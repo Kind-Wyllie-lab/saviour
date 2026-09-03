@@ -42,7 +42,7 @@ import logging
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -50,6 +50,61 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SPECTROGRAM_SIZE = (1920, 480)
 DEFAULT_STRIP_HEIGHT = 240
+
+# ffmpeg showspectrum(pic) enum values we let the caller pick from.
+SPEC_COLORS = (
+    "intensity", "rainbow", "moreland", "nebulae", "fire", "fiery", "fruit",
+    "cool", "magma", "green", "viridis", "plasma", "cividis", "terrain",
+    "channel",
+)
+SPEC_FSCALES = ("lin", "log", "rlog")
+SPEC_ASCALES = ("lin", "sqrt", "cbrt", "log", "4thrt", "5thrt")
+
+
+@dataclass
+class SpectrogramOpts:
+    """How the audio is drawn -- colour map, frequency band, and the
+    amplitude/frequency scales. Shared by the static PNG, the overlay
+    strip and the ethogram panel so they render identically."""
+
+    color: str = "intensity"
+    fmin_hz: int = 0
+    fmax_hz: int | None = None
+    fscale: str = "lin"      # frequency axis
+    ascale: str = "log"      # amplitude -> colour
+    gain: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.color not in SPEC_COLORS:
+            raise ValueError(f"spectrogram color must be one of {SPEC_COLORS}")
+        if self.fscale not in SPEC_FSCALES:
+            raise ValueError(f"spectrogram fscale must be one of {SPEC_FSCALES}")
+        if self.ascale not in SPEC_ASCALES:
+            raise ValueError(f"spectrogram ascale must be one of {SPEC_ASCALES}")
+        if not 0.1 <= self.gain <= 20:
+            raise ValueError("spectrogram gain must be between 0.1 and 20")
+        if self.fmax_hz is not None and self.fmax_hz <= self.fmin_hz:
+            raise ValueError("spectrogram fmax must be above fmin")
+
+    def _common(self, width: int, height: int) -> str:
+        band = ""
+        if self.fmin_hz:
+            band += f":start={self.fmin_hz}"
+        if self.fmax_hz:
+            band += f":stop={self.fmax_hz}"
+        return (
+            f"s={width}x{height}:mode=combined:color={self.color}:"
+            f"scale={self.ascale}:fscale={self.fscale}:gain={self.gain}{band}"
+        )
+
+    def pic_filter(self, width: int, height: int) -> str:
+        return f"showspectrumpic={self._common(width, height)}:legend=1"
+
+    def scroll_filter(self, width: int, height: int, fps: int) -> str:
+        return (
+            f"showspectrum={self._common(width, height)}:"
+            f"slide=scroll:fps={fps}"
+        )
 
 # The microphone recorder loop reads a fixed number of frames per block
 # (`recorder.record(numframes=frame_num)`), writing one sidecar line per
@@ -132,7 +187,6 @@ def _round_or_none(value: float, digits: int) -> float | None:
 class AlignOptions:
     out_dir: str
     out_rate: int | None = None
-    fmax_hz: int | None = None
     spectrogram: bool = False
     overlay_path: str | None = None
     strip_height: int = DEFAULT_STRIP_HEIGHT
@@ -141,6 +195,7 @@ class AlignOptions:
     ethogram: bool = False
     ethogram_fps: int = 15
     frame_index_offset: int = 0
+    spec: SpectrogramOpts = field(default_factory=SpectrogramOpts)
 
 
 # --------------------------------------------------------------------------- #
@@ -503,41 +558,51 @@ def render_aligned_audio(
 
 def render_spectrogram_png(
     aligned_path: str, out_path: str,
-    size: tuple[int, int] = DEFAULT_SPECTROGRAM_SIZE, fmax_hz: int | None = None,
+    size: tuple[int, int] = DEFAULT_SPECTROGRAM_SIZE,
+    spec: SpectrogramOpts | None = None,
 ) -> str:
-    stop = f":stop={fmax_hz}" if fmax_hz else ""
+    spec = spec or SpectrogramOpts()
     _run([
         "ffmpeg", "-y", "-i", aligned_path,
-        "-lavfi",
-        f"showspectrumpic=s={size[0]}x{size[1]}:mode=combined:scale=log:"
-        f"fscale=lin:legend=1{stop}",
-        out_path,
+        "-lavfi", spec.pic_filter(size[0], size[1]), out_path,
     ])
     return out_path
 
 
-def render_overlay(
-    composite_path: str, aligned_paths: list[str], out_path: str,
-    strip_height: int, fps: int, fmax_hz: int | None = None,
-) -> str:
-    """video_compose.py output + a scrolling spectrogram strip (first
-    track) + every aligned track muxed as audio, into a .mkv."""
+def _video_width(path: str) -> int:
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width", "-of", "csv=p=0", composite_path],
+         "-show_entries", "stream=width", "-of", "csv=p=0", path],
         capture_output=True, text=True, check=True,
     )
-    width = int(probe.stdout.strip())
-    stop = f":stop={fmax_hz}" if fmax_hz else ""
+    return int(probe.stdout.strip())
+
+
+def render_overlay(
+    composite_path: str, aligned_paths: list[str], out_path: str,
+    strip_height: int, fps: int, spec: SpectrogramOpts | None = None,
+    stacked: bool = False,
+) -> str:
+    """A `video_compose.py` composite + a scrolling spectrogram of the
+    first aligned track + every aligned track muxed as audio, into a
+    `.mkv`. `stacked=False` overlays the strip on the bottom of the
+    video; `stacked=True` puts a full spectrogram panel below it."""
+    spec = spec or SpectrogramOpts()
+    width = _video_width(composite_path)
 
     cmd = ["ffmpeg", "-y", "-i", composite_path]
     for path in aligned_paths:
         cmd += ["-i", path]
-    graph = (
-        f"[1:a]showspectrum=s={width}x{strip_height}:slide=scroll:mode=combined:"
-        f"scale=log:fscale=lin:fps={fps}{stop}[spec];"
-        f"[0:v][spec]overlay=0:H-h[v]"
-    )
+    spec_filter = spec.scroll_filter(width, strip_height, fps)
+    if stacked:
+        graph = (
+            f"[1:a]{spec_filter}[sp];"
+            f"[sp]drawbox=x={width - 3}:y=0:w=3:h={strip_height}:"
+            f"color=yellow@0.9:t=fill[strip];"
+            f"[0:v][strip]vstack=inputs=2[v]"
+        )
+    else:
+        graph = f"[1:a]{spec_filter}[spec];[0:v][spec]overlay=0:H-h[v]"
     cmd += ["-filter_complex", graph, "-map", "[v]"]
     for i in range(len(aligned_paths)):
         cmd += ["-map", f"{i + 1}:a"]
@@ -546,10 +611,23 @@ def render_overlay(
     return out_path
 
 
+def render_muxed_track(
+    composite_path: str, aligned_path: str, out_path: str,
+) -> str:
+    """The composite, unchanged, with one aligned audio track muxed in."""
+    _run([
+        "ffmpeg", "-y", "-i", composite_path, "-i", aligned_path,
+        "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+        "-b:a", "192k", "-movflags", "+faststart", out_path,
+    ])
+    return out_path
+
+
 def render_ethogram(
     date_dir: str, aligned_flac: str, window_start_ns: int, window_dur_s: float,
     out_path: str, fps: int = 15, strip_height: int = DEFAULT_STRIP_HEIGHT,
-    fmax_hz: int | None = None, panel_width: int = 800, index_offset: int = 0,
+    spec: SpectrogramOpts | None = None, panel_width: int = 800,
+    index_offset: int = 0,
 ) -> str:
     """Camera footage on top, a scrolling spectrogram of the aligned audio
     below with a "now" line, for scrubbing a session to check that a sound
@@ -562,6 +640,7 @@ def render_ethogram(
     """
     import cv2  # noqa: PLC0415  -- optional heavy dep, only this path needs it
 
+    spec = spec or SpectrogramOpts(gain=2.5)
     cam_csvs = _camera_timestamp_csvs(date_dir)
     if not cam_csvs:
         raise ValueError(f"No camera timestamp CSV under {date_dir} for the ethogram")
@@ -603,11 +682,9 @@ def render_ethogram(
         writer.release()
         cap.release()
 
-    stop = f":stop={fmax_hz}" if fmax_hz else ""
     graph = (
         f"[0:v]scale={panel_width}:-2,setsar=1[top];"
-        f"[1:a]showspectrum=s={panel_width}x{strip_height}:slide=scroll:"
-        f"mode=combined:scale=log:fscale=lin:gain=2.5:fps={fps}{stop}[sp];"
+        f"[1:a]{spec.scroll_filter(panel_width, strip_height, fps)}[sp];"
         f"[sp]drawbox=x={panel_width - 3}:y=0:w=3:h={strip_height}:"
         f"color=yellow@0.9:t=fill[spec];"
         f"[top][spec]vstack=inputs=2[v]"
@@ -692,13 +769,13 @@ def align_session_audio(
 
         if opts.spectrogram:
             report["spectrogram_path"] = render_spectrogram_png(
-                aligned, f"{base}_spectrogram.png", fmax_hz=opts.fmax_hz,
+                aligned, f"{base}_spectrogram.png", spec=opts.spec,
             )
         if opts.ethogram:
             report["ethogram_path"] = render_ethogram(
                 date_dir, aligned, window_start, window_dur,
                 f"{base}_ethogram.mp4", fps=opts.ethogram_fps,
-                strip_height=opts.strip_height, fmax_hz=opts.fmax_hz,
+                strip_height=opts.strip_height, spec=opts.spec,
                 index_offset=opts.frame_index_offset,
             )
         results.append(report)
@@ -707,7 +784,7 @@ def align_session_audio(
         overlay_out = os.path.splitext(opts.overlay_path)[0] + "_with_audio.mkv"
         render_overlay(
             opts.overlay_path, aligned_paths, overlay_out,
-            opts.strip_height, _composite_fps(opts.overlay_path), opts.fmax_hz,
+            opts.strip_height, _composite_fps(opts.overlay_path), spec=opts.spec,
         )
         for report in results:
             report["overlay_path"] = overlay_out
@@ -727,8 +804,18 @@ def main() -> None:
                         help="Force the window duration in seconds")
     parser.add_argument("--out-rate", type=int, default=None,
                         help="Output sample rate (default: the recording's own rate)")
-    parser.add_argument("--fmax", type=int, default=None, dest="fmax_hz",
+    parser.add_argument("--fmax", type=int, default=None, dest="spec_fmax",
                         help="Upper frequency limit for spectrograms, Hz")
+    parser.add_argument("--fmin", type=int, default=0, dest="spec_fmin",
+                        help="Lower frequency limit for spectrograms, Hz")
+    parser.add_argument("--spec-color", default="intensity", choices=SPEC_COLORS,
+                        help="Spectrogram colour map")
+    parser.add_argument("--spec-fscale", default="lin", choices=SPEC_FSCALES,
+                        help="Spectrogram frequency-axis scale")
+    parser.add_argument("--spec-ascale", default="log", choices=SPEC_ASCALES,
+                        help="Spectrogram amplitude scale")
+    parser.add_argument("--spec-gain", type=float, default=1.0,
+                        help="Spectrogram gain (0.1-20)")
     parser.add_argument("--spectrogram", action="store_true",
                         help="Also write a whole-session spectrogram PNG per mic")
     parser.add_argument("--overlay", default=None, dest="overlay_path",
@@ -754,7 +841,6 @@ def main() -> None:
     opts = AlignOptions(
         out_dir=args.out_dir or session_dir,
         out_rate=args.out_rate,
-        fmax_hz=args.fmax_hz,
         spectrogram=args.spectrogram,
         overlay_path=args.overlay_path,
         strip_height=args.strip_height,
@@ -763,6 +849,10 @@ def main() -> None:
         ethogram=args.ethogram,
         ethogram_fps=args.ethogram_fps,
         frame_index_offset=args.frame_index_offset,
+        spec=SpectrogramOpts(
+            color=args.spec_color, fmin_hz=args.spec_fmin, fmax_hz=args.spec_fmax,
+            fscale=args.spec_fscale, ascale=args.spec_ascale, gain=args.spec_gain,
+        ),
     )
     results = align_session_audio(
         args.date_dir, opts, t_start_ns=args.t_start_ns, duration_s=args.duration_s,

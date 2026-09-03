@@ -2066,3 +2066,137 @@ class TestFirstRunSetup:
                 {"controller": {"name": "Habitat A", "location": "Room 2"}})
             assert not os.path.exists(sentinel)
             assert payloads["first_run_state"] == {"needed": False}
+
+
+# ---------------------------------------------------------------------------
+# Habitat Session socket handlers
+# ---------------------------------------------------------------------------
+
+class TestHabitatSessionHandlers:
+    def test_estimate_habitat_volume_no_auth(self):
+        web, facade = _make_web_with_facade()
+        facade.estimate_habitat_volume.return_value = {
+            "success": True, "projected_bytes_total": 42, "plans": [],
+        }
+        client = _connected_client(web)
+        client.emit("estimate_habitat_volume",
+                    {"plans": [{"plan_id": "a"}], "expected_minutes": 1440})
+        rec = client.get_received()
+        facade.estimate_habitat_volume.assert_called_once_with(
+            [{"plan_id": "a"}], 1440.0)
+        assert rec[0]["name"] == "habitat_volume_estimate"
+        assert rec[0]["args"][0]["projected_bytes_total"] == 42
+
+    def test_pause_and_resume_require_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("pause_session", {"session_name": "hab"})
+        client.emit("resume_session", {"session_name": "hab"})
+        names = [m["name"] for m in client.get_received()]
+        assert names == ["session_error", "session_error"]
+        facade.pause_session.assert_not_called()
+        facade.resume_session.assert_not_called()
+
+    def test_pause_and_resume_after_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.pause_session.return_value = {"success": True}
+            facade.resume_session.return_value = {"success": True}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("pause_session", {"session_name": "hab"})
+            client.emit("resume_session", {"session_name": "hab"})
+            client.get_received()
+        facade.pause_session.assert_called_once_with("hab")
+        facade.resume_session.assert_called_once_with("hab")
+
+    def test_pause_error_is_surfaced(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.pause_session.return_value = {
+                "success": False, "error": "Session is stopped, not active"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("pause_session", {"session_name": "hab"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "session_error"
+        assert "stopped" in rec[0]["args"][0]["error"]
+
+    def test_create_habitat_session_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.create_habitat_session.return_value = {
+                "success": True, "session_name": "hab"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            with patch.object(web, "_check_nas_free_space", return_value=None), \
+                 patch.object(web, "_write_session_metadata"):
+                client.emit("create_habitat_session", {
+                    "session_name": "hab",
+                    "plans": [{"plan_id": "cams", "modules": ["c1"]}],
+                })
+                rec = client.get_received()
+        facade.create_habitat_session.assert_called_once()
+        assert rec[0]["name"] == "create_session_result"
+        assert rec[0]["args"][0]["session_name"] == "hab"
+
+    def test_create_habitat_session_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.create_habitat_session.return_value = {
+                "success": False, "error": "module(s) offline: c1"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            with patch.object(web, "_check_nas_free_space", return_value=None):
+                client.emit("create_habitat_session", {
+                    "session_name": "hab", "plans": [{"plan_id": "a"}]})
+                rec = client.get_received()
+        assert rec[0]["name"] == "session_error"
+        assert "offline" in rec[0]["args"][0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# Compose ("aggregated video") socket handlers
+# ---------------------------------------------------------------------------
+
+class TestComposeHandlers:
+    def test_get_compose_jobs_empty_before_first_use(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("get_compose_jobs")
+        rec = client.get_received()
+        assert rec[0]["name"] == "compose_jobs"
+        assert rec[0]["args"][0] == {"jobs": []}
+
+    def test_cancel_compose_job_no_worker(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("cancel_compose_job", {"job_id": "x"})
+        rec = client.get_received()
+        assert rec[0]["name"] == "compose_job_cancelled"
+        assert rec[0]["args"][0] == {"job_id": "x", "ok": False}
+
+    def test_compose_session_video_rejects_bad_spec(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("compose_session_video", {"session_name": "bad name!"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "compose_job_rejected"
+        assert "session_name" in rec[0]["args"][0]["error"]
+
+    def test_compose_session_video_accepts_valid_spec(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            fake_worker = MagicMock()
+            fake_worker.submit.return_value = MagicMock(
+                summary=lambda: {"id": "j1", "state": "queued"})
+            with patch.object(web, "_get_compose_worker", return_value=fake_worker):
+                client.emit("compose_session_video", {
+                    "session_name": "sess", "layout": "grid"})
+                rec = client.get_received()
+        fake_worker.submit.assert_called_once()
+        assert rec[0]["name"] == "compose_job_accepted"

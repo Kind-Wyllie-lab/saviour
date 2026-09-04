@@ -101,12 +101,20 @@ export default function HabitatSessionPanel({ session, onDownloadReport }) {
           {isPaused ? "Paused" : isActive ? "Active" : state}
         </span>
         {isActive && (
-          <button className="btn btn-secondary" onClick={pause}>
+          <button
+            type="button"
+            className="session-btn session-btn--cancel habitat-session-panel__action"
+            onClick={pause}
+          >
             Pause
           </button>
         )}
         {isPaused && (
-          <button className="btn" onClick={resume}>
+          <button
+            type="button"
+            className="session-btn session-btn--start habitat-session-panel__action"
+            onClick={resume}
+          >
             Resume
           </button>
         )}

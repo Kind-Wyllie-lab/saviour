@@ -425,7 +425,8 @@
   color: var(--warning-color, #b26a00);
 }
 
-.habitat-session-panel__head .btn {
+.habitat-session-panel__head .btn,
+.habitat-session-panel__action {
   margin-left: auto;
 }
 

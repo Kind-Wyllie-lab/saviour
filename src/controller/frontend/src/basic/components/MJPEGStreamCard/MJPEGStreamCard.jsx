@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Link } from "react-router";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
 import SnapshotButton from "../SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
@@ -31,7 +32,7 @@ const MAX_RECONNECTS = 10;
  * into view — a backgrounded or off-screen card tears its connection down
  * instead of decoding frames and leaking sockets forever.
  */
-function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus, className = "" }) {
+function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus, className = "", settingsId }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
   // Actual aspect ratio of the stream, discovered from the first loaded
@@ -214,6 +215,17 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
           >
             ⟳
           </button>
+          {settingsId && (
+            <Link
+              to={`/settings#${settingsId}`}
+              className="mjpeg-settings-button"
+              title="Module settings"
+              aria-label="Module settings"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⚙
+            </Link>
+          )}
         </div>
         <div
           className="mjpeg-stream-video snapshot-hover-parent"

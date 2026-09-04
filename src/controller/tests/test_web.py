@@ -2112,6 +2112,45 @@ class TestHabitatSessionHandlers:
         assert rec[0]["name"] == "habitat_volume_estimate"
         assert rec[0]["args"][0]["projected_bytes_total"] == 42
 
+    def test_estimate_session_projection_no_auth(self):
+        web, facade = _make_web_with_facade()
+        facade.estimate_session_projection.return_value = {
+            "success": True, "gb_per_day": 12.3, "fits": True,
+        }
+        client = _connected_client(web)
+        client.emit("estimate_session_projection",
+                    {"session_name": "hab", "horizon_minutes": 4320})
+        rec = client.get_received()
+        facade.estimate_session_projection.assert_called_once_with("hab", 4320)
+        assert rec[0]["name"] == "session_projection_estimate"
+        assert rec[0]["args"][0]["gb_per_day"] == 12.3
+
+    def test_set_session_expected_duration_requires_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("set_session_expected_duration",
+                    {"session_name": "hab", "minutes": 4320})
+        assert client.get_received()[0]["name"] == "session_error"
+        facade.set_session_expected_duration.assert_not_called()
+
+    def test_set_session_expected_duration_forwards_and_surfaces_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.set_session_expected_duration.return_value = {"result": "success"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("set_session_expected_duration",
+                        {"session_name": "hab", "minutes": 4320})
+            facade.set_session_expected_duration.assert_called_once_with("hab", 4320)
+
+            facade.set_session_expected_duration.return_value = {
+                "result": "error", "error": "Not a Habitat Session"}
+            client.get_received()
+            client.emit("set_session_expected_duration",
+                        {"session_name": "hab", "minutes": None})
+            assert client.get_received()[-1]["name"] == "session_error"
+
     def test_pause_and_resume_require_login(self):
         web, facade = _make_web_with_facade()
         client = _connected_client(web)

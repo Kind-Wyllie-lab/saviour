@@ -54,7 +54,11 @@
         "framesync_cap_rows": 500000,
         "framesync_habitat_cap_rows": 200000,
         "framesync_health_cap_rows": 200000,
-        "framesync_day_settle_hours": 1
+        "framesync_day_settle_hours": 1,
+        "habitat_space_alert_enabled": true,
+        "habitat_space_alert_ratio": 1.0,
+        "habitat_space_alert_clear_ratio": 0.85,
+        "habitat_projection_default_horizon_hours": 24
     },
     "logging": {
         "_level": "INFO",

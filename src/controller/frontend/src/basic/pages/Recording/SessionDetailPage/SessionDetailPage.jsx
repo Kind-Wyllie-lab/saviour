@@ -9,7 +9,7 @@ import {
   DOWNLOAD_CONFIRM_BYTES, triggerDownload,
 } from "../sessionFormat";
 import {
-  SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, reportDownloadUrl, worstSummary,
+  SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, reportDownloadUrl, worstSummary, ptpChip,
 } from "../syncFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
@@ -478,20 +478,45 @@ export default function SessionDetailPage() {
                 : session.modules.join(", ")}
             </span>
 
-            {session.framesync_verdict?.status && (
-              <>
-                <span className="session-meta-label">Sync quality</span>
-                <span>
-                  <span
-                    className={`config-sync-badge config-sync-badge--${SYNC_CLASS[session.framesync_verdict.status]}`}
-                  >
-                    {SYNC_LABEL[session.framesync_verdict.status]}
+            {(session.plans?.length || session.framesync_verdict?.status
+              || session.ptp_warning) && (() => {
+              const fs = session.framesync_verdict?.status;
+              const ptp = ptpChip(session);
+              return (
+                <>
+                  <span className="session-meta-label">Sync</span>
+                  <span className="session-sync-chips">
+                    <span className="session-sync-chip">
+                      <span className="session-sync-chip__label">Camera frame sync</span>
+                      {fs ? (
+                        <span
+                          className={`config-sync-badge config-sync-badge--${SYNC_CLASS[fs]}`}
+                          title={`${SYNC_TITLE[fs]}${worstSummary(session.framesync_verdict) ? " — " + worstSummary(session.framesync_verdict) : ""}`}
+                        >
+                          {SYNC_LABEL[fs]}
+                        </span>
+                      ) : (
+                        <span
+                          className="config-sync-badge config-sync-badge--muted"
+                          title="Checked automatically a few minutes after the last file lands"
+                        >
+                          sync –
+                        </span>
+                      )}
+                    </span>
+                    <span className="session-sync-chip">
+                      <span className="session-sync-chip__label">PTP</span>
+                      <span
+                        className={`config-sync-badge config-sync-badge--${ptp.cls}`}
+                        title={ptp.title}
+                      >
+                        {ptp.label}
+                      </span>
+                    </span>
                   </span>
-                  {" "}
-                  {worstSummary(session.framesync_verdict)}
-                </span>
-              </>
-            )}
+                </>
+              );
+            })()}
 
             <span className="session-meta-label">Start</span>
             <span>{session.start_time || "-"}</span>

@@ -735,6 +735,25 @@ class Web(ABC):
             worker = self._compose_worker
             _emit("compose_jobs", {"jobs": worker.list() if worker else []})
 
+        @self.socketio.on("compose_streams_info")
+        def handle_compose_streams_info(data=None):
+            from flask_socketio import emit as _emit
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            session_name = (data or {}).get("session_name", "")
+            date_dir = (data or {}).get("date_dir") or None
+            streams = (data or {}).get("streams") or None
+            try:
+                _emit("compose_streams_info",
+                      compose.streams_info(share, session_name, date_dir, streams))
+            except compose.ComposeError as exc:
+                _emit("compose_streams_info",
+                      {"session_name": session_name, "error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("compose_streams_info failed")
+                _emit("compose_streams_info",
+                      {"session_name": session_name,
+                       "error": f"internal error: {exc}"})
+
         @self.socketio.on("cancel_compose_job")
         def handle_cancel_compose_job(data=None):
             from flask_socketio import emit as _emit
@@ -756,6 +775,8 @@ class Web(ABC):
                             "export.mount_path", "/home/pi/controller_share"
                         ),
                         spec,
+                        rebuild=bool((spec_dict or {}).get("rebuild")),
+                        logger=self.logger,
                     )
                     self.socketio.emit("compose_preview_ready", {
                         "image": "data:image/png;base64,"

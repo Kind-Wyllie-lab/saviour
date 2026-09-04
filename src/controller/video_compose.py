@@ -270,15 +270,85 @@ def compose_session_video(
     return output_path
 
 
+def _csv_bounds(csv_path: str) -> tuple[int, int]:
+    """(first_ts_ns, last_ts_ns) from a camera's per-frame CSV, without
+    touching the (much more expensive to open) video file."""
+    with open(csv_path, newline="") as f:
+        ts = [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+    if not ts:
+        raise ValueError(f"{csv_path} has no timestamps")
+    return ts[0], ts[-1]
+
+
+def _representative_frame(stream: CameraStream, t_ns: int) -> np.ndarray:
+    """Decode the one frame closest to `t_ns` for a single camera."""
+    cursor = _StreamCursor(stream)
+    try:
+        return cursor.sync_to(t_ns)
+    finally:
+        cursor.release()
+
+
+def _stream_thumb(
+    stream: CameraStream, t_ns: int, cache_dir: str | None
+) -> np.ndarray:
+    """A representative frame for `stream`, read from a cached PNG in
+    `cache_dir` when present, otherwise decoded from the video and written
+    there for next time. The cache makes repeated "Preview layout" presses
+    cheap -- no video decode at all once every stream is cached."""
+    if cache_dir:
+        thumb_path = os.path.join(cache_dir, f"{stream.name}.png")
+        cached = cv2.imread(thumb_path) if os.path.isfile(thumb_path) else None
+        if cached is not None:
+            return cached
+        frame = _representative_frame(stream, t_ns)
+        os.makedirs(cache_dir, exist_ok=True)
+        cv2.imwrite(thumb_path, frame)
+        return frame
+    return _representative_frame(stream, t_ns)
+
+
+def _attach_audio_preview(
+    frame: np.ndarray, audio_png: str, audio_mode: str
+) -> np.ndarray:
+    """Composite a spectrogram PNG into the preview the same way a real
+    render places it: `panel` stacked below the video, `strip` overlaid on
+    the bottom of the video."""
+    spec_img = cv2.imread(audio_png)
+    if spec_img is None:
+        return frame
+    ch, cw = frame.shape[:2]
+    if audio_mode == "panel":
+        panel_h = max(2, round(ch * 0.4) // 2 * 2)
+        panel = cv2.resize(spec_img, (cw, panel_h))
+        panel = _label(panel, "audio")
+        return np.vstack([frame, panel])
+    # strip
+    strip_h = max(2, round(ch * 0.18) // 2 * 2)
+    strip = cv2.resize(spec_img, (cw, strip_h))
+    out = frame.copy()
+    out[ch - strip_h : ch, 0:cw] = strip
+    return out
+
+
 def compose_preview_frame(
     date_dir: str, output_png: str,
     streams: list[str] | None = None,
     regions: list[tuple[int, int, int, int]] | None = None,
     canvas: tuple[int, int] | None = None,
     at_fraction: float = 0.5,
+    cache_dir: str | None = None,
+    audio_png: str | None = None,
+    audio_mode: str | None = None,
 ) -> str:
     """Composite a single frame (at `at_fraction` through the overlap
-    window) to a PNG -- a fast layout preview before a full render."""
+    window) to a PNG -- a fast layout preview before a full render.
+
+    `cache_dir`, when given, holds one representative PNG per camera so
+    repeated previews skip video decode entirely. `audio_png` + `audio_mode`
+    ("strip" | "panel") composite a spectrogram into the preview so audio
+    layout modes are visible before rendering.
+    """
     found = discover_camera_streams(date_dir)
     if streams is not None:
         by_name = {s.name: s for s in found}
@@ -290,18 +360,18 @@ def compose_preview_frame(
     else:
         cw, ch = canvas
 
-    cursors = [_StreamCursor(s) for s in found]
-    try:
-        t_start = max(c.first_ts for c in cursors)
-        t_end = min(c.last_ts for c in cursors)
-        t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
-        frame = np.zeros((ch, cw, 3), dtype=np.uint8)
-        for cursor, (x, y, w, h) in zip(cursors, regions, strict=True):
-            pane = _label(_fit_into(cursor.sync_to(t), w, h), cursor.name)
-            frame[y : y + h, x : x + w] = pane
-    finally:
-        for cursor in cursors:
-            cursor.release()
+    bounds = [_csv_bounds(s.csv_path) for s in found]
+    t_start = max(b[0] for b in bounds)
+    t_end = min(b[1] for b in bounds)
+    t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
+
+    frame = np.zeros((ch, cw, 3), dtype=np.uint8)
+    for stream, (x, y, w, h) in zip(found, regions, strict=True):
+        pane = _label(_fit_into(_stream_thumb(stream, t, cache_dir), w, h), stream.name)
+        frame[y : y + h, x : x + w] = pane
+
+    if audio_png and audio_mode in ("strip", "panel"):
+        frame = _attach_audio_preview(frame, audio_png, audio_mode)
 
     os.makedirs(os.path.dirname(output_png) or ".", exist_ok=True)
     if not cv2.imwrite(output_png, frame):

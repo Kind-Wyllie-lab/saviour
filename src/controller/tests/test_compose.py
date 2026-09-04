@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import pytest
 
 from src.controller.compose import (
+    DEFAULT_FPS,
     AudioSpec,
     ComposeError,
     ComposeSpec,
@@ -22,9 +23,13 @@ from src.controller.compose import (
     camera_window,
     discover_streams,
     find_microphone,
+    list_mic_folders,
     plan_regions,
     render_preview,
     resolve_date_dir,
+    stream_fps,
+    streams_info,
+    suggest_fps,
 )
 
 # --------------------------------------------------------------------------- #
@@ -134,6 +139,75 @@ def test_render_preview_composites_one_frame(tmp_path, monkeypatch):
     assert data == b"\x89PNG-preview"
     assert captured["kw"]["streams"] == ["camera_a"]
     assert not os.path.exists(captured["out"])  # temp preview cleaned up
+
+
+# --------------------------------------------------------------------------- #
+# fps derivation                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _ts_csv(path, rate_hz, n=50, t0=1_000_000_000):
+    step = round(1e9 / rate_hz)
+    rows = "\n".join(f"{i},{t0 + i * step}" for i in range(n))
+    path.write_text(f"frame_id,timestamp_ns\n{rows}\n")
+
+
+def test_stream_fps_from_median_gap(tmp_path):
+    p = tmp_path / "a_timestamps.csv"
+    _ts_csv(p, 30.0)
+    assert stream_fps(str(p)) == pytest.approx(30.0, abs=0.1)
+
+
+def test_stream_fps_none_when_too_short(tmp_path):
+    p = tmp_path / "a_timestamps.csv"
+    p.write_text("frame_id,timestamp_ns\n0,1\n1,2\n")
+    assert stream_fps(str(p)) is None
+
+
+def test_suggest_fps_takes_the_fastest_camera(tmp_path, monkeypatch):
+    from src.controller.compose import SessionStream
+
+    monkeypatch.setattr(
+        "src.controller.compose.probe_dimensions", lambda _p: (640, 480)
+    )
+    slow, fast = tmp_path / "slow.csv", tmp_path / "fast.csv"
+    _ts_csv(slow, 15.0)
+    _ts_csv(fast, 48.7)
+    streams = [
+        SessionStream("slow", "s.ts", str(slow), 640, 480),
+        SessionStream("fast", "f.ts", str(fast), 640, 480),
+    ]
+    assert suggest_fps(streams) == 49          # max, rounded
+    assert suggest_fps(streams, hi=30) == 30   # clamped
+
+
+def test_suggest_fps_falls_back_to_default(tmp_path):
+    from src.controller.compose import SessionStream
+
+    p = tmp_path / "short.csv"
+    p.write_text("frame_id,timestamp_ns\n0,1\n")
+    assert suggest_fps([SessionStream("x", "x.ts", str(p), 1, 1)]) == DEFAULT_FPS
+
+
+def test_streams_info_reports_cameras_mics_and_fps(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.controller.compose.probe_dimensions", lambda _p: (1280, 720)
+    )
+    dd = tmp_path / "sess" / "20260901"
+    (dd / "cam_a").mkdir(parents=True)
+    (dd / "cam_a" / "v.ts").write_bytes(b"x")
+    _ts_csv(dd / "cam_a" / "v_timestamps.csv", 25.0)
+    (dd / "mic_a").mkdir()
+    (dd / "mic_a" / "r.flac").write_bytes(b"x")
+    (dd / "mic_a" / "r_timestamps.txt").write_text("STARTED 1.0\n")
+
+    assert list_mic_folders(str(dd)) == ["mic_a"]
+    info = streams_info(str(tmp_path), "sess", None)
+    assert info["dates"] == ["20260901"]
+    assert info["cameras"][0]["name"] == "cam_a"
+    assert info["cameras"][0]["width"] == 1280
+    assert info["mics"] == ["mic_a"]
+    assert info["suggested_fps"] == 25
 
 
 # --------------------------------------------------------------------------- #

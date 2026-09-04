@@ -20,15 +20,20 @@ from __future__ import annotations
 
 import csv
 import glob
+import hashlib
 import json
 import math
 import os
 import queue
+import shutil
+import statistics
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from itertools import pairwise
 
 from src.controller import audio_align
 
@@ -285,6 +290,101 @@ def read_frame_timestamps(csv_path: str) -> list[int]:
         return [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
 
 
+def stream_fps(csv_path: str) -> float | None:
+    """A camera's real capture rate from the median gap between its
+    per-frame timestamps (nominal fps drifts from real -- see CLAUDE.md
+    Hardware gotchas). None if the CSV is too short to tell."""
+    ts = read_frame_timestamps(csv_path)
+    if len(ts) < 3:
+        return None
+    gaps = [b - a for a, b in pairwise(ts) if b > a]
+    if not gaps:
+        return None
+    median_gap_ns = statistics.median(gaps)
+    return 1e9 / median_gap_ns if median_gap_ns else None
+
+
+def suggest_fps(streams: list[SessionStream], lo: int = 1, hi: int = 60) -> int:
+    """Default output fps for a compose: the fastest real capture rate
+    among the selected cameras (so no camera is temporally down-sampled),
+    rounded and clamped. Falls back to DEFAULT_FPS if no CSV is usable."""
+    rates = [r for s in streams if (r := stream_fps(s.csv_path)) is not None]
+    if not rates:
+        return DEFAULT_FPS
+    return max(lo, min(hi, round(max(rates))))
+
+
+def list_mic_folders(date_dir: str) -> list[str]:
+    """Module folder names under `date_dir` that hold a mic recording
+    (an audio file + a `*_timestamps.txt` sidecar)."""
+    out = []
+    for entry in sorted(os.listdir(date_dir)):
+        mdir = os.path.join(date_dir, entry)
+        if not os.path.isdir(mdir):
+            continue
+        has_audio = any(
+            glob.glob(os.path.join(mdir, f"*{ext}")) for ext in (".flac", ".wav")
+        )
+        has_sidecar = bool(glob.glob(os.path.join(mdir, "*_timestamps.txt")))
+        if has_audio and has_sidecar:
+            out.append(entry)
+    return out
+
+
+def streams_info(share_path: str, session_name: str,
+                 date_dir: str | None = None,
+                 streams: list[str] | None = None) -> dict:
+    """Lightweight inventory for the compose UI -- cameras (with real
+    dimensions + capture rate), mic folders, available recording days, and
+    the fps a render should default to. No video decode, no full render.
+    `streams`, if given, scopes `suggested_fps` to just those cameras."""
+    if not _safe_name(session_name):
+        raise ComposeError("invalid session_name")
+    session_dir = os.path.join(share_path, session_name)
+    if not os.path.isdir(session_dir):
+        raise ComposeError("session directory not found")
+    dates = sorted(
+        os.path.basename(p)
+        for p in glob.glob(os.path.join(session_dir, "*"))
+        if os.path.isdir(p) and not os.path.basename(p).startswith(".")
+    )
+    resolved = resolve_date_dir(session_dir, date_dir)
+    cams = discover_streams(resolved, None)
+    wanted = [s for s in cams if not streams or s.name in streams] or cams
+    return {
+        "session_name": session_name,
+        "date_dir": os.path.basename(resolved),
+        "dates": dates,
+        "cameras": [
+            {
+                "name": s.name, "width": s.width, "height": s.height,
+                "fps": round(r, 2) if (r := stream_fps(s.csv_path)) else None,
+            }
+            for s in cams
+        ],
+        "mics": list_mic_folders(resolved),
+        "suggested_fps": suggest_fps(wanted),
+    }
+
+
+def _preview_cache_dir(session_name: str, date_base: str) -> str:
+    """Controller-local scratch dir for cached preview thumbnails -- kept
+    off the (possibly remote) export share so a preview never writes there,
+    and out of the session tree so it never shows in the file browser or a
+    download zip."""
+    path = os.path.join(
+        tempfile.gettempdir(), "saviour_compose_cache", session_name, date_base
+    )
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def clear_preview_cache(session_name: str, date_base: str | None = None) -> None:
+    root = os.path.join(tempfile.gettempdir(), "saviour_compose_cache", session_name)
+    target = os.path.join(root, date_base) if date_base else root
+    shutil.rmtree(target, ignore_errors=True)
+
+
 def find_microphone(date_dir: str, source: str | None):
     """The chosen mic's (audio_path, sidecar_path), or the first mic
     folder with an audio file + a `*_timestamps.txt` sidecar."""
@@ -304,25 +404,73 @@ def find_microphone(date_dir: str, source: str | None):
     )
 
 
-def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960) -> bytes:
+def _preview_spectrogram_png(cache_dir: str, date_dir: str, audio: AudioSpec,
+                             width: int, logger=None) -> str | None:
+    """A representative (unaligned) spectrogram PNG for the preview, cached
+    by mic file + spectrogram options so it's rendered once per settings
+    combination. Returns None (preview just omits the audio panel) if
+    ffmpeg or the mic recording isn't usable -- a preview must not fail
+    over audio."""
+    try:
+        audio_file, _sidecar = find_microphone(date_dir, audio.source)
+        try:
+            mtime = int(os.path.getmtime(audio_file))
+        except OSError:
+            mtime = 0
+        # `strip` and `panel` render the same source spectrogram (only the
+        # placement differs), so the mode is deliberately not in the key.
+        key = hashlib.md5(
+            f"{audio_file}|{mtime}|{width}|"
+            f"{json.dumps(audio.spectrogram, sort_keys=True)}".encode()
+        ).hexdigest()[:12]
+        out = os.path.join(cache_dir, f"spec_{key}.png")
+        if not os.path.isfile(out):
+            height = max(2, round(width * 0.28) // 2 * 2)
+            audio_align.render_source_spectrogram_png(
+                audio_file, out, size=(width, height), spec=audio.spec_opts(),
+            )
+        return out
+    except Exception as exc:  # noqa: BLE001 -- preview must not fail over audio
+        if logger:
+            logger.warning("compose preview: skipping audio panel (%s)", exc)
+        return None
+
+
+def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
+                   rebuild: bool = False, logger=None) -> bytes:
     """One composited frame (mid-window) as PNG bytes -- a fast layout
-    preview before committing to a full render. Video layout only; audio
-    modes aren't previewed."""
+    preview before committing to a full render. Cameras are drawn from
+    cached per-module thumbnails (rebuilt on `rebuild=True`); a `strip`/
+    `panel` audio mode is composited in the same place a real render puts
+    it."""
     from src.controller import video_compose
 
     session_dir = os.path.join(share_path, spec.session_name)
     if not os.path.isdir(session_dir):
         raise ComposeError("session directory not found")
     date_dir = resolve_date_dir(session_dir, spec.date_dir)
+    date_base = os.path.basename(date_dir)
+    if rebuild:
+        clear_preview_cache(spec.session_name, date_base)
+    cache_dir = _preview_cache_dir(spec.session_name, date_base)
+
     streams = discover_streams(date_dir, spec.streams)
     regions, cw, ch = plan_regions(
         [(s.width, s.height) for s in streams], spec.layout, canvas_width=max_width,
     )
-    tmp = os.path.join(date_dir, f".compose_preview_{uuid.uuid4().hex[:8]}.png")
+
+    audio = AudioSpec(**spec.audio)
+    audio_png = None
+    if audio.mode in ("strip", "panel"):
+        audio_png = _preview_spectrogram_png(cache_dir, date_dir, audio, cw, logger)
+
+    tmp = os.path.join(cache_dir, f".preview_{uuid.uuid4().hex[:8]}.png")
     try:
         video_compose.compose_preview_frame(
             date_dir, tmp, streams=[s.name for s in streams],
-            regions=regions, canvas=(cw, ch),
+            regions=regions, canvas=(cw, ch), cache_dir=cache_dir,
+            audio_png=audio_png,
+            audio_mode=audio.mode if audio_png else None,
         )
         with open(tmp, "rb") as f:
             return f.read()

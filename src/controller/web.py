@@ -40,7 +40,7 @@ from flask import (
 )
 from flask_socketio import SocketIO
 
-from src.controller import compose
+from src.controller import compose, framesync_check
 from src.controller.config import Config
 from src.controller.themes import ThemeError, ThemeStore
 from src.shared.data_rate import (
@@ -264,6 +264,7 @@ class Web(ABC):
         self._register_routes()
         self._register_socketio_events()
         self._register_compose_events()
+        self._register_framesync_events()
 
         # Store module readiness state in memory
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
@@ -289,6 +290,8 @@ class Web(ABC):
         # page — spun up on first request so no thread starts before the
         # app is serving.
         self._compose_worker = None
+        # Same, for automatic framesync/PTP sync-quality validation.
+        self._framesync_worker = None
 
         # Set up paths
         self.habitat_share_dir = Path(self.config.get("export.mount_path", "/home/pi/controller_share"))
@@ -862,6 +865,67 @@ class Web(ABC):
                 self.socketio.emit("ephys_align_update", payload)
 
             threading.Thread(target=_run, daemon=True, name="ephys-align").start()
+
+
+    # ------------------------------------------------------------------ #
+    # Sync-quality validation (src/controller/framesync_check.py)        #
+    # ------------------------------------------------------------------ #
+
+    def _framesync_thresholds(self) -> dict:
+        """DEFAULT_THRESHOLDS with any config.recording.* overrides on top."""
+        rec = self.config.get("recording", {}) or {}
+        return {
+            k: rec.get(k, v)
+            for k, v in framesync_check.DEFAULT_THRESHOLDS.items()
+        }
+
+    def _get_framesync_worker(self):
+        """Build the single-slot framesync-check worker on first use.
+
+        Instantiated on first submit (auto-trigger from
+        Recording._monitor_sessions via the facade, or the manual
+        recheck_framesync event) so no thread starts before the app serves.
+        """
+        if self._framesync_worker is None:
+            share = self.config.get(
+                "export.mount_path", "/home/pi/controller_share"
+            )
+            self._framesync_worker = framesync_check.SyncCheckWorker(
+                share_path=share,
+                thresholds_provider=self._framesync_thresholds,
+                on_update=lambda s: self.socketio.emit("framesync_job_update", s),
+                on_result=lambda sn, scope, dd, v, rr:
+                    self.facade.apply_framesync_verdict(sn, scope, dd, v, rr),
+                logger=self.logger,
+            )
+        return self._framesync_worker
+
+    def _register_framesync_events(self):
+        @self.socketio.on("recheck_framesync")
+        def handle_recheck_framesync(data=None):
+            from flask_socketio import emit as _emit
+            data = data or {}
+            try:
+                job = self._get_framesync_worker().submit({
+                    "session_name": data.get("session_name", ""),
+                    "date_dir": data.get("date_dir") or None,
+                    "scope": data.get("scope")
+                    or ("day" if data.get("date_dir") else "session"),
+                    "reason": "manual",
+                })
+                _emit("framesync_job_accepted", job.summary())
+            except framesync_check.SyncCheckError as exc:
+                _emit("framesync_job_rejected", {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("recheck_framesync failed")
+                _emit("framesync_job_rejected",
+                      {"error": f"internal error: {exc}"})
+
+        @self.socketio.on("get_framesync_jobs")
+        def handle_get_framesync_jobs(data=None):
+            from flask_socketio import emit as _emit
+            worker = self._framesync_worker
+            _emit("framesync_jobs", {"jobs": worker.list() if worker else []})
 
 
     def notify_module_update(self):

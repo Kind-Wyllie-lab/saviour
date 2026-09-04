@@ -1312,3 +1312,99 @@ class TestSessionPersistence:
                 "Controller restarted during active session"
             )
             assert session.module_stop_states == {"cam1": "unknown"}
+
+    def test_framesync_verdict_fields_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            rec, _facade = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED,
+                framesync_verdict={"status": "amber", "reasons": ["cam1: ptp"]},
+                day_verdicts={
+                    "20260901": {"status": "green"},
+                    "20260902": {"status": "amber"},
+                },
+            )
+            rec._save_sessions()
+
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
+            s = rec2.sessions["exp1"]
+            assert s.framesync_verdict == {"status": "amber", "reasons": ["cam1: ptp"]}
+            assert s.day_verdicts["20260901"]["status"] == "green"
+            assert s.day_verdicts["20260902"]["status"] == "amber"
+
+    def test_old_sessions_json_without_verdict_keys_still_loads(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({"exp1": {
+                    "session_name": "exp1", "target": "camera",
+                    "state": "stopped", "modules": ["cam1"],
+                }}, f)
+            with patch("src.controller.recording.threading.Thread"):
+                rec = Recording()
+            recording_module.SESSIONS_FILE = sessions_file
+            rec._load_sessions()
+            s = rec.sessions["exp1"]
+            assert s.framesync_verdict is None
+            assert s.day_verdicts == {}
+
+
+class TestApplyFramesyncVerdict:
+    def _rec(self):
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        rec._save_sessions = MagicMock()
+        return rec, facade
+
+    def test_plain_session_stores_verdict_and_pushes(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec._framesync_inflight.add(("exp1", "__session__"))
+
+        rec.apply_framesync_verdict(
+            "exp1", "session", None,
+            {"status": "green", "reasons": []}, "exp1/framesync_report.json")
+
+        v = rec.sessions["exp1"].framesync_verdict
+        assert v["status"] == "green"
+        assert v["report_rel"] == "exp1/framesync_report.json"
+        assert ("exp1", "__session__") not in rec._framesync_inflight
+        facade.update_sessions.assert_called()
+        rec._save_sessions.assert_called()
+
+    def test_habitat_day_stores_and_rolls_up_worst_of(self):
+        rec, _facade = self._rec()
+        rec.sessions["hab"] = _session(state=SessionState.ACTIVE)
+
+        rec.apply_framesync_verdict("hab", "day", "20260901",
+                                    {"status": "green"}, None)
+        rec.apply_framesync_verdict("hab", "day", "20260902",
+                                    {"status": "amber"}, None)
+
+        s = rec.sessions["hab"]
+        assert set(s.day_verdicts) == {"20260901", "20260902"}
+        assert s.framesync_verdict["status"] == "amber"        # worst-of
+        assert s.framesync_verdict["green_days"] == 1
+        assert s.framesync_verdict["total_days"] == 2
+        assert s.framesync_verdict["latest"]["date_dir"] == "20260902"
+
+    def test_unknown_session_is_a_noop(self):
+        rec, facade = self._rec()
+        rec._framesync_inflight.add(("gone", "__session__"))
+        rec.apply_framesync_verdict("gone", "session", None, {"status": "green"}, None)
+        assert ("gone", "__session__") not in rec._framesync_inflight
+        facade.update_sessions.assert_not_called()
+
+    def test_rollup_all_skipped_days_is_skipped(self):
+        assert Recording._rollup_day_verdicts(
+            {"20260901": {"status": "skipped"}, "20260902": {"status": "skipped"}}
+        )["status"] == "skipped"
+
+    def test_rollup_only_looks_at_recent_days(self):
+        dv = {f"202609{d:02d}": {"status": "green"} for d in range(1, 12)}
+        dv["20260901"] = {"status": "red"}          # old red, outside the window
+        out = Recording._rollup_day_verdicts(dv)
+        assert out["status"] == "green"
+        assert out["total_days"] == 11

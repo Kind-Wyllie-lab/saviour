@@ -220,6 +220,32 @@ def test_fit_rejects_scheduler_stalls(tmp_path):
     assert fit.sample0_wall_ns == pytest.approx(int(sample0 * 1e9), abs=3_000_000)
 
 
+def test_fit_ignores_capture_stream_warmup(tmp_path):
+    """The first record() call spans the capture-stream warm-up, so its
+    pre-call timestamp lands up to a block early. That must not pull the
+    sample-0 intercept back (which showed up as audio leading video by ~1 s)."""
+    sidecar = tmp_path / "mic_timestamps.txt"
+    n_blocks = 60
+    sample0 = 1_700_000_000.0
+    slope = FRAME_NUM / NOMINAL_RATE  # ~0.683 s
+    _write_sidecar(sidecar, sample0, NOMINAL_RATE, n_blocks, jitter_s=0.001, seed=2)
+    lines = sidecar.read_text().splitlines()
+    body = [i for i, ln in enumerate(lines) if _is_float(ln)]
+    # block 0 stamped a whole block early, block 1 half a block early
+    lines[body[0]] = f"{float(lines[body[0]]) - slope:.6f}"
+    lines[body[1]] = f"{float(lines[body[1]]) - slope / 2:.6f}"
+    sidecar.write_text("\n".join(lines) + "\n")
+
+    with patch(
+        "src.controller.audio_align._probe_audio",
+        return_value=(n_blocks * FRAME_NUM, NOMINAL_RATE),
+    ):
+        fit = parse_mic_sidecar(str(sidecar), "unused.flac")
+
+    # intercept still lands on the true start, not ~0.68 s early
+    assert fit.sample0_wall_ns == pytest.approx(int(sample0 * 1e9), abs=5_000_000)
+
+
 def test_fit_degenerate_single_block_falls_back_to_started(tmp_path):
     sidecar = tmp_path / "mic_timestamps.txt"
     sample0 = 1_700_000_123.0

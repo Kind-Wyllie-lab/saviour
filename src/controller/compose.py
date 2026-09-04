@@ -623,24 +623,37 @@ class ComposeWorker:
         out_path = os.path.join(date_dir, out_name)
         base_path = out_path + ".base.mp4" if audio.mode != "none" else out_path
 
-        def progress(done: int, total: int, stage: str = "rendering") -> None:
+        def set_progress(frac: float, stage: str) -> None:
             if job.state == "cancelled":
                 raise _CancelledError()
-            job.progress = round(done / total, 4) if total else 0.0
+            job.progress = round(max(0.0, min(1.0, frac)), 4)
             job.stage = stage
             self._emit(job)
 
+        def phase(lo: float, hi: float, stage: str):
+            """A 0..1 sub-callback that maps into the [lo, hi] band -- so the
+            video pass and each audio pass each own a slice of the bar
+            instead of the audio work all landing at 99%."""
+            def cb(done, total=1, _stage=None):
+                frac = (done / total) if total else 0.0
+                set_progress(lo + (hi - lo) * frac, _stage or stage)
+            return cb
+
+        # `none`/`track` audio is cheap (stream copy); `strip`/`panel` re-encode
+        # the whole video, so give it a real slice of the bar.
+        video_hi = 0.65 if audio.mode in ("strip", "panel") else (
+            0.97 if audio.mode == "track" else 1.0
+        )
         try:
             video_compose.compose_session_video(
                 date_dir, base_path,
                 streams=[s.name for s in streams],
                 regions=regions, canvas=(canvas_w, canvas_h),
-                fps=spec.fps, progress=progress,
+                fps=spec.fps, progress=phase(0.0, video_hi, "compositing video"),
             )
             if audio.mode != "none":
-                progress(99, 100, "aligning audio")
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,
-                                  spec.fps)
+                                  spec.fps, phase)
                 _safe_unlink(base_path)
         except _CancelledError:
             _safe_unlink(base_path)
@@ -650,14 +663,16 @@ class ComposeWorker:
         return os.path.relpath(out_path, self.share_path)
 
     def _apply_audio(self, date_dir, streams, audio: AudioSpec,
-                     base_path: str, out_path: str, fps: int) -> None:
+                     base_path: str, out_path: str, fps: int, phase) -> None:
         audio_file, sidecar = find_microphone(date_dir, audio.source)
         t_start, t_end = camera_window(streams)
+        window_s = (t_end - t_start) / 1e9
         fit = audio_align.parse_mic_sidecar(sidecar, audio_file)
         aligned = os.path.splitext(out_path)[0] + "_aligned.flac"
         audio_align.render_aligned_audio(
             audio_align.AudioStream("mic", audio_file, sidecar), fit,
-            t_start, (t_end - t_start) / 1e9, aligned, fit.nominal_rate_hz,
+            t_start, window_s, aligned, fit.nominal_rate_hz,
+            progress=phase(0.65, 0.75, "aligning audio"),
         )
         try:
             if audio.mode == "track":
@@ -667,6 +682,8 @@ class ComposeWorker:
                     base_path, [aligned], out_path,
                     audio_align.DEFAULT_STRIP_HEIGHT, fps,
                     spec=audio.spec_opts(), stacked=(audio.mode == "panel"),
+                    progress=phase(0.75, 1.0, "rendering audio panel"),
+                    total_s=window_s,
                 )
         finally:
             _safe_unlink(aligned)

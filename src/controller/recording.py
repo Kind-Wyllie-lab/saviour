@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
-from src.controller import recording_plans
+from src.controller import framesync_check, recording_plans
 from src.shared.data_rate import estimate_recording_bytes_per_s
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
@@ -2318,6 +2318,83 @@ class Recording:
             } if days else None,
         }
 
+    def _check_framesync_validation(self) -> None:
+        """Every ~5 min: queue a sync-quality check for anything ready for one.
+
+        Plain session -> once, when it is STOPPED and every export is
+        confirmed. Habitat Session -> per completed YYYYMMDD day dir. All
+        triggering lives here (not in module_export_update's hot path): it is
+        idempotent (skip if a verdict already exists) and restart-safe (the
+        in-memory worker is simply re-triggered next cycle)."""
+        share = self._get_share_root()
+        now_utc = datetime.now(UTC)
+        settle = (self.facade.get_config().get("recording", {})
+                  .get("framesync_day_settle_hours", 1))
+
+        for name, session in list(self.sessions.items()):
+            try:
+                session_dir = os.path.join(share, name)
+                if not os.path.isdir(session_dir):
+                    continue
+
+                if session.plans:                       # Habitat Session
+                    for day in framesync_check.enumerate_day_dirs(session_dir):
+                        if day in session.day_verdicts:
+                            continue
+                        if not framesync_check.day_is_complete(
+                                session_dir, day, session.pending_exports,
+                                now_utc, settle):
+                            continue
+                        if not framesync_check.day_has_cameras(session_dir, day):
+                            self._store_framesync_skip(
+                                name, "day", day, "no camera data for this day")
+                            continue
+                        self._submit_framesync(name, scope="day", date_dir=day)
+                    continue
+
+                # plain session
+                if (session.state != SessionState.STOPPED
+                        or session.pending_exports != 0
+                        or session.framesync_verdict is not None):
+                    continue
+                if not framesync_check.enumerate_day_dirs(session_dir):
+                    self._store_framesync_skip(
+                        name, "session", None, "session has no date directory")
+                    continue
+                self._submit_framesync(name, scope="session", date_dir=None)
+            except Exception as e:  # noqa: BLE001 -- one bad session must not stall the loop
+                self.logger.exception(
+                    f"framesync validation check failed for {name}: {e}")
+
+    def _submit_framesync(self, session_name: str, *, scope: str,
+                          date_dir: str | None) -> None:
+        key = (session_name, date_dir or "__session__")
+        if key in self._framesync_inflight:
+            return
+        self._framesync_inflight.add(key)
+        try:
+            self.facade.submit_framesync_check({
+                "session_name": session_name,
+                "scope": scope,
+                "date_dir": date_dir,
+                "reason": "auto",
+            })
+        except Exception:
+            self._framesync_inflight.discard(key)
+            raise
+
+    def _store_framesync_skip(self, session_name: str, scope: str,
+                              date_dir: str | None, reason: str) -> None:
+        """Record a 'skipped' verdict for a target with nothing to validate,
+        so _check_framesync_validation doesn't reconsider it every cycle."""
+        verdict = {
+            "schema": 1, "status": "skipped", "scope": scope,
+            "date_dir": date_dir, "reasons": [reason], "worst": {}, "counts": {},
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "report_rel": None,
+        }
+        self.apply_framesync_verdict(session_name, scope, date_dir, verdict, None)
+
 
     def _poll_recording_state(self) -> None:
         """Ask every module in every non-STOPPED session to report its local
@@ -2437,6 +2514,7 @@ class Recording:
                 self._check_nas_space_periodic()
                 self._check_export_staleness()
                 self._check_export_stall_after_stop()
+                self._check_framesync_validation()
                 self._poll_recording_state()
                 self._flush_unattended_digest()
 

@@ -340,14 +340,31 @@ def test_find_microphone_picks_first_or_named(tmp_path):
 @dataclass
 class _FakeSession:
     state: str
+    pending_exports: int = 0
 
 
-def test_busy_reason_blocks_on_active_and_exporting():
-    assert any_session_busy_reason({"s1": _FakeSession("ended")}) is None
+def test_busy_reason_ignores_finished_sessions():
+    # a stopped / errored session is finished -- it's exactly what compose
+    # targets, so it must not block.
+    assert any_session_busy_reason({"s1": _FakeSession("stopped")}) is None
     assert any_session_busy_reason({"s1": _FakeSession("error")}) is None
+    assert any_session_busy_reason(
+        {"a": _FakeSession("stopped"), "b": _FakeSession("stopped")}
+    ) is None
+
+
+def test_busy_reason_blocks_stopped_with_exports_in_flight():
+    reason = any_session_busy_reason(
+        {"s1": _FakeSession("stopped", pending_exports=3)}
+    )
+    assert reason and "in flight" in reason
+
+
+def test_busy_reason_blocks_on_running_sessions():
     assert "s1" in any_session_busy_reason({"s1": _FakeSession("active")})
-    assert any_session_busy_reason({"s1": _FakeSession("stopped")}) is not None
+    assert "s1" in any_session_busy_reason({"s1": _FakeSession("paused")})
     assert any_session_busy_reason({"s1": {"state": "scheduled"}}) is not None
+    assert any_session_busy_reason({"s2": {"state": "pending"}}) is not None
 
 
 # --------------------------------------------------------------------------- #

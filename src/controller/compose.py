@@ -685,15 +685,24 @@ def _safe_unlink(path: str) -> None:
 
 
 def any_session_busy_reason(sessions: dict) -> str | None:
-    """A reason string if any session is still recording / about to /
-    still exporting -- composing then would race the share -- else None.
-    `sessions` is facade.get_recording_sessions()'s value."""
-    busy = {"active", "scheduled", "stopped", "pending"}
+    """A reason string if any session is still recording / about to start /
+    still exporting -- composing then would load the controller or race the
+    share -- else None. `sessions` is facade.get_recording_sessions()'s
+    value (RecordingSession objects, or their dicts).
+
+    A `stopped` session is *finished* -- it's exactly what compose targets
+    -- so it only counts as busy while it still has exports in flight."""
+    def field(s, key, default=None):
+        return s.get(key, default) if isinstance(s, dict) else getattr(s, key, default)
+
+    running = {"active", "paused", "scheduled", "pending"}
     for name, s in sessions.items():
-        if isinstance(s, dict):
-            state = s.get("state")
-        else:
-            state = getattr(s, "state", None)
-        if str(state) in busy:
+        state = str(field(s, "state"))
+        if state in running:
             return f"a session ({name}) is still {state}; compose when it has ended"
+        if state == "stopped" and (field(s, "pending_exports", 0) or 0) > 0:
+            return (
+                f"a session ({name}) still has exports in flight; "
+                "compose once they finish"
+            )
     return None

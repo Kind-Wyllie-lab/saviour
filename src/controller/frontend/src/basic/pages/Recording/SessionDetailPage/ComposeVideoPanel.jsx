@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import socket from "/src/socket";
+import usePersistedState from "/src/hooks/usePersistedState";
 import { formatDuration } from "../sessionFormat";
 import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../syncFormat";
 
@@ -116,13 +117,17 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
 
   const [dateDir, setDateDir] = useState("");
   const [selected, setSelected] = useState([]);
-  const [layout, setLayout] = useState("auto");
+  // Persisted so the panel reopens (page reload, tab switch) with the same
+  // choices the last preview was rendered with -- the colour picker in
+  // particular used to snap back to "intensity" while the preview still
+  // showed the last colour.
+  const [layout, setLayout] = usePersistedState("compose_layout", "auto");
   const [fps, setFps] = useState("");
   const fpsTouched = useRef(false);
-  const [fmt, setFmt] = useState("mp4");
-  const [audioMode, setAudioMode] = useState("none");
+  const [fmt, setFmt] = usePersistedState("compose_fmt", "mp4");
+  const [audioMode, setAudioMode] = usePersistedState("compose_audio_mode", "none");
   const [audioSource, setAudioSource] = useState("");
-  const [spec, setSpec] = useState({
+  const [spec, setSpec] = usePersistedState("compose_spec", {
     color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
     ascale: "log", gain: 2.5,
   });
@@ -299,6 +304,9 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
         camera's real per-frame timestamp. Runs in the background — you can
         leave this page.
       </p>
+
+      <div className="compose-panel__body">
+       <div className="compose-panel__controls">
 
       {dates.length > 1 && (
         <div className="form-field">
@@ -485,6 +493,8 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
 
       {notice && <div className="compose-job__error">{notice}</div>}
 
+       </div>
+
       <div className="compose-panel__preview-wrap">
         <div className="compose-panel__preview-head">
           <span>Preview</span>
@@ -516,6 +526,7 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
         {preview?.error && (
           <div className="compose-job__error">{preview.error}</div>
         )}
+      </div>
       </div>
 
       {(() => {

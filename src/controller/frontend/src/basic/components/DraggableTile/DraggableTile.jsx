@@ -14,8 +14,8 @@ const MIN_H = 120;
 // Position/size are owned by the parent (persisted there); this just reports
 // deltas via onChange({ x, y } | { width } | { width, height }).
 export default function DraggableTile({
-  x, y, width, height, ratio = 16 / 9, resize = "aspect",
-  bounds, onChange, onRemove, onAutoHeight, children,
+  x, y, width, height, ratio = 16 / 9, resize = "aspect", zIndex,
+  bounds, onChange, onRemove, onAutoHeight, onActivate, children,
 }) {
   // onChange is recreated on every parent render; keep the latest so a drag
   // that started a render ago still writes through to current state.
@@ -89,7 +89,12 @@ export default function DraggableTile({
   };
 
   return (
-    <div className="dash-tile" style={{ left: x, top: y, width }}>
+    <div
+      className="dash-tile"
+      style={{ left: x, top: y, width, zIndex }}
+      // Capture so it still fires when the grip/resize handlers stopPropagation.
+      onPointerDownCapture={() => onActivate?.()}
+    >
       <div
         className="dash-tile__grip"
         onPointerDown={startPointer("drag")}

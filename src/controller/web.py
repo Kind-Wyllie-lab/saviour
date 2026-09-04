@@ -1680,6 +1680,30 @@ class Web(ABC):
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
+        @self.socketio.on("set_session_expected_duration")
+        def handle_set_session_expected_duration(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            session_name = data.get("session_name")
+            minutes = data.get("minutes", None)
+            self.logger.info(
+                f"Set expected duration for session '{session_name}' -> {minutes}"
+            )
+            result = self.facade.set_session_expected_duration(session_name, minutes)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
+        @self.socketio.on("estimate_session_projection")
+        def handle_estimate_session_projection(data):
+            from flask_socketio import emit as _emit
+            data = data or {}
+            session_name = data.get("session_name")
+            horizon = data.get("horizon_minutes", None)
+            _emit("session_projection_estimate",
+                  self.facade.estimate_session_projection(session_name, horizon))
+
         @self.socketio.on("request_recording_state_refresh")
         def handle_request_recording_state_refresh(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

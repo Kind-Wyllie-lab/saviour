@@ -537,6 +537,106 @@
   white-space: nowrap;
 }
 
+/* --- Habitat "Data & space" block --- */
+
+.habitat-space {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+  font-size: 0.85rem;
+}
+
+.habitat-space__head {
+  font-size: 0.8rem;
+  color: var(--text-muted, #999);
+  font-weight: 600;
+}
+
+.habitat-space__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.habitat-space__row--muted {
+  color: var(--text-muted, #999);
+}
+
+.habitat-space__k {
+  min-width: 88px;
+  color: var(--text-muted, #999);
+}
+
+.habitat-space__sub {
+  color: var(--text-muted, #999);
+  font-size: 0.78rem;
+}
+
+.habitat-space__banner {
+  margin: 4px 0 2px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: color-mix(in srgb, var(--border-color, #ddd) 12%, transparent);
+  border-left: 3px solid var(--text-muted, #999);
+}
+
+.habitat-space__banner--ok {
+  color: var(--text-muted, #999);
+  border-left-color: var(--success-color, #2e7d32);
+}
+
+.habitat-space__editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.habitat-space__editor-label {
+  color: var(--text-muted, #999);
+  min-width: 88px;
+}
+
+.habitat-space__num {
+  width: 60px;
+}
+
+.habitat-space__or {
+  color: var(--text-muted, #999);
+  font-size: 0.78rem;
+}
+
+.habitat-space__preview {
+  color: var(--text-muted, #999);
+  font-size: 0.78rem;
+}
+
+/* --- side-by-side sync chips (camera frame sync + PTP) --- */
+
+.session-sync-chips {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.session-sync-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-sync-chip__label {
+  font-size: 0.78rem;
+  color: var(--text-muted, #999);
+}
+
 .compose-panel__sync {
   margin: 6px 0;
   padding: 6px 10px;

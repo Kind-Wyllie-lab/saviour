@@ -7,19 +7,13 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
 import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
+import { humanizeMinutes } from "../sessionFormat";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
-
-function humanizeMinutes(mins) {
-  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
-  if (mins < 90) return `${Math.round(mins)} min`;
-  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
-  return `${Math.round(mins / 60 / 24)} days`;
-}
 
 function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated, prefill }) {
   const { experimentName, experimenter } = useExperimentTitle();

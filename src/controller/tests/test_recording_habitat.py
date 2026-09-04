@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import src.controller.recording as recording_module
@@ -419,3 +420,223 @@ def test_clear_fault_rejected_when_stopped_or_missing():
     s.error_time = "20260601-090000"
     assert rec.clear_fault("hab")["result"] == "error"
     assert rec.clear_fault("nope")["result"] == "error"
+
+
+# --------------------------------------------------------------------------- #
+# expected-run length + share-space projection                               #
+# --------------------------------------------------------------------------- #
+
+
+def _plain_session(rec, name="plain"):
+    rec.sessions[name] = RecordingSession(
+        session_name=name, target="c1", modules=["c1"]
+    )
+    rec.sessions[name].state = SessionState.ACTIVE
+    return rec.sessions[name]
+
+
+def _stub_space(rec, free_bytes, free_pct=50.0):
+    """Stub every free-space source estimate_session_projection reads."""
+    rec._get_share_root = lambda: "/share"
+    rec._check_nas_space = lambda: {
+        "ok": True, "free_pct": free_pct, "free_gb": free_bytes / 2**30,
+    }
+    return patch(
+        "src.controller.recording.shutil.disk_usage",
+        return_value=SimpleNamespace(
+            free=free_bytes, total=free_bytes * 4, used=free_bytes * 3
+        ),
+    )
+
+
+def test_set_expected_duration_round_trips_and_leaves_timed_stop_at():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    assert rec.set_session_expected_duration("hab", 3 * 1440)["result"] == "success"
+    assert s.expected_minutes == 3 * 1440
+    assert s.timed_stop_at is None
+    facade.update_sessions.assert_called()
+
+    rec._save_sessions()
+    with patch("src.controller.recording.threading.Thread"):
+        rec2 = Recording()
+    assert rec2.sessions["hab"].expected_minutes == 3 * 1440
+
+
+def test_set_expected_duration_clear():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    rec.set_session_expected_duration("hab", 5000)
+    assert rec.set_session_expected_duration("hab", None)["result"] == "success"
+    assert s.expected_minutes is None
+
+
+def test_set_expected_duration_validation():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    _active_habitat(rec)
+    assert rec.set_session_expected_duration("hab", -1)["result"] == "error"
+    assert rec.set_session_expected_duration("hab", 0)["result"] == "error"
+    assert rec.set_session_expected_duration("hab", float("nan"))["result"] == "error"
+    assert rec.set_session_expected_duration("hab", 366 * 1440 + 1)["result"] == "error"
+    assert rec.set_session_expected_duration("hab", "lots")["result"] == "error"
+
+
+def test_set_expected_duration_rejected_non_habitat():
+    rec, _ = _rec(c1="camera")
+    _plain_session(rec)
+    assert rec.set_session_expected_duration("plain", 100)["result"] == "error"
+
+
+def test_projection_horizon_from_expected_minutes():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.recording_start_at = time.time()
+    s.expected_minutes = 7 * 1440
+    with _stub_space(rec, 5_000_000_000_000):        # 5 TB free
+        proj = rec.estimate_session_projection("hab")
+    assert proj["success"]
+    assert proj["horizon_source"] == "expected_minutes"
+    assert 7 * 1440 - 5 <= proj["horizon_minutes"] <= 7 * 1440
+    assert proj["projected_bytes_to_horizon"] > 0
+    assert proj["fits"] is True
+    assert proj["gb_per_day"] > 0 and proj["bytes_per_s_avg"] > 0
+    mics = next(p for p in proj["plans"] if p["plan_id"] == "mics")
+    assert mics["duty_fraction"] < 0.5
+
+
+def test_projection_horizon_from_timed_stop_at():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.timed_stop_at = time.time() + 3600
+    s.expected_minutes = 99999          # timed_stop_at must win
+    with _stub_space(rec, 5_000_000_000_000):
+        proj = rec.estimate_session_projection("hab")
+    assert proj["horizon_source"] == "timed_stop_at"
+    assert 55 <= proj["horizon_minutes"] <= 60
+    assert proj["planned_end_epoch"] == s.timed_stop_at
+
+
+def test_projection_horizon_from_duration_minutes_when_pending():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)   # PENDING
+    rec.sessions["hab"].duration_minutes = 120
+    with _stub_space(rec, 5_000_000_000_000):
+        proj = rec.estimate_session_projection("hab")
+    assert proj["horizon_source"] == "duration_minutes"
+    assert proj["horizon_minutes"] == 120
+
+
+def test_projection_open_ended():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    _active_habitat(rec)
+    with _stub_space(rec, 5_000_000_000_000):
+        proj = rec.estimate_session_projection("hab")
+    assert proj["horizon_source"] == "open_ended"
+    assert proj["horizon_minutes"] is None
+    assert proj["projected_bytes_to_horizon"] is None
+    assert proj["fits"] is None
+    assert proj["gb_per_hour"] > 0
+    assert proj["runway_hours"] is not None
+
+
+def test_projection_fits_false_when_share_small():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.recording_start_at = time.time()
+    s.expected_minutes = 7 * 1440
+    with _stub_space(rec, 2_000_000_000):            # 2 GB free
+        proj = rec.estimate_session_projection("hab")
+    assert proj["fits"] is False
+    assert proj["shortfall_bytes"] > 0
+
+
+def test_projection_rejects_non_habitat():
+    rec, _ = _rec(c1="camera")
+    _plain_session(rec)
+    assert rec.estimate_session_projection("plain")["success"] is False
+
+
+def _over_budget_habitat(rec):
+    s = _active_habitat(rec)
+    s.recording_start_at = time.time()
+    s.expected_minutes = 30 * 1440       # 30 days -> huge projection
+    return s
+
+
+def test_space_projection_alerts_once_and_dedupes():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    _over_budget_habitat(rec)
+    with _stub_space(rec, 3_000_000_000):           # 3 GB free
+        rec._check_habitat_space_projection()
+        rec._check_habitat_space_projection()
+    assert rec._habitat_space_alerted["hab"] is True
+    facade.send_alert.assert_called_once()
+    kwargs = facade.send_alert.call_args.kwargs
+    assert kwargs["severity"] == "warning"
+    assert kwargs["key"] == "habitat_space_projection_hab"
+
+
+def test_space_projection_clears_under_hysteresis():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    _over_budget_habitat(rec)
+    with _stub_space(rec, 3_000_000_000):
+        rec._check_habitat_space_projection()
+    assert rec._habitat_space_alerted["hab"] is True
+    with _stub_space(rec, 500_000_000_000_000):     # plenty now
+        rec._check_habitat_space_projection()
+    assert rec._habitat_space_alerted["hab"] is False
+
+
+def test_space_projection_silent_for_open_ended():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    _active_habitat(rec)                             # no horizon
+    with _stub_space(rec, 1_000_000):
+        rec._check_habitat_space_projection()
+    facade.send_alert.assert_not_called()
+    assert "hab" not in rec._habitat_space_alerted
+
+
+def test_space_projection_silent_when_fits():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    _over_budget_habitat(rec)
+    with _stub_space(rec, 500_000_000_000_000):
+        rec._check_habitat_space_projection()
+    facade.send_alert.assert_not_called()
+
+
+def test_space_projection_skips_paused():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _over_budget_habitat(rec)
+    s.state = SessionState.PAUSED
+    with _stub_space(rec, 3_000_000_000):
+        rec._check_habitat_space_projection()
+    facade.send_alert.assert_not_called()
+
+
+def test_space_projection_skips_non_habitat():
+    rec, facade = _rec(c1="camera")
+    _plain_session(rec)
+    with _stub_space(rec, 1_000_000):
+        rec._check_habitat_space_projection()
+    facade.send_alert.assert_not_called()
+
+
+def test_space_projection_respects_disable_flag():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    facade.get_config.return_value = {
+        "recording": {"habitat_space_alert_enabled": False}
+    }
+    _over_budget_habitat(rec)
+    with _stub_space(rec, 3_000_000_000):
+        rec._check_habitat_space_projection()
+    facade.send_alert.assert_not_called()
+
+
+def test_space_projection_gated_by_notify_disk_space():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    facade.get_config.return_value = {"teams": {"notify_disk_space": False}}
+    _over_budget_habitat(rec)
+    with _stub_space(rec, 3_000_000_000):
+        rec._check_habitat_space_projection()
+    assert rec._habitat_space_alerted["hab"] is True   # flag still set
+    facade.send_alert.assert_not_called()              # but no Teams alert

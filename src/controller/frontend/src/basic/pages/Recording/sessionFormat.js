@@ -108,6 +108,19 @@ export function formatDuration(minutes) {
   return parts.length > 0 ? parts.join(" ") : "0m";
 }
 
+// Coarse, human-friendly rendering of a minute count for planning copy
+// ("run is set to ~3 days", "share holds ~18 hours at this rate"). Deliberately
+// rounds hard -- this is for at-a-glance planning, not a precise readout;
+// formatDuration() above is the exact h/m/s version.
+export function humanizeMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
+  if (mins < 90) return `${Math.round(mins)} min`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
+  const days = mins / 60 / 24;
+  if (days < 14) return `${Math.round(days)} days`;
+  return `${Math.round(days / 7)} weeks`;
+}
+
 export function formatScheduledDays(days) {
   if (!days || days.length === 0 || days.length === 7) return "every day";
   return [...days].sort((a, b) => a - b).map(d => DAY_NAMES[d]).join(", ");

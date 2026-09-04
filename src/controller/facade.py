@@ -167,6 +167,18 @@ class ControllerFacade:
             plans, expected_minutes
         )
 
+    def estimate_session_projection(self, session_name: str,
+                                    horizon_minutes: float | None = None) -> dict:
+        return self.controller.recording.estimate_session_projection(
+            session_name, horizon_minutes
+        )
+
+    def set_session_expected_duration(self, session_name: str,
+                                      minutes: float | None) -> dict:
+        return self.controller.recording.set_session_expected_duration(
+            session_name, minutes
+        )
+
     def force_start_scheduled_session(self, session_name: str) -> dict:
         return self.controller.recording.force_start_scheduled_session(session_name)
 

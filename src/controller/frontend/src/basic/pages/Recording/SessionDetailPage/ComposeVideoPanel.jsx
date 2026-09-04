@@ -278,7 +278,7 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
       streams: selected,
       layout,
       fps: effectiveFps,
-      fmt,
+      fmt: showSpec ? "mkv" : fmt,   // strip/panel is composited to Matroska
       audio: buildAudio(),
     });
   };
@@ -378,7 +378,14 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
         </div>
         <div className="form-field">
           <label>Format:</label>
-          <select value={fmt} onChange={(e) => setFmt(e.target.value)}>
+          <select
+            value={showSpec ? "mkv" : fmt}
+            onChange={(e) => setFmt(e.target.value)}
+            disabled={showSpec}
+            title={showSpec
+              ? "A spectrogram strip/panel is composited with ffmpeg, which outputs Matroska"
+              : ""}
+          >
             <option value="mp4">MP4</option>
             <option value="mkv">MKV</option>
           </select>

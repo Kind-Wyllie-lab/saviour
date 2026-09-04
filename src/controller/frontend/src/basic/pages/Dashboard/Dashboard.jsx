@@ -3,6 +3,7 @@ import "./Dashboard.css";
 
 import useModules from "/src/hooks/useModules";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
+import DraggableTile from "/src/basic/components/DraggableTile/DraggableTile";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 
@@ -15,6 +16,25 @@ const STREAM_PORTS = {
 };
 
 const COMPACT_BREAKPOINT = 1280;
+
+// "Arrange" mode: free drag/resize layout, persisted in localStorage.
+const ARRANGE_GAP = 12;
+const DEFAULT_TILE_W = 440;
+const TILE_CHROME_PX = 64; // grip strip + card label header + padding, for flow layout
+const LS_ARRANGE = "saviour_dashboard_arrange";
+const LS_LAYOUT = "saviour_dashboard_layout";
+
+function readLS(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v == null ? fallback : v;
+  } catch {
+    return fallback;
+  }
+}
+function writeLS(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+}
 
 function useIsCompact() {
   const [isCompact, setIsCompact] = useState(
@@ -126,6 +146,22 @@ function Dashboard() {
     return next;
   });
 
+  // Arrange mode + the custom { [moduleId]: {x, y, width} } layout it edits.
+  const [arrange, setArrange] = useState(() => readLS(LS_ARRANGE, "0") === "1");
+  const toggleArrange = () => setArrange((v) => {
+    const next = !v;
+    writeLS(LS_ARRANGE, next ? "1" : "0");
+    return next;
+  });
+  const [customLayout, setCustomLayout] = useState(() => {
+    try { return JSON.parse(readLS(LS_LAYOUT, "{}")) || {}; } catch { return {}; }
+  });
+  useEffect(() => { writeLS(LS_LAYOUT, JSON.stringify(customLayout)); }, [customLayout]);
+  const resetLayout = () => setCustomLayout({});
+  // Real per-stream aspect ratio, discovered from each card's first frame —
+  // drives the aspect-locked tile height in arrange mode.
+  const [ratios, setRatios] = useState({});
+
   const groups = useMemo(() => {
     const names = [...new Set(moduleList.map(m => m.group).filter(Boolean))].sort();
     return names;
@@ -178,6 +214,41 @@ function Dashboard() {
 
   const compactCols = streamColsFallback;
 
+  // Effective arrange-mode layout: a saved {x,y,width} per stream, or a
+  // flowed default slot for one that's never been placed.
+  const effectiveLayout = useMemo(() => {
+    const canvasW = camerasGridSize.width || 1200;
+    const perRow = Math.max(
+      1, Math.floor((canvasW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
+    );
+    const out = {};
+    allStreams.forEach((s, i) => {
+      if (customLayout[s.id]) { out[s.id] = customLayout[s.id]; return; }
+      const ratio = ratios[s.id] || 16 / 9;
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      out[s.id] = {
+        x: col * (DEFAULT_TILE_W + ARRANGE_GAP),
+        y: row * (Math.round(DEFAULT_TILE_W / ratio) + TILE_CHROME_PX + ARRANGE_GAP),
+        width: DEFAULT_TILE_W,
+      };
+    });
+    return out;
+  }, [allStreams, customLayout, ratios, camerasGridSize.width]);
+
+  const updateTile = (id, patch) => setCustomLayout((prev) => ({
+    ...prev,
+    [id]: {
+      ...(prev[id] || effectiveLayout[id] || { x: 0, y: 0, width: DEFAULT_TILE_W }),
+      ...patch,
+    },
+  }));
+
+  const noteRatio = (id, isCamera) => (r) => {
+    setRatios((p) => (p[id] === r ? p : { ...p, [id]: r }));
+    if (isCamera) setStreamRatio(r);
+  };
+
   return (
     <div className="dashboard">
       {(groups.length > 0 || !isCompact) && (
@@ -198,14 +269,34 @@ function Dashboard() {
             </div>
           )}
           {!isCompact && (
-            <button
-              type="button"
-              className="dashboard-panel-toggle"
-              onClick={togglePanel}
-              title={panelHidden ? "Show the status panel" : "Hide the status panel"}
-            >
-              {panelHidden ? "Show panel" : "Hide panel"}
-            </button>
+            <>
+              <button
+                type="button"
+                className="dashboard-panel-toggle"
+                onClick={togglePanel}
+                title={panelHidden ? "Show the status panel" : "Hide the status panel"}
+              >
+                {panelHidden ? "Show panel" : "Hide panel"}
+              </button>
+              <button
+                type="button"
+                className={`dashboard-panel-toggle${arrange ? " dashboard-panel-toggle--on" : ""}`}
+                onClick={toggleArrange}
+                title="Drag and resize the stream tiles freely (aspect ratio locked)"
+              >
+                {arrange ? "Done arranging" : "Arrange"}
+              </button>
+              {arrange && (
+                <button
+                  type="button"
+                  className="dashboard-panel-toggle"
+                  onClick={resetLayout}
+                  title="Clear the custom layout and re-flow the tiles"
+                >
+                  Reset layout
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -239,6 +330,38 @@ function Dashboard() {
       ) : (
         /* ── Wide: all streams in the fitted grid, status panel right ── */
         <div className="dashboard-main">
+          {arrange ? (
+            <div className="dashboard-arrange-canvas" ref={camerasGridRef}>
+              {allStreams.length === 0 ? (
+                <div className="dashboard-no-cameras">No streams connected</div>
+              ) : (
+                allStreams.map((s) => {
+                  const t = effectiveLayout[s.id]
+                    || { x: 0, y: 0, width: DEFAULT_TILE_W };
+                  return (
+                    <DraggableTile
+                      key={s.id}
+                      x={t.x}
+                      y={t.y}
+                      width={t.width}
+                      ratio={ratios[s.id] || 16 / 9}
+                      bounds={camerasGridSize}
+                      onChange={(patch) => updateTile(s.id, patch)}
+                    >
+                      <MJPEGStreamCard
+                        ip={s.ip}
+                        port={s.port}
+                        label={s.label}
+                        isRecording={s.isRecording}
+                        onAspectRatio={noteRatio(s.id, s.isCamera)}
+                        syncStatus={s.syncStatus}
+                      />
+                    </DraggableTile>
+                  );
+                })
+              )}
+            </div>
+          ) : (
           <div
             className="dashboard-cameras"
             ref={camerasGridRef}
@@ -267,6 +390,7 @@ function Dashboard() {
               ))
             )}
           </div>
+          )}
 
           {!panelHidden && (
             <div className="dashboard-panel">

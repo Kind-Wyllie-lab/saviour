@@ -1,0 +1,83 @@
+.dash-tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 8px;
+  background: var(--card-bg-color, #1e1e1e);
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  touch-action: none;
+}
+
+.dash-tile__grip {
+  flex-shrink: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: grab;
+  letter-spacing: 3px;
+  font-size: 10px;
+  color: var(--text-muted, #999);
+  background: color-mix(in srgb, var(--border-color, #888) 22%, transparent);
+  user-select: none;
+}
+
+.dash-tile__grip:active {
+  cursor: grabbing;
+}
+
+.dash-tile__body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dash-tile__body .mjpeg-stream-card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* The tile supplies the frame/border; drop the card's own padding so the
+     video is exactly --tile-w wide and doesn't overflow the tile. */
+  padding: 0;
+}
+
+.dash-tile__body .mjpeg-stream-header {
+  padding: 4px 6px;
+}
+
+/* The stream video is pinned to the tile's aspect-locked size; the card's
+   own label header sits above it, so the tile grows to fit. */
+.dash-tile__body .mjpeg-stream-video {
+  flex: none;
+  width: var(--tile-w);
+  height: var(--tile-h);
+}
+
+.dash-tile__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 46%,
+    var(--accent-color, #4a9eff) 46% 100%
+  );
+  opacity: 0.75;
+}
+
+.dash-tile__resize:hover {
+  opacity: 1;
+}
+
+/* Kill text selection / stray cursors everywhere while a tile is being moved. */
+body.dash-tile-dragging,
+body.dash-tile-dragging * {
+  user-select: none !important;
+}

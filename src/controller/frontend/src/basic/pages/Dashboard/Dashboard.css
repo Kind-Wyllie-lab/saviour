@@ -96,7 +96,6 @@
 }
 
 .dashboard-panel-toggle {
-  margin-left: auto;
   font-size: 0.82em;
   padding: 3px 14px;
   border: 1px solid var(--border-color);
@@ -107,8 +106,37 @@
   transition: border-color 0.15s;
 }
 
+/* First toggle button carries the auto margin that pushes the whole button
+   group to the right of the toolbar. */
+.dashboard-toolbar .dashboard-panel-toggle:first-of-type {
+  margin-left: auto;
+}
+
 .dashboard-panel-toggle:hover {
   border-color: var(--accent-color, #4a9eff);
+}
+
+.dashboard-panel-toggle--on {
+  border-color: var(--accent-color, #4a9eff);
+  color: var(--accent-color, #4a9eff);
+}
+
+/* ── Arrange mode: free drag/resize canvas ─────────────────────────────── */
+
+.dashboard-arrange-canvas {
+  flex: 2;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background-image:
+    linear-gradient(to right,
+      color-mix(in srgb, var(--border-color, #888) 12%, transparent) 1px,
+      transparent 1px),
+    linear-gradient(to bottom,
+      color-mix(in srgb, var(--border-color, #888) 12%, transparent) 1px,
+      transparent 1px);
+  background-size: 40px 40px;
 }
 
 .dashboard-group-filter label {

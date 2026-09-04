@@ -19,6 +19,7 @@ import time
 import zipfile
 from unittest.mock import MagicMock, call, patch
 
+from src.controller.dashboard_views import DashboardViewStore
 from src.controller.recording import RecordingSession
 from src.controller.web import (
     Web,
@@ -859,6 +860,30 @@ class TestAuthGatedHandlers:
             web._collect_bug_report.assert_called_once()
             (called_sid,), _ = web._collect_bug_report.call_args
             assert called_sid  # a real sid was captured, not None/empty
+
+    def test_clear_fault_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("clear_fault", {"session_name": "hab"})
+
+        facade.clear_fault.assert_not_called()
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def test_clear_fault_forwards_and_surfaces_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.clear_fault.return_value = {"result": "success"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("clear_fault", {"session_name": "hab"})
+            facade.clear_fault.assert_called_once_with("hab")
+
+            facade.clear_fault.return_value = {"result": "error", "error": "No fault to clear"}
+            client.get_received()
+            client.emit("clear_fault", {"session_name": "hab"})
+            assert client.get_received()[-1]["name"] == "session_error"
 
 
 class TestCheckReady:
@@ -2087,6 +2112,45 @@ class TestHabitatSessionHandlers:
         assert rec[0]["name"] == "habitat_volume_estimate"
         assert rec[0]["args"][0]["projected_bytes_total"] == 42
 
+    def test_estimate_session_projection_no_auth(self):
+        web, facade = _make_web_with_facade()
+        facade.estimate_session_projection.return_value = {
+            "success": True, "gb_per_day": 12.3, "fits": True,
+        }
+        client = _connected_client(web)
+        client.emit("estimate_session_projection",
+                    {"session_name": "hab", "horizon_minutes": 4320})
+        rec = client.get_received()
+        facade.estimate_session_projection.assert_called_once_with("hab", 4320)
+        assert rec[0]["name"] == "session_projection_estimate"
+        assert rec[0]["args"][0]["gb_per_day"] == 12.3
+
+    def test_set_session_expected_duration_requires_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("set_session_expected_duration",
+                    {"session_name": "hab", "minutes": 4320})
+        assert client.get_received()[0]["name"] == "session_error"
+        facade.set_session_expected_duration.assert_not_called()
+
+    def test_set_session_expected_duration_forwards_and_surfaces_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.set_session_expected_duration.return_value = {"result": "success"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("set_session_expected_duration",
+                        {"session_name": "hab", "minutes": 4320})
+            facade.set_session_expected_duration.assert_called_once_with("hab", 4320)
+
+            facade.set_session_expected_duration.return_value = {
+                "result": "error", "error": "Not a Habitat Session"}
+            client.get_received()
+            client.emit("set_session_expected_duration",
+                        {"session_name": "hab", "minutes": None})
+            assert client.get_received()[-1]["name"] == "session_error"
+
     def test_pause_and_resume_require_login(self):
         web, facade = _make_web_with_facade()
         client = _connected_client(web)
@@ -2269,3 +2333,87 @@ class TestSessionDiagnosticsHandler:
                         got = m["args"][0]
                 time.sleep(0.05)
         assert got and "unknown session" in got["error"]
+
+
+# ---------------------------------------------------------------------------
+# Dashboard "Saved Views"
+# ---------------------------------------------------------------------------
+
+class TestDashboardViewHandlers:
+    def _web(self, tmpdir):
+        web, _ = _make_web_with_facade()
+        web.view_store = DashboardViewStore(
+            views_dir=os.path.join(tmpdir, "dashboard_views"))
+        return web
+
+    def _view(self, name="Overview"):
+        return {
+            "name": name,
+            "widgets": [{"id": "widget:health", "type": "health"}],
+            "layout": {"widget:health": {"x": 0, "y": 0, "width": 340, "height": 300}},
+        }
+
+    def test_get_dashboard_views_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            client.emit("get_dashboard_views")
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_views"
+        assert rec[0]["args"][0] == {"views": [], "default_id": ""}
+
+    def test_save_requires_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            client.emit("save_dashboard_view", self._view())
+            rec = client.get_received()
+            assert rec[0]["name"] == "dashboard_view_error"
+            assert web.view_store.list() == []
+
+    def test_save_then_broadcast_and_persist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_dashboard_view", self._view("My Rig"))
+            names = [e["name"] for e in client.get_received()]
+            assert "dashboard_view_saved" in names
+            assert "dashboard_views" in names
+            stored = web.view_store.list()
+            assert len(stored) == 1 and stored[0]["id"] == "my-rig"
+
+    def test_save_invalid_emits_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_dashboard_view", {"name": "", "widgets": []})
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_view_error"
+
+    def test_delete_and_set_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            web.view_store.save({**self._view("Main"), "id": "main"})
+
+            client.emit("set_default_dashboard_view", {"id": "main"})
+            client.get_received()
+            assert web.view_store.get_default_id() == "main"
+
+            client.emit("delete_dashboard_view", {"id": "main"})
+            rec = client.get_received()
+            assert rec[-1]["name"] == "dashboard_views"
+            assert web.view_store.list() == []
+            assert web.view_store.get_default_id() == ""
+
+    def test_set_default_unknown_emits_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("set_default_dashboard_view", {"id": "ghost"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_view_error"

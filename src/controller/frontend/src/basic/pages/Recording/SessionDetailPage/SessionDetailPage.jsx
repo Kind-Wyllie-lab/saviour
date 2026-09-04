@@ -9,13 +9,43 @@ import {
   DOWNLOAD_CONFIRM_BYTES, triggerDownload,
 } from "../sessionFormat";
 import {
-  SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, reportDownloadUrl, worstSummary,
+  SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, reportDownloadUrl, worstSummary, ptpChip,
 } from "../syncFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
 import HabitatSessionPanel from "./HabitatSessionPanel";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
+
+// "16 cameras · 4 microphones · 1 TTL" from a list of module ids + the loaded
+// module list — a full list of ids overflows the card for a habitat session.
+const _TYPE_BUCKETS = [
+  ["camera", "camera", "cameras", (t) => t.includes("camera")],
+  ["microphone", "microphone", "microphones", (t) => t === "microphone"],
+  ["ttl", "TTL", "TTL", (t) => t === "ttl"],
+  ["rfid", "RFID", "RFID", (t) => t === "rfid"],
+];
+
+function summariseModules(ids, moduleList) {
+  const typeOf = new Map((moduleList || []).map((m) => [m.id, m.type || ""]));
+  const parts = [];
+  let known = 0;
+  for (const [, one, many, match] of _TYPE_BUCKETS) {
+    const n = ids.filter((id) => match(typeOf.get(id) || "")).length;
+    if (n) { parts.push(`${n} ${n === 1 ? one : many}`); known += n; }
+  }
+  if (ids.length > known) parts.push(`${ids.length - known} other`);
+  return parts.length ? parts.join(" · ")
+    : `${ids.length} module${ids.length !== 1 ? "s" : ""}`;
+}
+
+function summariseTarget(target, sessionModules, moduleList) {
+  if (!target) return "-";
+  if (!target.includes(",")) return target;   // "all" / a group / a type name
+  const ids = target.split(",");
+  if (ids.length === (sessionModules || []).length) return `all ${ids.length} modules`;
+  return summariseModules(ids, moduleList);
+}
 
 function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   const [selectedId, setSelectedId] = useState("");
@@ -369,6 +399,7 @@ export default function SessionDetailPage() {
   };
   const handleAddModuleConfirm = (name, moduleId) => socket.emit("add_module_to_session", { session_name: name, module_id: moduleId });
   const handleRetryExport = () => socket.emit("retry_failed_exports", { session_name: sessionName });
+  const handleClearFault = () => socket.emit("clear_fault", { session_name: sessionName });
   const handleExportDiagnostics = () => {
     setDiagState("collecting");
     socket.emit("get_session_diagnostics", { session_name: sessionName });
@@ -434,25 +465,58 @@ export default function SessionDetailPage() {
         <div className="session-details">
           <div className="session-meta-grid">
             <span className="session-meta-label">Target</span>
-            <span>{session.target}</span>
+            <span title={session.target}>
+              {modules.length
+                ? summariseTarget(session.target, session.modules, modules)
+                : (session.target || "-")}
+            </span>
 
             <span className="session-meta-label">Modules</span>
-            <span>{session.modules.join(", ")}</span>
+            <span title={session.modules.join(", ")}>
+              {modules.length
+                ? summariseModules(session.modules, modules)
+                : session.modules.join(", ")}
+            </span>
 
-            {session.framesync_verdict?.status && (
-              <>
-                <span className="session-meta-label">Sync quality</span>
-                <span>
-                  <span
-                    className={`config-sync-badge config-sync-badge--${SYNC_CLASS[session.framesync_verdict.status]}`}
-                  >
-                    {SYNC_LABEL[session.framesync_verdict.status]}
+            {(session.plans?.length || session.framesync_verdict?.status
+              || session.ptp_warning) && (() => {
+              const fs = session.framesync_verdict?.status;
+              const ptp = ptpChip(session);
+              return (
+                <>
+                  <span className="session-meta-label">Sync</span>
+                  <span className="session-sync-chips">
+                    <span className="session-sync-chip">
+                      <span className="session-sync-chip__label">Camera frame sync</span>
+                      {fs ? (
+                        <span
+                          className={`config-sync-badge config-sync-badge--${SYNC_CLASS[fs]}`}
+                          title={`${SYNC_TITLE[fs]}${worstSummary(session.framesync_verdict) ? " — " + worstSummary(session.framesync_verdict) : ""}`}
+                        >
+                          {SYNC_LABEL[fs]}
+                        </span>
+                      ) : (
+                        <span
+                          className="config-sync-badge config-sync-badge--muted"
+                          title="Checked automatically a few minutes after the last file lands"
+                        >
+                          sync –
+                        </span>
+                      )}
+                    </span>
+                    <span className="session-sync-chip">
+                      <span className="session-sync-chip__label">PTP</span>
+                      <span
+                        className={`config-sync-badge config-sync-badge--${ptp.cls}`}
+                        title={ptp.title}
+                      >
+                        {ptp.label}
+                      </span>
+                    </span>
                   </span>
-                  {" "}
-                  {worstSummary(session.framesync_verdict)}
-                </span>
-              </>
-            )}
+                </>
+              );
+            })()}
 
             <span className="session-meta-label">Start</span>
             <span>{session.start_time || "-"}</span>
@@ -925,6 +989,15 @@ export default function SessionDetailPage() {
                 title="Re-attempt export for this session -- useful if exports failed and gave up before whatever caused it (e.g. bad credentials) was fixed"
               >
                 Retry Export
+              </button>
+            )}
+            {(isActive || isError) && session.error_time && (
+              <button
+                className="session-btn session-btn--cancel"
+                onClick={handleClearFault}
+                title="Acknowledge and clear the fault marker. If the underlying problem persists the monitor will re-flag it within a few minutes."
+              >
+                Clear Fault
               </button>
             )}
             <button

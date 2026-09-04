@@ -42,6 +42,7 @@ from flask_socketio import SocketIO
 
 from src.controller import compose, framesync_check
 from src.controller.config import Config
+from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
 from src.shared.data_rate import (
     bytes_per_s_to_mb_per_min,
@@ -229,6 +230,15 @@ class Web(ABC):
             logger=self.logger,
         )
 
+        # Operator-defined dashboard layouts ("Saved Views"), one JSON file
+        # each, alongside the active config. Served via get_dashboard_views /
+        # save_dashboard_view rather than riding the controller-config payload.
+        self.view_store = DashboardViewStore(
+            os.path.join(os.path.dirname(self.config.active_config_path),
+                         "dashboard_views"),
+            logger=self.logger,
+        )
+
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
 
@@ -265,6 +275,7 @@ class Web(ABC):
         self._register_socketio_events()
         self._register_compose_events()
         self._register_framesync_events()
+        self._register_dashboard_view_events()
 
         # Store module readiness state in memory
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
@@ -926,6 +937,64 @@ class Web(ABC):
             from flask_socketio import emit as _emit
             worker = self._framesync_worker
             _emit("framesync_jobs", {"jobs": worker.list() if worker else []})
+
+
+    def _dashboard_views_payload(self) -> dict:
+        """The full Saved Views state broadcast to clients: every stored view
+        plus which id (if any) is the default."""
+        return {
+            "views": self.view_store.list(),
+            "default_id": self.view_store.get_default_id(),
+        }
+
+    def _register_dashboard_view_events(self):
+        @self.socketio.on("get_dashboard_views")
+        def handle_get_dashboard_views(data=None):
+            self.socketio.emit("dashboard_views", self._dashboard_views_payload(),
+                               room=request.sid)
+
+        @self.socketio.on("save_dashboard_view")
+        def handle_save_dashboard_view(data):
+            if not self._require_auth("dashboard_view_error",
+                                      {"error": "Login required for this action"}):
+                return
+            try:
+                saved = self.view_store.save(data or {})
+            except ViewError as e:
+                self.socketio.emit("dashboard_view_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            # Ack to the saver (so it can adopt a server-assigned id), then
+            # broadcast the new full list to every open dashboard.
+            self.socketio.emit("dashboard_view_saved", {"view": saved},
+                               room=request.sid)
+            self.socketio.emit("dashboard_views", self._dashboard_views_payload())
+
+        @self.socketio.on("delete_dashboard_view")
+        def handle_delete_dashboard_view(data):
+            if not self._require_auth("dashboard_view_error",
+                                      {"error": "Login required for this action"}):
+                return
+            try:
+                self.view_store.delete((data or {}).get("id", ""))
+            except ViewError as e:
+                self.socketio.emit("dashboard_view_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.socketio.emit("dashboard_views", self._dashboard_views_payload())
+
+        @self.socketio.on("set_default_dashboard_view")
+        def handle_set_default_dashboard_view(data):
+            if not self._require_auth("dashboard_view_error",
+                                      {"error": "Login required for this action"}):
+                return
+            try:
+                self.view_store.set_default_id((data or {}).get("id", ""))
+            except ViewError as e:
+                self.socketio.emit("dashboard_view_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.socketio.emit("dashboard_views", self._dashboard_views_payload())
 
 
     def notify_module_update(self):
@@ -1600,6 +1669,40 @@ class Web(ABC):
             result = self.facade.retry_failed_exports(session_name)
             if "error" in result:
                 self.socketio.emit("session_error", result)
+
+        @self.socketio.on("clear_fault")
+        def handle_clear_fault(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = (data or {}).get("session_name")
+            self.logger.info(f"Received request to clear fault for session '{session_name}'")
+            result = self.facade.clear_fault(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
+        @self.socketio.on("set_session_expected_duration")
+        def handle_set_session_expected_duration(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            session_name = data.get("session_name")
+            minutes = data.get("minutes", None)
+            self.logger.info(
+                f"Set expected duration for session '{session_name}' -> {minutes}"
+            )
+            result = self.facade.set_session_expected_duration(session_name, minutes)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
+        @self.socketio.on("estimate_session_projection")
+        def handle_estimate_session_projection(data):
+            from flask_socketio import emit as _emit
+            data = data or {}
+            session_name = data.get("session_name")
+            horizon = data.get("horizon_minutes", None)
+            _emit("session_projection_estimate",
+                  self.facade.estimate_session_projection(session_name, horizon))
 
         @self.socketio.on("request_recording_state_refresh")
         def handle_request_recording_state_refresh(data):

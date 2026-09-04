@@ -209,6 +209,35 @@ def probe_dimensions(video_path: str) -> tuple[int, int]:
     return int(s["width"]), int(s["height"])
 
 
+def _video_frame_count(video_path: str) -> int:
+    """Exact frame count of a video's first stream (decoded packet count --
+    the container's nb_frames is often absent/wrong for MPEG-TS). 0 if it
+    can't be determined."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-count_packets", "-show_entries", "stream=nb_read_packets",
+             "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, check=True,
+        )
+        return int(out.stdout.strip() or 0)
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return 0
+
+
+def _prestage_skip(video_path: str, n_csv_rows: int) -> int:
+    """How many leading `*_timestamps.csv` rows have no matching video frame.
+
+    The camera's frame precallback can log rows for a few frames captured
+    before `start_encoder()` actually opened the stream (and, on older
+    firmware, from CSV-open rather than encoder-start -- up to ~1 s). Those
+    head rows shift every downstream `frame i <-> timestamp i` mapping, so
+    they must be dropped. Mirrors tools/make_aligned_video.load_timestamps.
+    """
+    n_frames = _video_frame_count(video_path)
+    return max(0, n_csv_rows - n_frames) if n_frames else 0
+
+
 # --------------------------------------------------------------------------- #
 # Session layout on disk                                                      #
 # --------------------------------------------------------------------------- #
@@ -221,6 +250,7 @@ class SessionStream:
     csv_path: str
     width: int
     height: int
+    csv_skip: int = 0  # leading timestamp rows with no video frame (pre-stage)
 
 
 def resolve_date_dir(session_dir: str, date_dir: str | None) -> str:
@@ -257,7 +287,12 @@ def discover_streams(date_dir: str, wanted: list[str] | None) -> list[SessionStr
         if not videos or not csvs:
             continue
         w, h = probe_dimensions(videos[0])
-        streams.append(SessionStream(entry, videos[0], csvs[0], w, h))
+        try:
+            n_rows = sum(1 for _ in open(csvs[0], newline="")) - 1  # minus header
+        except OSError:
+            n_rows = 0
+        skip = _prestage_skip(videos[0], n_rows) if n_rows > 0 else 0
+        streams.append(SessionStream(entry, videos[0], csvs[0], w, h, skip))
     if wanted:
         missing = [w for w in wanted if w not in {s.name for s in streams}]
         if missing:
@@ -273,7 +308,7 @@ def camera_window(streams: list[SessionStream]) -> tuple[int, int]:
     the window audio is aligned into, matching video_compose."""
     firsts, lasts = [], []
     for s in streams:
-        rows = read_frame_timestamps(s.csv_path)
+        rows = read_frame_timestamps(s.csv_path)[s.csv_skip:]  # drop pre-stage rows
         if rows:
             firsts.append(rows[0])
             lasts.append(rows[-1])
@@ -471,6 +506,7 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
             regions=regions, canvas=(cw, ch), cache_dir=cache_dir,
             audio_png=audio_png,
             audio_mode=audio.mode if audio_png else None,
+            csv_skip={s.name: s.csv_skip for s in streams},
         )
         with open(tmp, "rb") as f:
             return f.read()
@@ -650,6 +686,7 @@ class ComposeWorker:
                 streams=[s.name for s in streams],
                 regions=regions, canvas=(canvas_w, canvas_h),
                 fps=spec.fps, progress=phase(0.0, video_hi, "compositing video"),
+                csv_skip={s.name: s.csv_skip for s in streams},
             )
             if audio.mode != "none":
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,

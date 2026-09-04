@@ -15,9 +15,12 @@
        small laptop) — nothing in the sidebar actually needs 148px: the
        widest content (footer-links' "GitHub"/"Docs" row, the version
        button) tops out around 110px, and nav-link/logo sizing scale down
-       gracefully with the sidebar itself. The ceiling is unchanged since
-       only the narrow end was reported as an issue. */
-    width: clamp(112px, 10vw, 210px);
+       gracefully with the sidebar itself.
+       Ceiling lowered 210px -> 176px and coefficient 10vw -> 9vw
+       2026-09-04 (reported too wide on large screens) — the widest content
+       is still ~110px, so 176px keeps a comfortable margin without handing
+       a 1440p+ display an oversized rail. */
+    width: clamp(112px, 9vw, 176px);
     flex-shrink: 0;
     justify-content: space-between;
     /* Query container so children (the wordmark) can size themselves against

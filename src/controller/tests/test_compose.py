@@ -311,6 +311,30 @@ def test_camera_window_is_the_overlap(tmp_path):
     assert camera_window(streams) == (2_000, 7_000)
 
 
+def test_camera_window_drops_prestage_rows(tmp_path):
+    from src.controller.compose import SessionStream
+
+    p = tmp_path / "a_timestamps.csv"
+    # 3 pre-stage rows (0..2) with no video frame, then the real ones
+    p.write_text("frame_id,timestamp_ns\n"
+                 + "".join(f"{i},{1000 + i}\n" for i in range(3))
+                 + "".join(f"{i},{5000 + i * 100}\n" for i in range(10)))
+    s = SessionStream("a", "a.ts", str(p), 640, 480, csv_skip=3)
+    start, end = camera_window([s])
+    assert start == 5000               # first real frame, not the pre-stage 1000
+    assert end == 5000 + 9 * 100
+
+
+def test_prestage_skip_from_frame_count(monkeypatch):
+    import src.controller.compose as c
+    monkeypatch.setattr(c, "_video_frame_count", lambda _p: 100)
+    assert c._prestage_skip("x.ts", 130) == 30     # 30 pre-stage rows
+    assert c._prestage_skip("x.ts", 100) == 0
+    assert c._prestage_skip("x.ts", 95) == 0       # never negative
+    monkeypatch.setattr(c, "_video_frame_count", lambda _p: 0)
+    assert c._prestage_skip("x.ts", 130) == 0      # unknowable -> don't guess
+
+
 def test_find_microphone_picks_first_or_named(tmp_path):
     dd = tmp_path / "20260805"
     for name in ("microphone_1", "microphone_2"):

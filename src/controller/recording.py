@@ -9,6 +9,7 @@ Created: 26/01/2026
 
 import json
 import logging
+import math
 import os
 import shutil
 import threading
@@ -32,6 +33,20 @@ LEAD_SECS = 3
 # How long after recording_start_at to suppress fault detection.
 # Modules take a few seconds to spin up after their scheduled start time.
 _STARTUP_GRACE_SECS = 15
+
+
+def _humanise_minutes(mins: float) -> str:
+    """Short human string for a minute count -- used in session-event log
+    lines only (the frontend has its own formatter for display)."""
+    if mins < 90:
+        return f"{round(mins)} min"
+    hours = mins / 60
+    if hours < 48:
+        return f"{round(hours)} hours"
+    days = hours / 24
+    if days < 14:
+        return f"{days:.1f} days".replace(".0 ", " ")
+    return f"{round(days / 7)} weeks"
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +121,12 @@ class RecordingSession:
     # Timed sessions: epoch timestamp at which the session should auto-stop.
     # None means no auto-stop (infinite / manual stop).
     timed_stop_at:             float | None = None
+    # Habitat Session: operator's estimate of the total run length, in
+    # minutes. Display + share-space-projection metadata ONLY -- never sets
+    # timed_stop_at, never auto-stops. Used when a habitat run is open-ended
+    # so the monitor can still warn if the share will fill before the
+    # intended end.
+    expected_minutes:          float | None = None
     # Scheduled sessions: weekday ints (0=Mon…6=Sun) on which to run.
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
@@ -181,6 +202,10 @@ class Recording:
         # (session_name, date_dir or "__session__") for framesync checks
         # currently queued/running, so _monitor_sessions doesn't re-enqueue.
         self._framesync_inflight: set[tuple[str, str]] = set()
+        # Habitat Session name → True once a "share will fill before the
+        # planned end" alert has fired; cleared under a hysteresis ratio so
+        # it can't flap. Not persisted (a controller restart re-evaluates).
+        self._habitat_space_alerted: dict[str, bool] = {}
 
         self._load_sessions()
 
@@ -1344,6 +1369,246 @@ class Recording:
         )
         self.logger.info(f"Manually retried export for session '{session_name}': {failed_modules}")
         return {"result": "success"}
+
+
+    def clear_fault(self, session_name: str) -> dict:
+        """Operator acknowledges a session fault: wipe the fault record so
+        the badge clears. If the session is parked in ERROR, flip it back to
+        ACTIVE so the monitor resumes normally; an unattended session is
+        usually already ACTIVE and this just dismisses a stale marker. The
+        strike counters are cleared too (as the auto-recovery path does) so
+        the next monitor pass doesn't instantly re-trip on a stale count.
+        If the underlying problem is still real it will re-fault within a
+        cycle or two -- same posture as a manual export retry."""
+        session = self.sessions.get(session_name)
+        if not session:
+            return {"result": "error", "error": "Session not found"}
+        if session.state not in (
+            SessionState.ACTIVE, SessionState.ERROR, SessionState.PAUSED
+        ):
+            return {"result": "error",
+                    "error": f"Session is {session.state}, no clearable fault"}
+        if not session.error_message and not session.error_time \
+                and session.state != SessionState.ERROR:
+            return {"result": "error", "error": "No fault to clear"}
+
+        with self._lock:
+            prev = session.error_message or "fault"
+            session.error_message = ""
+            session.error_time = None
+            if session.state == SessionState.ERROR:
+                session.state = SessionState.ACTIVE
+            for m in session.modules:
+                self._not_recording_strikes.pop((session_name, m), None)
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self._log_session_event(
+            session_name, "RECOVERY",
+            f"Fault manually cleared by operator — was: {prev}"
+        )
+        self.logger.info(f"Fault manually cleared for session '{session_name}'")
+        return {"result": "success"}
+
+
+    def set_session_expected_duration(self, session_name: str,
+                                      minutes: float | None) -> dict:
+        """Set (or clear, with minutes=None) a Habitat Session's operator
+        estimate of total run length. Display + share-space-projection
+        metadata ONLY: this never sets timed_stop_at and never auto-stops
+        the session. A real timed_stop_at always takes precedence."""
+        session = self.sessions.get(session_name)
+        if not session or not session.plans:
+            return {"result": "error", "error": "Not a Habitat Session"}
+        if minutes is not None:
+            try:
+                minutes = float(minutes)
+            except (TypeError, ValueError):
+                return {"result": "error",
+                        "error": "Expected duration must be a number"}
+            if not math.isfinite(minutes) or minutes <= 0:
+                return {"result": "error",
+                        "error": "Expected duration must be positive"}
+            if minutes > 366 * 1440:
+                return {"result": "error",
+                        "error": "Expected duration exceeds one year"}
+
+        with self._lock:
+            session.expected_minutes = minutes
+            # A fresh estimate should be allowed to re-alert.
+            self._habitat_space_alerted.pop(session_name, None)
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        msg = (
+            "Expected run length cleared by operator"
+            if minutes is None
+            else f"Expected run length set to {_humanise_minutes(minutes)} by operator"
+        )
+        self._log_session_event(session_name, "INFO", msg)
+        self.logger.info(f"{msg} for session '{session_name}'")
+        return {"result": "success"}
+
+
+    def estimate_session_projection(self, session_name: str,
+                                    horizon_minutes: float | None = None) -> dict:
+        """Read-only, duty-cycle-aware projection of how much data a Habitat
+        Session writes between now and its horizon, versus free space on the
+        export share. Never mutates anything.
+
+        Horizon precedence: explicit arg > (timed_stop_at - now) > (PENDING
+        duration_minutes) > (expected_minutes - elapsed) > open-ended (None).
+        """
+        session = self.sessions.get(session_name)
+        if not session or not session.plans:
+            return {"success": False, "error": "Not a Habitat Session"}
+
+        cfg = self.facade.get_config()
+        modules_info = self.facade.get_modules()
+        rates: dict[str, float] = {}
+        for m in (mm for p in session.plans for mm in p.modules):
+            mtype = (modules_info.get(m) or {}).get("type", "")
+            bps, _ = estimate_recording_bytes_per_s(mtype, cfg)
+            rates[m] = bps or 0.0
+
+        now = time.time()
+        start_ref = session.recording_start_at or now
+        elapsed_min = max(0.0, (now - start_ref) / 60)
+
+        horizon_min: float | None = None
+        horizon_source = "open_ended"
+        if horizon_minutes is not None and horizon_minutes > 0:
+            horizon_min, horizon_source = float(horizon_minutes), "explicit"
+        elif session.timed_stop_at:
+            horizon_min = max(0.0, (session.timed_stop_at - now) / 60)
+            horizon_source = "timed_stop_at"
+        elif session.state == SessionState.PENDING and session.duration_minutes:
+            horizon_min = float(session.duration_minutes)
+            horizon_source = "duration_minutes"
+        elif session.expected_minutes:
+            horizon_min = max(0.0, float(session.expected_minutes) - elapsed_min)
+            horizon_source = "expected_minutes"
+
+        # Duty-weighted average byte rate: campaign volume over one minute
+        # is linear in duration, so total/60 is the correct time-average
+        # even with nothing recording this instant.
+        per_min = recording_plans.estimate_campaign_volume(
+            session.plans, rates, 1.0
+        )
+        bytes_per_s_avg = per_min["projected_bytes_total"] / 60.0
+        bytes_per_s_peak = float(sum(rates.values()))
+
+        per_plan = per_min["plans"]
+        projected = None
+        if horizon_min is not None:
+            camp = recording_plans.estimate_campaign_volume(
+                session.plans, rates, horizon_min
+            )
+            projected = round(camp["projected_bytes_total"])
+            per_plan = camp["plans"]
+
+        try:
+            free = shutil.disk_usage(self._get_share_root()).free
+        except OSError:
+            free = None
+        nas = self._check_nas_space()
+        free_pct = nas["free_pct"] if nas.get("ok") else None
+
+        fits = None
+        shortfall = 0
+        if projected is not None and free is not None:
+            fits = projected <= free
+            shortfall = max(0, projected - free)
+
+        runway_hours = None
+        runway_end_epoch = None
+        if free is not None and bytes_per_s_avg > 0:
+            runway_s = free / bytes_per_s_avg
+            runway_hours = round(runway_s / 3600, 1)
+            runway_end_epoch = now + runway_s
+
+        return {
+            "success": True,
+            "session_name": session_name,
+            "horizon_minutes": horizon_min,
+            "horizon_source": horizon_source,
+            "bytes_per_s_avg": round(bytes_per_s_avg, 1),
+            "bytes_per_s_peak": round(bytes_per_s_peak, 1),
+            "gb_per_hour": round(bytes_per_s_avg * 3600 / 1e9, 3),
+            "gb_per_day": round(bytes_per_s_avg * 86400 / 1e9, 2),
+            "projected_bytes_to_horizon": projected,
+            "free_bytes": free,
+            "free_pct": free_pct,
+            "fits": fits,
+            "shortfall_bytes": round(shortfall),
+            "runway_hours": runway_hours,
+            "runway_end_epoch": runway_end_epoch,
+            "planned_end_epoch": session.timed_stop_at,
+            "plans": per_plan,
+        }
+
+
+    def _check_habitat_space_projection(self) -> None:
+        """Proactive 'the export share will fill before the planned end'
+        alert. Runs on the 5-min monitor cadence for every ACTIVE Habitat
+        Session that has a positive horizon (timed_stop_at or
+        expected_minutes). One Teams alert per session (deduped by
+        send_alert key + a per-session flag), cleared under a hysteresis
+        ratio so it can't flap. Open-ended runs never alert here."""
+        rec_cfg = self.facade.get_config().get("recording", {})
+        if not rec_cfg.get("habitat_space_alert_enabled", True):
+            return
+        ratio = float(rec_cfg.get("habitat_space_alert_ratio", 1.0))
+        clear_ratio = float(rec_cfg.get("habitat_space_alert_clear_ratio", 0.85))
+        autopause_pct = rec_cfg.get(
+            "habitat_autopause_free_pct", rec_cfg.get("nas_min_free_pct", 5)
+        )
+
+        for name, session in self.sessions.items():
+            if not session.plans or session.state != SessionState.ACTIVE:
+                continue
+            proj = self.estimate_session_projection(name)
+            if not proj.get("success"):
+                continue
+            projected = proj.get("projected_bytes_to_horizon")
+            free = proj.get("free_bytes")
+            if projected is None or not free:
+                # Open-ended, or free space unknown -- nothing to compare.
+                continue
+
+            alerted = self._habitat_space_alerted.get(name, False)
+            if not alerted and projected >= free * ratio:
+                self._habitat_space_alerted[name] = True
+                runway_h = proj.get("runway_hours")
+                proj_gb, free_gb = projected / 1e9, free / 1e9
+                runway_str = (
+                    f"runway ≈ {runway_h:.0f} h; " if runway_h else ""
+                )
+                msg = (
+                    f"Habitat Session **{name}** is projected to write "
+                    f"~{proj_gb:.0f} GB before its planned end, but only "
+                    f"{free_gb:.0f} GB is free on the export share "
+                    f"({runway_str}auto-pauses at {autopause_pct}% free). "
+                    "Extend the share, shorten the run, or expect an auto-pause."
+                )
+                self.logger.warning(
+                    f"Habitat Session '{name}': projected {proj_gb:.0f} GB "
+                    f"exceeds {free_gb:.0f} GB free on the share"
+                )
+                self._log_session_event(name, "WARNING", msg)
+                if self._notify_enabled("notify_disk_space"):
+                    self.facade.send_alert(
+                        key=f"habitat_space_projection_{name}",
+                        title=f"Share will fill before planned end — {name}",
+                        message=msg,
+                        severity="warning",
+                    )
+            elif alerted and projected < free * clear_ratio:
+                self._habitat_space_alerted[name] = False
+                self._log_session_event(
+                    name, "RECOVERY",
+                    "Projected data volume back within free share space",
+                )
 
 
     def request_recording_state_refresh(self, session_name: str) -> dict:
@@ -2517,6 +2782,12 @@ class Recording:
                 self._check_framesync_validation()
                 self._poll_recording_state()
                 self._flush_unattended_digest()
+                try:
+                    self._check_habitat_space_projection()
+                except Exception as e:
+                    self.logger.exception(
+                        f"Habitat space-projection check failed: {e}"
+                    )
 
             # Habitat Session disk auto-pause / auto-resume runs more often
             # than the 5-min alert cadence — a critically full share should

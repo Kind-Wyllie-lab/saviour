@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import socket from "/src/socket";
 import { formatDuration } from "../sessionFormat";
+import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../syncFormat";
 
 const LAYOUTS = [
   { value: "auto", label: "Auto" },
@@ -109,7 +110,7 @@ function JobRow({ job, onCancel, onDownload }) {
   );
 }
 
-export default function ComposeVideoPanel({ sessionName, files, onRequestDownload }) {
+export default function ComposeVideoPanel({ sessionName, session, files, onRequestDownload }) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
 
@@ -516,6 +517,29 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
           <div className="compose-job__error">{preview.error}</div>
         )}
       </div>
+
+      {(() => {
+        const verdict =
+          session?.day_verdicts?.[dateDir] ||
+          (dates.length === 1 ? session?.framesync_verdict : null);
+        if (verdict?.status) {
+          return (
+            <div className={`compose-panel__sync compose-panel__sync--${SYNC_CLASS[verdict.status]}`}>
+              Sync quality {dateDir ? `(${dateDir})` : ""}:{" "}
+              <strong>{SYNC_LABEL[verdict.status]}</strong>
+              {worstSummary(verdict) ? ` — ${worstSummary(verdict)}` : ""}
+              <span className="compose-panel__sync-note">
+                {" "}validated automatically; not recomputed here
+              </span>
+            </div>
+          );
+        }
+        return (
+          <div className="compose-panel__sync compose-panel__sync--muted">
+            Sync quality not yet validated for this day.
+          </div>
+        );
+      })()}
 
       <div className="compose-panel__actions">
         <button

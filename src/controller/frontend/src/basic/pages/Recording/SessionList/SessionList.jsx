@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import socket from "/src/socket";
 import { formatFaultTime, formatScheduledDays, formatTarget, formatRecordingMode } from "../sessionFormat";
+import { SYNC_LABEL, SYNC_TITLE, worstSummary } from "../syncFormat";
 import { Countdown, Elapsed } from "../sessionFormatComponents";
 import "./SessionList.css";
 
@@ -171,6 +172,18 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                     {isStopped   && <span className="session-state-label session-state-label--stopped">Stopped</span>}
                     {isScheduled && <span className="session-state-label session-state-label--scheduled">Scheduled</span>}
                     {isError     && <span className="session-state-label session-state-label--error">Error</span>}
+                    {session.framesync_verdict?.status && (
+                      <span
+                        className={`session-state-label session-sync-badge session-sync-badge--${session.framesync_verdict.status}`}
+                        title={
+                          (session.framesync_verdict.reasons || []).slice(0, 3).join(" · ")
+                          || worstSummary(session.framesync_verdict)
+                          || SYNC_TITLE[session.framesync_verdict.status]
+                        }
+                      >
+                        {SYNC_LABEL[session.framesync_verdict.status]}
+                      </span>
+                    )}
                   </div>
 
                   <div className="session-row__type">

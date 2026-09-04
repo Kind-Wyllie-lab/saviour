@@ -87,6 +87,7 @@ export default function PostProcess() {
         <>
           <ComposeVideoPanel
             sessionName={selected}
+            session={sessions?.[selected]}
             files={fileInfo.files}
             onRequestDownload={requestDownload}
           />

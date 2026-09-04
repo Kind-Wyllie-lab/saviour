@@ -1,5 +1,6 @@
 import React from "react";
 import socket from "/src/socket";
+import { SYNC_TITLE, worstSummary } from "../syncFormat";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -38,9 +39,46 @@ function PlanRow({ plan }) {
   );
 }
 
-export default function HabitatSessionPanel({ session }) {
+function DayRow({ sessionName, day, verdict, onDownloadReport }) {
+  const status = verdict.status || "skipped";
+  return (
+    <div className="habitat-day">
+      <span
+        className={`habitat-day__dot habitat-day__dot--${status}`}
+        title={(verdict.reasons || []).slice(0, 3).join(" · ") || SYNC_TITLE[status]}
+      />
+      <span className="habitat-day__date">{day}</span>
+      <span className="habitat-day__summary">{worstSummary(verdict)}</span>
+      {verdict.report_rel && (
+        <button
+          type="button"
+          className="session-log-toggle"
+          onClick={() => onDownloadReport?.(verdict.report_rel)}
+        >
+          report
+        </button>
+      )}
+      <button
+        type="button"
+        className="session-log-toggle"
+        onClick={() =>
+          socket.emit("recheck_framesync", {
+            session_name: sessionName, scope: "day", date_dir: day,
+          })
+        }
+      >
+        re-check
+      </button>
+    </div>
+  );
+}
+
+export default function HabitatSessionPanel({ session, onDownloadReport }) {
   const plans = session?.plans || [];
   if (!plans.length) return null;
+
+  const dayVerdicts = session.day_verdicts || {};
+  const days = Object.keys(dayVerdicts).sort().reverse();
 
   const state = session.state;
   const isActive = state === "active";
@@ -86,6 +124,23 @@ export default function HabitatSessionPanel({ session }) {
           <PlanRow key={p.plan_id} plan={p} />
         ))}
       </div>
+
+      {days.length > 0 && (
+        <div className="habitat-session-panel__days">
+          <div className="habitat-session-panel__days-head">
+            Recording days — sync quality
+          </div>
+          {days.map((d) => (
+            <DayRow
+              key={d}
+              sessionName={session.session_name}
+              day={d}
+              verdict={dayVerdicts[d]}
+              onDownloadReport={onDownloadReport}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

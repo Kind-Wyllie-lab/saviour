@@ -176,6 +176,20 @@
 .session-state-label--error      { color: #c62828; }
 .session-state-label--past-fault { color: #c0580a; }
 
+/* Post-hoc sync-quality verdict pill (framesync_check). */
+.session-sync-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #fff;
+}
+.session-sync-badge--green   { background: var(--success-color, #2e7d32); }
+.session-sync-badge--amber   { background: #b26a00; }
+.session-sync-badge--red     { background: var(--error-color, #c62828); }
+.session-sync-badge--skipped,
+.session-sync-badge--error   { background: var(--text-muted, #999); }
+
 .session-expand-toggle {
   font-size: 0.75rem;
   user-select: none;

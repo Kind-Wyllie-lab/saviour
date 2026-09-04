@@ -197,6 +197,20 @@ class ControllerFacade:
         serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
         self.controller.web.socketio.emit("sessions_update", serializable_sessions)
 
+    # -- Sync-quality validation (framesync_check.SyncCheckWorker) ------- #
+    def submit_framesync_check(self, spec: dict) -> None:
+        """Queue a sync-quality check. Called from Recording._monitor_sessions
+        (auto) — the worker is owned by web.py."""
+        self.controller.web._get_framesync_worker().submit(spec)
+
+    def apply_framesync_verdict(self, session_name: str, scope: str,
+                                date_dir: str | None, verdict: dict,
+                                report_rel: str | None) -> None:
+        """Worker -> here -> Recording: store the verdict on the session."""
+        self.controller.recording.apply_framesync_verdict(
+            session_name, scope, date_dir, verdict, report_rel
+        )
+
     """Set config"""
     def set_config(self, new_config: dict) -> bool:
         self.controller.config.set_all(new_config, persist=True)

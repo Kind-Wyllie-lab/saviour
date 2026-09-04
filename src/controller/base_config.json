@@ -39,7 +39,22 @@
         "nas_warn_free_pct": 15,
         "local_min_free_pct": 10,
         "export_stale_mins": 150,
-        "expected_module_counts": {}
+        "expected_module_counts": {},
+        "ptp_gate_us": 50.0,
+        "ptp_amber_us": 250.0,
+        "framesync_detrended_p95_green_us": 20.0,
+        "framesync_detrended_p95_amber_us": 200.0,
+        "framesync_drift_accum_halfframe_frac_amber": 0.5,
+        "framesync_drift_accum_halfframe_frac_red": 1.0,
+        "framesync_dropped_frac_amber": 0.001,
+        "framesync_dropped_frac_red": 0.02,
+        "framesync_rate_cv_amber": 0.05,
+        "framesync_fps_dev_amber": 0.02,
+        "framesync_artefact_frac_amber": 0.05,
+        "framesync_cap_rows": 500000,
+        "framesync_habitat_cap_rows": 200000,
+        "framesync_health_cap_rows": 200000,
+        "framesync_day_settle_hours": 1
     },
     "logging": {
         "_level": "INFO",

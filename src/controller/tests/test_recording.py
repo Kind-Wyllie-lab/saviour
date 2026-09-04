@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import time
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import src.controller.recording as recording_module
@@ -1312,3 +1313,214 @@ class TestSessionPersistence:
                 "Controller restarted during active session"
             )
             assert session.module_stop_states == {"cam1": "unknown"}
+
+    def test_framesync_verdict_fields_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            rec, _facade = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED,
+                framesync_verdict={"status": "amber", "reasons": ["cam1: ptp"]},
+                day_verdicts={
+                    "20260901": {"status": "green"},
+                    "20260902": {"status": "amber"},
+                },
+            )
+            rec._save_sessions()
+
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
+            s = rec2.sessions["exp1"]
+            assert s.framesync_verdict == {"status": "amber", "reasons": ["cam1: ptp"]}
+            assert s.day_verdicts["20260901"]["status"] == "green"
+            assert s.day_verdicts["20260902"]["status"] == "amber"
+
+    def test_old_sessions_json_without_verdict_keys_still_loads(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({"exp1": {
+                    "session_name": "exp1", "target": "camera",
+                    "state": "stopped", "modules": ["cam1"],
+                }}, f)
+            with patch("src.controller.recording.threading.Thread"):
+                rec = Recording()
+            recording_module.SESSIONS_FILE = sessions_file
+            rec._load_sessions()
+            s = rec.sessions["exp1"]
+            assert s.framesync_verdict is None
+            assert s.day_verdicts == {}
+
+
+class TestApplyFramesyncVerdict:
+    def _rec(self):
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        rec._save_sessions = MagicMock()
+        return rec, facade
+
+    def test_plain_session_stores_verdict_and_pushes(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec._framesync_inflight.add(("exp1", "__session__"))
+
+        rec.apply_framesync_verdict(
+            "exp1", "session", None,
+            {"status": "green", "reasons": []}, "exp1/framesync_report.json")
+
+        v = rec.sessions["exp1"].framesync_verdict
+        assert v["status"] == "green"
+        assert v["report_rel"] == "exp1/framesync_report.json"
+        assert ("exp1", "__session__") not in rec._framesync_inflight
+        facade.update_sessions.assert_called()
+        rec._save_sessions.assert_called()
+
+    def test_habitat_day_stores_and_rolls_up_worst_of(self):
+        rec, _facade = self._rec()
+        rec.sessions["hab"] = _session(state=SessionState.ACTIVE)
+
+        rec.apply_framesync_verdict("hab", "day", "20260901",
+                                    {"status": "green"}, None)
+        rec.apply_framesync_verdict("hab", "day", "20260902",
+                                    {"status": "amber"}, None)
+
+        s = rec.sessions["hab"]
+        assert set(s.day_verdicts) == {"20260901", "20260902"}
+        assert s.framesync_verdict["status"] == "amber"        # worst-of
+        assert s.framesync_verdict["green_days"] == 1
+        assert s.framesync_verdict["total_days"] == 2
+        assert s.framesync_verdict["latest"]["date_dir"] == "20260902"
+
+    def test_unknown_session_is_a_noop(self):
+        rec, facade = self._rec()
+        rec._framesync_inflight.add(("gone", "__session__"))
+        rec.apply_framesync_verdict("gone", "session", None, {"status": "green"}, None)
+        assert ("gone", "__session__") not in rec._framesync_inflight
+        facade.update_sessions.assert_not_called()
+
+    def test_rollup_all_skipped_days_is_skipped(self):
+        assert Recording._rollup_day_verdicts(
+            {"20260901": {"status": "skipped"}, "20260902": {"status": "skipped"}}
+        )["status"] == "skipped"
+
+    def test_rollup_only_looks_at_recent_days(self):
+        dv = {f"202609{d:02d}": {"status": "green"} for d in range(1, 12)}
+        dv["20260901"] = {"status": "red"}          # old red, outside the window
+        out = Recording._rollup_day_verdicts(dv)
+        assert out["status"] == "green"
+        assert out["total_days"] == 11
+
+
+class TestCheckFramesyncValidation:
+    """_check_framesync_validation() -- the auto-trigger from _monitor_sessions."""
+
+    def _rec(self, tmpdir):
+        rec, facade = _make_recording()
+        rec._get_share_root = lambda: tmpdir
+        rec._log_session_event = MagicMock()
+        rec._save_sessions = MagicMock()
+        facade.get_config.return_value = {}
+        facade.submit_framesync_check = MagicMock()
+        return rec, facade
+
+    @staticmethod
+    def _make_day(share, session, day, *, camera=True):
+        d = os.path.join(share, session, day)
+        os.makedirs(d, exist_ok=True)
+        if camera:
+            cam = os.path.join(d, "camera_a")
+            os.makedirs(cam, exist_ok=True)
+            with open(os.path.join(cam, "v_timestamps.csv"), "w") as f:
+                f.write("frame_id,timestamp_ns\n0,1\n")
+        return d
+
+    def test_plain_stopped_session_all_exports_confirmed_fires_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            self._make_day(tmp, "exp1", "20260903")
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED, pending_exports=0)
+
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_called_once()
+            spec = facade.submit_framesync_check.call_args[0][0]
+            assert spec["scope"] == "session" and spec["session_name"] == "exp1"
+
+            # already in flight -> not resubmitted
+            facade.submit_framesync_check.reset_mock()
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_not_called()
+
+    def test_plain_session_not_fired_while_exports_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            self._make_day(tmp, "exp1", "20260903")
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED, pending_exports=2)
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_not_called()
+
+    def test_plain_session_not_fired_when_active_or_already_verdicted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            self._make_day(tmp, "exp1", "20260903")
+            rec.sessions["a"] = _session(session_name="a", state=SessionState.ACTIVE)
+            rec.sessions["b"] = _session(
+                session_name="b", state=SessionState.STOPPED, pending_exports=0,
+                framesync_verdict={"status": "green"})
+            self._make_day(tmp, "a", "20260903")
+            self._make_day(tmp, "b", "20260903")
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_not_called()
+
+    def test_plain_session_with_no_date_dir_is_stored_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            os.makedirs(os.path.join(tmp, "exp1"))
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED, pending_exports=0)
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_not_called()
+            assert rec.sessions["exp1"].framesync_verdict["status"] == "skipped"
+
+    def test_habitat_fires_for_past_days_only(self):
+        from src.controller.recording import recording_plans
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            today = datetime.now(UTC).strftime("%Y%m%d")
+            past1, past2 = "20200101", "20200102"
+            for day in (past1, past2, today):
+                self._make_day(tmp, "hab", day)
+            plan = recording_plans.RecordingPlan(
+                plan_id="p1", label="p1", modules=["camera_a"])
+            rec.sessions["hab"] = _session(
+                session_name="hab", state=SessionState.ACTIVE,
+                pending_exports=0, plans=[plan])
+
+            rec._check_framesync_validation()
+            fired = {c[0][0]["date_dir"]
+                     for c in facade.submit_framesync_check.call_args_list}
+            assert fired == {past1, past2}          # not today
+
+            # a day already carrying a verdict is skipped
+            facade.submit_framesync_check.reset_mock()
+            rec._framesync_inflight.clear()
+            rec.sessions["hab"].day_verdicts = {past1: {"status": "green"}}
+            rec._check_framesync_validation()
+            fired = {c[0][0]["date_dir"]
+                     for c in facade.submit_framesync_check.call_args_list}
+            assert fired == {past2}
+
+    def test_habitat_day_without_cameras_is_stored_skipped(self):
+        from src.controller.recording import recording_plans
+        with tempfile.TemporaryDirectory() as tmp:
+            rec, facade = self._rec(tmp)
+            self._make_day(tmp, "hab", "20200101", camera=False)
+            plan = recording_plans.RecordingPlan(
+                plan_id="p1", label="p1", modules=["m"])
+            rec.sessions["hab"] = _session(
+                session_name="hab", state=SessionState.ACTIVE,
+                pending_exports=0, plans=[plan])
+            rec._check_framesync_validation()
+            facade.submit_framesync_check.assert_not_called()
+            assert rec.sessions["hab"].day_verdicts["20200101"]["status"] == "skipped"

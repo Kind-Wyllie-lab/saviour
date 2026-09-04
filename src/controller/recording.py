@@ -14,10 +14,10 @@ import shutil
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
-from src.controller import recording_plans
+from src.controller import framesync_check, recording_plans
 from src.shared.data_rate import estimate_recording_bytes_per_s
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
@@ -131,6 +131,14 @@ class RecordingSession:
     # until an operator resumes) or "disk" (auto-paused on critically low
     # share space, auto-resumed once space recovers).
     pause_reason:              str | None = None
+    # Post-hoc sync-quality verdict (framesync_check). Plain session: one slim
+    # verdict once every file is on the share. Habitat Session: day_verdicts
+    # holds one slim verdict per completed YYYYMMDD; framesync_verdict is the
+    # rolled-up worst-of-recent-days summary. Plain dicts so sessions.json
+    # round-trips with no __post_init__ rehydration; None/{} until the first
+    # check runs.
+    framesync_verdict:         dict | None = None
+    day_verdicts:              dict = field(default_factory=dict)
 
     def __post_init__(self):
         # sessions.json round-trips plans as plain dicts; rehydrate them.
@@ -170,6 +178,9 @@ class Recording:
         # per-plan module stop isn't mistaken by _check_all_stopped for the
         # whole session ending.
         self._full_stopping: set[str] = set()
+        # (session_name, date_dir or "__session__") for framesync checks
+        # currently queued/running, so _monitor_sessions doesn't re-enqueue.
+        self._framesync_inflight: set[tuple[str, str]] = set()
 
         self._load_sessions()
 
@@ -2239,6 +2250,152 @@ class Recording:
             self._save_sessions()
 
 
+    # ------------------------------------------------------------------ #
+    # Sync-quality validation (framesync_check.SyncCheckWorker)          #
+    # ------------------------------------------------------------------ #
+
+    _FRAMESYNC_ROLLUP_DAYS = 7
+
+    def apply_framesync_verdict(self, session_name: str, scope: str,
+                                date_dir: str | None, verdict: dict,
+                                report_rel: str | None) -> None:
+        """Store a sync-quality verdict on a session. Called by the framesync
+        worker via the facade once a check (or a manual re-check) finishes.
+        `verdict` is already slimmed (framesync_check.slim)."""
+        v = dict(verdict)
+        v["report_rel"] = report_rel
+        with self._lock:
+            session = self.sessions.get(session_name)
+            if session is None:
+                self._framesync_inflight.discard(
+                    (session_name, date_dir or "__session__"))
+                return
+            if scope == "day" and date_dir:
+                session.day_verdicts = {**session.day_verdicts, date_dir: v}
+                session.framesync_verdict = self._rollup_day_verdicts(
+                    session.day_verdicts)
+            else:
+                session.framesync_verdict = v
+            self._framesync_inflight.discard(
+                (session_name, date_dir or "__session__"))
+
+        self._log_session_event(
+            session_name, "INFO",
+            f"Sync-quality validation ({scope}"
+            f"{' ' + date_dir if date_dir else ''}): {v.get('status')}")
+        self._save_sessions()
+        self.facade.update_sessions(self.sessions)
+
+    @classmethod
+    def _rollup_day_verdicts(cls, day_verdicts: dict) -> dict:
+        """Worst-of the most recent N completed days (green < amber < red;
+        skipped / error ignored unless every day is one). Carries the
+        green/total-day tally and the latest day so the UI can show both a
+        badge colour and progress on a weeks-long Habitat Session."""
+        order = {"green": 0, "amber": 1, "red": 2}
+        days = sorted(day_verdicts)
+        recent = days[-cls._FRAMESYNC_ROLLUP_DAYS:]
+        recent_status = [day_verdicts[d].get("status") for d in recent]
+        real = [s for s in recent_status if s in order]
+        if real:
+            status = max(real, key=lambda s: order[s])
+        elif "error" in recent_status:
+            status = "error"
+        else:
+            status = "skipped"
+        return {
+            "schema": 1,
+            "status": status,
+            "scope": "session",
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "days": {d: day_verdicts[d].get("status") for d in days},
+            "green_days": sum(1 for d in days
+                              if day_verdicts[d].get("status") == "green"),
+            "total_days": len(days),
+            "latest": {
+                "date_dir": days[-1],
+                "status": day_verdicts[days[-1]].get("status"),
+            } if days else None,
+        }
+
+    def _check_framesync_validation(self) -> None:
+        """Every ~5 min: queue a sync-quality check for anything ready for one.
+
+        Plain session -> once, when it is STOPPED and every export is
+        confirmed. Habitat Session -> per completed YYYYMMDD day dir. All
+        triggering lives here (not in module_export_update's hot path): it is
+        idempotent (skip if a verdict already exists) and restart-safe (the
+        in-memory worker is simply re-triggered next cycle)."""
+        share = self._get_share_root()
+        now_utc = datetime.now(UTC)
+        settle = (self.facade.get_config().get("recording", {})
+                  .get("framesync_day_settle_hours", 1))
+
+        for name, session in list(self.sessions.items()):
+            try:
+                session_dir = os.path.join(share, name)
+                if not os.path.isdir(session_dir):
+                    continue
+
+                if session.plans:                       # Habitat Session
+                    for day in framesync_check.enumerate_day_dirs(session_dir):
+                        if day in session.day_verdicts:
+                            continue
+                        if not framesync_check.day_is_complete(
+                                session_dir, day, session.pending_exports,
+                                now_utc, settle):
+                            continue
+                        if not framesync_check.day_has_cameras(session_dir, day):
+                            self._store_framesync_skip(
+                                name, "day", day, "no camera data for this day")
+                            continue
+                        self._submit_framesync(name, scope="day", date_dir=day)
+                    continue
+
+                # plain session
+                if (session.state != SessionState.STOPPED
+                        or session.pending_exports != 0
+                        or session.framesync_verdict is not None):
+                    continue
+                if not framesync_check.enumerate_day_dirs(session_dir):
+                    self._store_framesync_skip(
+                        name, "session", None, "session has no date directory")
+                    continue
+                self._submit_framesync(name, scope="session", date_dir=None)
+            except Exception as e:  # noqa: BLE001 -- one bad session must not stall the loop
+                self.logger.exception(
+                    f"framesync validation check failed for {name}: {e}")
+
+    def _submit_framesync(self, session_name: str, *, scope: str,
+                          date_dir: str | None) -> None:
+        key = (session_name, date_dir or "__session__")
+        if key in self._framesync_inflight:
+            return
+        self._framesync_inflight.add(key)
+        try:
+            self.facade.submit_framesync_check({
+                "session_name": session_name,
+                "scope": scope,
+                "date_dir": date_dir,
+                "reason": "auto",
+            })
+        except Exception:
+            self._framesync_inflight.discard(key)
+            raise
+
+    def _store_framesync_skip(self, session_name: str, scope: str,
+                              date_dir: str | None, reason: str) -> None:
+        """Record a 'skipped' verdict for a target with nothing to validate,
+        so _check_framesync_validation doesn't reconsider it every cycle."""
+        verdict = {
+            "schema": 1, "status": "skipped", "scope": scope,
+            "date_dir": date_dir, "reasons": [reason], "worst": {}, "counts": {},
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "report_rel": None,
+        }
+        self.apply_framesync_verdict(session_name, scope, date_dir, verdict, None)
+
+
     def _poll_recording_state(self) -> None:
         """Ask every module in every non-STOPPED session to report its local
         recording-pipeline summary (pending/to_export/exported). Fire-and-
@@ -2357,6 +2514,7 @@ class Recording:
                 self._check_nas_space_periodic()
                 self._check_export_staleness()
                 self._check_export_stall_after_stop()
+                self._check_framesync_validation()
                 self._poll_recording_state()
                 self._flush_unattended_digest()
 

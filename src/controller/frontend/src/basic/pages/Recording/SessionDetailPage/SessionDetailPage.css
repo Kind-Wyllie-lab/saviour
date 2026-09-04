@@ -437,6 +437,98 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color, #2e7d32) 25%, transparent);
 }
 
+/* --- sync-quality verdict (framesync_check) --- */
+
+.config-sync-badge--green  { background: var(--success-color, #2e7d32); color: #fff; }
+.config-sync-badge--amber  { background: #b26a00; color: #fff; }
+.config-sync-badge--red    { background: var(--error-color, #c62828); color: #fff; }
+.config-sync-badge--muted  { background: var(--text-muted, #999); color: #fff; }
+
+.session-sync-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.session-sync-verdict__detail {
+  font-size: 0.8rem;
+  color: var(--text-muted, #999);
+}
+
+.habitat-session-panel__days {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
+.habitat-session-panel__days-head {
+  font-size: 0.8rem;
+  color: var(--text-muted, #999);
+  font-weight: 600;
+}
+
+.habitat-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.habitat-day__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-muted, #999);
+  flex-shrink: 0;
+}
+
+.habitat-day__dot--green {
+  background: var(--success-color, #2e7d32);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color, #2e7d32) 25%, transparent);
+}
+
+.habitat-day__dot--amber { background: #b26a00; }
+.habitat-day__dot--red   { background: var(--error-color, #c62828); }
+.habitat-day__dot--skipped,
+.habitat-day__dot--error  { background: var(--text-muted, #999); }
+
+.habitat-day__date {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.habitat-day__summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-panel__sync {
+  margin: 6px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: color-mix(in srgb, var(--border-color, #ddd) 12%, transparent);
+}
+
+.compose-panel__sync--green { border-left: 3px solid var(--success-color, #2e7d32); }
+.compose-panel__sync--amber { border-left: 3px solid #b26a00; }
+.compose-panel__sync--red   { border-left: 3px solid var(--error-color, #c62828); }
+.compose-panel__sync--muted { border-left: 3px solid var(--text-muted, #999); }
+
+.compose-panel__sync-note {
+  color: var(--text-muted, #999);
+  font-size: 0.78rem;
+}
+
 .habitat-plan__label {
   font-weight: 600;
   font-size: 0.88rem;

@@ -64,6 +64,20 @@
   margin: 0 auto;
 }
 
+/* Non-camera streams (audio spectrogram, TTL logic trace, RFID timeline)
+   carry their own very different aspect ratios — a wide short strip, a
+   near-square stack. --cell-w/--cell-h are sized to the *camera* ratio, so
+   forcing both onto these cells (as the rule above does) pins e.g. a TTL
+   strip into a camera-shaped box and letterboxes it with big empty bands
+   above and below. Keep the column width, but drop the fixed height so
+   each card's own --stream-ratio drives it; cap at the camera cell height
+   so a taller-than-camera stream can't push its grid row past the fitted
+   box and reintroduce a scrollbar. */
+.dashboard-cameras .mjpeg-stream-card--fit .mjpeg-stream-video {
+  height: auto;
+  max-height: var(--cell-h);
+}
+
 /* ── Toolbar (group filter + panel toggle) ──────────────────────────────── */
 
 .dashboard-toolbar {

@@ -38,7 +38,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   }, [experimentName, target, now]);
 
   const [recordingMode, setRecordingMode] = usePersistedState("saviour_session_form_mode", "immediate");
-  const [unattended, setUnattended] = usePersistedState("saviour_session_form_unattended", false);
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [dataRate, setDataRate] = useState(null);
@@ -219,7 +218,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         session_name: experimentName,
         duration_minutes: recordingMode === "timed" ? totalDurationMins : null,
         researcher: experimenter || null,
-        unattended,
       });
     }
 
@@ -276,21 +274,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
             <option value="scheduled">Scheduled - daily time window</option>
           </select>
         </div>
-
-        {recordingMode !== "scheduled" && (
-          <div className="form-row">
-            <label htmlFor="unattended-check">Unattended</label>
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: "normal" }}>
-              <input
-                id="unattended-check"
-                type="checkbox"
-                checked={unattended}
-                onChange={(e) => setUnattended(e.target.checked)}
-              />
-              Long-term run — self-heal module dropouts instead of stopping, daily fault digest
-            </label>
-          </div>
-        )}
 
         {recordingMode === "timed" && (
           <div className="form-row">

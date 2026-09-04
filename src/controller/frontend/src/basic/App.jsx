@@ -19,7 +19,7 @@ import FirstRunModal from "./components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "./components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "./components/RecordingStatusWidget/RecordingStatusWidget";
 import useClockOnce from "/src/hooks/useClockOnce";
-import useSessions from "/src/hooks/useSessions";
+import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import socket from "/src/socket";
 
 
@@ -39,41 +39,20 @@ const pages = [
 
 const CLOCK_DRIFT_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
 
-// Keyed by "session_name::error_time" so a new fault on the same session re-alerts.
-function faultKey(session) {
-  return `saviour_fault_ack::${session.session_name}::${session.error_time ?? "unknown"}`;
-}
-
 function App() {
   const clockInfo = useClockOnce();
-  const { sessionList } = useSessions();
-  const [pendingFaults, setPendingFaults] = useState([]);
+  const { pendingFaults, acknowledge } = useFaultAlerts();
   const [showClockModal, setShowClockModal] = useState(false);
   const [nasHealth, setNasHealth] = useState(null);
   const location = useLocation();
   const prevPathname = useRef(location.pathname);
 
-  useEffect(() => {
-    const unacked = sessionList.filter(
-      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
-    );
-    setPendingFaults(unacked);
-  }, [sessionList]);
-
   // Dismiss fault modal (and mark acknowledged) when the user navigates to another page
   useEffect(() => {
     if (location.pathname === prevPathname.current) return;
     prevPathname.current = location.pathname;
-    setPendingFaults((faults) => {
-      faults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
-      return [];
-    });
-  }, [location.pathname]);
-
-  const handleAcknowledge = () => {
-    pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
-    setPendingFaults([]);
-  };
+    acknowledge();
+  }, [location.pathname, acknowledge]);
 
   useEffect(() => {
     if (clockInfo == null) return;
@@ -132,7 +111,7 @@ function App() {
       {pendingFaults.length > 0 && (
         <FaultAlertModal
           faultedSessions={pendingFaults}
-          onAcknowledge={handleAcknowledge}
+          onAcknowledge={acknowledge}
         />
       )}
       <FirstRunModal />

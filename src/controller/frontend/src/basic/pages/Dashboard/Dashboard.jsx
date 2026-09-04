@@ -225,6 +225,7 @@ function Dashboard() {
                   label={s.label}
                   isRecording={s.isRecording}
                   syncStatus={s.syncStatus}
+                  className={s.isCamera ? "" : "mjpeg-stream-card--fit"}
                 />
               ))}
             </div>
@@ -261,6 +262,7 @@ function Dashboard() {
                   isRecording={s.isRecording}
                   onAspectRatio={s.isCamera ? setStreamRatio : undefined}
                   syncStatus={s.syncStatus}
+                  className={s.isCamera ? "" : "mjpeg-stream-card--fit"}
                 />
               ))
             )}

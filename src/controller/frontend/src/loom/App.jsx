@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { Routes, Route, useLocation } from "react-router";
 import "./App.css";
 
@@ -14,7 +14,7 @@ import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertMod
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
-import useSessions from "/src/hooks/useSessions";
+import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import { LoomStageProvider } from "/src/loom/LoomStageContext";
 
 document.title = "Loom";
@@ -29,37 +29,17 @@ const pages = [
   { label: "Guide",     path: "/guide" },
 ];
 
-function faultKey(session) {
-  return `saviour_fault_ack::${session.session_name}::${session.error_time ?? "unknown"}`;
-}
-
 function App() {
-  const { sessionList } = useSessions();
-  const [pendingFaults, setPendingFaults] = useState([]);
+  const { pendingFaults, acknowledge } = useFaultAlerts();
   const location = useLocation();
-
-  useEffect(() => {
-    const unacked = sessionList.filter(
-      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
-    );
-    setPendingFaults(unacked);
-  }, [sessionList]);
 
   // Dismiss on navigation
   const prevPath = React.useRef(location.pathname);
   useEffect(() => {
     if (location.pathname === prevPath.current) return;
     prevPath.current = location.pathname;
-    setPendingFaults((faults) => {
-      faults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
-      return [];
-    });
-  }, [location.pathname]);
-
-  const handleAcknowledge = () => {
-    pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
-    setPendingFaults([]);
-  };
+    acknowledge();
+  }, [location.pathname, acknowledge]);
 
   return (
     <LoomStageProvider>
@@ -83,7 +63,7 @@ function App() {
         {pendingFaults.length > 0 && (
           <FaultAlertModal
             faultedSessions={pendingFaults}
-            onAcknowledge={handleAcknowledge}
+            onAcknowledge={acknowledge}
           />
         )}
         <FirstRunModal />

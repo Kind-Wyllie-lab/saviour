@@ -31,7 +31,7 @@ const MAX_RECONNECTS = 10;
  * into view — a backgrounded or off-screen card tears its connection down
  * instead of decoding frames and leaking sockets forever.
  */
-function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus }) {
+function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus, className = "" }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
   // Actual aspect ratio of the stream, discovered from the first loaded
@@ -202,7 +202,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
 
   return (
     <>
-      <div className="mjpeg-stream-card card" ref={cardRef}>
+      <div className={`mjpeg-stream-card card ${className}`.trim()} ref={cardRef}>
         <div className="mjpeg-stream-header">
           {label && <span className="mjpeg-stream-label">{label}</span>}
           <button

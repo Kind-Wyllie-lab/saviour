@@ -1,7 +1,9 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import "./Dashboard.css";
 
 import useModules from "/src/hooks/useModules";
+import useDashboardViews from "/src/hooks/useDashboardViews";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import DraggableTile from "/src/basic/components/DraggableTile/DraggableTile";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
@@ -17,12 +19,21 @@ const STREAM_PORTS = {
 
 const COMPACT_BREAKPOINT = 1280;
 
-// "Arrange" mode: free drag/resize layout, persisted in localStorage.
+// Free drag/resize canvas of tiles. On the wide layout the dashboard is a
+// canvas of "widgets" — camera/sensor streams plus status widgets (health
+// summary, module list) — arranged into named "Saved Views" persisted on the
+// controller (see useDashboardViews). The compact layout keeps the simple
+// stacked view.
 const ARRANGE_GAP = 12;
 const DEFAULT_TILE_W = 440;
 const TILE_CHROME_PX = 64; // grip strip + card label header + padding, for flow layout
-const LS_ARRANGE = "saviour_dashboard_arrange";
-const LS_LAYOUT = "saviour_dashboard_layout";
+const PANEL_DEFAULT_W = { "module-list": 460, health: 340 };
+const PANEL_DEFAULT_H = { "module-list": 460, health: 300 };
+
+const LS_VIEW = "saviour_dashboard_view";       // last-selected view id (per browser)
+const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // Phase 1 layout, for first-run bootstrap
+
+const SYNTHETIC = "__unsaved__";
 
 function readLS(key, fallback) {
   try {
@@ -34,6 +45,27 @@ function readLS(key, fallback) {
 }
 function writeLS(key, value) {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+}
+
+// Phase 1 stored a single layout in localStorage, keyed by bare module id for
+// streams and "widget:health" / "widget:modules" for the panels. Remap those
+// keys onto the Phase 2 widget-instance ids so a pre-existing arrangement
+// carries into the first (unsaved) view.
+function readLegacyLayout() {
+  try {
+    const v = JSON.parse(readLS(LS_LEGACY_LAYOUT, "{}"));
+    if (!v || typeof v !== "object") return {};
+    const out = {};
+    for (const [k, geom] of Object.entries(v)) {
+      if (k === "widget:health") out["widget:health"] = geom;
+      else if (k === "widget:modules" || k === "widget:module-list") {
+        out["widget:module-list"] = geom;
+      } else out[`stream:${k}`] = geom;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 function useIsCompact() {
@@ -49,10 +81,8 @@ function useIsCompact() {
   return isCompact;
 }
 
-// Tracks an element's content-box size. Uses a callback ref (not
-// useRef+one-shot useEffect) so it reattaches correctly when the element
-// itself mounts/unmounts — e.g. the wide/compact dashboard layouts swap
-// which grid div exists as the window crosses COMPACT_BREAKPOINT.
+// Tracks an element's content-box size. Callback ref so it reattaches when
+// the wide/compact layouts swap which element exists.
 function useElementSize() {
   const [node, setNode] = useState(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -68,235 +98,387 @@ function useElementSize() {
   return [setNode, size];
 }
 
-const GRID_GAP_PX = 12;
-// Fixed vertical chrome per card outside the video box itself (the ~8px
-// top/bottom padding plus the uppercase label header) — subtracted from the
-// per-row height budget so the fitted grid doesn't overshoot by a few
-// pixels per row and reintroduce a scrollbar.
-const CARD_CHROME_PX = 40;
-// .mjpeg-stream-card's left+right padding (8px each side, see
-// MJPEGStreamCard.css). The card is width:fit-content clamped to the grid
-// column via max-width:100%, but the video box inside it gets an explicit
-// px width — without subtracting this, that width leaves no room for the
-// card's own padding and the video overflows the card by this amount,
-// producing a horizontal scrollbar inside the card.
-const CARD_PADDING_X = 16;
-
-// Largest (width, height) matching `ratio` that still fits `cols` columns x
-// `rows` rows inside a `containerW` x `containerH` box — so the camera grid
-// always fits the available space instead of overflowing and forcing the
-// dashboard to scroll.
-function fitCellSize(containerW, containerH, cols, rows, ratio) {
-  if (!containerW || !containerH || cols < 1 || rows < 1) return null;
-  const availW = containerW - GRID_GAP_PX * (cols - 1) - CARD_PADDING_X * cols;
-  const availH = containerH - GRID_GAP_PX * (rows - 1) - CARD_CHROME_PX * rows;
-  if (availW <= 0 || availH <= 0) return null;
-  let width = availW / cols;
-  let height = width / ratio;
-  if (height * rows > availH) {
-    height = availH / rows;
-    width = height * ratio;
+// Stream port + display label for a module, or null if it has no stream.
+function streamInfo(m) {
+  if (m.type?.includes("camera")) {
+    return { port: STREAM_PORTS.camera, label: m.name, isCamera: true };
   }
-  return { width, height };
+  if (m.type === "microphone") {
+    return { port: STREAM_PORTS.microphone, label: `${m.name} - Audio` };
+  }
+  if (m.type === "ttl") {
+    return { port: STREAM_PORTS.ttl, label: `${m.name} - TTL` };
+  }
+  if (m.type === "rfid") {
+    return {
+      port: m.config?.monitoring?._port ?? STREAM_PORTS.rfid,
+      label: `${m.name} - RFID`,
+    };
+  }
+  return null;
 }
+const isStreamModule = (m) => streamInfo(m) != null;
 
-// Picks the column count (1..n) that yields the largest per-card area for
-// `n` cards in a containerW x containerH box. A fixed column count picked
-// from `n` alone (the old heuristic) can land on a layout that's row-bound
-// — e.g. 2 cards stacked in 1 column, 2 rows — leaving each card's width
-// unused once fitCellSize shrinks it to fit the row budget. Trying every
-// column count and keeping the biggest result finds the arrangement that
-// actually uses the most of the available box. `ratio` is the camera
-// ratio; non-camera streams (spectrogram, RFID timeline) just letterbox
-// within their cell via object-fit: contain.
-function bestGridLayout(containerW, containerH, n, ratio) {
-  if (!containerW || !containerH || n === 0) return null;
-  let best = null;
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    const cellSize = fitCellSize(containerW, containerH, cols, rows, ratio);
-    if (!cellSize) continue;
-    const area = cellSize.width * cellSize.height;
-    if (!best || area > best.area) best = { cols, cellSize, area };
-  }
-  return best;
+// The default widget set for a fresh / unsaved view: every module stream
+// (cameras first) plus the two status widgets.
+function defaultWidgets(modules) {
+  const streams = modules
+    .filter(isStreamModule)
+    .slice()
+    .sort((a, b) => {
+      const ac = a.type?.includes("camera") ? 0 : 1;
+      const bc = b.type?.includes("camera") ? 0 : 1;
+      return ac - bc;
+    })
+    .map((m) => ({ id: `stream:${m.id}`, type: "stream", target: m.id }));
+  return [
+    ...streams,
+    { id: "widget:health", type: "health" },
+    { id: "widget:module-list", type: "module-list" },
+  ];
 }
 
 function Dashboard() {
   const { moduleList } = useModules();
-  const [selectedGroup, setSelectedGroup] = useState("all");
+  const loggedIn = useIsLoggedIn();
+  const {
+    views, defaultId, loaded, lastSaved, error, clearError,
+    saveView, deleteView, setDefaultView,
+  } = useDashboardViews();
+
   const isCompact = useIsCompact();
-  const [camerasGridRef, camerasGridSize] = useElementSize();
-  // Real aspect ratio of the camera streams, discovered from the first
-  // loaded frame — used to fit the grid (see fitCellSize above). Assumes a
-  // uniform ratio across camera modules, which holds for a real rig.
-  const [streamRatio, setStreamRatio] = useState(16 / 9);
-  // The right-hand status panel (health + module list) is the single biggest
-  // consumer of horizontal space on the wide layout — let it be hidden so
-  // the stream grid gets the full width. Persisted; wide layout only (the
-  // compact layout stacks it below the grid, where it costs no width).
-  const [panelHidden, setPanelHidden] = useState(() => {
-    try { return localStorage.getItem("saviour_dashboard_panel_hidden") === "1"; }
-    catch { return false; }
-  });
-  const togglePanel = () => setPanelHidden((v) => {
-    const next = !v;
-    try { localStorage.setItem("saviour_dashboard_panel_hidden", next ? "1" : "0"); }
-    catch { /* storage unavailable — toggle still works for this session */ }
-    return next;
-  });
-
-  // Arrange mode + the custom { [moduleId]: {x, y, width} } layout it edits.
-  const [arrange, setArrange] = useState(() => readLS(LS_ARRANGE, "0") === "1");
-  const toggleArrange = () => setArrange((v) => {
-    const next = !v;
-    writeLS(LS_ARRANGE, next ? "1" : "0");
-    return next;
-  });
-  const [customLayout, setCustomLayout] = useState(() => {
-    try { return JSON.parse(readLS(LS_LAYOUT, "{}")) || {}; } catch { return {}; }
-  });
-  useEffect(() => { writeLS(LS_LAYOUT, JSON.stringify(customLayout)); }, [customLayout]);
-  const resetLayout = () => setCustomLayout({});
-  // Real per-stream aspect ratio, discovered from each card's first frame —
-  // drives the aspect-locked tile height in arrange mode.
+  const [canvasRef, canvasSize] = useElementSize();
   const [ratios, setRatios] = useState({});
+  const noteRatio = (id) => (r) => {
+    setRatios((p) => (p[id] === r ? p : { ...p, [id]: r }));
+  };
 
-  const groups = useMemo(() => {
-    const names = [...new Set(moduleList.map(m => m.group).filter(Boolean))].sort();
-    return names;
-  }, [moduleList]);
+  const [activeViewId, setActiveViewId] = useState(() => readLS(LS_VIEW, ""));
+  // Working copy of the active view. `id: null` == an unsaved bootstrap view
+  // whose widget list is derived live from the connected modules.
+  const [draft, setDraft] = useState({
+    id: null, name: "", group: "", widgets: [], layout: {},
+  });
 
-  const visibleModules = selectedGroup === "all"
-    ? moduleList
-    : moduleList.filter(m => m.group === selectedGroup);
+  // Keep activeViewId pointing at a real view (or "" for the unsaved one).
+  useEffect(() => {
+    if (!loaded) return;
+    if (activeViewId && views.some((v) => v.id === activeViewId)) return;
+    const fallback =
+      defaultId && views.some((v) => v.id === defaultId)
+        ? defaultId
+        : views[0]?.id || "";
+    if (fallback !== activeViewId) {
+      setActiveViewId(fallback);
+      writeLS(LS_VIEW, fallback);
+    }
+  }, [loaded, views, defaultId, activeViewId]);
 
-  const cameraModules = visibleModules.filter(m => m.type?.includes("camera"));
-  const micModules    = visibleModules.filter(m => m.type === "microphone");
-  const ttlModules    = visibleModules.filter(m => m.type === "ttl");
-  const rfidModules   = visibleModules.filter(m => m.type === "rfid");
+  // Load the draft from the selected view. Keyed on the id (not the view
+  // object) so a background broadcast doesn't stomp an in-progress drag.
+  const viewsRef = useRef(views);
+  viewsRef.current = views;
+  const draftLoadedRef = useRef(false);
+  useEffect(() => {
+    const v = viewsRef.current.find((x) => x.id === activeViewId);
+    draftLoadedRef.current = false;
+    if (v) {
+      setDraft({
+        id: v.id,
+        name: v.name,
+        group: v.group || "",
+        widgets: Array.isArray(v.widgets) ? v.widgets : [],
+        layout: v.layout && typeof v.layout === "object" ? v.layout : {},
+      });
+    } else {
+      setDraft({
+        id: null, name: "", group: "", widgets: [], layout: readLegacyLayout(),
+      });
+    }
+    const t = setTimeout(() => { draftLoadedRef.current = true; }, 0);
+    return () => clearTimeout(t);
+  }, [activeViewId, loaded]);
 
-  // Flat ordered list of every module stream — cameras first, then the
-  // sensor streams. Both dashboard layouts render this one list so nothing
-  // gets stranded in a scrolling side panel.
-  const allStreams = useMemo(() => [
-    ...cameraModules.map(m => ({
-      id: m.id, ip: m.ip, port: STREAM_PORTS.camera, isCamera: true,
-      label: m.name, isRecording: m.status === "RECORDING",
-      syncStatus: m.config_sync_status,
-    })),
-    ...micModules.map(m => ({
-      id: m.id, ip: m.ip, port: STREAM_PORTS.microphone,
-      label: `${m.name} - Audio`, isRecording: m.status === "RECORDING",
-      syncStatus: m.config_sync_status,
-    })),
-    ...ttlModules.map(m => ({
-      id: m.id, ip: m.ip, port: STREAM_PORTS.ttl,
-      label: `${m.name} - TTL`, isRecording: m.status === "RECORDING",
-      syncStatus: m.config_sync_status,
-    })),
-    ...rfidModules.map(m => ({
-      id: m.id, ip: m.ip, port: m.config?.monitoring?._port ?? STREAM_PORTS.rfid,
-      label: `${m.name} - RFID`, isRecording: m.status === "RECORDING",
-      syncStatus: m.config_sync_status,
-    })),
-  ], [cameraModules, micModules, ttlModules, rfidModules]);
+  // Adopt a freshly created view (New / Save as / Duplicate all round-trip a
+  // dashboard_view_saved ack carrying the server-assigned id). Wait until the
+  // broadcast list actually contains it, and adopt each ack only once so a
+  // later manual view switch isn't fought.
+  const adoptedRef = useRef(null);
+  useEffect(() => {
+    if (!lastSaved?.id || adoptedRef.current === lastSaved) return;
+    if (!views.some((v) => v.id === lastSaved.id)) return;
+    adoptedRef.current = lastSaved;
+    setActiveViewId(lastSaved.id);
+    writeLS(LS_VIEW, lastSaved.id);
+  }, [lastSaved, views]);
 
-  // Column count used before the grid's box has been measured yet (first
-  // render) — a reasonable guess so nothing flashes unstyled.
-  const streamColsFallback = (() => { const n = allStreams.length; return n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
-  const streamLayout = useMemo(
-    () => bestGridLayout(camerasGridSize.width, camerasGridSize.height, allStreams.length, streamRatio),
-    [camerasGridSize.width, camerasGridSize.height, allStreams.length, streamRatio]
+  const groups = useMemo(
+    () => [...new Set(moduleList.map((m) => m.group).filter(Boolean))].sort(),
+    [moduleList]
   );
-  const streamCols = streamLayout?.cols ?? streamColsFallback;
-  const streamCellSize = streamLayout?.cellSize ?? null;
+  const groupModules = useMemo(
+    () => (draft.group ? moduleList.filter((m) => m.group === draft.group) : moduleList),
+    [moduleList, draft.group]
+  );
 
-  const compactCols = streamColsFallback;
+  // The widgets actually on the canvas: an explicit list for a saved view,
+  // derived live from the modules for the unsaved bootstrap view.
+  const widgets = useMemo(
+    () => (draft.id ? draft.widgets : defaultWidgets(moduleList)),
+    [draft.id, draft.widgets, moduleList]
+  );
 
-  // Effective arrange-mode layout: a saved {x,y,width} per stream, or a
-  // flowed default slot for one that's never been placed.
+  // Effective geometry per widget: a saved {x,y,width,height?} or a flowed
+  // default slot for one that's never been placed.
   const effectiveLayout = useMemo(() => {
-    const canvasW = camerasGridSize.width || 1200;
+    const canvasW = canvasSize.width || 1200;
     const perRow = Math.max(
       1, Math.floor((canvasW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
     );
+    const rowH = Math.round(DEFAULT_TILE_W / (16 / 9)) + TILE_CHROME_PX + ARRANGE_GAP;
     const out = {};
-    allStreams.forEach((s, i) => {
-      if (customLayout[s.id]) { out[s.id] = customLayout[s.id]; return; }
-      const ratio = ratios[s.id] || 16 / 9;
+    widgets.forEach((w, i) => {
+      if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
       const col = i % perRow;
       const row = Math.floor(i / perRow);
-      out[s.id] = {
+      const isStream = w.type === "stream";
+      const slot = {
         x: col * (DEFAULT_TILE_W + ARRANGE_GAP),
-        y: row * (Math.round(DEFAULT_TILE_W / ratio) + TILE_CHROME_PX + ARRANGE_GAP),
-        width: DEFAULT_TILE_W,
+        y: row * rowH,
+        width: isStream ? DEFAULT_TILE_W : (PANEL_DEFAULT_W[w.type] ?? 360),
       };
+      if (!isStream) slot.height = PANEL_DEFAULT_H[w.type] ?? 300;
+      out[w.id] = slot;
     });
     return out;
-  }, [allStreams, customLayout, ratios, camerasGridSize.width]);
+  }, [widgets, draft.layout, canvasSize.width]);
 
-  const updateTile = (id, patch) => setCustomLayout((prev) => ({
-    ...prev,
-    [id]: {
-      ...(prev[id] || effectiveLayout[id] || { x: 0, y: 0, width: DEFAULT_TILE_W }),
-      ...patch,
+  // Refs so the debounced auto-save closure always sees current values
+  // without re-arming on every render.
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const widgetsRef = useRef(widgets); widgetsRef.current = widgets;
+  const effLayoutRef = useRef(effectiveLayout); effLayoutRef.current = effectiveLayout;
+
+  const materialisedLayout = () => {
+    const out = {};
+    widgetsRef.current.forEach((w) => {
+      out[w.id] =
+        draftRef.current.layout[w.id] ||
+        effLayoutRef.current[w.id] ||
+        { x: 0, y: 0, width: DEFAULT_TILE_W };
+    });
+    return out;
+  };
+  const cleanWidgets = () =>
+    widgetsRef.current.map(({ id, type, target }) =>
+      type === "stream" ? { id, type, target } : { id, type });
+  const viewPayload = (over = {}) => {
+    const d = draftRef.current;
+    return {
+      ...(d.id ? { id: d.id } : {}),
+      name: d.name,
+      group: d.group || "",
+      widgets: cleanWidgets(),
+      layout: materialisedLayout(),
+      ...over,
+    };
+  };
+
+  // Auto-save edits to a saved view when logged in. The unsaved bootstrap
+  // view (no id) and guests persist nothing — an explicit "Save as view".
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    if (!loggedIn || !draftRef.current.id) return;
+    const t = setTimeout(() => saveView(viewPayload()), 700);
+    return () => clearTimeout(t);
+  }, [draft, loggedIn, saveView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── draft mutations ──────────────────────────────────────────────────
+  const updateTile = (id, patch) => setDraft((d) => ({
+    ...d,
+    layout: {
+      ...d.layout,
+      [id]: {
+        ...(d.layout[id] || effLayoutRef.current[id] || { x: 0, y: 0, width: DEFAULT_TILE_W }),
+        ...patch,
+      },
     },
   }));
-
-  const noteRatio = (id, isCamera) => (r) => {
-    setRatios((p) => (p[id] === r ? p : { ...p, [id]: r }));
-    if (isCamera) setStreamRatio(r);
+  const removeWidget = (id) => setDraft((d) => {
+    const layout = { ...d.layout };
+    delete layout[id];
+    return { ...d, widgets: d.widgets.filter((w) => w.id !== id), layout };
+  });
+  const addFromCatalog = (key) => {
+    let w;
+    if (key === "widget:health") w = { id: key, type: "health" };
+    else if (key === "widget:module-list") w = { id: key, type: "module-list" };
+    else w = { id: key, type: "stream", target: key.slice("stream:".length) };
+    setDraft((d) => {
+      const n = d.widgets.length % 6;
+      const isStream = w.type === "stream";
+      const slot = {
+        x: 24 + n * 28,
+        y: 24 + n * 28,
+        width: isStream ? DEFAULT_TILE_W : (PANEL_DEFAULT_W[w.type] ?? 360),
+      };
+      if (!isStream) slot.height = PANEL_DEFAULT_H[w.type] ?? 300;
+      return { ...d, widgets: [...d.widgets, w], layout: { ...d.layout, [w.id]: slot } };
+    });
   };
+  const resetLayout = () => setDraft((d) => ({ ...d, layout: {} }));
+
+  // ── view management (all admin-gated server-side) ────────────────────
+  const newView = () => {
+    const name = window.prompt("New view name", "Overview");
+    if (name && name.trim()) {
+      saveView({ name: name.trim(), group: "", widgets: defaultWidgets(moduleList), layout: {} });
+    }
+  };
+  const saveAsView = () => {
+    const name = window.prompt("Name this view", "Overview");
+    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+  };
+  const duplicateView = () => {
+    const name = window.prompt("Name for the copy", `${draft.name} copy`);
+    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+  };
+  const renameView = () => {
+    const name = window.prompt("Rename view", draft.name);
+    if (name && name.trim()) setDraft((d) => ({ ...d, name: name.trim() }));
+  };
+  const removeView = () => {
+    if (draft.id && window.confirm(`Delete the "${draft.name}" view?`)) {
+      deleteView(draft.id);
+    }
+  };
+  const pickView = (id) => {
+    // Flush any edit still inside the auto-save debounce before leaving.
+    if (loggedIn && draftLoadedRef.current && draftRef.current.id) {
+      saveView(viewPayload());
+    }
+    setActiveViewId(id);
+    writeLS(LS_VIEW, id);
+  };
+
+  // Widgets that could still be added to the current saved view.
+  const catalog = useMemo(() => {
+    if (!draft.id) return [];
+    const present = new Set(widgets.map((w) => w.id));
+    const out = [];
+    if (!present.has("widget:health")) out.push({ key: "widget:health", label: "Health summary" });
+    if (!present.has("widget:module-list")) out.push({ key: "widget:module-list", label: "Module list" });
+    groupModules.filter(isStreamModule).forEach((m) => {
+      const id = `stream:${m.id}`;
+      if (!present.has(id)) out.push({ key: id, label: streamInfo(m).label });
+    });
+    return out;
+  }, [draft.id, widgets, groupModules]);
+
+  const canManage = loggedIn;
+  const savingHint = !draft.id
+    ? "Unsaved layout"
+    : loggedIn
+    ? "Changes save automatically"
+    : "Log in to save changes";
 
   return (
     <div className="dashboard">
-      {(groups.length > 0 || !isCompact) && (
+      {!isCompact && (
         <div className="dashboard-toolbar">
-          {groups.length > 0 && (
-            <div className="dashboard-group-filter">
-              <label htmlFor="group-select">Group:</label>
-              <select
-                id="group-select"
-                value={selectedGroup}
-                onChange={e => setSelectedGroup(e.target.value)}
-              >
-                <option value="all">All modules</option>
-                {groups.map(g => (
-                  <option key={g} value={g}>{g}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          {!isCompact && (
-            <>
+          <div className="dashboard-view-picker">
+            <label htmlFor="view-select">View:</label>
+            <select
+              id="view-select"
+              value={draft.id || SYNTHETIC}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v && v !== SYNTHETIC) pickView(v);
+              }}
+            >
+              {!draft.id && <option value={SYNTHETIC}>Unsaved layout</option>}
+              {views.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}{v.id === defaultId ? "  ★" : ""}
+                </option>
+              ))}
+            </select>
+
+            {!draft.id ? (
               <button
                 type="button"
                 className="dashboard-panel-toggle"
-                onClick={togglePanel}
-                title={panelHidden ? "Show the status panel" : "Hide the status panel"}
+                onClick={saveAsView}
+                disabled={!canManage}
+                title={canManage ? "Save this layout as a named view" : "Log in to save views"}
               >
-                {panelHidden ? "Show panel" : "Hide panel"}
+                Save as view…
               </button>
-              <button
-                type="button"
-                className={`dashboard-panel-toggle${arrange ? " dashboard-panel-toggle--on" : ""}`}
-                onClick={toggleArrange}
-                title="Drag and resize the stream tiles freely (aspect ratio locked)"
-              >
-                {arrange ? "Done arranging" : "Arrange"}
-              </button>
-              {arrange && (
+            ) : (
+              <>
+                <button type="button" className="dashboard-panel-toggle" onClick={renameView} disabled={!canManage}>Rename</button>
+                <button type="button" className="dashboard-panel-toggle" onClick={duplicateView} disabled={!canManage}>Duplicate</button>
                 <button
                   type="button"
                   className="dashboard-panel-toggle"
-                  onClick={resetLayout}
-                  title="Clear the custom layout and re-flow the tiles"
+                  onClick={() => setDefaultView(draft.id)}
+                  disabled={!canManage || draft.id === defaultId}
+                  title="Show this view by default"
                 >
-                  Reset layout
+                  {draft.id === defaultId ? "Default ★" : "Set default"}
                 </button>
-              )}
-            </>
+                <button type="button" className="dashboard-panel-toggle" onClick={removeView} disabled={!canManage}>Delete</button>
+              </>
+            )}
+            <button type="button" className="dashboard-panel-toggle" onClick={newView} disabled={!canManage}>New view</button>
+          </div>
+
+          <div className="dashboard-toolbar-right">
+            {groups.length > 0 && draft.id && (
+              <div className="dashboard-group-filter">
+                <label htmlFor="group-select">Group:</label>
+                <select
+                  id="group-select"
+                  value={draft.group || "all"}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, group: e.target.value === "all" ? "" : e.target.value }))
+                  }
+                >
+                  <option value="all">All modules</option>
+                  {groups.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {draft.id && catalog.length > 0 && (
+              <select
+                className="dashboard-add-widget"
+                value=""
+                onChange={(e) => { if (e.target.value) addFromCatalog(e.target.value); e.target.value = ""; }}
+              >
+                <option value="">+ Add widget</option>
+                {catalog.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              className="dashboard-panel-toggle"
+              onClick={resetLayout}
+              title="Clear the custom positions and re-flow the tiles"
+            >
+              Reset layout
+            </button>
+            <span className="dashboard-saving-hint">{savingHint}</span>
+          </div>
+
+          {error && (
+            <div className="dashboard-view-error" role="alert">
+              {error}
+              <button type="button" onClick={clearError} aria-label="Dismiss">✕</button>
+            </div>
           )}
         </div>
       )}
@@ -304,100 +486,83 @@ function Dashboard() {
       {isCompact ? (
         /* ── Compact: stream grid + status below ── */
         <div className="dashboard-compact">
-          {allStreams.length === 0 ? (
+          {moduleList.filter(isStreamModule).length === 0 ? (
             <div className="dashboard-no-cameras">No streams connected</div>
           ) : (
-            <div className="dashboard-compact-streams" style={{ gridTemplateColumns: `repeat(${compactCols}, 1fr)` }}>
-              {allStreams.map(s => (
-                <MJPEGStreamCard
-                  key={s.id}
-                  ip={s.ip}
-                  port={s.port}
-                  label={s.label}
-                  isRecording={s.isRecording}
-                  syncStatus={s.syncStatus}
-                  className={s.isCamera ? "" : "mjpeg-stream-card--fit"}
-                />
-              ))}
+            <div
+              className="dashboard-compact-streams"
+              style={{ gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, moduleList.filter(isStreamModule).length))}, 1fr)` }}
+            >
+              {moduleList.filter(isStreamModule).map((m) => {
+                const info = streamInfo(m);
+                return (
+                  <MJPEGStreamCard
+                    key={m.id}
+                    ip={m.ip}
+                    port={info.port}
+                    label={info.label}
+                    isRecording={m.status === "RECORDING"}
+                    syncStatus={m.config_sync_status}
+                    className={info.isCamera ? "" : "mjpeg-stream-card--fit"}
+                  />
+                );
+              })}
             </div>
           )}
-
           <div className="dashboard-compact-panel">
             <HealthSummaryWidget />
-            <ModuleList modules={visibleModules} />
+            <ModuleList modules={moduleList} />
           </div>
         </div>
       ) : (
-        /* ── Wide: all streams in the fitted grid, status panel right ── */
+        /* ── Wide: every widget is a free-positioned tile on one canvas ── */
         <div className="dashboard-main">
-          {arrange ? (
-            <div className="dashboard-arrange-canvas" ref={camerasGridRef}>
-              {allStreams.length === 0 ? (
-                <div className="dashboard-no-cameras">No streams connected</div>
-              ) : (
-                allStreams.map((s) => {
-                  const t = effectiveLayout[s.id]
-                    || { x: 0, y: 0, width: DEFAULT_TILE_W };
-                  return (
-                    <DraggableTile
-                      key={s.id}
-                      x={t.x}
-                      y={t.y}
-                      width={t.width}
-                      ratio={ratios[s.id] || 16 / 9}
-                      bounds={camerasGridSize}
-                      onChange={(patch) => updateTile(s.id, patch)}
-                    >
+          <div className="dashboard-arrange-canvas" ref={canvasRef}>
+            {widgets.map((w) => {
+              const t = effectiveLayout[w.id] || { x: 0, y: 0, width: DEFAULT_TILE_W };
+              const isStream = w.type === "stream";
+              const mod = isStream ? moduleList.find((m) => m.id === w.target) : null;
+              if (isStream && draft.group && (!mod || mod.group !== draft.group)) {
+                return null;
+              }
+              const info = isStream && mod ? streamInfo(mod) : null;
+              return (
+                <DraggableTile
+                  key={w.id}
+                  x={t.x}
+                  y={t.y}
+                  width={t.width}
+                  height={t.height}
+                  ratio={isStream ? (ratios[w.id] || 16 / 9) : undefined}
+                  resize={isStream ? "aspect" : "both"}
+                  bounds={canvasSize}
+                  onChange={(patch) => updateTile(w.id, patch)}
+                  onRemove={draft.id ? () => removeWidget(w.id) : undefined}
+                >
+                  {isStream ? (
+                    mod && info ? (
                       <MJPEGStreamCard
-                        ip={s.ip}
-                        port={s.port}
-                        label={s.label}
-                        isRecording={s.isRecording}
-                        onAspectRatio={noteRatio(s.id, s.isCamera)}
-                        syncStatus={s.syncStatus}
+                        ip={mod.ip}
+                        port={info.port}
+                        label={info.label}
+                        isRecording={mod.status === "RECORDING"}
+                        onAspectRatio={noteRatio(w.id)}
+                        syncStatus={mod.config_sync_status}
                       />
-                    </DraggableTile>
-                  );
-                })
-              )}
-            </div>
-          ) : (
-          <div
-            className="dashboard-cameras"
-            ref={camerasGridRef}
-            style={{
-              gridTemplateColumns: `repeat(${streamCols}, 1fr)`,
-              ...(streamCellSize && {
-                "--cell-w": `${streamCellSize.width}px`,
-                "--cell-h": `${streamCellSize.height}px`,
-              }),
-            }}
-          >
-            {allStreams.length === 0 ? (
-              <div className="dashboard-no-cameras">No streams connected</div>
-            ) : (
-              allStreams.map(s => (
-                <MJPEGStreamCard
-                  key={s.id}
-                  ip={s.ip}
-                  port={s.port}
-                  label={s.label}
-                  isRecording={s.isRecording}
-                  onAspectRatio={s.isCamera ? setStreamRatio : undefined}
-                  syncStatus={s.syncStatus}
-                  className={s.isCamera ? "" : "mjpeg-stream-card--fit"}
-                />
-              ))
-            )}
+                    ) : (
+                      <div className="dashboard-widget-missing">
+                        {w.target}<br />not connected
+                      </div>
+                    )
+                  ) : w.type === "health" ? (
+                    <HealthSummaryWidget />
+                  ) : (
+                    <ModuleList modules={groupModules} />
+                  )}
+                </DraggableTile>
+              );
+            })}
           </div>
-          )}
-
-          {!panelHidden && (
-            <div className="dashboard-panel">
-              <HealthSummaryWidget />
-              <ModuleList modules={visibleModules} />
-            </div>
-          )}
         </div>
       )}
     </div>

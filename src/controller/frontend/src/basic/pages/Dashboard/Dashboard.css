@@ -6,7 +6,7 @@
   overflow: hidden;
 }
 
-/* ── Main body: cameras left, status panel right ─────────────────────────── */
+/* ── Main body: one full-width canvas of tiles ──────────────────────────── */
 
 .dashboard-main {
   flex: 1;
@@ -17,76 +17,29 @@
   overflow: hidden;
 }
 
-/* ── Camera grid ─────────────────────────────────────────────────────────── */
-
-.dashboard-cameras {
-  flex: 2;
-  display: grid;
-  /* column count set via inline style on the element */
-  grid-auto-rows: auto;
-  /* grid-auto-rows: auto still stretches rows to fill a definite-height
-     container by default — this container gets one from flex:2 above, so
-     without this, cards would bloat back out to fill the column exactly
-     like the old 1fr did. */
-  align-content: start;
-  gap: 12px;
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.dashboard-cameras .mjpeg-stream-card {
-  min-width: 0;
-  min-height: 0;
-  /* Grid items stretch to fill their column by default — shrink the card
-     itself to wrap its (aspect-ratio-constrained) content and center it,
-     otherwise the card's background/border still spans the full column
-     even once the video inside it stops doing so, showing as empty card
-     space rather than neutral page background either side of it. */
-  width: fit-content;
-  max-width: 100%;
-  justify-self: center;
-}
-
-/* Size the video area to a cell size that (a) matches the stream's real
-   aspect ratio and (b) is guaranteed to fit rows x cols within the grid's
-   measured box (--cell-w/--cell-h, computed in Dashboard.jsx's
-   fitCellSize()) — a square stream in a wide column would otherwise sit in
-   a much taller card than it needs (blank card space), or the grid would
-   grow taller than the viewport and force the whole dashboard to scroll.
-   Before the grid's size / the stream's ratio are known, fall back to
-   100%-wide with an assumed 16:9 so nothing flashes at zero size. */
-.dashboard-cameras .mjpeg-stream-video {
-  flex: none;
-  width: var(--cell-w, 100%);
-  height: var(--cell-h, auto);
-  aspect-ratio: var(--stream-ratio, 16 / 9);
-  margin: 0 auto;
-}
-
-/* Non-camera streams (audio spectrogram, TTL logic trace, RFID timeline)
-   carry their own very different aspect ratios — a wide short strip, a
-   near-square stack. --cell-w/--cell-h are sized to the *camera* ratio, so
-   forcing both onto these cells (as the rule above does) pins e.g. a TTL
-   strip into a camera-shaped box and letterboxes it with big empty bands
-   above and below. Keep the column width, but drop the fixed height so
-   each card's own --stream-ratio drives it; cap at the camera cell height
-   so a taller-than-camera stream can't push its grid row past the fitted
-   box and reintroduce a scrollbar. */
-.dashboard-cameras .mjpeg-stream-card--fit .mjpeg-stream-video {
-  height: auto;
-  max-height: var(--cell-h);
-}
-
-/* ── Toolbar (group filter + panel toggle) ──────────────────────────────── */
+/* ── Toolbar (Saved View picker + widget controls) ─────────────────────── */
 
 .dashboard-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 6px 16px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.dashboard-view-picker,
+.dashboard-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Push the widget/group controls to the right of the toolbar row. */
+.dashboard-toolbar-right {
+  margin-left: auto;
 }
 
 .dashboard-group-filter {
@@ -106,25 +59,55 @@
   transition: border-color 0.15s;
 }
 
-/* First toggle button carries the auto margin that pushes the whole button
-   group to the right of the toolbar. */
-.dashboard-toolbar .dashboard-panel-toggle:first-of-type {
-  margin-left: auto;
+.dashboard-panel-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.dashboard-panel-toggle:hover {
+.dashboard-panel-toggle:hover:not(:disabled) {
   border-color: var(--accent-color, #4a9eff);
 }
 
-.dashboard-panel-toggle--on {
-  border-color: var(--accent-color, #4a9eff);
-  color: var(--accent-color, #4a9eff);
+.dashboard-saving-hint {
+  font-size: 0.76em;
+  opacity: 0.5;
+  white-space: nowrap;
 }
 
-/* ── Arrange mode: free drag/resize canvas ─────────────────────────────── */
+.dashboard-view-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-basis: 100%;
+  font-size: 0.82em;
+  color: var(--danger-color, #e5534b);
+}
+
+.dashboard-view-error button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.dashboard-widget-missing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  font-size: 0.8em;
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* ── Free drag/resize canvas ───────────────────────────────────────────── */
 
 .dashboard-arrange-canvas {
-  flex: 2;
+  flex: 1;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -139,7 +122,8 @@
   background-size: 40px 40px;
 }
 
-.dashboard-group-filter label {
+.dashboard-group-filter label,
+.dashboard-view-picker label {
   font-size: 0.78em;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -147,7 +131,9 @@
   opacity: 0.5;
 }
 
-.dashboard-group-filter select {
+.dashboard-group-filter select,
+.dashboard-view-picker select,
+.dashboard-add-widget {
   font-size: 0.82em;
   padding: 3px 26px 3px 10px;
   border: 1px solid var(--border-color);
@@ -164,11 +150,15 @@
   transition: border-color 0.15s;
 }
 
-.dashboard-group-filter select:hover {
+.dashboard-group-filter select:hover,
+.dashboard-view-picker select:hover,
+.dashboard-add-widget:hover {
   border-color: var(--accent-color, #4a9eff);
 }
 
-.dashboard-group-filter select:focus {
+.dashboard-group-filter select:focus,
+.dashboard-view-picker select:focus,
+.dashboard-add-widget:focus {
   border-color: var(--accent-color, #4a9eff);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a9eff) 20%, transparent);
 }
@@ -180,23 +170,6 @@
   justify-content: center;
   opacity: 0.4;
   font-style: italic;
-}
-
-/* ── Right status panel ──────────────────────────────────────────────────── */
-
-.dashboard-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  min-width: 0;
-  max-width: 420px;
-}
-
-/* Override global .card min-width so cards fit the narrow panel */
-.dashboard-panel .card {
-  min-width: 0;
 }
 
 /* ── Compact layout (≤ 1280px) ──────────────────────────────────────────── */
@@ -219,8 +192,8 @@
   align-content: start;
 }
 
-/* Size to the stream's real aspect ratio (see .dashboard-cameras above) so
-   cards don't bloat with empty space; 16:9 is only a pre-first-frame guess. */
+/* Size to the stream's real aspect ratio so cards don't bloat with empty
+   space; 16:9 is only a pre-first-frame guess. */
 .dashboard-compact-streams .mjpeg-stream-video {
   flex: none;
   aspect-ratio: var(--stream-ratio, 16 / 9);

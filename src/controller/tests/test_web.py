@@ -19,6 +19,7 @@ import time
 import zipfile
 from unittest.mock import MagicMock, call, patch
 
+from src.controller.dashboard_views import DashboardViewStore
 from src.controller.recording import RecordingSession
 from src.controller.web import (
     Web,
@@ -2269,3 +2270,87 @@ class TestSessionDiagnosticsHandler:
                         got = m["args"][0]
                 time.sleep(0.05)
         assert got and "unknown session" in got["error"]
+
+
+# ---------------------------------------------------------------------------
+# Dashboard "Saved Views"
+# ---------------------------------------------------------------------------
+
+class TestDashboardViewHandlers:
+    def _web(self, tmpdir):
+        web, _ = _make_web_with_facade()
+        web.view_store = DashboardViewStore(
+            views_dir=os.path.join(tmpdir, "dashboard_views"))
+        return web
+
+    def _view(self, name="Overview"):
+        return {
+            "name": name,
+            "widgets": [{"id": "widget:health", "type": "health"}],
+            "layout": {"widget:health": {"x": 0, "y": 0, "width": 340, "height": 300}},
+        }
+
+    def test_get_dashboard_views_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            client.emit("get_dashboard_views")
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_views"
+        assert rec[0]["args"][0] == {"views": [], "default_id": ""}
+
+    def test_save_requires_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            client.emit("save_dashboard_view", self._view())
+            rec = client.get_received()
+            assert rec[0]["name"] == "dashboard_view_error"
+            assert web.view_store.list() == []
+
+    def test_save_then_broadcast_and_persist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_dashboard_view", self._view("My Rig"))
+            names = [e["name"] for e in client.get_received()]
+            assert "dashboard_view_saved" in names
+            assert "dashboard_views" in names
+            stored = web.view_store.list()
+            assert len(stored) == 1 and stored[0]["id"] == "my-rig"
+
+    def test_save_invalid_emits_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_dashboard_view", {"name": "", "widgets": []})
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_view_error"
+
+    def test_delete_and_set_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            web.view_store.save({**self._view("Main"), "id": "main"})
+
+            client.emit("set_default_dashboard_view", {"id": "main"})
+            client.get_received()
+            assert web.view_store.get_default_id() == "main"
+
+            client.emit("delete_dashboard_view", {"id": "main"})
+            rec = client.get_received()
+            assert rec[-1]["name"] == "dashboard_views"
+            assert web.view_store.list() == []
+            assert web.view_store.get_default_id() == ""
+
+    def test_set_default_unknown_emits_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("set_default_dashboard_view", {"id": "ghost"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "dashboard_view_error"

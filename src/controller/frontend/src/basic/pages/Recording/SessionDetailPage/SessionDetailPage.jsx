@@ -8,6 +8,9 @@ import {
   formatScheduledDays, levelClass, DOWNLOAD_ALL_MAX_BYTES,
   DOWNLOAD_CONFIRM_BYTES, triggerDownload,
 } from "../sessionFormat";
+import {
+  SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, reportDownloadUrl, worstSummary,
+} from "../syncFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
 import HabitatSessionPanel from "./HabitatSessionPanel";
@@ -125,6 +128,7 @@ export default function SessionDetailPage() {
   const [editError, setEditError] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(null); // null | { url, name, sizeBytes }
   const [diagState, setDiagState] = useState(null); // null | "collecting"
+  const [framesyncJob, setFramesyncJob] = useState(null); // null | { state, progress, scope, date_dir }
 
   const requestDownload = (url, name, sizeBytes) => {
     if (sizeBytes >= DOWNLOAD_CONFIRM_BYTES) {
@@ -164,6 +168,29 @@ export default function SessionDetailPage() {
     socket.on("session_diagnostics_ready", onReady);
     return () => socket.off("session_diagnostics_ready", onReady);
   }, []);
+
+  // Transient "validating sync…" progress. The verdict itself lands via the
+  // normal sessions_update push, so this is just for feedback while a job runs.
+  useEffect(() => {
+    const onJob = (j) => {
+      if ((j.spec?.session_name || j.session_name) !== sessionName) return;
+      setFramesyncJob(
+        j.state === "queued" || j.state === "running"
+          ? { state: j.state, progress: j.progress, stage: j.stage,
+              scope: j.spec?.scope, date_dir: j.spec?.date_dir }
+          : null,
+      );
+    };
+    socket.on("framesync_job_update", onJob);
+    return () => socket.off("framesync_job_update", onJob);
+  }, [sessionName]);
+
+  const recheckFramesync = (opts = {}) =>
+    socket.emit("recheck_framesync", {
+      session_name: sessionName,
+      scope: opts.date_dir ? "day" : "session",
+      date_dir: opts.date_dir,
+    });
 
   useEffect(() => {
     const handler = ({ session_name, success, error }) => {
@@ -398,7 +425,11 @@ export default function SessionDetailPage() {
           {isError     && <span className="session-state-label session-state-label--error">Error</span>}
         </div>
 
-        <HabitatSessionPanel session={session} />
+        <HabitatSessionPanel
+          session={session}
+          onDownloadReport={(rel) => triggerDownload(
+            reportDownloadUrl(session.session_name, rel), "framesync_report.json")}
+        />
 
         <div className="session-details">
           <div className="session-meta-grid">
@@ -407,6 +438,21 @@ export default function SessionDetailPage() {
 
             <span className="session-meta-label">Modules</span>
             <span>{session.modules.join(", ")}</span>
+
+            {session.framesync_verdict?.status && (
+              <>
+                <span className="session-meta-label">Sync quality</span>
+                <span>
+                  <span
+                    className={`config-sync-badge config-sync-badge--${SYNC_CLASS[session.framesync_verdict.status]}`}
+                  >
+                    {SYNC_LABEL[session.framesync_verdict.status]}
+                  </span>
+                  {" "}
+                  {worstSummary(session.framesync_verdict)}
+                </span>
+              </>
+            )}
 
             <span className="session-meta-label">Start</span>
             <span>{session.start_time || "-"}</span>
@@ -600,6 +646,56 @@ export default function SessionDetailPage() {
             <p className="session-info-text">
               ✓ All exports confirmed on the share
             </p>
+          )}
+
+          {(session.framesync_verdict || framesyncJob
+            || (isStopped && (session.pending_exports ?? 0) === 0)) && (
+            <div className="session-sync-verdict">
+              {session.framesync_verdict?.status && (
+                <span
+                  className={`config-sync-badge config-sync-badge--${SYNC_CLASS[session.framesync_verdict.status]}`}
+                  title={SYNC_TITLE[session.framesync_verdict.status]}
+                >
+                  {SYNC_LABEL[session.framesync_verdict.status]}
+                </span>
+              )}
+              {framesyncJob ? (
+                <span className="session-sync-verdict__detail">
+                  Validating sync…{framesyncJob.progress
+                    ? ` ${Math.round(framesyncJob.progress * 100)}%` : ""}
+                </span>
+              ) : session.framesync_verdict ? (
+                <span className="session-sync-verdict__detail">
+                  {worstSummary(session.framesync_verdict)
+                    || (session.framesync_verdict.reasons || [])[0] || ""}
+                </span>
+              ) : (
+                <span className="session-sync-verdict__detail">
+                  Sync quality not validated yet
+                </span>
+              )}
+              {session.framesync_verdict?.report_rel && (
+                <button
+                  type="button"
+                  className="session-log-toggle"
+                  onClick={() => triggerDownload(
+                    reportDownloadUrl(session.session_name,
+                      session.framesync_verdict.report_rel),
+                    "framesync_report.json")}
+                >
+                  report.json
+                </button>
+              )}
+              {!framesyncJob && (
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  onClick={() => recheckFramesync()}
+                >
+                  {session.framesync_verdict ? "Re-check" : "Validate sync quality"}
+                </button>
+              )}
+            </div>
           )}
 
           {isStopped && shareInfo?.share_ip && (() => {

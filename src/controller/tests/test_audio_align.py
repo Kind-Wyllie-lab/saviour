@@ -14,11 +14,15 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from src.controller import audio_align
 from src.controller.audio_align import (
     AlignOptions,
     SpectrogramOpts,
+    _dashed_line_filters,
     _is_float,
     _label_from_filename,
+    _run_progress,
+    _strip_pixels_per_second,
     align_session_audio,
     build_align_filter,
     discover_audio_streams,
@@ -44,6 +48,85 @@ def test_spectrogram_opts_builds_filters():
     scroll = s.scroll_filter(640, 240, 15)
     assert scroll.startswith("showspectrum=s=640x240")
     assert "slide=scroll" in scroll and "fps=15" in scroll
+
+
+def test_pic_filter_nolegend():
+    f = SpectrogramOpts().pic_filter_nolegend(400, 120)
+    assert f.startswith("showspectrumpic=s=400x120") and "legend=0" in f
+
+
+# --------------------------------------------------------------------------- #
+# scrolling strip helpers                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_strip_pixels_per_second_scales_and_caps():
+    w, pps = _strip_pixels_per_second(60.0)
+    assert w == 60 * audio_align.PLAYHEAD_PPS and pps == audio_align.PLAYHEAD_PPS
+    # a very long recording is capped, pps drops accordingly
+    w2, pps2 = _strip_pixels_per_second(100_000.0)
+    assert w2 == audio_align._MAX_STRIP_PX and pps2 < audio_align.PLAYHEAD_PPS
+    assert w2 % 2 == 0
+    # never zero-width for a tiny clip
+    assert _strip_pixels_per_second(0.0)[0] >= 2
+
+
+def test_dashed_line_filters_covers_full_height():
+    chain = _dashed_line_filters("(W-3)/2", 100, dash=14, gap=9)
+    segs = chain.split(",")
+    assert all(s.startswith("drawbox=x=(W-3)/2") for s in segs)
+    # last segment's y+h reaches the bottom
+    last = segs[-1]
+    y = int(last.split("y=")[1].split(":")[0])
+    h = int(last.split("h=")[1].split(":")[0])
+    assert y + h == 100
+
+
+def test_run_progress_parses_ffmpeg_progress(monkeypatch):
+    lines = iter([
+        "frame=10\n", "out_time_us=2500000\n", "progress=continue\n",
+        "out_time_us=5000000\n", "progress=end\n",
+    ])
+
+    class _FakeProc:
+        stdout = lines
+        stderr = type("S", (), {"read": staticmethod(lambda: "")})()
+        returncode = 0
+
+        def wait(self):
+            pass
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakeProc())
+    seen = []
+    _run_progress(["ffmpeg", "-i", "x"], total_s=10.0, on_frac=seen.append)
+    assert seen == [0.25, 0.5]          # 2.5s / 10s, 5s / 10s
+
+
+def test_run_progress_falls_back_to_run_without_duration(monkeypatch):
+    called = {}
+    monkeypatch.setattr(audio_align, "_run", lambda cmd: called.setdefault("cmd", cmd))
+    _run_progress(["ffmpeg", "-i", "x"], total_s=None, on_frac=lambda _f: None)
+    assert called["cmd"] == ["ffmpeg", "-i", "x"]
+
+
+def test_run_progress_raises_on_ffmpeg_failure(monkeypatch):
+    class _FailProc:
+        stdout = iter([])
+        stderr = type("S", (), {"read": staticmethod(lambda: "boom\nbad codec")})()
+        returncode = 1
+
+        def wait(self):
+            pass
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FailProc())
+    with pytest.raises(RuntimeError, match="bad codec"):
+        _run_progress(["ffmpeg"], total_s=5.0, on_frac=lambda _f: None)
 
 
 def test_spectrogram_opts_omits_unset_band():

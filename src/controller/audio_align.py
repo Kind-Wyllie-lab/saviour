@@ -39,9 +39,11 @@ import csv
 import glob
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -50,6 +52,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SPECTROGRAM_SIZE = (1920, 480)
 DEFAULT_STRIP_HEIGHT = 240
+# Scrolling spectrogram strip: horizontal pixels per second of audio, and a
+# hard cap on the pre-rendered strip width so a long session doesn't ask
+# ffmpeg for a 200k-px PNG.
+PLAYHEAD_PPS = 120
+_MAX_STRIP_PX = 48000
 
 # ffmpeg showspectrum(pic) enum values we let the caller pick from.
 SPEC_COLORS = (
@@ -99,6 +106,11 @@ class SpectrogramOpts:
 
     def pic_filter(self, width: int, height: int) -> str:
         return f"showspectrumpic={self._common(width, height)}:legend=1"
+
+    def pic_filter_nolegend(self, width: int, height: int) -> str:
+        """A bare spectrogram image with no axis/legend chrome -- for a
+        strip that pans, where a baked-in axis would scroll with it."""
+        return f"showspectrumpic={self._common(width, height)}:legend=0"
 
     def scroll_filter(self, width: int, height: int, fps: int) -> str:
         return (
@@ -538,6 +550,57 @@ def _run(cmd: list[str]) -> None:
         raise RuntimeError(f"{cmd[0]} failed ({proc.returncode}):\n{tail}")
 
 
+def _run_progress(cmd: list[str], total_s: float | None, on_frac) -> None:
+    """`_run` but streams ffmpeg's own `-progress` output so a long re-encode
+    reports a real 0..1 fraction via `on_frac`. Falls back to `_run` when
+    there's no duration or callback to drive."""
+    if not total_s or total_s <= 0 or on_frac is None:
+        _run(cmd)
+        return
+    full = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    proc = subprocess.Popen(
+        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        for raw in proc.stdout:
+            key, _, val = raw.strip().partition("=")
+            if key == "out_time_us":
+                unit = 1e6
+            elif key == "out_time_ms":
+                unit = 1e3
+            else:
+                continue
+            try:
+                on_frac(max(0.0, min(1.0, int(val) / unit / total_s)))
+            except (ValueError, TypeError):
+                pass
+    finally:
+        proc.wait()
+        if proc.poll() is None:
+            proc.kill()
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stderr.read() or "").strip().splitlines()[-8:])
+        raise RuntimeError(f"{cmd[0]} failed ({proc.returncode}):\n{tail}")
+
+
+def _dashed_line_filters(width_expr: str, height: int, thickness: int = 3,
+                         dash: int = 14, gap: int = 9,
+                         colour: str = "yellow@0.85") -> str:
+    """A vertical dashed line as a chain of `drawbox` segments, for the
+    centred 'now' marker. `width_expr` is an ffmpeg x-position expression
+    (e.g. '(W-3)/2')."""
+    segs = []
+    y = 0
+    while y < height:
+        h = min(dash, height - y)
+        segs.append(
+            f"drawbox=x={width_expr}:y={y}:w={thickness}:h={h}:"
+            f"color={colour}:t=fill"
+        )
+        y += dash + gap
+    return ",".join(segs)
+
+
 # --------------------------------------------------------------------------- #
 # Rendering                                                                   #
 # --------------------------------------------------------------------------- #
@@ -546,13 +609,14 @@ def _run(cmd: list[str]) -> None:
 def render_aligned_audio(
     stream: AudioStream, fit: SidecarFit,
     t_start_ns: int, duration_s: float, out_path: str, out_rate: int,
+    progress=None,
 ) -> str:
     filt = build_align_filter(fit, t_start_ns, out_rate) + ",apad"
-    _run([
+    _run_progress([
         "ffmpeg", "-y", "-i", stream.audio_path,
         "-af", filt, "-t", f"{duration_s:.6f}",
         "-c:a", "flac", out_path,
-    ])
+    ], duration_s, progress)
     return out_path
 
 
@@ -598,47 +662,85 @@ def _video_width(path: str) -> int:
     return int(probe.stdout.strip())
 
 
+def _media_duration_s(path: str) -> float:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", path],
+        capture_output=True, text=True, check=True,
+    )
+    try:
+        return float(probe.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _strip_pixels_per_second(total_s: float) -> tuple[int, float]:
+    """(strip_width_px, pixels_per_second) for a `total_s`-long recording,
+    at PLAYHEAD_PPS but capped at _MAX_STRIP_PX so a long session doesn't
+    ask ffmpeg for an enormous PNG."""
+    total_s = max(total_s, 0.1)
+    width = min(math.ceil(total_s * PLAYHEAD_PPS), _MAX_STRIP_PX)
+    width = max(2, width // 2 * 2)
+    return width, width / total_s
+
+
 def render_overlay(
     composite_path: str, aligned_paths: list[str], out_path: str,
     strip_height: int, fps: int, spec: SpectrogramOpts | None = None,
-    stacked: bool = False,
+    stacked: bool = False, progress=None, total_s: float | None = None,
 ) -> str:
-    """A `video_compose.py` composite + a scrolling spectrogram of the
-    first aligned track + every aligned track muxed as audio, into a
-    `.mkv`. `stacked=False` overlays the strip on the bottom of the
-    video; `stacked=True` puts a full spectrogram panel below it."""
+    """A `video_compose.py` composite + a spectrogram of the first aligned
+    track that scrolls with a **centred** 'now' marker (a dashed vertical
+    line at mid-width; past audio to its left, upcoming audio to its
+    right), plus every aligned track muxed as audio, into a `.mkv`.
+    `stacked=False` overlays the strip on the bottom of the video;
+    `stacked=True` puts a full spectrogram panel below it. `progress(0..1)`
+    + `total_s` drive a real progress read off ffmpeg's own `-progress`."""
     spec = spec or SpectrogramOpts()
     width = _video_width(composite_path)
+    if not total_s or total_s <= 0:
+        total_s = _media_duration_s(composite_path) or _media_duration_s(
+            aligned_paths[0] if aligned_paths else composite_path
+        )
+    strip_w, pps = _strip_pixels_per_second(total_s or 1.0)
 
-    cmd = ["ffmpeg", "-y", "-i", composite_path]
-    for path in aligned_paths:
-        cmd += ["-i", path]
-    spec_filter = spec.scroll_filter(width, strip_height, fps)
-    # `showspectrum:slide=scroll` keeps emitting frames for as long as its
-    # audio input lasts. The aligned audio is padded to the camera *window*
-    # duration, which is a fraction of a frame longer than the composite
-    # (n_out = int(window / step)), so the spectrum outlives [0:v]. `vstack`
-    # / `overlay` then have one input at EOF and the other still running,
-    # which trips `Assertion best_input >= 0` in ffmpeg 6.x's input picker.
-    # `shortest=1` on the combining filter (+ -shortest on the output) makes
-    # it stop cleanly with the video instead.
-    if stacked:
-        graph = (
-            f"[1:a]{spec_filter}[sp];"
-            f"[sp]drawbox=x={width - 3}:y=0:w=3:h={strip_height}:"
-            f"color=yellow@0.9:t=fill[strip];"
-            f"[0:v][strip]vstack=inputs=2:shortest=1[v]"
+    tmp_dir = os.path.dirname(out_path) or "."
+    wide_png = os.path.join(tmp_dir, f".strip_{uuid.uuid4().hex[:8]}.png")
+    try:
+        # 1. the whole recording's spectrogram as one wide, chrome-free PNG.
+        _run([
+            "ffmpeg", "-y", "-i", aligned_paths[0],
+            "-lavfi", spec.pic_filter_nolegend(strip_w, strip_height), wide_png,
+        ])
+
+        # 2. pan that PNG so the column for output time `t` sits at mid-width,
+        #    over a dark backing, with a dashed centre line.
+        dashes = _dashed_line_filters(f"({width}-3)/2", strip_height)
+        strip_chain = (
+            f"color=c=0x101014:s={width}x{strip_height}:r={fps}[bg];"
+            f"[bg][1:v]overlay=x='{width}/2-{pps:.4f}*t':y=0:"
+            f"eof_action=pass:shortest=1[scan];"
+            f"[scan]{dashes}[strip]"
         )
-    else:
-        graph = (
-            f"[1:a]{spec_filter}[spec];"
-            f"[0:v][spec]overlay=0:H-h:shortest=1[v]"
-        )
-    cmd += ["-filter_complex", graph, "-map", "[v]"]
-    for i in range(len(aligned_paths)):
-        cmd += ["-map", f"{i + 1}:a"]
-    cmd += ["-shortest", "-c:v", "libx264", "-crf", "20", "-c:a", "flac", out_path]
-    _run(cmd)
+        if stacked:
+            graph = f"{strip_chain};[0:v][strip]vstack=inputs=2:shortest=1[v]"
+        else:
+            graph = f"{strip_chain};[0:v][strip]overlay=0:H-h:shortest=1[v]"
+
+        cmd = ["ffmpeg", "-y", "-i", composite_path, "-loop", "1", "-i", wide_png]
+        for path in aligned_paths:
+            cmd += ["-i", path]
+        cmd += ["-filter_complex", graph, "-map", "[v]"]
+        for i in range(len(aligned_paths)):
+            cmd += ["-map", f"{i + 2}:a"]     # 0=composite, 1=wide PNG
+        cmd += ["-shortest", "-c:v", "libx264", "-crf", "20",
+                "-c:a", "flac", out_path]
+        _run_progress(cmd, total_s, progress)
+    finally:
+        try:
+            os.remove(wide_png)
+        except OSError:
+            pass
     return out_path
 
 

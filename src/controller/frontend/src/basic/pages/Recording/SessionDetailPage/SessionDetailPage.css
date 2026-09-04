@@ -268,9 +268,34 @@
   font-size: 0.78rem;
 }
 
+/* Controls on the left, preview pinned to the right so both are visible at
+   once on a wide screen; stacks on a narrow one. */
+.compose-panel__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.compose-panel__controls {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* --- always-on layout preview --- */
 .compose-panel__preview-wrap {
   margin: 4px 0 2px;
+  flex: 1 1 380px;
+  min-width: 0;
+  position: sticky;
+  top: 8px;
+}
+
+@media (max-width: 720px) {
+  .compose-panel__preview-wrap { position: static; }
 }
 
 .compose-panel__preview-head {

@@ -32,7 +32,32 @@ const TILE_CHROME_PX = 64; // grip strip + card label header + padding, for flow
 // mirroring the old fixed dashboard. Both start content-sized (no dead space);
 // a manual resize turns a widget into a fixed-height scrolling box.
 const PANEL_COL_W = 360;
-const PANEL_H_ESTIMATE = 240; // fallback until a widget reports its real height
+const PANEL_H_ESTIMATE = 210; // fallback until a widget reports its real height
+const TILE_GRIP_PX = 20;      // .dash-tile__grip height — the drag strip above every body
+const STREAM_TILE_CHROME = 46; // grip + stream-card header, per stream-tile row
+
+// Largest aspect-locked cell (w = h * ratio) for `n` tiles laid out in some
+// cols x rows grid that still fits a boxW x boxH area — tries every column
+// count and keeps the one giving the biggest cell. Used so the default view's
+// streams fill the space left of the status column instead of flowing at a
+// fixed width. Mirrors the pre-widget-board dashboard's fitted grid.
+function fitStreamGrid(boxW, boxH, n, ratio) {
+  if (!boxW || !boxH || n < 1) return null;
+  let best = null;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    // 2px per tile for the .dash-tile border (both axes).
+    const availW = boxW - ARRANGE_GAP * (cols - 1) - 2 * cols;
+    const availH = boxH - (STREAM_TILE_CHROME + ARRANGE_GAP + 2) * rows;
+    if (availW <= 0 || availH <= 0) continue;
+    let w = availW / cols;
+    let h = w / (ratio || 16 / 9);
+    if (h * rows > availH) { h = availH / rows; w = h * (ratio || 16 / 9); }
+    const area = w * h;
+    if (area > 0 && (!best || area > best.area)) best = { cols, w, h, area };
+  }
+  return best;
+}
 
 const LS_VIEW = "saviour_dashboard_view";       // last-selected view id (per browser)
 const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // Phase 1 layout, for first-run bootstrap
@@ -239,44 +264,72 @@ function Dashboard() {
 
   // Effective geometry per widget: a saved {x,y,width,height?} wins; otherwise
   // a default slot. The unsaved ("bootstrap") layout mirrors the old fixed
-  // dashboard — status widgets in a fixed-width right column, streams filling
-  // the space to their left. A saved view just flows unplaced widgets.
+  // dashboard — status widgets in a fixed-width right column, streams sized to
+  // fill the space to their left. A saved view just flows unplaced widgets at
+  // a fixed width.
   const effectiveLayout = useMemo(() => {
     const canvasW = canvasSize.width || 1200;
+    const canvasH = canvasSize.height || 800;
     const bootstrap = !draft.id;
-    const rightX = bootstrap
-      ? Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP)
-      : 0;
-    const leftW = bootstrap ? Math.max(320, rightX - ARRANGE_GAP) : canvasW;
-    const perRow = Math.max(
-      1, Math.floor((leftW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
-    );
     const rowH = Math.round(DEFAULT_TILE_W / (16 / 9)) + TILE_CHROME_PX + ARRANGE_GAP;
     const out = {};
 
     const streams = widgets.filter((w) => w.type === "stream");
     const panels = widgets.filter((w) => w.type !== "stream");
 
-    streams.forEach((w, i) => {
-      if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-      out[w.id] = {
-        x: (i % perRow) * (DEFAULT_TILE_W + ARRANGE_GAP),
-        y: Math.floor(i / perRow) * rowH,
-        width: DEFAULT_TILE_W,
-      };
-    });
+    const placeFlowStreams = (boxW) => {
+      const perRow = Math.max(
+        1, Math.floor((boxW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
+      );
+      streams.forEach((w, i) => {
+        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+        out[w.id] = {
+          x: (i % perRow) * (DEFAULT_TILE_W + ARRANGE_GAP),
+          y: Math.floor(i / perRow) * rowH,
+          width: DEFAULT_TILE_W,
+        };
+      });
+    };
 
     if (bootstrap) {
+      const rightX = Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP);
+      const leftW = Math.max(320, rightX - ARRANGE_GAP);
+
+      // Streams: fitted grid filling the left region; fall back to a fixed
+      // flow before the canvas has been measured.
+      const repRatio =
+        ratios[streams[0]?.id] || Object.values(ratios)[0] || 16 / 9;
+      const fit = streams.length
+        ? fitStreamGrid(leftW - 2, canvasH - 4, streams.length, repRatio)
+        : null;
+      if (fit) {
+        streams.forEach((w, i) => {
+          if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+          out[w.id] = {
+            x: (i % fit.cols) * (fit.w + ARRANGE_GAP),
+            y: Math.floor(i / fit.cols) * (fit.h + STREAM_TILE_CHROME + ARRANGE_GAP),
+            width: fit.w,
+          };
+        });
+      } else {
+        placeFlowStreams(leftW);
+      }
+
+      // Status widgets: fixed-width right column, stacked by their measured
+      // heights (grip strip included) so there's no gap between them.
       let y = ARRANGE_GAP;
       panels.forEach((w) => {
         if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
         out[w.id] = { x: rightX, y, width: PANEL_COL_W }; // content-sized
-        y += (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
+        y += TILE_GRIP_PX + (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
       });
     } else {
-      const streamRows = Math.max(1, Math.ceil(streams.length / perRow));
+      placeFlowStreams(canvasW);
+      const perRow = Math.max(
+        1, Math.floor((canvasW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
+      );
+      const y = Math.max(1, Math.ceil(streams.length / perRow)) * rowH;
       let x = 0;
-      const y = streamRows * rowH;
       panels.forEach((w) => {
         if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
         out[w.id] = { x, y, width: PANEL_COL_W }; // content-sized
@@ -284,7 +337,7 @@ function Dashboard() {
       });
     }
     return out;
-  }, [widgets, draft.layout, draft.id, canvasSize.width, autoHeights]);
+  }, [widgets, draft.layout, draft.id, canvasSize.width, canvasSize.height, autoHeights, ratios]);
 
   // Refs so the debounced auto-save closure always sees current values
   // without re-arming on every render.

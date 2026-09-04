@@ -17,6 +17,36 @@ import HabitatSessionPanel from "./HabitatSessionPanel";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
+// "16 cameras · 4 microphones · 1 TTL" from a list of module ids + the loaded
+// module list — a full list of ids overflows the card for a habitat session.
+const _TYPE_BUCKETS = [
+  ["camera", "camera", "cameras", (t) => t.includes("camera")],
+  ["microphone", "microphone", "microphones", (t) => t === "microphone"],
+  ["ttl", "TTL", "TTL", (t) => t === "ttl"],
+  ["rfid", "RFID", "RFID", (t) => t === "rfid"],
+];
+
+function summariseModules(ids, moduleList) {
+  const typeOf = new Map((moduleList || []).map((m) => [m.id, m.type || ""]));
+  const parts = [];
+  let known = 0;
+  for (const [, one, many, match] of _TYPE_BUCKETS) {
+    const n = ids.filter((id) => match(typeOf.get(id) || "")).length;
+    if (n) { parts.push(`${n} ${n === 1 ? one : many}`); known += n; }
+  }
+  if (ids.length > known) parts.push(`${ids.length - known} other`);
+  return parts.length ? parts.join(" · ")
+    : `${ids.length} module${ids.length !== 1 ? "s" : ""}`;
+}
+
+function summariseTarget(target, sessionModules, moduleList) {
+  if (!target) return "-";
+  if (!target.includes(",")) return target;   // "all" / a group / a type name
+  const ids = target.split(",");
+  if (ids.length === (sessionModules || []).length) return `all ${ids.length} modules`;
+  return summariseModules(ids, moduleList);
+}
+
 function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   const [selectedId, setSelectedId] = useState("");
   const selectRef = useRef(null);
@@ -434,10 +464,18 @@ export default function SessionDetailPage() {
         <div className="session-details">
           <div className="session-meta-grid">
             <span className="session-meta-label">Target</span>
-            <span>{session.target}</span>
+            <span title={session.target}>
+              {modules.length
+                ? summariseTarget(session.target, session.modules, modules)
+                : (session.target || "-")}
+            </span>
 
             <span className="session-meta-label">Modules</span>
-            <span>{session.modules.join(", ")}</span>
+            <span title={session.modules.join(", ")}>
+              {modules.length
+                ? summariseModules(session.modules, modules)
+                : session.modules.join(", ")}
+            </span>
 
             {session.framesync_verdict?.status && (
               <>

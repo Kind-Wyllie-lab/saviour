@@ -309,6 +309,14 @@
   font-size: 0.85rem;
 }
 
+/* Value cells must be allowed to shrink and wrap — otherwise a long value
+   (e.g. a habitat session's ~20-module list) blows the 1fr track out past
+   the card onto the page background. */
+.session-meta-grid > span:not(.session-meta-label) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .session-meta-label {
   font-weight: 600;
   opacity: 0.6;

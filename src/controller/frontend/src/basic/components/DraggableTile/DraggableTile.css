@@ -72,13 +72,20 @@
 }
 
 .dash-tile__body--free > * {
+  width: 100%;
   min-width: 0;
   margin: 0;
+  box-sizing: border-box;
 }
 
 .dash-tile__body--free .card {
   min-width: 0;
   margin: 0;
+  /* No fixed height on the tile until it's resized, so the card is exactly
+     as tall as its content — no dead space below it. */
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
 }
 
 .dash-tile__body .mjpeg-stream-card {

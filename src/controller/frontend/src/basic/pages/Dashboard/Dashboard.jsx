@@ -27,8 +27,12 @@ const COMPACT_BREAKPOINT = 1280;
 const ARRANGE_GAP = 12;
 const DEFAULT_TILE_W = 440;
 const TILE_CHROME_PX = 64; // grip strip + card label header + padding, for flow layout
-const PANEL_DEFAULT_W = { "module-list": 460, health: 340 };
-const PANEL_DEFAULT_H = { "module-list": 460, health: 300 };
+// The default ("unsaved") layout puts the status widgets in a fixed-width
+// right-hand column, same width for both, with the streams filling the rest —
+// mirroring the old fixed dashboard. Both start content-sized (no dead space);
+// a manual resize turns a widget into a fixed-height scrolling box.
+const PANEL_COL_W = 360;
+const PANEL_H_ESTIMATE = 240; // fallback until a widget reports its real height
 
 const LS_VIEW = "saviour_dashboard_view";       // last-selected view id (per browser)
 const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // Phase 1 layout, for first-run bootstrap
@@ -152,6 +156,11 @@ function Dashboard() {
   const noteRatio = (id) => (r) => {
     setRatios((p) => (p[id] === r ? p : { ...p, [id]: r }));
   };
+  // Rendered height of each content-sized ("both", not yet resized) widget,
+  // so the default layout can stack the right-hand column tightly.
+  const [autoHeights, setAutoHeights] = useState({});
+  const noteAutoHeight = (id) => (px) =>
+    setAutoHeights((p) => (Math.abs((p[id] || 0) - px) < 2 ? p : { ...p, [id]: px }));
 
   const [activeViewId, setActiveViewId] = useState(() => readLS(LS_VIEW, ""));
   // Working copy of the active view. `id: null` == an unsaved bootstrap view
@@ -228,30 +237,54 @@ function Dashboard() {
     [draft.id, draft.widgets, moduleList]
   );
 
-  // Effective geometry per widget: a saved {x,y,width,height?} or a flowed
-  // default slot for one that's never been placed.
+  // Effective geometry per widget: a saved {x,y,width,height?} wins; otherwise
+  // a default slot. The unsaved ("bootstrap") layout mirrors the old fixed
+  // dashboard — status widgets in a fixed-width right column, streams filling
+  // the space to their left. A saved view just flows unplaced widgets.
   const effectiveLayout = useMemo(() => {
     const canvasW = canvasSize.width || 1200;
+    const bootstrap = !draft.id;
+    const rightX = bootstrap
+      ? Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP)
+      : 0;
+    const leftW = bootstrap ? Math.max(320, rightX - ARRANGE_GAP) : canvasW;
     const perRow = Math.max(
-      1, Math.floor((canvasW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
+      1, Math.floor((leftW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
     );
     const rowH = Math.round(DEFAULT_TILE_W / (16 / 9)) + TILE_CHROME_PX + ARRANGE_GAP;
     const out = {};
-    widgets.forEach((w, i) => {
+
+    const streams = widgets.filter((w) => w.type === "stream");
+    const panels = widgets.filter((w) => w.type !== "stream");
+
+    streams.forEach((w, i) => {
       if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-      const col = i % perRow;
-      const row = Math.floor(i / perRow);
-      const isStream = w.type === "stream";
-      const slot = {
-        x: col * (DEFAULT_TILE_W + ARRANGE_GAP),
-        y: row * rowH,
-        width: isStream ? DEFAULT_TILE_W : (PANEL_DEFAULT_W[w.type] ?? 360),
+      out[w.id] = {
+        x: (i % perRow) * (DEFAULT_TILE_W + ARRANGE_GAP),
+        y: Math.floor(i / perRow) * rowH,
+        width: DEFAULT_TILE_W,
       };
-      if (!isStream) slot.height = PANEL_DEFAULT_H[w.type] ?? 300;
-      out[w.id] = slot;
     });
+
+    if (bootstrap) {
+      let y = ARRANGE_GAP;
+      panels.forEach((w) => {
+        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+        out[w.id] = { x: rightX, y, width: PANEL_COL_W }; // content-sized
+        y += (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
+      });
+    } else {
+      const streamRows = Math.max(1, Math.ceil(streams.length / perRow));
+      let x = 0;
+      const y = streamRows * rowH;
+      panels.forEach((w) => {
+        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+        out[w.id] = { x, y, width: PANEL_COL_W }; // content-sized
+        x += PANEL_COL_W + ARRANGE_GAP;
+      });
+    }
     return out;
-  }, [widgets, draft.layout, canvasSize.width]);
+  }, [widgets, draft.layout, draft.id, canvasSize.width, autoHeights]);
 
   // Refs so the debounced auto-save closure always sees current values
   // without re-arming on every render.
@@ -320,9 +353,8 @@ function Dashboard() {
       const slot = {
         x: 24 + n * 28,
         y: 24 + n * 28,
-        width: isStream ? DEFAULT_TILE_W : (PANEL_DEFAULT_W[w.type] ?? 360),
+        width: isStream ? DEFAULT_TILE_W : PANEL_COL_W, // panels stay content-sized
       };
-      if (!isStream) slot.height = PANEL_DEFAULT_H[w.type] ?? 300;
       return { ...d, widgets: [...d.widgets, w], layout: { ...d.layout, [w.id]: slot } };
     });
   };
@@ -538,6 +570,7 @@ function Dashboard() {
                   bounds={canvasSize}
                   onChange={(patch) => updateTile(w.id, patch)}
                   onRemove={draft.id ? () => removeWidget(w.id) : undefined}
+                  onAutoHeight={isStream ? undefined : noteAutoHeight(w.id)}
                 >
                   {isStream ? (
                     mod && info ? (

@@ -60,7 +60,7 @@ function fitStreamGrid(boxW, boxH, n, ratio) {
 }
 
 const LS_VIEW = "saviour_dashboard_view";       // last-selected view id (per browser)
-const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // Phase 1 layout, for first-run bootstrap
+const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // dead Phase 1 key — cleared on mount
 
 const SYNTHETIC = "__unsaved__";
 
@@ -74,27 +74,6 @@ function readLS(key, fallback) {
 }
 function writeLS(key, value) {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
-}
-
-// Phase 1 stored a single layout in localStorage, keyed by bare module id for
-// streams and "widget:health" / "widget:modules" for the panels. Remap those
-// keys onto the Phase 2 widget-instance ids so a pre-existing arrangement
-// carries into the first (unsaved) view.
-function readLegacyLayout() {
-  try {
-    const v = JSON.parse(readLS(LS_LEGACY_LAYOUT, "{}"));
-    if (!v || typeof v !== "object") return {};
-    const out = {};
-    for (const [k, geom] of Object.entries(v)) {
-      if (k === "widget:health") out["widget:health"] = geom;
-      else if (k === "widget:modules" || k === "widget:module-list") {
-        out["widget:module-list"] = geom;
-      } else out[`stream:${k}`] = geom;
-    }
-    return out;
-  } catch {
-    return {};
-  }
 }
 
 function useIsCompact() {
@@ -194,6 +173,11 @@ function Dashboard() {
     id: null, name: "", group: "", widgets: [], layout: {},
   });
 
+  // Drop the dead Phase 1 per-browser layout key so it can't resurface.
+  useEffect(() => {
+    try { localStorage.removeItem(LS_LEGACY_LAYOUT); } catch { /* ignore */ }
+  }, []);
+
   // Keep activeViewId pointing at a real view (or "" for the unsaved one).
   useEffect(() => {
     if (!loaded) return;
@@ -225,9 +209,10 @@ function Dashboard() {
         layout: v.layout && typeof v.layout === "object" ? v.layout : {},
       });
     } else {
-      setDraft({
-        id: null, name: "", group: "", widgets: [], layout: readLegacyLayout(),
-      });
+      // The unsaved "default" view is never persisted — always recompute it
+      // fresh (fitted stream grid + right-hand status column) so a refresh
+      // lands on the same layout as "Reset layout".
+      setDraft({ id: null, name: "", group: "", widgets: [], layout: {} });
     }
     const t = setTimeout(() => { draftLoadedRef.current = true; }, 0);
     return () => clearTimeout(t);
@@ -262,82 +247,59 @@ function Dashboard() {
     [draft.id, draft.widgets, moduleList]
   );
 
-  // Effective geometry per widget: a saved {x,y,width,height?} wins; otherwise
-  // a default slot. The unsaved ("bootstrap") layout mirrors the old fixed
-  // dashboard — status widgets in a fixed-width right column, streams sized to
-  // fill the space to their left. A saved view just flows unplaced widgets at
-  // a fixed width.
+  // Effective geometry per widget: an explicitly-placed {x,y,width,height?}
+  // from the view wins; anything unplaced falls back to the auto arrangement —
+  // status widgets in a fixed-width right-hand column, streams sized by a
+  // fitted grid to fill the space to their left. This is also exactly what
+  // "Reset layout" produces (it just clears the explicit placements).
   const effectiveLayout = useMemo(() => {
     const canvasW = canvasSize.width || 1200;
     const canvasH = canvasSize.height || 800;
-    const bootstrap = !draft.id;
-    const rowH = Math.round(DEFAULT_TILE_W / (16 / 9)) + TILE_CHROME_PX + ARRANGE_GAP;
     const out = {};
 
     const streams = widgets.filter((w) => w.type === "stream");
     const panels = widgets.filter((w) => w.type !== "stream");
 
-    const placeFlowStreams = (boxW) => {
-      const perRow = Math.max(
-        1, Math.floor((boxW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
-      );
-      streams.forEach((w, i) => {
-        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-        out[w.id] = {
-          x: (i % perRow) * (DEFAULT_TILE_W + ARRANGE_GAP),
-          y: Math.floor(i / perRow) * rowH,
-          width: DEFAULT_TILE_W,
-        };
-      });
-    };
+    const rightX = Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP);
+    const leftW = Math.max(320, rightX - ARRANGE_GAP);
 
-    if (bootstrap) {
-      const rightX = Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP);
-      const leftW = Math.max(320, rightX - ARRANGE_GAP);
-
-      // Streams: fitted grid filling the left region; fall back to a fixed
-      // flow before the canvas has been measured.
-      const repRatio =
-        ratios[streams[0]?.id] || Object.values(ratios)[0] || 16 / 9;
-      const fit = streams.length
-        ? fitStreamGrid(leftW - 2, canvasH - 4, streams.length, repRatio)
-        : null;
-      if (fit) {
-        streams.forEach((w, i) => {
-          if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-          out[w.id] = {
+    // Streams: fitted grid filling the left region; a fixed flow only as a
+    // fallback before the canvas has been measured.
+    const repRatio = ratios[streams[0]?.id] || Object.values(ratios)[0] || 16 / 9;
+    const fit = streams.length
+      ? fitStreamGrid(leftW - 2, canvasH - 4, streams.length, repRatio)
+      : null;
+    const flowPerRow = Math.max(
+      1, Math.floor((leftW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
+    );
+    const flowRowH =
+      Math.round(DEFAULT_TILE_W / (16 / 9)) + TILE_CHROME_PX + ARRANGE_GAP;
+    streams.forEach((w, i) => {
+      if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+      out[w.id] = fit
+        ? {
             x: (i % fit.cols) * (fit.w + ARRANGE_GAP),
             y: Math.floor(i / fit.cols) * (fit.h + STREAM_TILE_CHROME + ARRANGE_GAP),
             width: fit.w,
+          }
+        : {
+            x: (i % flowPerRow) * (DEFAULT_TILE_W + ARRANGE_GAP),
+            y: Math.floor(i / flowPerRow) * flowRowH,
+            width: DEFAULT_TILE_W,
           };
-        });
-      } else {
-        placeFlowStreams(leftW);
-      }
+    });
 
-      // Status widgets: fixed-width right column, stacked by their measured
-      // heights (grip strip included) so there's no gap between them.
-      let y = ARRANGE_GAP;
-      panels.forEach((w) => {
-        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-        out[w.id] = { x: rightX, y, width: PANEL_COL_W }; // content-sized
-        y += TILE_GRIP_PX + (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
-      });
-    } else {
-      placeFlowStreams(canvasW);
-      const perRow = Math.max(
-        1, Math.floor((canvasW + ARRANGE_GAP) / (DEFAULT_TILE_W + ARRANGE_GAP))
-      );
-      const y = Math.max(1, Math.ceil(streams.length / perRow)) * rowH;
-      let x = 0;
-      panels.forEach((w) => {
-        if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-        out[w.id] = { x, y, width: PANEL_COL_W }; // content-sized
-        x += PANEL_COL_W + ARRANGE_GAP;
-      });
-    }
+    // Status widgets: fixed-width right column, stacked by their measured
+    // heights (grip strip included) so there's no gap between them.
+    let y = ARRANGE_GAP;
+    panels.forEach((w) => {
+      if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
+      out[w.id] = { x: rightX, y, width: PANEL_COL_W }; // content-sized
+      y += TILE_GRIP_PX + (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
+    });
+
     return out;
-  }, [widgets, draft.layout, draft.id, canvasSize.width, canvasSize.height, autoHeights, ratios]);
+  }, [widgets, draft.layout, canvasSize.width, canvasSize.height, autoHeights, ratios]);
 
   // Refs so the debounced auto-save closure always sees current values
   // without re-arming on every render.

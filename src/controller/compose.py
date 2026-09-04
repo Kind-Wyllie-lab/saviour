@@ -220,7 +220,13 @@ def _video_frame_count(video_path: str) -> int:
              "-of", "csv=p=0", video_path],
             capture_output=True, text=True, check=True,
         )
-        return int(out.stdout.strip() or 0)
+        # Some ffprobe builds (7.x, MPEG-TS) print the stream's csv row
+        # twice -- once under `programs[].streams[]`, once under the
+        # top-level `streams[]` -- with a blank line between. Both copies
+        # carry the same value, so take the first non-empty line rather
+        # than int()-ing the whole (multi-line) blob.
+        lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+        return int(lines[0]) if lines else 0
     except (subprocess.CalledProcessError, ValueError, OSError):
         return 0
 

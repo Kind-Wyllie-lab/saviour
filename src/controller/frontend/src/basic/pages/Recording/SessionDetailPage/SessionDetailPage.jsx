@@ -665,12 +665,12 @@ export default function SessionDetailPage() {
             );
           })()}
 
-          {fileInfo && fileInfo !== "loading" && fileInfo.files.length > 0 && !isActive && (
+          {isStopped && fileInfo && fileInfo !== "loading" && fileInfo.files.length > 0 && (
             <Link
               className="session-postprocess-link"
               to={`/post-process?session=${encodeURIComponent(session.session_name)}`}
             >
-              Post-process this session — compose video, aligned audio, ephys →
+              Post-process this session - compose video, aligned audio, ephys
             </Link>
           )}
 

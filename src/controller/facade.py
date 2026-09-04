@@ -186,6 +186,9 @@ class ControllerFacade:
     def retry_failed_exports(self, session_name: str) -> dict:
         return self.controller.recording.retry_failed_exports(session_name)
 
+    def clear_fault(self, session_name: str) -> dict:
+        return self.controller.recording.clear_fault(session_name)
+
     def add_module_to_session(self, session_name: str, module_id: str) -> dict:
         return self.controller.recording.add_module_to_session(session_name, module_id)
 

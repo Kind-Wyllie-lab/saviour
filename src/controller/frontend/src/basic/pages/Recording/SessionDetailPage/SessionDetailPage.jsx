@@ -399,6 +399,7 @@ export default function SessionDetailPage() {
   };
   const handleAddModuleConfirm = (name, moduleId) => socket.emit("add_module_to_session", { session_name: name, module_id: moduleId });
   const handleRetryExport = () => socket.emit("retry_failed_exports", { session_name: sessionName });
+  const handleClearFault = () => socket.emit("clear_fault", { session_name: sessionName });
   const handleExportDiagnostics = () => {
     setDiagState("collecting");
     socket.emit("get_session_diagnostics", { session_name: sessionName });
@@ -963,6 +964,15 @@ export default function SessionDetailPage() {
                 title="Re-attempt export for this session -- useful if exports failed and gave up before whatever caused it (e.g. bad credentials) was fixed"
               >
                 Retry Export
+              </button>
+            )}
+            {(isActive || isError) && session.error_time && (
+              <button
+                className="session-btn session-btn--cancel"
+                onClick={handleClearFault}
+                title="Acknowledge and clear the fault marker. If the underlying problem persists the monitor will re-flag it within a few minutes."
+              >
+                Clear Fault
               </button>
             )}
             <button

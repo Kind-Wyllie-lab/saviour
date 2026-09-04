@@ -1346,6 +1346,46 @@ class Recording:
         return {"result": "success"}
 
 
+    def clear_fault(self, session_name: str) -> dict:
+        """Operator acknowledges a session fault: wipe the fault record so
+        the badge clears. If the session is parked in ERROR, flip it back to
+        ACTIVE so the monitor resumes normally; an unattended session is
+        usually already ACTIVE and this just dismisses a stale marker. The
+        strike counters are cleared too (as the auto-recovery path does) so
+        the next monitor pass doesn't instantly re-trip on a stale count.
+        If the underlying problem is still real it will re-fault within a
+        cycle or two -- same posture as a manual export retry."""
+        session = self.sessions.get(session_name)
+        if not session:
+            return {"result": "error", "error": "Session not found"}
+        if session.state not in (
+            SessionState.ACTIVE, SessionState.ERROR, SessionState.PAUSED
+        ):
+            return {"result": "error",
+                    "error": f"Session is {session.state}, no clearable fault"}
+        if not session.error_message and not session.error_time \
+                and session.state != SessionState.ERROR:
+            return {"result": "error", "error": "No fault to clear"}
+
+        with self._lock:
+            prev = session.error_message or "fault"
+            session.error_message = ""
+            session.error_time = None
+            if session.state == SessionState.ERROR:
+                session.state = SessionState.ACTIVE
+            for m in session.modules:
+                self._not_recording_strikes.pop((session_name, m), None)
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self._log_session_event(
+            session_name, "RECOVERY",
+            f"Fault manually cleared by operator — was: {prev}"
+        )
+        self.logger.info(f"Fault manually cleared for session '{session_name}'")
+        return {"result": "success"}
+
+
     def request_recording_state_refresh(self, session_name: str) -> dict:
         """On-demand refresh of every member module's local recording-pipeline
         summary (pending/to_export/exported) for a session, rather than

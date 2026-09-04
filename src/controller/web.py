@@ -1670,6 +1670,16 @@ class Web(ABC):
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
+        @self.socketio.on("clear_fault")
+        def handle_clear_fault(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = (data or {}).get("session_name")
+            self.logger.info(f"Received request to clear fault for session '{session_name}'")
+            result = self.facade.clear_fault(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
         @self.socketio.on("request_recording_state_refresh")
         def handle_request_recording_state_refresh(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

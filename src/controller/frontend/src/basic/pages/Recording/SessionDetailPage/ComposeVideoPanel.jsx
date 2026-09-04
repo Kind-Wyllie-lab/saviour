@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import socket from "/src/socket";
 import { formatDuration } from "../sessionFormat";
 
@@ -19,8 +19,23 @@ const AUDIO_MODES = [
 
 const SPEC_COLORS = [
   "intensity", "rainbow", "magma", "viridis", "plasma", "cividis",
-  "fire", "moreland", "nebulae", "terrain", "cool", "green",
+  "fire", "fiery", "fruit", "moreland", "nebulae", "terrain",
+  "cool", "green", "channel",
 ];
+
+// Committed swatch PNGs, one per colour map (tools/gen_spectrogram_swatches.py).
+// { "intensity": "/assets/.../intensity.png", ... }
+const SWATCHES = Object.fromEntries(
+  Object.entries(
+    import.meta.glob("/src/assets/spectrogram-swatches/*.png", {
+      eager: true,
+      query: "?url",
+      import: "default",
+    }),
+  ).map(([path, url]) => [path.split("/").pop().replace(".png", ""), url]),
+);
+
+const PREVIEW_DEBOUNCE_MS = 650;
 
 // Group the flat session file list into { dateDir: { cameras: [...], mics: [...] } }.
 // A camera stream is a folder with a video (.ts/.mp4) + a *_timestamps.csv;
@@ -101,7 +116,8 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
   const [dateDir, setDateDir] = useState("");
   const [selected, setSelected] = useState([]);
   const [layout, setLayout] = useState("auto");
-  const [fps, setFps] = useState(15);
+  const [fps, setFps] = useState("");
+  const fpsTouched = useRef(false);
   const [fmt, setFmt] = useState("mp4");
   const [audioMode, setAudioMode] = useState("none");
   const [audioSource, setAudioSource] = useState("");
@@ -113,9 +129,14 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState(null); // { image } | { error }
   const [previewing, setPreviewing] = useState(false);
+  const [info, setInfo] = useState(null); // { suggested_fps, cameras, mics } | { error }
+  const previewTimer = useRef(null);
 
   const cams = byDate[dateDir]?.cameras || [];
   const mics = byDate[dateDir]?.mics || [];
+  const showSpec = audioMode === "strip" || audioMode === "panel";
+  const selectedKey = selected.join("|");
+  const specKey = showSpec ? JSON.stringify(spec) : "";
 
   // Default to the most recent date dir and select all its cameras.
   useEffect(() => {
@@ -146,13 +167,16 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
     const onRejected = (d) => setNotice(d.error || "Compose request rejected");
     const onPreview = (d) => {
       setPreviewing(false);
-      setPreview(d);
+      // Keep the last good image visible if this attempt only errored.
+      setPreview((prev) => (d.error && prev?.image ? { ...prev, error: d.error } : d));
     };
+    const onInfo = (d) => setInfo(d);
     socket.on("compose_jobs", onList);
     socket.on("compose_job_update", upsert);
     socket.on("compose_job_accepted", onAccepted);
     socket.on("compose_job_rejected", onRejected);
     socket.on("compose_preview_ready", onPreview);
+    socket.on("compose_streams_info", onInfo);
     socket.emit("get_compose_jobs");
     return () => {
       socket.off("compose_jobs", onList);
@@ -160,8 +184,71 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
       socket.off("compose_job_accepted", onAccepted);
       socket.off("compose_job_rejected", onRejected);
       socket.off("compose_preview_ready", onPreview);
+      socket.off("compose_streams_info", onInfo);
     };
   }, []);
+
+  // Ask the backend for the real per-camera capture rate / mic list for the
+  // current selection, and adopt the suggested fps until the user overrides it.
+  useEffect(() => {
+    if (!dateDir || !selected.length) return;
+    socket.emit("compose_streams_info", {
+      session_name: sessionName,
+      date_dir: dateDir,
+      streams: selected,
+    });
+  }, [sessionName, dateDir, selectedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!fpsTouched.current && info?.suggested_fps) {
+      setFps(String(info.suggested_fps));
+    }
+  }, [info?.suggested_fps]);
+
+  const buildAudio = () =>
+    audioMode === "none"
+      ? { mode: "none" }
+      : {
+          mode: audioMode,
+          source: audioSource || undefined,
+          spectrogram:
+            audioMode === "track"
+              ? {}
+              : {
+                  color: spec.color,
+                  fmin_hz: Number(spec.fmin_hz) || 0,
+                  fmax_hz: Number(spec.fmax_hz) || undefined,
+                  fscale: spec.fscale,
+                  ascale: spec.ascale,
+                  gain: Number(spec.gain) || 1,
+                },
+        };
+
+  const effectiveFps = Number(fps) || info?.suggested_fps || 15;
+
+  const requestPreview = (opts = {}) => {
+    if (!selected.length) return;
+    setPreviewing(true);
+    setPreview((prev) => (prev?.image ? { image: prev.image } : prev));
+    socket.emit("compose_preview", {
+      session_name: sessionName,
+      date_dir: dateDir || undefined,
+      streams: selected,
+      layout,
+      audio: buildAudio(),
+      rebuild: opts.rebuild || undefined,
+    });
+  };
+
+  // The preview is always on screen — re-render it (debounced) whenever an
+  // input that changes the layout or the audio panel changes.
+  useEffect(() => {
+    if (!selected.length) return undefined;
+    clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => requestPreview(), PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(previewTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateDir, selectedKey, layout, audioMode, audioSource, specKey]);
 
   if (!dates.length) return null; // nothing composable in this session
 
@@ -179,47 +266,18 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
 
   const submit = () => {
     setNotice("");
-    const audio =
-      audioMode === "none"
-        ? { mode: "none" }
-        : {
-            mode: audioMode,
-            source: audioSource || undefined,
-            spectrogram:
-              audioMode === "track"
-                ? {}
-                : {
-                    color: spec.color,
-                    fmin_hz: Number(spec.fmin_hz) || 0,
-                    fmax_hz: Number(spec.fmax_hz) || undefined,
-                    fscale: spec.fscale,
-                    ascale: spec.ascale,
-                    gain: Number(spec.gain) || 1,
-                  },
-          };
     socket.emit("compose_session_video", {
       session_name: sessionName,
       date_dir: dateDir || undefined,
       streams: selected,
       layout,
-      fps: Number(fps) || 15,
+      fps: effectiveFps,
       fmt,
-      audio,
+      audio: buildAudio(),
     });
   };
 
   const setSpecField = (k, v) => setSpec((s) => ({ ...s, [k]: v }));
-
-  const requestPreview = () => {
-    setPreview(null);
-    setPreviewing(true);
-    socket.emit("compose_preview", {
-      session_name: sessionName,
-      date_dir: dateDir || undefined,
-      streams: selected,
-      layout,
-    });
-  };
 
   const download = (job) => {
     // output_rel is "<session>/<date>/<file>"; the download route wants the
@@ -257,16 +315,25 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
       <div className="form-field">
         <label>Cameras:</label>
         <div className="compose-panel__streams">
-          {cams.map((mod) => (
-            <label key={mod} className="compose-panel__stream">
-              <input
-                type="checkbox"
-                checked={selected.includes(mod)}
-                onChange={() => toggle(mod)}
-              />
-              {mod}
-            </label>
-          ))}
+          {cams.map((mod) => {
+            const camFps = info?.cameras?.find((c) => c.name === mod)?.fps;
+            return (
+              <label key={mod} className="compose-panel__stream">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(mod)}
+                  onChange={() => toggle(mod)}
+                />
+                {mod}
+                {camFps ? (
+                  <span className="compose-panel__stream-fps">
+                    {" "}
+                    {camFps} fps
+                  </span>
+                ) : null}
+              </label>
+            );
+          })}
         </div>
       </div>
 
@@ -282,13 +349,22 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
           </select>
         </div>
         <div className="form-field">
-          <label>Output FPS:</label>
+          <label>
+            Output FPS:
+            {!fpsTouched.current && info?.suggested_fps ? (
+              <span className="compose-panel__hint"> (camera rate)</span>
+            ) : null}
+          </label>
           <input
             type="number"
             min="1"
             max="60"
             value={fps}
-            onChange={(e) => setFps(e.target.value)}
+            placeholder={info?.suggested_fps || ""}
+            onChange={(e) => {
+              fpsTouched.current = true;
+              setFps(e.target.value);
+            }}
           />
         </div>
         <div className="form-field">
@@ -333,86 +409,113 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
         )}
       </div>
 
-      {(audioMode === "strip" || audioMode === "panel") && (
-        <div className="compose-panel__row compose-panel__spec">
+      {showSpec && (
+        <>
           <div className="form-field">
             <label>Colour:</label>
-            <select
-              value={spec.color}
-              onChange={(e) => setSpecField("color", e.target.value)}
-            >
+            <div className="compose-panel__swatches">
               {SPEC_COLORS.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
+                <button
+                  type="button"
+                  key={c}
+                  className={`compose-panel__swatch${
+                    spec.color === c ? " compose-panel__swatch--active" : ""
+                  }`}
+                  title={c}
+                  onClick={() => setSpecField("color", c)}
+                >
+                  {SWATCHES[c] ? (
+                    <img src={SWATCHES[c]} alt={c} />
+                  ) : (
+                    <span className="compose-panel__swatch-fallback">{c}</span>
+                  )}
+                  <span className="compose-panel__swatch-name">{c}</span>
+                </button>
               ))}
-            </select>
+            </div>
           </div>
-          <div className="form-field">
-            <label>Freq min (Hz):</label>
-            <input
-              type="number"
-              min="0"
-              step="1000"
-              value={spec.fmin_hz}
-              onChange={(e) => setSpecField("fmin_hz", e.target.value)}
-            />
+          <div className="compose-panel__row compose-panel__spec">
+            <div className="form-field">
+              <label>Freq min (Hz):</label>
+              <input
+                type="number"
+                min="0"
+                step="1000"
+                value={spec.fmin_hz}
+                onChange={(e) => setSpecField("fmin_hz", e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label>Freq max (Hz):</label>
+              <input
+                type="number"
+                min="1000"
+                step="1000"
+                value={spec.fmax_hz}
+                onChange={(e) => setSpecField("fmax_hz", e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label>Freq scale:</label>
+              <select
+                value={spec.fscale}
+                onChange={(e) => setSpecField("fscale", e.target.value)}
+              >
+                <option value="lin">Linear</option>
+                <option value="log">Log</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Gain:</label>
+              <input
+                type="number"
+                min="0.1"
+                max="20"
+                step="0.5"
+                value={spec.gain}
+                onChange={(e) => setSpecField("gain", e.target.value)}
+              />
+            </div>
           </div>
-          <div className="form-field">
-            <label>Freq max (Hz):</label>
-            <input
-              type="number"
-              min="1000"
-              step="1000"
-              value={spec.fmax_hz}
-              onChange={(e) => setSpecField("fmax_hz", e.target.value)}
-            />
-          </div>
-          <div className="form-field">
-            <label>Freq scale:</label>
-            <select
-              value={spec.fscale}
-              onChange={(e) => setSpecField("fscale", e.target.value)}
-            >
-              <option value="lin">Linear</option>
-              <option value="log">Log</option>
-            </select>
-          </div>
-          <div className="form-field">
-            <label>Gain:</label>
-            <input
-              type="number"
-              min="0.1"
-              max="20"
-              step="0.5"
-              value={spec.gain}
-              onChange={(e) => setSpecField("gain", e.target.value)}
-            />
-          </div>
-        </div>
+        </>
       )}
 
       {notice && <div className="compose-job__error">{notice}</div>}
 
-      {preview?.error && (
-        <div className="compose-job__error">{preview.error}</div>
-      )}
-      {preview?.image && (
-        <img
-          className="compose-panel__preview"
-          src={preview.image}
-          alt="Layout preview (mid-session frame)"
-        />
-      )}
+      <div className="compose-panel__preview-wrap">
+        <div className="compose-panel__preview-head">
+          <span>Preview</span>
+          <button
+            className="btn btn-small"
+            onClick={() => requestPreview({ rebuild: true })}
+            disabled={previewing || !selected.length}
+            title="Re-decode each camera's thumbnail and rebuild the preview"
+          >
+            {previewing ? "Rendering…" : "Rebuild"}
+          </button>
+        </div>
+        <div className="compose-panel__preview-box">
+          {preview?.image ? (
+            <img
+              className="compose-panel__preview"
+              src={preview.image}
+              alt="Layout preview (mid-session frame)"
+            />
+          ) : (
+            <div className="compose-panel__preview-empty">
+              {selected.length ? "Preview will appear here" : "Select a camera"}
+            </div>
+          )}
+          {previewing && (
+            <div className="compose-panel__preview-spinner">Rendering…</div>
+          )}
+        </div>
+        {preview?.error && (
+          <div className="compose-job__error">{preview.error}</div>
+        )}
+      </div>
 
       <div className="compose-panel__actions">
-        <button
-          className="btn btn-secondary"
-          onClick={requestPreview}
-          disabled={!selected.length || previewing}
-        >
-          {previewing ? "Rendering preview…" : "Preview layout"}
-        </button>
         <button
           className="btn"
           onClick={submit}

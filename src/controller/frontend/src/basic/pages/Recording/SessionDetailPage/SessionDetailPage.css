@@ -218,6 +218,106 @@
   border-radius: 6px;
 }
 
+.compose-panel__hint,
+.compose-panel__stream-fps {
+  font-weight: 400;
+  opacity: 0.6;
+  font-size: 0.78rem;
+}
+
+/* --- always-on layout preview --- */
+.compose-panel__preview-wrap {
+  margin: 4px 0 2px;
+}
+
+.compose-panel__preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.75;
+  margin-bottom: 4px;
+}
+
+.compose-panel__preview-box {
+  position: relative;
+  max-width: 960px;
+}
+
+.compose-panel__preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  opacity: 0.5;
+  font-size: 0.85rem;
+}
+
+.compose-panel__preview-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--card-bg-color, #fff) 55%, transparent);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* --- spectrogram colour swatch picker --- */
+.compose-panel__swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+}
+
+.compose-panel__swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 3px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border-color, #ddd) 10%, transparent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.compose-panel__swatch:hover {
+  border-color: var(--border-color);
+}
+
+.compose-panel__swatch--active {
+  border-color: var(--accent-color, #3f7cac);
+}
+
+.compose-panel__swatch img {
+  display: block;
+  width: 100%;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.compose-panel__swatch-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  font-size: 0.65rem;
+}
+
+.compose-panel__swatch-name {
+  font-size: 0.68rem;
+  text-align: center;
+  opacity: 0.75;
+}
+
 /* --- Habitat Session panel --- */
 .habitat-session-panel__head {
   display: flex;

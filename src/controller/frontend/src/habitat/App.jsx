@@ -1,5 +1,5 @@
 import './App.css';
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Routes, Route } from "react-router";
 
 import Sidebar from '../basic/components/Sidebar/Sidebar';
@@ -16,7 +16,7 @@ import HabitatRecordingControl from "./components/HabitatRecordingControl/Habita
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
-import useSessions from "/src/hooks/useSessions";
+import useFaultAlerts from "/src/hooks/useFaultAlerts";
 
 
 document.title="Habitat";
@@ -33,28 +33,8 @@ const pages = [
   { label: "Guide", path: "/guide" },
 ];
 
-// Key used to track which faults have been acknowledged this browser session.
-// Keyed by "session_name:error_time" so a new fault on the same session re-alerts.
-function faultKey(session) {
-  return `saviour_fault_ack::${session.session_name}::${session.error_time ?? "unknown"}`;
-}
-
 function App() {
-  const { sessionList } = useSessions();
-  const [pendingFaults, setPendingFaults] = useState([]);
-
-  // Detect unacknowledged faults whenever the session list changes
-  useEffect(() => {
-    const unacked = sessionList.filter(
-      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
-    );
-    setPendingFaults(unacked);
-  }, [sessionList]);
-
-  const handleAcknowledge = () => {
-    pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
-    setPendingFaults([]);
-  };
+  const { pendingFaults, acknowledge } = useFaultAlerts();
 
   return (
     <div className="app">
@@ -80,7 +60,7 @@ function App() {
       {pendingFaults.length > 0 && (
         <FaultAlertModal
           faultedSessions={pendingFaults}
-          onAcknowledge={handleAcknowledge}
+          onAcknowledge={acknowledge}
         />
       )}
     </div>

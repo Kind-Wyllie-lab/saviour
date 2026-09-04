@@ -57,6 +57,10 @@ DEFAULT_STRIP_HEIGHT = 240
 # ffmpeg for a 200k-px PNG.
 PLAYHEAD_PPS = 120
 _MAX_STRIP_PX = 48000
+# Blocks skipped from the sidecar timing fit: the first record() call(s)
+# straddle the capture stream warm-up and their pre-call timestamps are
+# unreliable. See parse_mic_sidecar.
+_WARMUP_SKIP_BLOCKS = 2
 
 # ffmpeg showspectrum(pic) enum values we let the caller pick from.
 SPEC_COLORS = (
@@ -320,7 +324,19 @@ def parse_mic_sidecar(
 
     k = np.arange(n_blocks, dtype=np.float64)
     t = np.asarray(block_times, dtype=np.float64)
-    slope, intercept, keep = _robust_linfit(k, t)
+    # The first record() call blocks while the capture stream warms up -- on a
+    # 192 kHz / 131072-frame config that's up to a full block (~0.68 s), and on
+    # an AudioMoth sharing the device with the monitoring stream it can be
+    # more. Its pre-call time.time() stamp therefore lands well before any
+    # audio was actually delivered and drags the sample-0 intercept early
+    # (audio ends up leading the video). Blocks after the warm-up are evenly
+    # spaced and clean, so fit the line from there and let it extrapolate
+    # back to block 0.
+    fit_from = _WARMUP_SKIP_BLOCKS if n_blocks >= _WARMUP_SKIP_BLOCKS + 4 else 0
+    slope, intercept, keep_fit = _robust_linfit(k[fit_from:], t[fit_from:])
+    keep = np.ones(n_blocks, dtype=bool)
+    keep[fit_from:] = keep_fit
+    keep[:fit_from] = False
     resid_ms = np.abs(t - (slope * k + intercept)) * 1e3
 
     drift_blocks = abs(probe_samples - n_blocks * frame_num) / frame_num

@@ -33,6 +33,7 @@ import csv
 import glob
 import math
 import os
+import subprocess
 from dataclasses import dataclass
 
 import cv2
@@ -83,11 +84,14 @@ class _StreamCursor:
     time.
     """
 
-    def __init__(self, stream: CameraStream):
+    def __init__(self, stream: CameraStream, skip: int = 0):
         self.name = stream.name
         self.cap = cv2.VideoCapture(stream.video_path)
         with open(stream.csv_path, newline="") as f:
-            self.timestamps_ns = [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+            ts = [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+        # Drop leading rows the CSV logged for frames captured before the
+        # encoder started, so timestamps_ns[i] lines up with video frame i.
+        self.timestamps_ns = ts[skip:] if 0 < skip < len(ts) else ts
         self.idx = -1
         self.frame = None
         self._advance()
@@ -122,6 +126,21 @@ class _StreamCursor:
 
     def release(self):
         self.cap.release()
+
+
+def _probe_frame_count(video_path: str) -> int:
+    """Video frame count via ffprobe packet count; 0 if ffprobe is absent
+    or fails (this module otherwise has no ffmpeg dependency)."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-count_packets", "-show_entries", "stream=nb_read_packets",
+             "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, check=True,
+        )
+        return int(out.stdout.strip() or 0)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return 0
 
 
 def _grid_regions(
@@ -199,6 +218,7 @@ def compose_session_video(
     regions: list[tuple[int, int, int, int]] | None = None,
     canvas: tuple[int, int] | None = None,
     progress=None,
+    csv_skip: dict[str, int] | None = None,
 ) -> str:
     """Compose the session's cameras into one layout video.
 
@@ -234,7 +254,8 @@ def compose_session_video(
                 )
             regions, canvas_w, canvas_h = _grid_regions(len(found))
 
-    cursors = [_StreamCursor(s) for s in ordered]
+    _skip = csv_skip or {}
+    cursors = [_StreamCursor(s, _skip.get(s.name, 0)) for s in ordered]
     t_start = max(c.first_ts for c in cursors)
     t_end = min(c.last_ts for c in cursors)
     if t_end <= t_start:
@@ -270,19 +291,21 @@ def compose_session_video(
     return output_path
 
 
-def _csv_bounds(csv_path: str) -> tuple[int, int]:
+def _csv_bounds(csv_path: str, skip: int = 0) -> tuple[int, int]:
     """(first_ts_ns, last_ts_ns) from a camera's per-frame CSV, without
     touching the (much more expensive to open) video file."""
     with open(csv_path, newline="") as f:
         ts = [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+    if 0 < skip < len(ts):
+        ts = ts[skip:]
     if not ts:
         raise ValueError(f"{csv_path} has no timestamps")
     return ts[0], ts[-1]
 
 
-def _representative_frame(stream: CameraStream, t_ns: int) -> np.ndarray:
+def _representative_frame(stream: CameraStream, t_ns: int, skip: int = 0) -> np.ndarray:
     """Decode the one frame closest to `t_ns` for a single camera."""
-    cursor = _StreamCursor(stream)
+    cursor = _StreamCursor(stream, skip)
     try:
         return cursor.sync_to(t_ns)
     finally:
@@ -290,7 +313,7 @@ def _representative_frame(stream: CameraStream, t_ns: int) -> np.ndarray:
 
 
 def _stream_thumb(
-    stream: CameraStream, t_ns: int, cache_dir: str | None
+    stream: CameraStream, t_ns: int, cache_dir: str | None, skip: int = 0
 ) -> np.ndarray:
     """A representative frame for `stream`, read from a cached PNG in
     `cache_dir` when present, otherwise decoded from the video and written
@@ -301,11 +324,11 @@ def _stream_thumb(
         cached = cv2.imread(thumb_path) if os.path.isfile(thumb_path) else None
         if cached is not None:
             return cached
-        frame = _representative_frame(stream, t_ns)
+        frame = _representative_frame(stream, t_ns, skip)
         os.makedirs(cache_dir, exist_ok=True)
         cv2.imwrite(thumb_path, frame)
         return frame
-    return _representative_frame(stream, t_ns)
+    return _representative_frame(stream, t_ns, skip)
 
 
 def _attach_audio_preview(
@@ -340,6 +363,7 @@ def compose_preview_frame(
     cache_dir: str | None = None,
     audio_png: str | None = None,
     audio_mode: str | None = None,
+    csv_skip: dict[str, int] | None = None,
 ) -> str:
     """Composite a single frame (at `at_fraction` through the overlap
     window) to a PNG -- a fast layout preview before a full render.
@@ -360,14 +384,16 @@ def compose_preview_frame(
     else:
         cw, ch = canvas
 
-    bounds = [_csv_bounds(s.csv_path) for s in found]
+    _skip = csv_skip or {}
+    bounds = [_csv_bounds(s.csv_path, _skip.get(s.name, 0)) for s in found]
     t_start = max(b[0] for b in bounds)
     t_end = min(b[1] for b in bounds)
     t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
 
     frame = np.zeros((ch, cw, 3), dtype=np.uint8)
     for stream, (x, y, w, h) in zip(found, regions, strict=True):
-        pane = _label(_fit_into(_stream_thumb(stream, t, cache_dir), w, h), stream.name)
+        thumb = _stream_thumb(stream, t, cache_dir, _skip.get(stream.name, 0))
+        pane = _label(_fit_into(thumb, w, h), stream.name)
         frame[y : y + h, x : x + w] = pane
 
     if audio_png and audio_mode in ("strip", "panel"):
@@ -395,8 +421,22 @@ def main():
     session_dir = os.path.dirname(os.path.normpath(args.date_dir))
     session_name = os.path.basename(session_dir)
     output = args.output or os.path.join(session_dir, f"{session_name}_aggregated.mp4")
+
+    # Best-effort pre-stage-row skip so a standalone run is aligned too. Needs
+    # ffprobe; falls back to 0 (old behaviour) if it isn't on PATH.
+    csv_skip = {}
+    for s in discover_camera_streams(args.date_dir):
+        try:
+            with open(s.csv_path, newline="") as f:
+                n_rows = sum(1 for _ in csv.DictReader(f))
+            n_frames = _probe_frame_count(s.video_path)
+            if n_frames:
+                csv_skip[s.name] = max(0, n_rows - n_frames)
+        except OSError:
+            pass
+
     result = compose_session_video(
-        args.date_dir, output, layout=args.layout, fps=args.fps
+        args.date_dir, output, layout=args.layout, fps=args.fps, csv_skip=csv_skip
     )
     print(f"Wrote {result}")
 

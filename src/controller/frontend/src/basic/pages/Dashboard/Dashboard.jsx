@@ -166,6 +166,13 @@ function Dashboard() {
   const noteAutoHeight = (id) => (px) =>
     setAutoHeights((p) => (Math.abs((p[id] || 0) - px) < 2 ? p : { ...p, [id]: px }));
 
+  // Stacking order for overlapping tiles — the last one interacted with wins.
+  // Kept as an id list (bounded by widget count) so z-index values stay small
+  // and never approach modal/overlay ranges. Session-only (not persisted).
+  const [zOrder, setZOrder] = useState([]);
+  const bringToFront = (id) =>
+    setZOrder((o) => (o[o.length - 1] === id ? o : [...o.filter((x) => x !== id), id]));
+
   const [activeViewId, setActiveViewId] = useState(() => readLS(LS_VIEW, ""));
   // Working copy of the active view. `id: null` == an unsaved bootstrap view
   // whose widget list is derived live from the connected modules.
@@ -178,14 +185,17 @@ function Dashboard() {
     try { localStorage.removeItem(LS_LEGACY_LAYOUT); } catch { /* ignore */ }
   }, []);
 
-  // Keep activeViewId pointing at a real view (or "" for the unsaved one).
+  // Keep activeViewId pointing at something real. SYNTHETIC is an explicit,
+  // always-valid choice (the auto "Default layout"); "" is "not chosen yet"
+  // and resolves to the server default view, else the first, else SYNTHETIC.
   useEffect(() => {
     if (!loaded) return;
+    if (activeViewId === SYNTHETIC) return;
     if (activeViewId && views.some((v) => v.id === activeViewId)) return;
     const fallback =
       defaultId && views.some((v) => v.id === defaultId)
         ? defaultId
-        : views[0]?.id || "";
+        : views[0]?.id || SYNTHETIC;
     if (fallback !== activeViewId) {
       setActiveViewId(fallback);
       writeLS(LS_VIEW, fallback);
@@ -218,15 +228,19 @@ function Dashboard() {
     return () => clearTimeout(t);
   }, [activeViewId, loaded]);
 
-  // Adopt a freshly created view (New / Save as / Duplicate all round-trip a
-  // dashboard_view_saved ack carrying the server-assigned id). Wait until the
-  // broadcast list actually contains it, and adopt each ack only once so a
-  // later manual view switch isn't fought.
-  const adoptedRef = useRef(null);
+  // Adopt a freshly *created* view (New / Save as / Duplicate). Those set
+  // pendingCreateRef right before calling saveView; an ordinary save ack (a
+  // drag auto-save, or the flush in pickView) must NOT move the selection —
+  // otherwise switching to "Default layout" gets yanked back to the view its
+  // own flush-save just re-acked.
+  const pendingCreateRef = useRef(false);
+  const adoptedAtRef = useRef(0);
   useEffect(() => {
-    if (!lastSaved?.id || adoptedRef.current === lastSaved) return;
-    if (!views.some((v) => v.id === lastSaved.id)) return;
-    adoptedRef.current = lastSaved;
+    if (!lastSaved?.id || adoptedAtRef.current === lastSaved._at) return;
+    if (!pendingCreateRef.current) { adoptedAtRef.current = lastSaved._at; return; }
+    if (!views.some((v) => v.id === lastSaved.id)) return; // wait for the broadcast
+    adoptedAtRef.current = lastSaved._at;
+    pendingCreateRef.current = false;
     setActiveViewId(lastSaved.id);
     writeLS(LS_VIEW, lastSaved.id);
   }, [lastSaved, views]);
@@ -334,12 +348,16 @@ function Dashboard() {
 
   // Auto-save edits to a saved view when logged in. The unsaved bootstrap
   // view (no id) and guests persist nothing — an explicit "Save as view".
+  const [pendingSave, setPendingSave] = useState(false);
   useEffect(() => {
     if (!draftLoadedRef.current) return;
     if (!loggedIn || !draftRef.current.id) return;
+    setPendingSave(true);
     const t = setTimeout(() => saveView(viewPayload()), 700);
     return () => clearTimeout(t);
   }, [draft, loggedIn, saveView]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A save ack (lastSaved changes on every persisted write) clears the flag.
+  useEffect(() => { setPendingSave(false); }, [lastSaved]);
 
   // ── draft mutations ──────────────────────────────────────────────────
   const updateTile = (id, patch) => setDraft((d) => ({
@@ -379,16 +397,23 @@ function Dashboard() {
   const newView = () => {
     const name = window.prompt("New view name", "Overview");
     if (name && name.trim()) {
+      pendingCreateRef.current = true;
       saveView({ name: name.trim(), group: "", widgets: defaultWidgets(moduleList), layout: {} });
     }
   };
   const saveAsView = () => {
     const name = window.prompt("Name this view", "Overview");
-    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+    if (name && name.trim()) {
+      pendingCreateRef.current = true;
+      saveView(viewPayload({ id: undefined, name: name.trim() }));
+    }
   };
   const duplicateView = () => {
     const name = window.prompt("Name for the copy", `${draft.name} copy`);
-    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+    if (name && name.trim()) {
+      pendingCreateRef.current = true;
+      saveView(viewPayload({ id: undefined, name: name.trim() }));
+    }
   };
   const renameView = () => {
     const name = window.prompt("Rename view", draft.name);
@@ -424,10 +449,12 @@ function Dashboard() {
 
   const canManage = loggedIn;
   const savingHint = !draft.id
-    ? "Unsaved layout"
-    : loggedIn
-    ? "Changes save automatically"
-    : "Log in to save changes";
+    ? "Default layout — Save as a view to keep changes"
+    : !loggedIn
+    ? "Log in to save changes"
+    : pendingSave
+    ? "Saving…"
+    : "All changes saved";
 
   return (
     <div className="dashboard">
@@ -438,12 +465,9 @@ function Dashboard() {
             <select
               id="view-select"
               value={draft.id || SYNTHETIC}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v && v !== SYNTHETIC) pickView(v);
-              }}
+              onChange={(e) => e.target.value && pickView(e.target.value)}
             >
-              {!draft.id && <option value={SYNTHETIC}>Unsaved layout</option>}
+              <option value={SYNTHETIC}>Default layout</option>
               {views.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}{v.id === defaultId ? "  ★" : ""}
@@ -580,12 +604,14 @@ function Dashboard() {
                   y={t.y}
                   width={t.width}
                   height={t.height}
+                  zIndex={zOrder.indexOf(w.id) + 1 || undefined}
                   ratio={isStream ? (ratios[w.id] || 16 / 9) : undefined}
                   resize={isStream ? "aspect" : "both"}
                   bounds={canvasSize}
                   onChange={(patch) => updateTile(w.id, patch)}
                   onRemove={draft.id ? () => removeWidget(w.id) : undefined}
                   onAutoHeight={isStream ? undefined : noteAutoHeight(w.id)}
+                  onActivate={() => bringToFront(w.id)}
                 >
                   {isStream ? (
                     mod && info ? (
@@ -596,6 +622,7 @@ function Dashboard() {
                         isRecording={mod.status === "RECORDING"}
                         onAspectRatio={noteRatio(w.id)}
                         syncStatus={mod.config_sync_status}
+                        settingsId={mod.id}
                       />
                     ) : (
                       <div className="dashboard-widget-missing">

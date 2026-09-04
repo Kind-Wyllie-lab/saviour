@@ -614,19 +614,30 @@ def render_overlay(
     for path in aligned_paths:
         cmd += ["-i", path]
     spec_filter = spec.scroll_filter(width, strip_height, fps)
+    # `showspectrum:slide=scroll` keeps emitting frames for as long as its
+    # audio input lasts. The aligned audio is padded to the camera *window*
+    # duration, which is a fraction of a frame longer than the composite
+    # (n_out = int(window / step)), so the spectrum outlives [0:v]. `vstack`
+    # / `overlay` then have one input at EOF and the other still running,
+    # which trips `Assertion best_input >= 0` in ffmpeg 6.x's input picker.
+    # `shortest=1` on the combining filter (+ -shortest on the output) makes
+    # it stop cleanly with the video instead.
     if stacked:
         graph = (
             f"[1:a]{spec_filter}[sp];"
             f"[sp]drawbox=x={width - 3}:y=0:w=3:h={strip_height}:"
             f"color=yellow@0.9:t=fill[strip];"
-            f"[0:v][strip]vstack=inputs=2[v]"
+            f"[0:v][strip]vstack=inputs=2:shortest=1[v]"
         )
     else:
-        graph = f"[1:a]{spec_filter}[spec];[0:v][spec]overlay=0:H-h[v]"
+        graph = (
+            f"[1:a]{spec_filter}[spec];"
+            f"[0:v][spec]overlay=0:H-h:shortest=1[v]"
+        )
     cmd += ["-filter_complex", graph, "-map", "[v]"]
     for i in range(len(aligned_paths)):
         cmd += ["-map", f"{i + 1}:a"]
-    cmd += ["-c:v", "libx264", "-crf", "20", "-c:a", "flac", out_path]
+    cmd += ["-shortest", "-c:v", "libx264", "-crf", "20", "-c:a", "flac", out_path]
     _run(cmd)
     return out_path
 
@@ -707,12 +718,16 @@ def render_ethogram(
         f"[1:a]{spec.scroll_filter(panel_width, strip_height, fps)}[sp];"
         f"[sp]drawbox=x={panel_width - 3}:y=0:w=3:h={strip_height}:"
         f"color=yellow@0.9:t=fill[spec];"
-        f"[top][spec]vstack=inputs=2[v]"
+        # shortest=1 (+ -shortest): the scrolling spectrum outlives the
+        # frame-exact top panel by a fraction of a second, which trips
+        # `Assertion best_input >= 0` in ffmpeg 6.x -- stop with the video.
+        f"[top][spec]vstack=inputs=2:shortest=1[v]"
     )
     _run([
         "ffmpeg", "-y", "-i", tmp_top, "-i", aligned_flac,
         "-filter_complex", graph, "-map", "[v]", "-map", "1:a",
-        "-r", str(fps), "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+        "-r", str(fps), "-shortest",
+        "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
         "-pix_fmt", "yuv420p", "-g", str(fps * 3), "-c:a", "aac", "-b:a", "96k",
         "-movflags", "+faststart", out_path,
     ])

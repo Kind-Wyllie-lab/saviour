@@ -105,6 +105,32 @@ def test_run_progress_parses_ffmpeg_progress(monkeypatch):
     assert seen == [0.25, 0.5]          # 2.5s / 10s, 5s / 10s
 
 
+def test_run_progress_treats_out_time_ms_as_microseconds(monkeypatch):
+    """ffmpeg's `out_time_ms` is actually microseconds (legacy quirk) and is
+    emitted alongside `out_time_us` in every block. Both must yield the same
+    fraction -- otherwise the bar flickers 90-something % <-> 100 %."""
+    lines = iter([
+        "out_time_us=5000000\n", "out_time_ms=5000000\n", "progress=continue\n",
+        "out_time_us=9000000\n", "out_time_ms=9000000\n", "progress=end\n",
+    ])
+
+    class _FakeProc:
+        stdout = lines
+        stderr = type("S", (), {"read": staticmethod(lambda: "")})()
+        returncode = 0
+
+        def wait(self):
+            pass
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakeProc())
+    seen = []
+    _run_progress(["ffmpeg", "-i", "x"], total_s=10.0, on_frac=seen.append)
+    assert seen == [0.5, 0.5, 0.9, 0.9]  # no jump to a clamped 1.0
+
+
 def test_run_progress_falls_back_to_run_without_duration(monkeypatch):
     called = {}
     monkeypatch.setattr(audio_align, "_run", lambda cmd: called.setdefault("cmd", cmd))

@@ -580,14 +580,16 @@ def _run_progress(cmd: list[str], total_s: float | None, on_frac) -> None:
     try:
         for raw in proc.stdout:
             key, _, val = raw.strip().partition("=")
-            if key == "out_time_us":
-                unit = 1e6
-            elif key == "out_time_ms":
-                unit = 1e3
-            else:
+            # ffmpeg emits BOTH `out_time_us` and `out_time_ms` in every
+            # progress block, and -- a long-standing ffmpeg quirk kept for
+            # compat -- `out_time_ms` is actually microseconds too, not
+            # milliseconds. Treating it as ms made the fraction jump to a
+            # clamped 1.0 on alternate lines, so the bar flickered between
+            # ~90-something % and 100 %. Both are microseconds.
+            if key not in ("out_time_us", "out_time_ms"):
                 continue
             try:
-                on_frac(max(0.0, min(1.0, int(val) / unit / total_s)))
+                on_frac(max(0.0, min(1.0, int(val) / 1e6 / total_s)))
             except (ValueError, TypeError):
                 pass
     finally:

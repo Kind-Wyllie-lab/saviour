@@ -228,15 +228,19 @@ function Dashboard() {
     return () => clearTimeout(t);
   }, [activeViewId, loaded]);
 
-  // Adopt a freshly created view (New / Save as / Duplicate all round-trip a
-  // dashboard_view_saved ack carrying the server-assigned id). Wait until the
-  // broadcast list actually contains it, and adopt each ack only once so a
-  // later manual view switch isn't fought.
-  const adoptedRef = useRef(null);
+  // Adopt a freshly *created* view (New / Save as / Duplicate). Those set
+  // pendingCreateRef right before calling saveView; an ordinary save ack (a
+  // drag auto-save, or the flush in pickView) must NOT move the selection —
+  // otherwise switching to "Default layout" gets yanked back to the view its
+  // own flush-save just re-acked.
+  const pendingCreateRef = useRef(false);
+  const adoptedAtRef = useRef(0);
   useEffect(() => {
-    if (!lastSaved?.id || adoptedRef.current === lastSaved) return;
-    if (!views.some((v) => v.id === lastSaved.id)) return;
-    adoptedRef.current = lastSaved;
+    if (!lastSaved?.id || adoptedAtRef.current === lastSaved._at) return;
+    if (!pendingCreateRef.current) { adoptedAtRef.current = lastSaved._at; return; }
+    if (!views.some((v) => v.id === lastSaved.id)) return; // wait for the broadcast
+    adoptedAtRef.current = lastSaved._at;
+    pendingCreateRef.current = false;
     setActiveViewId(lastSaved.id);
     writeLS(LS_VIEW, lastSaved.id);
   }, [lastSaved, views]);
@@ -393,16 +397,23 @@ function Dashboard() {
   const newView = () => {
     const name = window.prompt("New view name", "Overview");
     if (name && name.trim()) {
+      pendingCreateRef.current = true;
       saveView({ name: name.trim(), group: "", widgets: defaultWidgets(moduleList), layout: {} });
     }
   };
   const saveAsView = () => {
     const name = window.prompt("Name this view", "Overview");
-    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+    if (name && name.trim()) {
+      pendingCreateRef.current = true;
+      saveView(viewPayload({ id: undefined, name: name.trim() }));
+    }
   };
   const duplicateView = () => {
     const name = window.prompt("Name for the copy", `${draft.name} copy`);
-    if (name && name.trim()) saveView(viewPayload({ id: undefined, name: name.trim() }));
+    if (name && name.trim()) {
+      pendingCreateRef.current = true;
+      saveView(viewPayload({ id: undefined, name: name.trim() }));
+    }
   };
   const renameView = () => {
     const name = window.prompt("Rename view", draft.name);

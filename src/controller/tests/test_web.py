@@ -861,6 +861,30 @@ class TestAuthGatedHandlers:
             (called_sid,), _ = web._collect_bug_report.call_args
             assert called_sid  # a real sid was captured, not None/empty
 
+    def test_clear_fault_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("clear_fault", {"session_name": "hab"})
+
+        facade.clear_fault.assert_not_called()
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def test_clear_fault_forwards_and_surfaces_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.clear_fault.return_value = {"result": "success"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("clear_fault", {"session_name": "hab"})
+            facade.clear_fault.assert_called_once_with("hab")
+
+            facade.clear_fault.return_value = {"result": "error", "error": "No fault to clear"}
+            client.get_received()
+            client.emit("clear_fault", {"session_name": "hab"})
+            assert client.get_received()[-1]["name"] == "session_error"
+
 
 class TestCheckReady:
     """validate_readiness makes each module mount+write+unmount against the

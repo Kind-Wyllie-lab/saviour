@@ -366,3 +366,56 @@ def test_estimate_habitat_volume_projects_and_checks_space():
     assert mics["duty_fraction"] < 0.5               # 10h/24h window
     assert est["projected_bytes_total"] > 0
     assert "share_free_bytes" in est
+
+
+# --------------------------------------------------------------------------- #
+# clear_fault                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def _active_habitat(rec):
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    s = rec.sessions["hab"]
+    s.state = SessionState.ACTIVE
+    return s
+
+
+def test_clear_fault_error_state_flips_to_active_and_clears_record():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.state = SessionState.ERROR
+    s.error_message = "c1 is offline"
+    s.error_time = "20260601-090000"
+    rec._not_recording_strikes[("hab", "c1")] = 3
+
+    assert rec.clear_fault("hab") == {"result": "success"}
+    assert s.state == SessionState.ACTIVE
+    assert s.error_message == "" and s.error_time is None
+    assert ("hab", "c1") not in rec._not_recording_strikes
+    facade.update_sessions.assert_called()
+
+
+def test_clear_fault_unattended_active_keeps_active():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.error_message = "m1: recording health degraded"
+    s.error_time = "20260601-090000"
+
+    assert rec.clear_fault("hab")["result"] == "success"
+    assert s.state == SessionState.ACTIVE
+    assert s.error_message == "" and s.error_time is None
+
+
+def test_clear_fault_noop_when_nothing_to_clear():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    _active_habitat(rec)
+    assert rec.clear_fault("hab")["result"] == "error"
+
+
+def test_clear_fault_rejected_when_stopped_or_missing():
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    s = _active_habitat(rec)
+    s.state = SessionState.STOPPED
+    s.error_time = "20260601-090000"
+    assert rec.clear_fault("hab")["result"] == "error"
+    assert rec.clear_fault("nope")["result"] == "error"

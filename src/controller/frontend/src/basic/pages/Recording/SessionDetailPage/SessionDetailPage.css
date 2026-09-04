@@ -208,6 +208,49 @@
 .compose-panel__actions {
   display: flex;
   gap: 8px;
+  margin-top: 4px;
+}
+
+/* The compose panel's buttons (.btn / .btn-small) have no global style —
+   scope them to the page's visual language here rather than touch the
+   shared class. */
+.compose-panel .btn,
+.compose-panel .btn-small {
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.compose-panel .btn {
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  border: none;
+  background-color: var(--accent-color, #3f7cac);
+  color: #fff;
+}
+
+.compose-panel .btn:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--accent-color, #3f7cac) 82%, #000);
+}
+
+.compose-panel .btn-small {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+  background: none;
+  color: var(--text-muted, #888);
+  border: 1px solid var(--border-color, #bbb);
+}
+
+.compose-panel .btn-small:hover:not(:disabled) {
+  color: var(--accent-color, #4a90d9);
+  border-color: var(--accent-color, #4a90d9);
+}
+
+.compose-panel .btn:disabled,
+.compose-panel .btn-small:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .compose-panel__preview {

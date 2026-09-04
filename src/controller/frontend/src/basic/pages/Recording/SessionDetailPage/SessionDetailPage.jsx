@@ -671,7 +671,8 @@ export default function SessionDetailPage() {
                 </span>
               ) : (
                 <span className="session-sync-verdict__detail">
-                  Sync quality not validated yet
+                  Sync quality is checked automatically within a few minutes of
+                  the last file landing.
                 </span>
               )}
               {session.framesync_verdict?.report_rel && (
@@ -689,10 +690,11 @@ export default function SessionDetailPage() {
               {!framesyncJob && (
                 <button
                   type="button"
-                  className="btn btn-small"
+                  className="session-btn session-btn--copy"
                   onClick={() => recheckFramesync()}
+                  title="Run the sync-quality check now instead of waiting for the automatic pass"
                 >
-                  {session.framesync_verdict ? "Re-check" : "Validate sync quality"}
+                  {session.framesync_verdict ? "Re-check" : "Check now"}
                 </button>
               )}
             </div>

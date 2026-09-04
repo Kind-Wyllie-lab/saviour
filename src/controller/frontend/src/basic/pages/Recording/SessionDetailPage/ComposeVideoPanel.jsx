@@ -411,8 +411,10 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
 
       {showSpec && (
         <>
-          <div className="form-field">
-            <label>Colour:</label>
+          <div className="compose-panel__colour">
+            <span className="compose-panel__colour-label">
+              Colour: <strong>{spec.color}</strong>
+            </span>
             <div className="compose-panel__swatches">
               {SPEC_COLORS.map((c) => (
                 <button
@@ -422,14 +424,14 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
                     spec.color === c ? " compose-panel__swatch--active" : ""
                   }`}
                   title={c}
+                  aria-label={c}
                   onClick={() => setSpecField("color", c)}
                 >
                   {SWATCHES[c] ? (
-                    <img src={SWATCHES[c]} alt={c} />
+                    <img src={SWATCHES[c]} alt="" />
                   ) : (
                     <span className="compose-panel__swatch-fallback">{c}</span>
                   )}
-                  <span className="compose-panel__swatch-name">{c}</span>
                 </button>
               ))}
             </div>

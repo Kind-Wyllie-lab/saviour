@@ -137,32 +137,6 @@
   50%       { box-shadow: 0 0 0 5px rgba(46, 125, 50, 0.06); }
 }
 
-/* Per-module update status (shown after Update All) */
-.module-update-status {
-    grid-column: 1 / -1;
-    font-size: 0.78em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.module-update-status--pending {
-    background: color-mix(in srgb, var(--accent-color, blue) 15%, transparent);
-    color: var(--accent-color, blue);
-}
-
-.module-update-status--success {
-    background: color-mix(in srgb, green 15%, transparent);
-    color: color-mix(in srgb, green 80%, var(--text-color));
-}
-
-.module-update-status--error {
-    background: color-mix(in srgb, red 15%, transparent);
-    color: color-mix(in srgb, red 80%, var(--text-color));
-}
-
 /* Bulk action buttons */
 .bulk-actions {
     display: flex;

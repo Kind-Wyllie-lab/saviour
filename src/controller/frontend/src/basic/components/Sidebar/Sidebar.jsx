@@ -138,10 +138,12 @@ function Sidebar({ navItems }) {
 
   // Deploy socket listeners
   useEffect(() => {
-    const onStatus = ({ stage, count }) => {
+    const onStatus = ({ stage }) => {
       if (stage === "modules_notified") {
-        // Modules only — the controller is not updated by this action.
-        setDeployStatus(`Update sent to ${count} module${count !== 1 ? "s" : ""}`);
+        // The System page takes over from here with a per-module progress
+        // modal (deviceStatuses / UpdateProgressModal) as soon as this same
+        // event reaches it — close this one so the two don't stack.
+        setShowUpdateModal(false);
       }
     };
     const onError = ({ error }) => {

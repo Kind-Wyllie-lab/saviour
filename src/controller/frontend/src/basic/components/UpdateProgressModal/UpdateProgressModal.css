@@ -1,0 +1,55 @@
+.update-progress-modal {
+  max-width: 520px;
+}
+
+.update-progress-modal__title {
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.update-progress-modal__table-wrap {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.update-progress-modal__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.update-progress-modal__table th {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 600;
+  opacity: 0.75;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--card-bg-color);
+}
+
+.update-progress-modal__table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  vertical-align: middle;
+}
+
+.update-progress-modal__name {
+  font-weight: 500;
+}
+
+.update-progress-modal__muted {
+  opacity: 0.6;
+}
+
+.update-progress-modal__output {
+  font-size: 0.9em;
+  font-family: monospace;
+  opacity: 0.75;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

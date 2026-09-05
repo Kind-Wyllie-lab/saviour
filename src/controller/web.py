@@ -2085,6 +2085,7 @@ class Web(ABC):
                     "id": data.get("id"),
                     "light": data.get("light"),
                     "dark": data.get("dark"),
+                    "source": data.get("source"),
                 })
             except ThemeError as e:
                 self.socketio.emit("custom_theme_error", {"error": str(e)},

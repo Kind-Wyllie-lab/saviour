@@ -123,6 +123,74 @@ def test_short_hex_accepted():
     assert saved["light"]["--bg-color"] == "#abc"
 
 
+# --- source (edit-mode provenance) --------------------------------------
+
+def test_source_round_trips():
+    s = _store()
+    payload = _theme("Ocean", source={
+        "palette": ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"],
+        "roles": {"bg": "#e9c46a", "card": "#e9c46a", "text": "#264653",
+                  "accent": "#2a9d8f", "accentAlt": "#f4a261"},
+        "raw": True,
+    })
+    saved = s.save(payload)
+    assert saved["source"]["palette"] == [
+        "#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51",
+    ]
+    assert saved["source"]["roles"]["accent"] == "#2a9d8f"
+    assert saved["source"]["raw"] is True
+
+    # Persisted to disk and reloaded via list(), not just handed back.
+    listed = s.list()
+    assert listed[0]["source"]["roles"]["bg"] == "#e9c46a"
+
+
+def test_source_roles_null_means_automatic():
+    s = _store()
+    payload = _theme("Auto", source={
+        "palette": ["#264653", "#2a9d8f", "#e9c46a"], "roles": None,
+    })
+    saved = s.save(payload)
+    assert saved["source"]["roles"] is None
+    assert saved["source"]["raw"] is False  # defaulted, not required
+
+
+def test_source_omitted_entirely():
+    s = _store()
+    saved = s.save(_theme("Plain"))
+    assert "source" not in saved
+
+
+def test_source_not_an_object_rejected():
+    s = _store()
+    with pytest.raises(ThemeError):
+        s.save(_theme("Bad", source="not-an-object"))
+
+
+def test_source_bad_palette_colour_rejected():
+    s = _store()
+    with pytest.raises(ThemeError):
+        s.save(_theme("Bad", source={"palette": ["#264653", "nope"]}))
+
+
+def test_source_roles_missing_key_rejected():
+    s = _store()
+    with pytest.raises(ThemeError):
+        s.save(_theme("Bad", source={
+            "roles": {"bg": "#264653", "card": "#264653", "text": "#264653",
+                      "accent": "#264653"},  # accentAlt missing
+        }))
+
+
+def test_source_roles_bad_hex_rejected():
+    s = _store()
+    with pytest.raises(ThemeError):
+        s.save(_theme("Bad", source={
+            "roles": {"bg": "#264653", "card": "#264653", "text": "#264653",
+                      "accent": "#264653", "accentAlt": "nope"},
+        }))
+
+
 # --- delete ----------------------------------------------------------
 
 def test_delete_removes_file():

@@ -261,15 +261,14 @@
   margin-top: 8px;
 }
 
+.theme-swatch-edit,
 .theme-swatch-delete {
   position: absolute;
   top: -7px;
-  right: -7px;
   width: 18px;
   height: 18px;
   padding: 0;
   line-height: 16px;
-  font-size: 13px;
   border: 1px solid var(--border-color);
   border-radius: 50%;
   background: var(--card-bg-color);
@@ -279,9 +278,26 @@
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
+.theme-swatch-edit {
+  left: -7px;
+  font-size: 10px;
+}
+
+.theme-swatch-delete {
+  right: -7px;
+  font-size: 13px;
+}
+
+.theme-swatch:hover .theme-swatch-edit,
 .theme-swatch:hover .theme-swatch-delete,
+.theme-swatch-edit:focus-visible,
 .theme-swatch-delete:focus-visible {
   opacity: 1;
+}
+
+.theme-swatch-edit:hover {
+  color: var(--accent-color);
+  border-color: var(--accent-color);
 }
 
 .theme-swatch-delete:hover {

@@ -368,17 +368,83 @@ function buildModeMap(hexes, targetMode) {
   };
 }
 
+// ─── Manual role assignment (ThemeImportModal drag-to-reorder) ──────────────
+// buildModeMap above always picks the palette's lightest/darkest hex as the
+// bg/card/text anchors and the two most vivid mid-tones as the accents. The
+// 5 roles below let an operator override that pick — assign any palette hex
+// to any role — while keeping the same lightness/contrast fix-up per mode,
+// so a manually-chosen anchor still renders a readable theme.
+export const PALETTE_ROLES = [
+  { key: "bg", label: "Background" },
+  { key: "card", label: "Card" },
+  { key: "text", label: "Text" },
+  { key: "accent", label: "Accent" },
+  { key: "accentAlt", label: "Accent (alt)" },
+];
+
+/**
+ * Seeds the manual role editor with the same picks buildModeMap makes
+ * automatically: lightest hex anchors bg + card, darkest anchors text, the
+ * two most vivid mid-tone hexes anchor the accents. One assignment covers
+ * both light and dark previews — each mode just mixes the same anchor
+ * toward a different target lightness (see buildModeMapFromRoles).
+ */
+export function defaultRoleAssignment(hexes) {
+  const byLum = [...hexes].sort((a, b) => relLum(a) - relLum(b));
+  const darkest = byLum[0];
+  const lightest = byLum[byLum.length - 1];
+  const [a1, a2] = pickAccents(hexes);
+  return { bg: lightest, card: lightest, text: darkest, accent: a1, accentAlt: a2 };
+}
+
+/**
+ * Same derivation as buildModeMap, but the bg/card/text/accent anchors come
+ * from an explicit { bg, card, text, accent, accentAlt } hex assignment
+ * instead of being picked automatically. `raw` skips the lightness/contrast
+ * fix-up entirely and uses the chosen hexes verbatim — an escape hatch for
+ * an operator who wants exactly what they picked, contrast risk and all.
+ */
+function buildModeMapFromRoles(roles, targetMode, raw) {
+  const { bg: bgAnchor, card: cardAnchor, text: textAnchor, accent: a1, accentAlt: a2 } = roles;
+  const light = targetMode === "light";
+  const bg = raw ? bgAnchor : withLum(bgAnchor, light ? 0.955 : 0.025);
+  const card = raw ? cardAnchor : withLum(cardAnchor, light ? 0.99 : 0.06);
+  const text = raw ? textAnchor : withLum(textAnchor, light ? 0.06 : 0.92);
+  const minContrast = light ? 3 : 4;
+  const accent = raw ? a1 : ensureContrast(a1, bg, minContrast);
+  const accentAlt = raw ? a2 : ensureContrast(a2, bg, minContrast);
+  return {
+    "--bg-color": bg,
+    "--card-bg-color": card,
+    "--text-color": text,
+    "--secondary-text-color": mix(text, bg, light ? 0.42 : 0.4),
+    "--accent-color": accent,
+    "--accent-color-alt": accentAlt,
+    "--border-color": mix(text, bg, light ? 0.82 : 0.8),
+    "--button-color": accent,
+  };
+}
+
 /**
  * Build a full theme ({ name, light, dark }) from a palette. Both variants
  * are synthesised from the same colours: the light map lightens the
  * palette's neutrals and the dark map darkens them, so the palette's
  * character shows through in whichever mode matches its natural lightness.
  * `id` is left unset — the backend assigns it from the name on save.
+ *
+ * `roleAssignment` (optional, see PALETTE_ROLES/defaultRoleAssignment) opts
+ * into the manually-anchored derivation instead of the automatic pick;
+ * `raw` (only meaningful together with `roleAssignment`) skips the
+ * lightness/contrast fix-up on those 5 roles.
  */
-export function themeFromPalette(name, hexes) {
+export function themeFromPalette(name, hexes, roleAssignment, raw) {
   return {
     name: (name || "").trim(),
-    light: buildModeMap(hexes, "light"),
-    dark: buildModeMap(hexes, "dark"),
+    light: roleAssignment
+      ? buildModeMapFromRoles(roleAssignment, "light", raw)
+      : buildModeMap(hexes, "light"),
+    dark: roleAssignment
+      ? buildModeMapFromRoles(roleAssignment, "dark", raw)
+      : buildModeMap(hexes, "dark"),
   };
 }

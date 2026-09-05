@@ -368,6 +368,66 @@ min-width: 300px;
   border-radius: 4px;
 }
 
+/* AudioMoth monitor tab's colour-map swatch picker (mirrors the Post-Process
+   page's compose-panel__swatch* pattern in SessionDetailPage.css). */
+.mic-colormap-picker {
+  margin-bottom: 8px;
+}
+
+.mic-colormap-picker__label {
+  display: block;
+  font-size: 0.88em;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.mic-colormap-picker__label strong {
+  font-weight: 600;
+}
+
+.mic-colormap-picker__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mic-colormap-picker__swatch {
+  width: 52px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.mic-colormap-picker__swatch:hover {
+  border-color: var(--border-color);
+}
+
+.mic-colormap-picker__swatch--active {
+  border-color: var(--accent-color, #3f7cac);
+}
+
+.mic-colormap-picker__swatch img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mic-colormap-picker__swatch-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 0.55rem;
+  line-height: 1;
+}
+
 /* Save + Reset button row */
 .config-action-buttons {
   display: flex;

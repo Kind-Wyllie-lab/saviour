@@ -1,3 +1,10 @@
+/* Sized by the widget's own rendered box (a dashboard tile can be much
+   narrower than the browser viewport), not the page viewport — see the
+   @container rules below. */
+.module-list-container {
+    container: module-list / inline-size;
+}
+
 .module-list-container h2 {
     text-align: center;
 }
@@ -197,31 +204,56 @@
     color: white;
 }
 
-/* ── ≤ 640px: drop Group and Version columns ─────────────────────────────── */
-@media (max-width: 640px) {
+/* ── Responsive to the widget's own box, not the page viewport: a dashboard
+   tile is routinely 260-420px wide regardless of how wide the browser is,
+   and can be dragged/resized narrower or wider at any time. Each tier below
+   shows strictly more detail than the narrower one, so growing a tile always
+   reveals more, not different, information. ───────────────────────────────*/
+
+/* ── < 420px: drop the Version column ──────────────────────────────────── */
+@container module-list (max-width: 420px) {
     .module-list-header,
     .module-list-item {
-        grid-template-columns: 2fr 1.3fr 0.6fr; /* name | status | ip */
+        grid-template-columns: 2fr 1.3fr 1fr 0.7fr; /* name | status | group | ip */
     }
 
-    .module-list-header span:nth-child(3),  /* Group header  */
     .module-list-header span:nth-child(5),  /* Version header */
-    .module-group-cell,
     .module-version {
         display: none;
     }
 }
 
-/* ── ≤ 440px: also drop IP, status text truncates to the dot icon ─────────── */
-@media (max-width: 440px) {
+/* ── < 320px: also drop Group ──────────────────────────────────────────── */
+@container module-list (max-width: 320px) {
+    .module-list-header,
+    .module-list-item {
+        grid-template-columns: 2fr 1.3fr 0.7fr; /* name | status | ip */
+    }
+
+    .module-list-header span:nth-child(3),  /* Group header */
+    .module-group-cell {
+        display: none;
+    }
+}
+
+/* ── < 220px: name + status dot only; header row and bulk actions collapse
+   to save vertical space too, since there's no room to label anything ──── */
+@container module-list (max-width: 220px) {
     .module-list-header,
     .module-list-item {
         grid-template-columns: 1fr auto; /* name | status */
     }
 
-    .module-list-header span:nth-child(4),  /* IP header */
-    .module-list-header span:nth-child(2),  /* Status header (redundant with dot) */
+    .module-list-header {
+        display: none;
+    }
+
     .module-ip {
         display: none;
+    }
+
+    .bulk-actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 }

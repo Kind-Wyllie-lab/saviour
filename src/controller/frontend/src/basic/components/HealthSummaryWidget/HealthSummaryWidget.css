@@ -1,5 +1,8 @@
 .health-summary-widget {
   padding: 12px 16px;
+  /* Sized by the widget's own rendered box, not the page viewport — see the
+     @container rules below. */
+  container: health-summary / inline-size;
 }
 
 .health-summary-widget--issues {
@@ -82,6 +85,38 @@
   font-size: 0.82em;
   font-weight: 400;
   opacity: 0.85;
+}
+
+/* ── < 260px wide: stack label/value instead of squeezing them onto one row
+   (long entries like "PTP sync (worst)" or an offline-module-name list stop
+   getting crushed into half the width), and drop the least essential rows
+   to keep the widget from getting any taller than it has to. ────────────── */
+@container health-summary (max-width: 260px) {
+  .hsw-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .hsw-value,
+  .hsw-alert .hsw-value {
+    text-align: left;
+    max-width: 100%;
+  }
+
+  .hsw-clock {
+    align-items: flex-start;
+  }
+
+  .hsw-drift {
+    display: none;
+  }
+
+  /* Uptime is the least essential row at a glance — drop it first when the
+     widget is this narrow. */
+  .hsw-row--uptime {
+    display: none;
+  }
 }
 
 /* Shared value colours — also used by System page */

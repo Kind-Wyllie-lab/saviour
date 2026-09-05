@@ -33,6 +33,12 @@ const TILE_CHROME_PX = 64; // grip strip + card label header + padding, for flow
 // a manual resize turns a widget into a fixed-height scrolling box.
 const PANEL_COL_W = 360;
 const PANEL_H_ESTIMATE = 210; // fallback until a widget reports its real height
+// A content-sized panel (health summary, module list, …) is capped to
+// whatever room is actually left below it on THIS screen, never sillier-tall
+// than this even with room to spare — a small laptop gets a short, scrolling
+// box instead of a widget that pushes the rest of the canvas off-screen.
+const PANEL_MAX_H_CAP = 480;
+const PANEL_MIN_H = 160;
 const TILE_GRIP_PX = 20;      // .dash-tile__grip height — the drag strip above every body
 const STREAM_TILE_CHROME = 46; // grip + stream-card header, per stream-tile row
 
@@ -308,7 +314,9 @@ function Dashboard() {
     let y = ARRANGE_GAP;
     panels.forEach((w) => {
       if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
-      out[w.id] = { x: rightX, y, width: PANEL_COL_W }; // content-sized
+      const roomBelow = canvasH - y - ARRANGE_GAP - TILE_GRIP_PX;
+      const maxHeight = Math.min(PANEL_MAX_H_CAP, Math.max(PANEL_MIN_H, roomBelow));
+      out[w.id] = { x: rightX, y, width: PANEL_COL_W, maxHeight }; // content-sized, capped
       y += TILE_GRIP_PX + (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
     });
 
@@ -324,10 +332,15 @@ function Dashboard() {
   const materialisedLayout = () => {
     const out = {};
     widgetsRef.current.forEach((w) => {
-      out[w.id] =
+      const entry =
         draftRef.current.layout[w.id] ||
         effLayoutRef.current[w.id] ||
         { x: 0, y: 0, width: DEFAULT_TILE_W };
+      // maxHeight is a derived, this-screen-only cap (see effectiveLayout) —
+      // never persist it, so a view saved on a small screen doesn't stay
+      // capped short when reopened on a bigger one.
+      const { maxHeight: _mh, ...persisted } = entry;
+      out[w.id] = persisted;
     });
     return out;
   };
@@ -383,10 +396,14 @@ function Dashboard() {
     setDraft((d) => {
       const n = d.widgets.length % 6;
       const isStream = w.type === "stream";
+      const slotY = 24 + n * 28;
+      const canvasH = canvasSize.height || 800;
+      const roomBelow = canvasH - slotY - ARRANGE_GAP - TILE_GRIP_PX;
       const slot = {
         x: 24 + n * 28,
-        y: 24 + n * 28,
+        y: slotY,
         width: isStream ? DEFAULT_TILE_W : PANEL_COL_W, // panels stay content-sized
+        ...(isStream ? {} : { maxHeight: Math.min(PANEL_MAX_H_CAP, Math.max(PANEL_MIN_H, roomBelow)) }),
       };
       return { ...d, widgets: [...d.widgets, w], layout: { ...d.layout, [w.id]: slot } };
     });
@@ -604,6 +621,7 @@ function Dashboard() {
                   y={t.y}
                   width={t.width}
                   height={t.height}
+                  maxHeight={t.maxHeight}
                   zIndex={zOrder.indexOf(w.id) + 1 || undefined}
                   ratio={isStream ? (ratios[w.id] || 16 / 9) : undefined}
                   resize={isStream ? "aspect" : "both"}

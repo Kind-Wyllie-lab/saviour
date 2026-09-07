@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import logging
 import math
 import os
 import subprocess
@@ -38,6 +39,8 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+_LOG = logging.getLogger(__name__)
 
 DEFAULT_CANVAS_WIDTH = 1920
 DEFAULT_FPS = 30
@@ -82,9 +85,22 @@ class _StreamCursor:
     seeking via OpenCV is not reliably frame-accurate) and tracks which
     decoded frame is currently the best match for a requested wall-clock
     time.
+
+    The naive mapping is decoded-frame `i` <-> CSV row `i`. That breaks
+    on a libcamera sync *client* camera: its encoder discards frames until
+    `SyncReady`, but the per-frame CSV logged a row for each of them, so
+    the CSV runs ahead of the `.ts` and the client drifts behind the sync
+    server in the composite (found 2026-09-07,
+    plans/multicam-frame-alignment-and-sync-provenance.md). When
+    `frame_count` is supplied and disagrees with the row count by more
+    than a frame, map CSV rows onto decoded frames *proportionally*
+    (assumes the drops are evenly spread — bounds the residual at ~half
+    the deficit) and record the mismatch for the caller to surface.
     """
 
-    def __init__(self, stream: CameraStream, skip: int = 0):
+    def __init__(
+        self, stream: CameraStream, skip: int = 0, frame_count: int | None = None
+    ):
         self.name = stream.name
         self.cap = cv2.VideoCapture(stream.video_path)
         with open(stream.csv_path, newline="") as f:
@@ -92,9 +108,29 @@ class _StreamCursor:
         # Drop leading rows the CSV logged for frames captured before the
         # encoder started, so timestamps_ns[i] lines up with video frame i.
         self.timestamps_ns = ts[skip:] if 0 < skip < len(ts) else ts
-        self.idx = -1
+        self.n_rows = len(self.timestamps_ns)
+        self.n_frames = (
+            frame_count if frame_count and frame_count > 0 else self.n_rows
+        )
+        # +ve: CSV has more rows than the .ts has frames (sync-client discards).
+        self.deficit = self.n_rows - self.n_frames
+        self._remap = (
+            abs(self.deficit) > 1 and self.n_frames > 1 and self.n_rows > 1
+        )
+        self.row = 0        # CSV row pointer — drives the time lookup
+        self.idx = -1       # decoded frame index
         self.frame = None
         self._advance()
+
+    @property
+    def mismatch_ms(self) -> float:
+        """Worst-case residual alignment error this stream carries after
+        the proportional remap (half the deficit, in ms at its own rate)."""
+        if not self._remap or self.n_rows < 2:
+            return 0.0
+        span_s = (self.timestamps_ns[-1] - self.timestamps_ns[0]) / 1e9
+        per_frame_ms = span_s * 1e3 / max(1, self.n_rows - 1)
+        return abs(self.deficit) / 2.0 * per_frame_ms
 
     def _advance(self) -> bool:
         ok, frame = self.cap.read()
@@ -104,14 +140,23 @@ class _StreamCursor:
         self.frame = frame
         return True
 
+    def _frame_for_row(self, row: int) -> int:
+        if not self._remap:
+            return row
+        return round(row * (self.n_frames - 1) / (self.n_rows - 1))
+
     def sync_to(self, t_ns: int):
-        """Advance while the *next* decoded frame is closer to t_ns than
-        the current one, then return the current frame."""
-        while self.idx + 1 < len(self.timestamps_ns):
-            cur_ts = self.timestamps_ns[self.idx]
-            nxt_ts = self.timestamps_ns[self.idx + 1]
-            if abs(nxt_ts - t_ns) > abs(cur_ts - t_ns):
+        """Walk the CSV row pointer to the row nearest `t_ns`, then decode
+        forward to that row's mapped frame. Called with monotonically
+        increasing `t_ns`, so both pointers only move forward."""
+        while self.row + 1 < self.n_rows:
+            if abs(self.timestamps_ns[self.row + 1] - t_ns) > abs(
+                self.timestamps_ns[self.row] - t_ns
+            ):
                 break
+            self.row += 1
+        target = self._frame_for_row(self.row)
+        while self.idx < target:
             if not self._advance():
                 break
         return self.frame
@@ -225,6 +270,7 @@ def compose_session_video(
     canvas: tuple[int, int] | None = None,
     progress=None,
     csv_skip: dict[str, int] | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Compose the session's cameras into one layout video.
 
@@ -232,6 +278,11 @@ def compose_session_video(
     `regions` + `canvas` supply a pre-planned layout (from
     compose.plan_regions) and, when given, override `layout`. `progress`
     is called `progress(done, total, stage)` every ~1 % of frames.
+
+    If `warnings` is a list, one string per stream whose `.ts` frame count
+    disagrees with its CSV row count (a sync-client discard skew) is
+    appended to it — the composite is still produced, with the drops
+    remapped proportionally.
     """
     found = discover_camera_streams(date_dir)
     if streams is not None:
@@ -261,7 +312,20 @@ def compose_session_video(
             regions, canvas_w, canvas_h = _grid_regions(len(found))
 
     _skip = csv_skip or {}
-    cursors = [_StreamCursor(s, _skip.get(s.name, 0)) for s in ordered]
+    cursors = [
+        _StreamCursor(s, _skip.get(s.name, 0), _probe_frame_count(s.video_path))
+        for s in ordered
+    ]
+    for c in cursors:
+        if c.deficit and abs(c.deficit) > 1:
+            msg = (
+                f"camera '{c.name}': {c.n_rows} CSV rows vs {c.n_frames} "
+                f".ts frames ({c.deficit:+d}); frames remapped proportionally, "
+                f"up to ~{c.mismatch_ms:.0f} ms residual alignment error"
+            )
+            _LOG.warning(msg)
+            if warnings is not None:
+                warnings.append(msg)
     t_start = max(c.first_ts for c in cursors)
     t_end = min(c.last_ts for c in cursors)
     if t_end <= t_start:
@@ -429,7 +493,9 @@ def main():
     output = args.output or os.path.join(session_dir, f"{session_name}_aggregated.mp4")
 
     # Best-effort pre-stage-row skip so a standalone run is aligned too. Needs
-    # ffprobe; falls back to 0 (old behaviour) if it isn't on PATH.
+    # ffprobe; falls back to 0 (old behaviour) if it isn't on PATH. Capped at
+    # a couple of frames -- a bigger CSV/`.ts` deficit is a sync-client discard
+    # skew that _StreamCursor remaps proportionally (see its docstring).
     csv_skip = {}
     for s in discover_camera_streams(args.date_dir):
         try:
@@ -437,13 +503,17 @@ def main():
                 n_rows = sum(1 for _ in csv.DictReader(f))
             n_frames = _probe_frame_count(s.video_path)
             if n_frames:
-                csv_skip[s.name] = max(0, n_rows - n_frames)
+                csv_skip[s.name] = min(2, max(0, n_rows - n_frames))
         except OSError:
             pass
 
+    warnings: list[str] = []
     result = compose_session_video(
-        args.date_dir, output, layout=args.layout, fps=args.fps, csv_skip=csv_skip
+        args.date_dir, output, layout=args.layout, fps=args.fps,
+        csv_skip=csv_skip, warnings=warnings,
     )
+    for w in warnings:
+        print(f"WARNING: {w}")
     print(f"Wrote {result}")
 
 

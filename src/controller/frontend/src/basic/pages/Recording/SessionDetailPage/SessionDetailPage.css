@@ -194,6 +194,18 @@
   font-size: 0.82rem;
 }
 
+.compose-job__warnings {
+  margin: 6px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.compose-job__warning {
+  color: var(--warning-color, #b26a00);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .compose-panel__spec {
   padding: 8px 10px;
   border: 1px solid var(--border-color);

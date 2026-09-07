@@ -130,9 +130,15 @@ def test_render_preview_composites_one_frame(tmp_path, monkeypatch):
         return out_png
 
     # video_compose pulls in OpenCV; stand in a fake module so this test
-    # runs without it (render_preview imports it lazily).
+    # runs without it (render_preview imports it lazily). Patch both the
+    # sys.modules entry and the already-bound package attribute -- once the
+    # real submodule has been imported (e.g. by test_video_compose.py at
+    # collection), `from src.controller import video_compose` reads the
+    # attribute and never consults sys.modules.
     fake_vc = types.SimpleNamespace(compose_preview_frame=fake_preview)
     monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
+    import src.controller as _sc
+    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
 
     spec = ComposeSpec.from_dict({"session_name": "sess", "layout": "grid"})
     data = render_preview(str(tmp_path), spec, max_width=800)
@@ -328,7 +334,10 @@ def test_camera_window_drops_prestage_rows(tmp_path):
 def test_prestage_skip_from_frame_count(monkeypatch):
     import src.controller.compose as c
     monkeypatch.setattr(c, "_video_frame_count", lambda _p: 100)
-    assert c._prestage_skip("x.ts", 130) == 30     # 30 pre-stage rows
+    # A big deficit is a sync-client discard skew, not all leading rows --
+    # capped at _MAX_PRESTAGE_SKIP; _StreamCursor remaps the rest.
+    assert c._prestage_skip("x.ts", 130) == c._MAX_PRESTAGE_SKIP
+    assert c._prestage_skip("x.ts", 101) == 1      # a genuine 1-row pre-stage
     assert c._prestage_skip("x.ts", 100) == 0
     assert c._prestage_skip("x.ts", 95) == 0       # never negative
     monkeypatch.setattr(c, "_video_frame_count", lambda _p: 0)

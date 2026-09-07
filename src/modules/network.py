@@ -217,33 +217,57 @@ class Network:
 
     """IP Methods"""
     def _find_own_ip(self):
-        # Get the ip address of the module
+        """Resolve this module's own eth0 IP, waiting for DHCP if necessary.
+
+        Bounded: retries every 2s for up to ``network._ip_wait_secs`` (default
+        60s), then raises ``RuntimeError`` instead of looping forever. This
+        runs during ``Module`` construction under ``saviour.service``
+        (``Restart=always``, ``RestartSec=10``), so a raised error means "let
+        systemd retry the whole process" -- exactly what the controller-side
+        ``_wait_for_proper_ip`` already does. Previously this was
+        ``while True: ... time.sleep(2)`` with no exit, so a module that
+        booted before eth0 had carrier (or with the controller's DHCP server
+        down) hung its service start indefinitely and invisibly.
+        """
         self.logger.info("Searching for own ip")
-        if os.name == 'nt': # Windows
+        if os.name == 'nt':  # Windows (dev only)
             self.ip = socket.gethostbyname(socket.gethostname())
-        else: # Linux/Unix
-            # Try multiple methods to get the actual network IP address
-            import time
-            self.ip = None
-            attempt = 0
-            while True:
-                attempt += 1
-                self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
-                # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
+            return
+
+        max_wait = self.config.get("network._ip_wait_secs", 60) if self.config else 60
+        deadline = time.monotonic() + max_wait
+        attempt = 0
+        self.ip = None
+        while time.monotonic() < deadline:
+            attempt += 1
+            self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
+            try:
                 self.ip = self._get_eth0_ip_nm()
+            except Exception as e:
+                self.logger.warning(f"nmcli IP lookup failed: {e}")
+                self.ip = None
 
+            if self.ip and not self.ip.startswith('127.'):
+                self.logger.info(f"Found eth0 IP: {self.ip}")
+                return
 
-                if not self.ip or self.ip.startswith('127.'):
-                    self.logger.warning(f"No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
-                    time.sleep(2)
-                else:
-                    break
+            self.logger.warning(
+                f"No valid eth0 IP yet (current: {self.ip}). Waiting for DHCP… "
+                f"(attempt {attempt})"
+            )
+            time.sleep(2)
+
+        raise RuntimeError(
+            f"Could not obtain a valid eth0 IP after {max_wait}s — is the PoE "
+            f"link up and the controller's DHCP server reachable? "
+            f"saviour.service will retry."
+        )
 
 
     def _get_eth0_ip_nm(self) -> str:
         cmd = ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        return result.stdout.split("/", 1)[0]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return result.stdout.strip().split("/", 1)[0]
 
 
     """Start and Stop"""

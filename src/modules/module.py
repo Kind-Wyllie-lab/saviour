@@ -806,20 +806,29 @@ class Module(ABC):
 
     def _wait_for_network_ready(self, check_interval: float = 2.0) -> bool:
         """
-        Wait for proper network connectivity with DHCP-assigned IP address.
-        Will keep trying indefinitely until a proper IP is obtained.
-        
+        Wait for a DHCP-assigned LAN IP (192.168.x / 10.0.x) on any interface.
+
+        Bounded by ``network._network_ready_wait_secs`` (default 120s); returns
+        False on timeout so ``start()`` can fail cleanly and let
+        ``saviour.service`` (``Restart=always``) retry, rather than blocking
+        the module's ``start()`` forever. Previously ``while True:`` with no
+        exit — the exact hang the controller-side wait was already fixed for.
+
         Args:
             check_interval: Time between checks in seconds (default: 2.0)
-            
-        Returns:
-            bool: True if proper IP is obtained (will always return True eventually)
-        """
-        self.logger.info("Waiting for proper network connectivity (will keep trying until IP is obtained)")
 
+        Returns:
+            bool: True once a LAN IP appears, False if the deadline passes first.
+        """
+        max_wait = self.config.get("network._network_ready_wait_secs", 120)
+        self.logger.info(
+            f"Waiting up to {max_wait}s for proper network connectivity"
+        )
+
+        deadline = time.monotonic() + max_wait
         attempts = 0
 
-        while True:
+        while time.monotonic() < deadline:
             attempts += 1
 
             try:
@@ -852,6 +861,12 @@ class Module(ABC):
 
             # Wait before next check
             time.sleep(check_interval)
+
+        self.logger.error(
+            f"No LAN IP (192.168.x / 10.0.x) after {max_wait}s — abandoning this "
+            f"start() attempt; saviour.service will retry."
+        )
+        return False
 
 
     def stop(self) -> bool:

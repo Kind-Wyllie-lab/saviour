@@ -34,6 +34,10 @@
    with per-modality-pair method + residual + verdict. Detail: "Defect 2" below.
 3. *(mitigation, not blocking)* hailo-camera load reduction — preview inference
    off during recording / more encoder buffers / lower preview fps.
+4. **Decide `camera.sync_mode` default** — free-run vs framesync. Recommendation
+   + reasoning in the "Decision to make" section below; framesync is what
+   *causes* the client skew, and behaviour work doesn't need sub-frame
+   cross-camera identity.
 
 **Open question for B1:** confirm the overlay text position/font is stable
 enough per camera variant (`camera` vs `hailo_camera`) for a numpy
@@ -289,6 +293,42 @@ measures — the two efforts are complementary.
 6. *(mitigation, not a fix)* Reduce hailo-camera load during recording —
    preview inference off / more encoder buffers / lower preview fps — to shrink
    the encoder-drop count.
+
+## Decision to make: default `camera.sync_mode` to `none` (free-run)?
+
+**Proposed 2026-09-07, not yet decided.** The whole client-camera frame-drop
+problem above is *caused by* libcamera software framesync: the sync **client**
+continuously nudges its frame interval to phase-track the server, which makes
+its encode cadence irregular and it drops handed frames under backpressure. The
+**server** stays clean (A4: `586 == 586`); only the client skews.
+
+**What framesync buys:** every camera captures the same instant to ~µs after
+lock. Needed only for genuine multi-view geometry — stereo depth, 3D pose,
+comparing the *exact same frame* across cameras.
+
+**What free-run + PTP gives instead:** every camera at its natural rate, no
+nudging → no sync-induced drops (both cameras behave like the A4 server).
+`video_compose` already resamples all streams onto a common wall-clock grid by
+nearest `timestamp_ns` (its core design). Cross-camera accuracy = **±½ frame**
+(~16 ms at 30 fps) + the inter-module PTP offset (µs-scale) — invisible for
+behaviour scoring / ethograms, and well inside the audio↔video budget (the
+uncalibrated ~tens-of-ms sensor latency dominates that link anyway).
+
+**Recommendation:** default the fleet to `sync_mode: none`; keep server/client
+available per-rig for anyone doing stereo/3D. Upside: removes the client
+skew at source, simpler pipeline. B1 is still worth building (a loaded camera
+can still drop capture frames — `dropped_before` — independent of sync), but
+the deficits become smaller and roughly symmetric rather than one-sided and
+growing.
+
+**Changes the recommendation:** a real plan for cross-camera 3D/stereo work.
+Then framesync earns its keep *there* — per-rig, not fleet-default.
+
+**Blocking checks before flipping the default:** (1) confirm no current analysis
+depends on frame-exact cross-camera correspondence; (2) `analyse_framesync.py`'s
+verdict logic and the session `framesync_report.json` still make sense for
+`sync_mode: none` (they already run for it — "best-effort"); (3) the frontend
+FrameSync card copy shouldn't imply sync is required.
 
 ## Acceptance
 

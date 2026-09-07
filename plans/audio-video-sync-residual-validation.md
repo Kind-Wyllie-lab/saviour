@@ -312,16 +312,31 @@ read size (buffer fill + copy/settle, not a fixed latency).
   the only thing that does. But it means the sign question now matters much less
   if `block_size` drops: 12 ms of ambiguity vs 597 ms.
 
-**Open follow-ups from this sweep:**
-- Stress-ng run at 8192 and 32768 (xrun headroom on a loaded Pi).
-- Longer recordings (≥60 s) at each size to tighten the excess estimate and catch
-  rare stalls.
+### Stress run — 8192, `stress-ng --cpu 4 --io 2 --vm 2` on the mic Pi, ~65 s, monitor on (2026-09-07, session `8192_transient_monitoron_stress`)
+
+| Quantity | Idle 8192 | **Stressed 8192** |
+|---|---|---|
+| First-read excess (block-0 vs steady line) | ~12 ms | **0.3 / 15 ms** — still negligible |
+| `RECORDER_ENTER_MS` | ~50 ms | **157 / 234 ms** (3–5× slower; pre-recording, harmless) |
+| Steady-fit residual p95 | ~1 ms | **7.6 / 13.3 ms** (scheduler jitter on the per-block `time.time()`) |
+| Blocks with a `record()` stall >85 ms | 0 | **3–6 per mic** (worst single stall ~290 ms) |
+| `SEGMENT_TOTAL_SAMPLES == n_blocks × 8192` | exact | **exact** — no samples dropped |
+| Apparent measured rate | −6…+60 ppm | **−975 / −1088 ppm** — *fit degradation from the stalls, not a real clock shift* |
+| Clap A/V offset (16 claps, matched-motion) | mean +17 ms | **mean +9.3 ms, std 10 ms, no drift across 65 s** |
+
+**Verdict: 8192 survives a hammered Pi for recording + timing.** `soundcard.record(numframes=8192)` blocks until it genuinely has 8192 fresh samples, so a stalled read costs a late *timestamp*, not lost *audio* — `_robust_linfit` + the `STARTED` anchor drop the stalled blocks and the alignment still lands sub-frame (mean +9 ms, no drift, despite the −1000 ppm the raw slope reports). Alignment accuracy degrades from <1 ms (idle) to ~10 ms p95 (stressed) — still well inside a video frame.
+
+**But the stress run also surfaced a real export bug** (fixed, `fix/export-mount-reuse-and-false-success`): under `--io 2` the mic module's Samba export failed and reported **success in 0 s** having transferred zero files — `_mount_share()` tore down the working mount, `umount` hit `target is busy`, and `export_staged` fabricated a `True` for the triggered session. Data was recoverable (`to_export/` on the module). See CLAUDE.md "Correctness / data loss".
+
+**Open follow-ups:**
+- Same stress run at 32768 and 131072 for comparison (does the p95 residual scale, do stalls get worse).
 - The `sample_rate` sweep (hold `block_size`, vary rate) to confirm the excess is
   fixed in *samples* not *milliseconds*.
 - `monitoring.enabled=false` × `block_size` — does removing the concurrent reader
   change the exponent or just the constant?
-- Decide a shipped default. 8192 looks attractive but needs the stress + long-run
-  data; 32768 (~100 ms excess, 4× xrun headroom vs 8192) may be the safer pick.
+- Phase A (TTL buzzer) for the sign, ideally with a stress run too.
+- Decide a shipped default. 8192 now has idle + stressed + long-run data and looks
+  safe; 32768 (~100 ms excess, more headroom) stays the conservative fallback.
 
 ## Phase C — targeted code probes (only if A/B point here)
 

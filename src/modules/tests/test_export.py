@@ -169,6 +169,34 @@ class TestPendingRollback:
 
             assert exp.exporting is False
 
+    def test_triggered_session_reports_false_when_nothing_exported(self):
+        """The real 2026-09-07 bug: files present, every export path fails
+        (mount down), but `session_results[triggered_session]` came back True
+        because the loop keyed results by the un-extractable session name and
+        the fallback set an unconditional True -- so the controller marked the
+        session exported and never retried."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            # module_id "microphone_4703" but filenames say "audiomoth_4703" --
+            # _extract_session_from_filename returns None, so the loop keys on
+            # the full export_path, which != triggered_session.
+            exp.module_id = "microphone_4703"
+            _write_test_file(
+                exp.to_export_folder,
+                "mysession_audiomoth_4703_(0_20260907-145949).flac")
+            _write_test_file(
+                exp.to_export_folder,
+                "mysession_audiomoth_4703_(0_20260907-145949)_timestamps.txt")
+
+            with patch.object(exp, "_setup_export", return_value=False), \
+                 patch.object(exp, "_setup_recovered_export", return_value=False), \
+                 patch.object(exp, "_update_samba_settings"):
+                results = exp.export_staged("mysession/20260907/audiomoth")
+
+            assert results.get("mysession") is False
+            # files must still be recoverable in to_export/
+            assert len(os.listdir(exp.to_export_folder)) == 2
+
 
 # ---------------------------------------------------------------------------
 # Thread lock — concurrent export_staged calls
@@ -331,6 +359,35 @@ class TestMountShare:
                 result = exp._mount_share()
             assert result is False
             assert mock_run.call_count == Export._MOUNT_MAX_ATTEMPTS
+
+    def test_reuses_healthy_existing_mount_without_umount(self):
+        """A working existing mount must be reused as-is -- never torn down
+        first (a failed `umount: target is busy` under load then aborted the
+        whole export, 2026-09-07)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            with patch("subprocess.run") as mock_run, \
+                 patch("os.path.ismount", return_value=True), \
+                 patch.object(exp, "_update_samba_settings"):
+                result = exp._mount_share()
+            assert result is True
+            mock_run.assert_not_called()  # no umount, no mount
+
+    def test_stale_mount_replaced_and_failed_umount_is_nonfatal(self):
+        """If the existing mount is unusable, replace it -- and a non-zero
+        umount must not abort the remount."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            umount_fail = MagicMock(returncode=32, stderr="target is busy")
+            mount_ok = MagicMock(returncode=0, stderr="")
+            with patch("subprocess.run",
+                       side_effect=[umount_fail, umount_fail, mount_ok]), \
+                 patch("os.path.ismount", return_value=True), \
+                 patch.object(exp, "_mount_is_usable", return_value=False), \
+                 patch.object(exp, "_update_samba_settings"), \
+                 patch("time.sleep"):
+                result = exp._mount_share()
+            assert result is True
 
 
 # ---------------------------------------------------------------------------

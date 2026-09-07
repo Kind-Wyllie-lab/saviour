@@ -7,6 +7,7 @@ Author: Andrew SG
 Created: 26/01/2026
 """
 
+import csv
 import json
 import logging
 import math
@@ -180,6 +181,7 @@ class Recording:
         self.logger = logging.getLogger(__name__)
         self.sessions: dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
+        self._marker_lock = threading.Lock()  # serialises markers.csv appends
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
@@ -3051,3 +3053,60 @@ class Recording:
                 f.write(line)
         except Exception:
             pass
+
+    _MARKER_CSV_COLUMNS = [
+        "recv_wall_ns", "recv_iso", "label", "source", "client_wall_ns",
+    ]
+
+    def add_marker(self, session_name: str, label: str,
+                   source: str | None = None,
+                   client_wall_ns: int | None = None) -> dict:
+        """Append a labelled event marker to `<session>/markers.csv` on the
+        share, stamped with the controller's wall clock (PTP grandmaster,
+        so the same timebase as module frame timestamps).
+
+        For an external experiment controller (pyControl etc.) to drop its
+        behavioural events -- trial start, stimulus, reward -- into the
+        recording timeline. `client_wall_ns` is the caller's own epoch
+        time for the event if it has one; recv_wall_ns is always the
+        controller's receive time (good to ~1 ms on the LAN).
+
+        Only valid while the session is ACTIVE. Returns a result dict.
+        """
+        session = self.sessions.get(session_name)
+        if not session:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        if session.state != SessionState.ACTIVE:
+            return {"success": False,
+                    "error": f"Session is {session.state}, not active"}
+        label = str(label).strip()
+        if not label:
+            return {"success": False, "error": "Marker label cannot be empty"}
+
+        recv_ns = time.time_ns()
+        recv_iso = datetime.now().isoformat(timespec="microseconds")
+        path = os.path.join(self._get_share_root(), session_name, "markers.csv")
+        row = [recv_ns, recv_iso, label, source or "",
+               client_wall_ns if client_wall_ns else ""]
+        try:
+            with self._marker_lock:
+                session_dir = os.path.dirname(path)
+                os.makedirs(session_dir, exist_ok=True)
+                new_file = not os.path.exists(path)
+                with open(path, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    if new_file:
+                        writer.writerow(self._MARKER_CSV_COLUMNS)
+                    writer.writerow(row)
+        except Exception as e:
+            self.logger.error(
+                f"add_marker: failed writing marker for '{session_name}': {e}")
+            return {"success": False, "error": f"Could not write marker: {e}"}
+
+        self._log_session_event(
+            session_name, "MARKER",
+            label + (f" (source: {source})" if source else ""))
+        self.logger.info(
+            f"Marker '{label}' recorded for session '{session_name}'")
+        return {"success": True, "session_name": session_name,
+                "recv_wall_ns": recv_ns, "recv_iso": recv_iso, "label": label}

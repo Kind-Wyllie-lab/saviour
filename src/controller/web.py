@@ -13,6 +13,7 @@ Created: ?
 
 
 import csv
+import hashlib
 import hmac
 import io
 import json
@@ -206,6 +207,13 @@ class Web(ABC):
     # sitting somewhere "get_controller_config" could ever echo back.
     _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
 
+    # Named API tokens for external programs (pyControl etc.) hitting
+    # /api/v1 -- an alternative to handing out the web-UI admin password,
+    # so a token baked into a script can be revoked on its own. Same
+    # rationale as above for living outside the JSON config: only sha256
+    # hashes are stored here, never the token itself.
+    _API_TOKENS_FILE = "/etc/saviour/api_tokens.json"
+
     # How long NAS free-space history is kept for the Storage page trend.
     _NAS_HISTORY_RETENTION_S = 30 * 24 * 3600
     # Max points returned to the chart / a single CSV export.
@@ -343,6 +351,43 @@ class Web(ABC):
         self._download_tokens: dict = {}
         self._download_token_lock = threading.Lock()
 
+        # Subscribers to the /api/v1/events SSE stream. Each is a bounded
+        # queue.Queue; _publish_api_event() fans an event dict out to all
+        # of them (dropping it for any that are full rather than blocking).
+        self._event_subscribers: list = []
+        self._event_lock = threading.Lock()
+
+
+    def _event_subscribe(self) -> "object":
+        """Register a new SSE subscriber queue and return it."""
+        q = _queue.Queue(maxsize=256)
+        with self._event_lock:
+            self._event_subscribers.append(q)
+        return q
+
+    def _event_unsubscribe(self, q) -> None:
+        with self._event_lock:
+            try:
+                self._event_subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def _publish_api_event(self, event_type: str, payload: dict | None = None) -> None:
+        """Fan a typed event out to every /api/v1/events subscriber.
+        Best-effort and non-blocking: a subscriber whose queue is full
+        misses this event. Safe to call from any thread, and a no-op when
+        nobody is listening."""
+        with self._event_lock:
+            subs = list(self._event_subscribers)
+        if not subs:
+            return
+        event = {"type": event_type, "ts": time.time(), **(payload or {})}
+        for q in subs:
+            try:
+                q.put_nowait(event)
+            except _queue.Full:
+                pass
+
 
     def _generate_experiment_name(self) -> str:
         """Generate experiment name from metadata, skipping empty fields."""
@@ -402,15 +447,99 @@ class Web(ABC):
         return hmac.compare_digest(str(password or ""), expected)
 
 
-    def _check_bearer_auth(self) -> bool:
-        """Check the admin password against this request's `Authorization:
-        Bearer <password>` header -- for the /facade/* REST routes, which
-        are for external scripts (e.g. a Matlab experiment controller)
-        rather than the browser frontend, so they have no Socket.IO session
-        to check via _is_authenticated/_require_auth."""
+    # -- API token store (named bearer tokens for /api/v1) ------------- #
+
+    def _load_api_tokens(self) -> list:
+        """List of {"name", "hash", "created"} dicts from _API_TOKENS_FILE.
+        Cached on the file's mtime. Missing/corrupt file -> []."""
+        try:
+            mtime = os.path.getmtime(self._API_TOKENS_FILE)
+        except OSError:
+            self._api_tokens_cache = (None, [])
+            return []
+        cache = getattr(self, "_api_tokens_cache", (None, []))
+        if cache[0] == mtime:
+            return cache[1]
+        try:
+            with open(self._API_TOKENS_FILE) as f:
+                data = json.load(f)
+            tokens = [t for t in data if isinstance(t, dict) and t.get("hash")]
+        except (OSError, ValueError):
+            tokens = []
+        self._api_tokens_cache = (mtime, tokens)
+        return tokens
+
+    def _persist_api_tokens(self, tokens: list) -> None:
+        os.makedirs(os.path.dirname(self._API_TOKENS_FILE), exist_ok=True)
+        fd = os.open(self._API_TOKENS_FILE,
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(tokens, f, indent=2)
+        self._api_tokens_cache = (None, [])  # force reload
+
+    @staticmethod
+    def _hash_api_token(token: str) -> str:
+        return hashlib.sha256((token or "").encode()).hexdigest()
+
+    def _api_token_matches(self, token: str) -> bool:
+        if not token:
+            return False
+        h = self._hash_api_token(token)
+        return any(hmac.compare_digest(t["hash"], h)
+                   for t in self._load_api_tokens())
+
+    def mint_api_token(self, name: str) -> dict:
+        """Create a named API token. Returns {"name", "token", "created"};
+        the raw token is shown here once and never recoverable after."""
+        name = (name or "").strip()
+        if not name:
+            return {"success": False, "error": "Token name cannot be empty"}
+        tokens = list(self._load_api_tokens())
+        if any(t["name"] == name for t in tokens):
+            return {"success": False, "error": f"Token '{name}' already exists"}
+        raw = secrets.token_urlsafe(32)
+        created = datetime.now(UTC).isoformat()
+        tokens.append({"name": name, "hash": self._hash_api_token(raw),
+                       "created": created})
+        self._persist_api_tokens(tokens)
+        self.logger.warning(f"Minted API token '{name}' for /api/v1 access")
+        return {"success": True, "name": name, "token": raw, "created": created}
+
+    def revoke_api_token(self, name: str) -> dict:
+        tokens = list(self._load_api_tokens())
+        kept = [t for t in tokens if t["name"] != name]
+        if len(kept) == len(tokens):
+            return {"success": False, "error": f"Unknown token '{name}'"}
+        self._persist_api_tokens(kept)
+        self.logger.warning(f"Revoked API token '{name}'")
+        return {"success": True}
+
+    def list_api_tokens(self) -> list:
+        """Public metadata only -- name + created, never the hash."""
+        return [{"name": t["name"], "created": t.get("created")}
+                for t in self._load_api_tokens()]
+
+    # -- bearer auth ------------------------------------------------- #
+
+    def _bearer_token(self) -> str:
         auth_header = request.headers.get("Authorization", "")
-        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
-        return self._check_admin_password(token)
+        return auth_header[7:] if auth_header.startswith("Bearer ") else ""
+
+    def _check_bearer_auth(self) -> bool:
+        """True if this request's `Authorization: Bearer <secret>` header
+        carries the admin password OR a provisioned API token. For the
+        /facade/* routes and the read/lifecycle /api/v1 routes -- external
+        scripts (pyControl, a Matlab experiment controller) with no
+        Socket.IO session to check via _is_authenticated/_require_auth."""
+        token = self._bearer_token()
+        return (self._check_admin_password(token)
+                or self._api_token_matches(token))
+
+    def _check_admin_bearer(self) -> bool:
+        """Stricter: the admin password ONLY, not an API token. Gates the
+        /api/v1/tokens management routes, so a leaked scoped token cannot
+        mint or revoke tokens."""
+        return self._check_admin_password(self._bearer_token())
 
 
     def _is_authenticated(self) -> bool:
@@ -1011,6 +1140,7 @@ class Web(ABC):
 
     def push_module_update(self, modules: dict):
         self.socketio.emit('modules_update', modules)
+        self._publish_api_event("modules", {"modules": modules})
 
 
     def _first_run_state(self) -> dict:

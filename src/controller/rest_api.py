@@ -8,16 +8,19 @@ that needs to read system state or start/stop recordings without driving
 the Socket.IO web UI.
 
 Mounted at /api/v1 as a Flask blueprint from web.py. Every route (reads
-included) authenticates with the shared admin password as a bearer token:
+included) authenticates with a bearer token:
 
-    Authorization: Bearer <admin password>
+    Authorization: Bearer <secret>
 
--- the same credential the web UI login uses. Retrieve it on the
-controller with `sudo cat /etc/saviour/admin_credentials`. The controller
-serves plain HTTP, so this token crosses the LAN in the clear, exactly as
-the web UI login already does; the project's threat model treats the LAN
-as the trust boundary (see CLAUDE.md "Project status & threat model").
-Do not expose the controller off-LAN.
+where <secret> is either the shared admin password (the same credential
+the web UI login uses -- `sudo cat /etc/saviour/admin_credentials`) or a
+named API token minted via POST /api/v1/tokens. The /api/v1/tokens
+management routes themselves require the admin password specifically, so
+a leaked scoped token cannot mint more. The controller serves plain
+HTTP, so the token crosses the LAN in the clear, exactly as the web UI
+login already does; the project's threat model treats the LAN as the
+trust boundary (see CLAUDE.md "Project status & threat model"). Do not
+expose the controller off-LAN.
 
 Both this API and the Socket.IO handlers call the same ControllerFacade
 methods -- the REST layer is deliberately thin so the two entry points
@@ -34,18 +37,22 @@ Response conventions:
             session not in a state that allows the action)
         503 the export share is configured but unreachable
 
-Scope (v1): read state + recording lifecycle. Arbitrary module commands
-are intentionally NOT here -- the pre-existing POST /facade/send_command
-still covers that escape hatch. Scheduled and Habitat sessions, config
-writes and module management are candidates for a later version.
+Scope: read state, an SSE event stream, the recording lifecycle for plain
+sessions, event markers into a running session, and API-token management.
+Arbitrary module commands are intentionally NOT here -- the pre-existing
+POST /facade/send_command still covers that escape hatch. Scheduled and
+Habitat session *creation*, config writes and module management are
+candidates for a later version.
 """
 
+import json
 import logging
+import queue
 from collections import Counter
 from dataclasses import asdict
 from functools import wraps
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +99,23 @@ def create_api_blueprint(web) -> Blueprint:
             if not web._check_bearer_auth():
                 return _error(
                     "unauthorized",
-                    "Provide the admin password as an "
-                    "'Authorization: Bearer <password>' header",
+                    "Provide the admin password or an API token as an "
+                    "'Authorization: Bearer <secret>' header",
+                    401,
+                )
+            return fn(*args, **kwargs)
+        return wrapper
+
+    def require_admin(fn):
+        """Admin password only -- not an API token. For the token
+        management routes."""
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not web._check_admin_bearer():
+                return _error(
+                    "unauthorized",
+                    "This route requires the admin password (not an API "
+                    "token) as an 'Authorization: Bearer <password>' header",
                     401,
                 )
             return fn(*args, **kwargs)
@@ -195,6 +217,51 @@ def create_api_blueprint(web) -> Blueprint:
             "start_gate_ns": gate_ns,
             "synced": worst is not None and worst <= gate_ns,
             "modules": modules,
+        })
+
+    # ------------------------------------------------------------------ #
+    # event stream (Server-Sent Events)
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/events")
+    @require_auth
+    def events():
+        """A text/event-stream of typed controller events so a caller
+        doesn't have to poll: `sessions` (full snapshot on any session
+        change), `modules` (registry change), `alert` (typed fault --
+        module offline, PTP degraded, export stall, low disk...),
+        `marker` (an accepted marker). Optional `?types=a,b` filter.
+
+        Each subscriber holds a worker thread for the life of the
+        connection -- keep the number of concurrent subscribers small on
+        a controller serving a lab.
+        """
+        wanted = None
+        raw = request.args.get("types")
+        if raw:
+            wanted = {t.strip() for t in raw.split(",") if t.strip()}
+
+        q = web._event_subscribe()
+
+        def stream():
+            try:
+                yield ": connected\n\n"
+                while True:
+                    try:
+                        event = q.get(timeout=15)
+                    except queue.Empty:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if wanted and event.get("type") not in wanted:
+                        continue
+                    yield f"data: {json.dumps(event)}\n\n"
+            finally:
+                web._event_unsubscribe(q)
+
+        return Response(stream(), mimetype="text/event-stream", headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         })
 
     # ------------------------------------------------------------------ #
@@ -336,6 +403,43 @@ def create_api_blueprint(web) -> Blueprint:
             )
         return jsonify(_session_dict(session_name))
 
+    @bp.post("/sessions/<session_name>/marker")
+    @require_auth
+    def add_marker(session_name):
+        """Append a labelled event marker to the session's markers.csv.
+        Body: {"label": str (required), "source"?: str, "t"?: number}
+        where `t` is the caller's own epoch time for the event, in
+        seconds (as from time.time()). The controller's receive time is
+        always recorded too."""
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        data = request.get_json(silent=True) or {}
+        label = str(data.get("label") or "").strip()
+        if not label:
+            return _error("invalid_request", "'label' is required", 400)
+
+        client_wall_ns = None
+        if data.get("t") is not None:
+            try:
+                client_wall_ns = int(float(data["t"]) * 1_000_000_000)
+            except (TypeError, ValueError):
+                return _error(
+                    "invalid_request",
+                    "'t' must be a number (epoch seconds)", 400)
+
+        result = web.facade.add_marker(
+            session_name, label, data.get("source") or None, client_wall_ns)
+        if not result.get("success"):
+            return _error(
+                "marker_rejected",
+                result.get("error", "Could not record marker"), 409)
+        web._publish_api_event("marker", {
+            "session": session_name, "label": label,
+            "recv_wall_ns": result["recv_wall_ns"],
+        })
+        return jsonify(result), 201
+
     @bp.delete("/sessions/<session_name>")
     @require_auth
     def delete_session(session_name):
@@ -354,5 +458,36 @@ def create_api_blueprint(web) -> Blueprint:
                 }
             return _error("delete_rejected", msg, status, **extra)
         return jsonify({"deleted": True, "session_name": session_name})
+
+    # ------------------------------------------------------------------ #
+    # API token management (admin password only, never an API token)
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/tokens")
+    @require_admin
+    def list_tokens():
+        return jsonify({"tokens": web.list_api_tokens()})
+
+    @bp.post("/tokens")
+    @require_admin
+    def create_token():
+        data = request.get_json(silent=True) or {}
+        result = web.mint_api_token(str(data.get("name") or ""))
+        if not result.get("success"):
+            status = 409 if "already exists" in result.get("error", "") else 400
+            return _error("token_rejected", result["error"], status)
+        return jsonify({
+            "name": result["name"],
+            "token": result["token"],
+            "created": result["created"],
+        }), 201
+
+    @bp.delete("/tokens/<name>")
+    @require_admin
+    def delete_token(name):
+        result = web.revoke_api_token(name)
+        if not result.get("success"):
+            return _error("not_found", result["error"], 404)
+        return jsonify({"revoked": True, "name": name})
 
     return bp

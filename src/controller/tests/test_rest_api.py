@@ -2,10 +2,14 @@
 Tests for src/controller/rest_api.py -- the /api/v1 REST blueprint.
 
 Exercised through Flask's test client with web.facade mocked (same
-approach as test_web.py's Tier 2/3). Every route authenticates with the
-admin password as a bearer token; the index route is the one exception.
+approach as test_web.py's Tier 2/3). Most routes take the admin password
+(or an API token) as a bearer token; the index route is open, and the
+/tokens routes require the admin password specifically. The SSE
+/events stream is pulled single-threaded (the test client runs the
+generator lazily on next()).
 """
 
+import json
 import os
 import tempfile
 from unittest.mock import MagicMock
@@ -33,6 +37,7 @@ def _web(**config_overrides):
 
     tmp = tempfile.mkdtemp()
     web._ADMIN_CREDENTIALS_FILE = os.path.join(tmp, "admin_credentials")
+    web._API_TOKENS_FILE = os.path.join(tmp, "api_tokens.json")
     password = web._get_or_create_admin_password()
     return web, password
 
@@ -407,3 +412,211 @@ class TestSessionDelete:
         web.app.test_client().delete(
             "/api/v1/sessions/s1", headers=_auth(password))
         web.facade.delete_session.assert_called_once_with("s1", True, False)
+
+
+# ---------------------------------------------------------------------------
+# markers
+# ---------------------------------------------------------------------------
+
+class TestMarkers:
+    def _active(self, web):
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active"),
+        }
+        web.facade.add_marker.return_value = {
+            "success": True, "session_name": "s1",
+            "recv_wall_ns": 1_700_000_000_123_000_000,
+            "recv_iso": "2026-09-07T12:00:00.123000", "label": "trial_1",
+        }
+
+    def test_marker_unknown_session_404(self):
+        web, password = _web()
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/nope/marker", json={"label": "x"},
+            headers=_auth(password))
+        assert resp.status_code == 404
+
+    def test_marker_requires_label(self):
+        web, password = _web()
+        self._active(web)
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/marker", json={"source": "pyctl"},
+            headers=_auth(password))
+        assert resp.status_code == 400
+
+    def test_marker_happy_path(self):
+        web, password = _web()
+        self._active(web)
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/marker",
+            json={"label": "trial_1", "source": "pyControl"},
+            headers=_auth(password))
+        assert resp.status_code == 201
+        assert resp.get_json()["recv_wall_ns"] == 1_700_000_000_123_000_000
+        web.facade.add_marker.assert_called_once_with(
+            "s1", "trial_1", "pyControl", None)
+
+    def test_marker_converts_client_epoch_seconds_to_ns(self):
+        web, password = _web()
+        self._active(web)
+        web.app.test_client().post(
+            "/api/v1/sessions/s1/marker",
+            json={"label": "reward", "t": 1700000000.5},
+            headers=_auth(password))
+        web.facade.add_marker.assert_called_once_with(
+            "s1", "reward", None, 1_700_000_000_500_000_000)
+
+    def test_marker_rejected_when_not_active(self):
+        web, password = _web()
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="pending"),
+        }
+        web.facade.add_marker.return_value = {
+            "success": False, "error": "Session is pending, not active"}
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/marker", json={"label": "x"},
+            headers=_auth(password))
+        assert resp.status_code == 409
+        assert resp.get_json()["error"]["code"] == "marker_rejected"
+
+    def test_marker_bad_t_is_400(self):
+        web, password = _web()
+        self._active(web)
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/marker",
+            json={"label": "x", "t": "not-a-number"},
+            headers=_auth(password))
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# SSE event stream
+# ---------------------------------------------------------------------------
+
+class TestEventStream:
+    def test_events_requires_auth(self):
+        web, _ = _web()
+        assert web.app.test_client().get(
+            "/api/v1/events").status_code == 401
+
+    def test_events_stream_delivers_published_events(self):
+        web, password = _web()
+        client = web.app.test_client()
+        resp = client.get("/api/v1/events", headers=_auth(password),
+                          buffered=False)
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"].startswith("text/event-stream")
+        stream = resp.response
+        assert next(stream) == b": connected\n\n"
+
+        web._publish_api_event("marker", {"label": "trial_1"})
+        chunk = next(stream).decode()
+        assert chunk.startswith("data: ")
+        event = json.loads(chunk[len("data: "):])
+        assert event["type"] == "marker"
+        assert event["label"] == "trial_1"
+        resp.close()
+
+    def test_events_types_filter_skips_other_types(self):
+        web, password = _web()
+        client = web.app.test_client()
+        resp = client.get("/api/v1/events?types=marker",
+                          headers=_auth(password), buffered=False)
+        stream = resp.response
+        next(stream)  # ": connected"
+        web._publish_api_event("modules", {"modules": {}})
+        web._publish_api_event("marker", {"label": "keep"})
+        chunk = next(stream).decode()
+        assert json.loads(chunk[len("data: "):])["label"] == "keep"
+        resp.close()
+
+    def test_subscribe_unsubscribe_bookkeeping(self):
+        web, _ = _web()
+        q = web._event_subscribe()
+        assert q in web._event_subscribers
+        web._event_unsubscribe(q)
+        assert q not in web._event_subscribers
+
+    def test_publish_with_no_subscribers_is_noop(self):
+        web, _ = _web()
+        web._publish_api_event("alert", {"key": "x"})  # must not raise
+
+    def test_stream_closing_removes_subscriber(self):
+        web, password = _web()
+        client = web.app.test_client()
+        resp = client.get("/api/v1/events", headers=_auth(password),
+                          buffered=False)
+        next(resp.response)
+        assert len(web._event_subscribers) == 1
+        resp.close()
+        assert web._event_subscribers == []
+
+
+# ---------------------------------------------------------------------------
+# API token management
+# ---------------------------------------------------------------------------
+
+class TestTokens:
+    def test_list_requires_admin_password_not_token(self):
+        web, password = _web()
+        web.mint_api_token("rig3")
+        token = web.mint_api_token("rig4")["token"]
+        # a valid API token is rejected by the management routes
+        resp = web.app.test_client().get(
+            "/api/v1/tokens", headers=_auth(token))
+        assert resp.status_code == 401
+        resp = web.app.test_client().get(
+            "/api/v1/tokens", headers=_auth(password))
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.get_json()["tokens"]}
+        assert names == {"rig3", "rig4"}
+
+    def test_mint_returns_token_once(self):
+        web, password = _web()
+        resp = web.app.test_client().post(
+            "/api/v1/tokens", json={"name": "pyControl"},
+            headers=_auth(password))
+        assert resp.status_code == 201
+        body = resp.get_json()
+        assert body["name"] == "pyControl"
+        assert len(body["token"]) > 20
+
+    def test_minted_token_works_on_data_routes(self):
+        web, password = _web()
+        token = web.app.test_client().post(
+            "/api/v1/tokens", json={"name": "rig"},
+            headers=_auth(password)).get_json()["token"]
+        web.facade.get_modules.return_value = {"cam1": {}}
+        resp = web.app.test_client().get(
+            "/api/v1/modules", headers=_auth(token))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"modules": {"cam1": {}}}
+
+    def test_duplicate_name_is_409(self):
+        web, password = _web()
+        web.mint_api_token("dup")
+        resp = web.app.test_client().post(
+            "/api/v1/tokens", json={"name": "dup"}, headers=_auth(password))
+        assert resp.status_code == 409
+
+    def test_empty_name_is_400(self):
+        web, password = _web()
+        resp = web.app.test_client().post(
+            "/api/v1/tokens", json={"name": "  "}, headers=_auth(password))
+        assert resp.status_code == 400
+
+    def test_revoke(self):
+        web, password = _web()
+        token = web.mint_api_token("gone")["token"]
+        resp = web.app.test_client().delete(
+            "/api/v1/tokens/gone", headers=_auth(password))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"revoked": True, "name": "gone"}
+        # the revoked token no longer authenticates
+        assert web._api_token_matches(token) is False
+
+    def test_revoke_unknown_is_404(self):
+        web, password = _web()
+        resp = web.app.test_client().delete(
+            "/api/v1/tokens/ghost", headers=_auth(password))
+        assert resp.status_code == 404

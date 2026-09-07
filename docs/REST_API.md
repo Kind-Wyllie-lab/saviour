@@ -16,18 +16,22 @@ module command, which `/api/v1` deliberately does not expose.
 
 ## Authentication
 
-Every route except the index authenticates with the **shared admin
-password** as a bearer token:
+Every route except the index authenticates with a bearer token:
 
 ```
-Authorization: Bearer <admin password>
+Authorization: Bearer <secret>
 ```
 
-This is the same credential the web UI login uses. On the controller:
+`<secret>` is **either**:
 
-```bash
-sudo cat /etc/saviour/admin_credentials
-```
+- the **shared admin password** — the same credential the web UI login uses
+  (`sudo cat /etc/saviour/admin_credentials` on the controller); **or**
+- a **named API token** minted via `POST /api/v1/tokens` (see
+  [API tokens](#api-tokens)). Preferred for a script — it can be revoked on
+  its own without disturbing the web UI login.
+
+The `/api/v1/tokens` management routes require the **admin password
+specifically** (not an API token), so a leaked scoped token cannot mint more.
 
 The controller serves **plain HTTP** (no TLS) — the token crosses the LAN in
 the clear, exactly as the web UI login already does. The project threat
@@ -126,6 +130,35 @@ name.
  "pending_exports": 0, "failed_exports": 0}
 ```
 
+### `GET /api/v1/events` — Server-Sent Events stream
+
+A `text/event-stream` of typed controller events, so a caller doesn't have to
+poll. Event types:
+
+| `type` | payload | fired when |
+|---|---|---|
+| `sessions` | `{"sessions": {name: {...}}}` | any session state change (full snapshot) |
+| `modules` | `{"modules": {id: {...}}}` | the module registry changes (online/offline, discovery) |
+| `alert` | `{"key", "title", "message", "severity"}` | any controller fault — module offline, PTP degraded, export stall, low disk, … (independent of whether Teams alerting is configured) |
+| `marker` | `{"session", "label", "recv_wall_ns"}` | a marker is accepted |
+
+Every event also carries `type` and `ts` (controller epoch seconds). Optional
+`?types=marker,alert` restricts the stream. Comment lines (`: keep-alive`)
+arrive every 15 s.
+
+```python
+import requests, json
+r = requests.get(f"{BASE}/events?types=sessions,alert",
+                 headers=AUTH, stream=True)
+for line in r.iter_lines():
+    if line.startswith(b"data: "):
+        evt = json.loads(line[6:])
+        print(evt["type"], evt)
+```
+
+Each subscriber holds a worker thread for the life of the connection — keep
+the number of concurrent `/events` clients small.
+
 ---
 
 ## Recording lifecycle
@@ -172,6 +205,32 @@ Habitat Sessions only (sessions with per-plan strategies). `409`
 `pause_rejected` / `resume_rejected` for a plain session or one not in the
 right state.
 
+### `POST /api/v1/sessions/<name>/marker` — drop an event marker
+
+Appends a labelled row to `<session>/markers.csv` on the share, stamped with
+the controller's wall clock (it is the PTP grandmaster, so the same timebase
+as module frame timestamps). This is how an external experiment controller
+gets its behavioural events — trial start, stimulus onset, reward, poke —
+into the recording timeline.
+
+| body field | type | | |
+|---|---|---|---|
+| `label` | string | **required** | the event name |
+| `source` | string | optional | e.g. `"pyControl"` |
+| `t` | number | optional | the caller's own epoch time for the event, in **seconds** (as from `time.time()`) |
+
+Only valid while the session is `ACTIVE` — `409` `marker_rejected` otherwise,
+`404` for an unknown name. `201` on success with
+`{recv_wall_ns, recv_iso, label}`. `recv_wall_ns` is the controller's receive
+time (good to ~1 ms on the LAN); `markers.csv` columns are
+`recv_wall_ns, recv_iso, label, source, client_wall_ns`.
+
+```bash
+curl -X POST "$base_url/api/v1/sessions/$S/marker" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"label": "trial_1", "source": "pyControl", "t": 1757246400.512}'
+```
+
 ### `DELETE /api/v1/sessions/<name>`
 
 Query params: `files` (`true`/`false`, default `true`) — also delete the
@@ -185,12 +244,46 @@ exports without `force` — the latter carries `export_warning`,
 
 ---
 
+## API tokens
+
+Named bearer tokens as an alternative to embedding the web-UI admin password
+in a script. Stored on the controller as SHA-256 hashes in
+`/etc/saviour/api_tokens.json` (mode 600) — the raw token is shown once, at
+creation, and is not recoverable afterwards. These routes require the
+**admin password** (not an API token).
+
+### `GET /api/v1/tokens`
+
+`{"tokens": [{"name": "pyControl-rig3", "created": "2026-09-07T..."}]}` —
+metadata only, never the hash.
+
+### `POST /api/v1/tokens`
+
+Body `{"name": "pyControl-rig3"}`. `201` `{"name", "token", "created"}` —
+**record `token` now**. `409` if the name is taken, `400` if empty.
+
+### `DELETE /api/v1/tokens/<name>`
+
+`200` `{"revoked": true, "name": "..."}`; `404` for an unknown name. The
+token stops authenticating immediately.
+
+```bash
+PW=$(ssh controller sudo cat /etc/saviour/admin_credentials)
+curl -X POST "$base_url/api/v1/tokens" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"name": "pyControl-rig3"}'
+# -> {"name":"pyControl-rig3","token":"XZ...","created":"..."}
+```
+
+---
+
 ## pyControl integration sketch
 
 From a pyControl *host* task-definition file (plain Python), gate the
 experiment on rig readiness, then bracket it with start/stop:
 
 ```python
+import time
 import requests
 
 BASE = "http://192.168.0.98:5000/api/v1"
@@ -208,14 +301,26 @@ def saviour_start(name):
         raise RuntimeError(body["autostart_error"])
     return body["session_name"]
 
+def saviour_mark(session_name, label):
+    requests.post(f"{BASE}/sessions/{session_name}/marker",
+                  headers=AUTH, timeout=5,
+                  json={"label": label, "source": "pyControl",
+                        "t": time.time()}).raise_for_status()
+
 def saviour_stop(session_name):
     requests.post(f"{BASE}/sessions/{session_name}/stop",
                   headers=AUTH, timeout=10).raise_for_status()
 ```
 
-## Not in v1
+Call `saviour_mark(s, "trial_1")` (etc.) from the task's event handlers so the
+behavioural timeline lands in `markers.csv` alongside the video/audio. For a
+watchdog, tail `GET /events?types=alert,sessions` on a background thread and
+abort the run if a module drops.
+
+## Not yet in the API
 
 Arbitrary module commands (`/facade/send_command` still covers this),
 scheduled-session and Habitat-session *creation*, config reads/writes,
-module management (reboot/update). These are candidates for a later
-version; the blueprint is the place to add them.
+module management (reboot/update), a per-session file manifest + bearer-minted
+download token. Candidates for a later version; the blueprint is the place to
+add them.

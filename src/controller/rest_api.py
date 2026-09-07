@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+Controller REST API (v1)
+
+A resource-oriented HTTP API for external programs on the lab LAN -- an
+experiment controller (pyControl, MATLAB, a bespoke acquisition script)
+that needs to read system state or start/stop recordings without driving
+the Socket.IO web UI.
+
+Mounted at /api/v1 as a Flask blueprint from web.py. Every route (reads
+included) authenticates with the shared admin password as a bearer token:
+
+    Authorization: Bearer <admin password>
+
+-- the same credential the web UI login uses. Retrieve it on the
+controller with `sudo cat /etc/saviour/admin_credentials`. The controller
+serves plain HTTP, so this token crosses the LAN in the clear, exactly as
+the web UI login already does; the project's threat model treats the LAN
+as the trust boundary (see CLAUDE.md "Project status & threat model").
+Do not expose the controller off-LAN.
+
+Both this API and the Socket.IO handlers call the same ControllerFacade
+methods -- the REST layer is deliberately thin so the two entry points
+cannot drift apart. Session creation additionally reuses web.py's
+_check_nas_free_space() preflight and _write_session_metadata().
+
+Response conventions:
+  * Success -> the resource as bare JSON (200; 201 for a created session).
+  * Failure -> {"error": {"code": <slug>, "message": <text>, ...}} with a
+    matching HTTP status:
+        400 invalid request      401 bad/missing bearer token
+        404 unknown module/session
+        409 conflict (module already recording, PTP not synced,
+            session not in a state that allows the action)
+        503 the export share is configured but unreachable
+
+Scope (v1): read state + recording lifecycle. Arbitrary module commands
+are intentionally NOT here -- the pre-existing POST /facade/send_command
+still covers that escape hatch. Scheduled and Habitat sessions, config
+writes and module management are candidates for a later version.
+"""
+
+import logging
+from collections import Counter
+from dataclasses import asdict
+from functools import wraps
+
+from flask import Blueprint, jsonify, request
+
+logger = logging.getLogger(__name__)
+
+API_PREFIX = "/api/v1"
+
+
+def _running_version() -> str:
+    """Running version string from src/__version__.py (pre-commit-hook
+    written, travels inside ZIP deploys). Mirrors notify.py's helper."""
+    try:
+        from src.__version__ import __version__
+        return __version__ or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def create_api_blueprint(web) -> Blueprint:
+    """Build the /api/v1 blueprint bound to a Web instance.
+
+    A fresh Blueprint per call (so multiple Web instances in a test run
+    don't collide). `web` supplies:
+      * web.facade                 -- the shared internal API
+      * web.config                 -- for the PTP start-gate threshold
+      * web._check_bearer_auth()   -- Authorization: Bearer check
+      * web._check_nas_free_space()-- export-share preflight
+      * web._write_session_metadata()
+      * web.get_exported_recordings()
+      * web._nas_health            -- last cached share probe (no mount)
+    """
+    bp = Blueprint("rest_api_v1", __name__, url_prefix=API_PREFIX)
+
+    # ------------------------------------------------------------------ #
+    # helpers
+    # ------------------------------------------------------------------ #
+
+    def _error(code: str, message: str, status: int, **extra):
+        body = {"code": code, "message": message}
+        body.update(extra)
+        return jsonify({"error": body}), status
+
+    def require_auth(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not web._check_bearer_auth():
+                return _error(
+                    "unauthorized",
+                    "Provide the admin password as an "
+                    "'Authorization: Bearer <password>' header",
+                    401,
+                )
+            return fn(*args, **kwargs)
+        return wrapper
+
+    def _sessions() -> dict:
+        return web.facade.get_recording_sessions()
+
+    def _session_dict(name: str) -> dict:
+        return asdict(_sessions()[name])
+
+    def _ptp_gate_ns() -> int:
+        return int(web.config.get("recording.ptp_start_gate_us", 50)) * 1000
+
+    def _worst_ptp_ns():
+        try:
+            return web.facade.get_ptp_sync()
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ #
+    # index (unauthenticated -- discloses no state)
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/")
+    def index():
+        return jsonify({
+            "name": "SAVIOUR controller REST API",
+            "version": "v1",
+            "auth": "Authorization: Bearer <admin password>",
+            "endpoints": sorted(
+                rule.rule for rule in web.app.url_map.iter_rules()
+                if rule.rule.startswith(API_PREFIX)
+            ),
+        })
+
+    # ------------------------------------------------------------------ #
+    # state / health / ptp
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/state")
+    @require_auth
+    def get_state():
+        sessions = _sessions()
+        counts = Counter(str(s.state) for s in sessions.values())
+        summary = web.facade.get_health_summary()
+        worst = _worst_ptp_ns()
+        gate_ns = _ptp_gate_ns()
+        return jsonify({
+            "version": _running_version(),
+            "uptime_s": web.facade.get_uptime(),
+            "recording": web.facade.get_recording_status(),
+            "sessions": {
+                "total": len(sessions),
+                "active": counts.get("active", 0),
+                "pending": counts.get("pending", 0),
+                "scheduled": counts.get("scheduled", 0),
+                "paused": counts.get("paused", 0),
+                "stopped": counts.get("stopped", 0),
+                "error": counts.get("error", 0),
+            },
+            "modules": {
+                "total": summary.get("total_modules", 0),
+                "online": summary.get("online_modules", 0),
+                "offline": summary.get("offline_modules", 0),
+            },
+            "ptp": {
+                "worst_offset_ns": worst,
+                "start_gate_ns": gate_ns,
+                "synced": worst is not None and worst <= gate_ns,
+            },
+            "disk": web._nas_health,
+        })
+
+    @bp.get("/health")
+    @require_auth
+    def get_health():
+        return jsonify({
+            "summary": web.facade.get_health_summary(),
+            "modules": web.facade.get_module_health(),
+        })
+
+    @bp.get("/ptp")
+    @require_auth
+    def get_ptp():
+        health = web.facade.get_module_health() or {}
+        modules = {
+            mid: {
+                "ptp4l_offset_ns": h.get("ptp4l_offset_ns"),
+                "phc2sys_offset_ns": h.get("phc2sys_offset_ns"),
+                "ptp4l_freq": h.get("ptp4l_freq"),
+            }
+            for mid, h in health.items()
+        }
+        worst = _worst_ptp_ns()
+        gate_ns = _ptp_gate_ns()
+        return jsonify({
+            "worst_offset_ns": worst,
+            "start_gate_ns": gate_ns,
+            "synced": worst is not None and worst <= gate_ns,
+            "modules": modules,
+        })
+
+    # ------------------------------------------------------------------ #
+    # modules
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/modules")
+    @require_auth
+    def list_modules():
+        return jsonify({"modules": web.facade.get_modules()})
+
+    @bp.get("/modules/<module_id>")
+    @require_auth
+    def get_module(module_id):
+        modules = web.facade.get_modules()
+        if module_id not in modules:
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+        return jsonify(modules[module_id])
+
+    @bp.get("/modules/<module_id>/health")
+    @require_auth
+    def get_one_module_health(module_id):
+        if module_id not in web.facade.get_modules():
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+        return jsonify(web.facade.get_module_health(module_id) or {})
+
+    # ------------------------------------------------------------------ #
+    # exports
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/exports")
+    @require_auth
+    def get_exports():
+        sessions = list(_sessions().values())
+        return jsonify({
+            "exported_recordings": web.get_exported_recordings(),
+            "pending_exports": sum(
+                getattr(s, "pending_exports", 0) for s in sessions),
+            "failed_exports": sum(
+                getattr(s, "total_exports_failed", 0) for s in sessions),
+        })
+
+    # ------------------------------------------------------------------ #
+    # sessions -- read
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/sessions")
+    @require_auth
+    def list_sessions():
+        return jsonify(
+            {"sessions": {n: asdict(s) for n, s in _sessions().items()}})
+
+    @bp.get("/sessions/<session_name>")
+    @require_auth
+    def get_session(session_name):
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        return jsonify(_session_dict(session_name))
+
+    # ------------------------------------------------------------------ #
+    # sessions -- lifecycle
+    # ------------------------------------------------------------------ #
+
+    @bp.post("/sessions")
+    @require_auth
+    def create_session():
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            return _error("invalid_request", "'name' is required", 400)
+        target = data.get("target") or "all"
+
+        nas_error = web._check_nas_free_space()
+        if nas_error:
+            return _error("share_unavailable", nas_error, 503)
+
+        result = web.facade.create_session(
+            name, target,
+            data.get("duration_minutes"),
+            data.get("researcher") or None,
+            unattended=bool(data.get("unattended")),
+        )
+        if not result or not result.get("success"):
+            return _error(
+                "session_rejected",
+                (result or {}).get("error", "Could not create session"),
+                409,
+            )
+
+        session_name = result["session_name"]
+        web._write_session_metadata(session_name, target)
+
+        body = _session_dict(session_name)
+        if data.get("autostart"):
+            start = web.facade.force_start_session(session_name)
+            body = _session_dict(session_name)
+            if not start or not start.get("success"):
+                body["autostart_error"] = (start or {}).get(
+                    "error", "Could not start session")
+        return jsonify(body), 201
+
+    @bp.post("/sessions/<session_name>/stop")
+    @require_auth
+    def stop_session(session_name):
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        web.facade.stop_session(session_name)
+        return jsonify(_session_dict(session_name))
+
+    @bp.post("/sessions/<session_name>/pause")
+    @require_auth
+    def pause_session(session_name):
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        result = web.facade.pause_session(session_name)
+        if not result or not result.get("success"):
+            return _error(
+                "pause_rejected",
+                (result or {}).get("error", "Could not pause session"),
+                409,
+            )
+        return jsonify(_session_dict(session_name))
+
+    @bp.post("/sessions/<session_name>/resume")
+    @require_auth
+    def resume_session(session_name):
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        result = web.facade.resume_session(session_name)
+        if not result or not result.get("success"):
+            return _error(
+                "resume_rejected",
+                (result or {}).get("error", "Could not resume session"),
+                409,
+            )
+        return jsonify(_session_dict(session_name))
+
+    @bp.delete("/sessions/<session_name>")
+    @require_auth
+    def delete_session(session_name):
+        files = request.args.get("files", "true").lower() != "false"
+        force = request.args.get("force", "false").lower() == "true"
+        result = web.facade.delete_session(session_name, files, force)
+        if result.get("error"):
+            msg = result["error"]
+            status = 404 if msg.startswith("Unknown session") else 409
+            extra = {}
+            if result.get("export_warning"):
+                extra = {
+                    "export_warning": True,
+                    "pending_exports": result.get("pending_exports"),
+                    "total_exports_failed": result.get("total_exports_failed"),
+                }
+            return _error("delete_rejected", msg, status, **extra)
+        return jsonify({"deleted": True, "session_name": session_name})
+
+    return bp

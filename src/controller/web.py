@@ -40,7 +40,7 @@ from flask import (
 )
 from flask_socketio import SocketIO
 
-from src.controller import compose, framesync_check
+from src.controller import compose, framesync_check, rest_api
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
@@ -283,6 +283,12 @@ class Web(ABC):
         self.rest_facade = True
         if self.rest_facade:
             self._register_rest_facade_routes()
+
+        # Resource-oriented REST API (/api/v1) for external experiment
+        # controllers (pyControl etc.) -- see src/controller/rest_api.py.
+        # A thin bearer-authed layer over the same ControllerFacade the
+        # Socket.IO handlers use. The older /facade/* routes stay as-is.
+        self.app.register_blueprint(rest_api.create_api_blueprint(self))
 
         # NAS health state + a rolling free-space history for the Storage page's
         # trend chart. One sample per _nas_monitor_loop pass (default 5 min);

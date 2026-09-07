@@ -89,11 +89,30 @@ class ControllerFacade:
 
 
     def get_system_state(self) -> dict:
+        """A compact rollup of controller state. Consumed by the Socket.IO
+        `get_system_state` event and the REST /api/v1/state route. The
+        `uptime` / `ptp_sync` keys are kept (not renamed) because the
+        habitat Dashboard reads them directly."""
+        sessions = self.get_recording_sessions()
+        counts: dict = {}
+        for s in sessions.values():
+            counts[str(s.state)] = counts.get(str(s.state), 0) + 1
+        summary = self.get_health_summary()
+        try:
+            ptp_ns = self.get_ptp_sync()
+        except Exception:
+            ptp_ns = None
         return {
-            "example": "This is an example system state object",
             "recording": self.get_recording_status(),
-            "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset_ns across modules, in nanoseconds
+            "uptime": self.get_uptime(),  # seconds since controller start
+            "ptp_sync": ptp_ns,  # largest |ptp4l_offset_ns| across modules
+            "sessions_total": len(sessions),
+            "sessions_active": counts.get("active", 0),
+            "sessions_pending": counts.get("pending", 0),
+            "sessions_scheduled": counts.get("scheduled", 0),
+            "modules_total": summary.get("total_modules", 0),
+            "modules_online": summary.get("online_modules", 0),
+            "modules_offline": summary.get("offline_modules", 0),
         }
 
 

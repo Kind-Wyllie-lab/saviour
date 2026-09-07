@@ -4,9 +4,16 @@
 # Usage: sudo saviour-config
 #        sudo saviour-config --apply                 (non-interactive, boot-time provisioning)
 #        sudo saviour-config --regenerate-service     (rewrite the systemd unit only, e.g. after a code-layout change)
+#        sudo saviour-config --apply-firewall         (re-apply just the wlan0/WAN firewall + smb.conf interface binding)
 #
 # Requires whiptail (pre-installed on Raspberry Pi OS).
 # Run after install.sh to assign a role, or any time to reconfigure.
+#
+# Hand-editable keys in /etc/saviour/config (beyond ROLE/TYPE/GATEWAY_*/DEVICE_IP):
+#   FIREWALL_WLAN_SSH=yes   keep TCP 22 reachable directly on the untrusted
+#                           (wlan0 / WAN) interface as a break-glass fallback to
+#                           Tailscale. Default (unset) drops it -- Tailscale, on
+#                           tailscale0, is never filtered by the firewall.
 
 set -uo pipefail
 
@@ -103,6 +110,11 @@ get_current_config() {
 
 write_config() {
     mkdir -p "$(dirname "$CONFIG_FILE")"
+    # Preserve hand-added optional keys that this script never sets itself
+    # (e.g. FIREWALL_WLAN_SSH) so regenerating the file doesn't silently
+    # drop a break-glass setting a user added over a USB mount.
+    local fw_wlan_ssh
+    fw_wlan_ssh=$(read_config_value "$CONFIG_FILE" FIREWALL_WLAN_SSH)
     tee "$CONFIG_FILE" > /dev/null <<EOF
 ROLE=${DEVICE_ROLE}
 TYPE=${DEVICE_TYPE}
@@ -111,6 +123,7 @@ GATEWAY=${GATEWAY}
 WAN_INTERFACE=${WAN_INTERFACE}
 DEVICE_IP=${DEVICE_IP}
 EOF
+    [ -n "$fw_wlan_ssh" ] && echo "FIREWALL_WLAN_SSH=${fw_wlan_ssh}" >> "$CONFIG_FILE"
 }
 
 # Marker of what was actually last applied -- see PROVISIONED_FILE above.
@@ -764,6 +777,8 @@ network_settings() {
             detect_interface_name
             set_own_ip
             [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
+            # WAN_INTERFACE may have changed — re-scope the firewall to it.
+            configure_firewall
             whiptail --title "Done" --msgbox "\nNetwork configuration updated." 7 $W
             ;;
         ip)
@@ -1055,6 +1070,13 @@ ensure_samba_human_accounts() {
         changed=true
     fi
 
+    # Reach devices provisioned before the interface-binding hardening landed:
+    # configure_samba_share() writes these lines into new installs directly,
+    # but its heredoc is only re-run on a role change.
+    if ensure_smbconf_bind_interfaces; then
+        changed=true
+    fi
+
     if [ "$changed" = true ]; then
         run_logged systemctl restart smbd nmbd
     fi
@@ -1126,6 +1148,11 @@ configure_samba_share() {
    log level = 1
    log file = /var/log/samba/%m.log
    max log size = 50
+   # Only listen on the loopback and the PoE LAN -- never on wlan0/eduroam
+   # even if the firewall (configure_firewall) is somehow not in effect.
+   # Add tailscale0 here if you want to reach the share over Tailscale.
+   bind interfaces only = yes
+   interfaces = lo eth0
 
 [${SHARENAME}]
    comment = SAVIOUR Controller Share
@@ -1283,6 +1310,138 @@ disable_mdns() {
     if is_installed "iptables-persistent"; then
         run_logged netfilter-persistent save
     fi
+}
+
+# ── wlan0 / WAN firewall ─────────────────────────────────────────────────────
+# The controller's own services all bind 0.0.0.0: the Flask/SocketIO UI +
+# /api/v1 on :5000, the :80->:5000 redirect (configure_mdns), the
+# unauthenticated ZeroMQ command bus on :5555/:5556, and Samba on
+# :445/:139/:137/:138. That is fine on eth0 -- the PoE LAN is the trust
+# boundary per the threat model -- but a controller that also has wlan0 on
+# campus wifi (eduroam / UoE-Device) is then exposing all of it to every
+# other client on that network if AP/client isolation isn't perfect.
+#
+# Scope a default-deny INPUT filter to the untrusted interface(s) only. lo,
+# eth0 and tailscale0 are never touched, so:
+#   * SSH in over Tailscale keeps working (tailscale0 is not filtered);
+#   * `ssh -D 1080` SOCKS to the web UI keeps working -- sshd on the
+#     controller makes that onward connection from localhost/eth0, not wlan0;
+#   * modules on the PoE LAN are unaffected.
+# Tailscale's own direct-path UDP (41641) is allowed back in so it doesn't
+# get forced onto a DERP relay. ICMP/ICMPv6 and the DHCP client ports stay
+# open. Everything else inbound on wlan0 is dropped, v4 and v6.
+#
+# "Untrusted" = wlan0 always (the rule is harmless if wlan0 is absent -- it
+# just never matches) plus WAN_INTERFACE when this controller shares internet
+# from something that isn't eth0.
+_fw_untrusted_interfaces() {
+    local ifaces="wlan0"
+    if [ -n "${WAN_INTERFACE:-}" ] \
+       && [ "$WAN_INTERFACE" != "eth0" ] \
+       && [ "$WAN_INTERFACE" != "wlan0" ] \
+       && [ "$WAN_INTERFACE" != "lo" ]; then
+        ifaces="$ifaces $WAN_INTERFACE"
+    fi
+    echo "$ifaces"
+}
+
+# Remove every INPUT rule that jumps to our chain, whatever interface it was
+# hooked on -- so configure_firewall() can re-hook cleanly each run and
+# disable_firewall() leaves nothing behind, even if the interface list
+# changed between runs. `$ipt -S` prints one `-A INPUT ... -j <chain>` line
+# per hook; turning `-A` into `-D` deletes it.
+_fw_unhook() {
+    local ipt="$1" chain="SAVIOUR-WLAN-IN" rules line
+    command -v "$ipt" > /dev/null 2>&1 || return 0
+    rules=$("$ipt" -S INPUT 2>/dev/null | grep -F -- "-j ${chain}" || true)
+    [ -n "$rules" ] || return 0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # word-split intentional: "INPUT -i wlan0 -j SAVIOUR-WLAN-IN"
+        # shellcheck disable=SC2086
+        "$ipt" -D ${line#-A } 2>/dev/null || true
+    done <<< "$rules"
+}
+
+_fw_build_family() {                 # $1 = iptables | ip6tables ; $2 = yes|"" (allow ssh on wan)
+    local ipt="$1" allow_ssh="$2" chain="SAVIOUR-WLAN-IN" iface
+    command -v "$ipt" > /dev/null 2>&1 || return 0
+    # Skip a family whose backend isn't actually usable (e.g. ip6tables on a
+    # kernel built without IPv6) rather than aborting the whole run.
+    if ! "$ipt" -L -n > /dev/null 2>&1; then
+        log "Firewall: ${ipt} not usable on this kernel — skipping that family"
+        return 0
+    fi
+
+    _fw_unhook "$ipt"
+    "$ipt" -N "$chain" 2>/dev/null || "$ipt" -F "$chain"
+
+    "$ipt" -A "$chain" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    if [ "$ipt" = "iptables" ]; then
+        "$ipt" -A "$chain" -p icmp -j ACCEPT
+        "$ipt" -A "$chain" -p udp --sport 67 --dport 68 -j ACCEPT      # DHCPv4 client
+    else
+        "$ipt" -A "$chain" -p ipv6-icmp -j ACCEPT                      # NDP / PMTU — required
+        "$ipt" -A "$chain" -p udp --dport 546 -j ACCEPT               # DHCPv6 client
+    fi
+    # Keep Tailscale on a direct path rather than a DERP relay.
+    "$ipt" -A "$chain" -p udp --dport 41641 -j ACCEPT
+    if [ "$allow_ssh" = "yes" ]; then
+        "$ipt" -A "$chain" -p tcp --dport 22 -j ACCEPT
+    fi
+    "$ipt" -A "$chain" -j DROP
+
+    for iface in $(_fw_untrusted_interfaces); do
+        "$ipt" -I INPUT 1 -i "$iface" -j "$chain"
+    done
+}
+
+configure_firewall() {
+    progress "Configuring wlan0/WAN firewall…"
+    local ifaces allow_ssh
+    ifaces=$(_fw_untrusted_interfaces)
+    allow_ssh=$(read_config_value "$CONFIG_FILE" FIREWALL_WLAN_SSH)
+    log "Configuring firewall (untrusted: ${ifaces}; wan ssh: ${allow_ssh:-no})"
+
+    if ! is_installed "iptables-persistent"; then
+        run_logged apt-get install -y iptables-persistent \
+            -o Dpkg::Options::="--force-confdef"
+    fi
+
+    _fw_build_family iptables  "$allow_ssh"
+    _fw_build_family ip6tables "$allow_ssh"
+
+    run_logged netfilter-persistent save
+}
+
+disable_firewall() {
+    progress "Removing wlan0/WAN firewall…"
+    log "Removing firewall"
+
+    local ipt
+    for ipt in iptables ip6tables; do
+        command -v "$ipt" > /dev/null 2>&1 || continue
+        _fw_unhook "$ipt"
+        "$ipt" -F SAVIOUR-WLAN-IN 2>/dev/null || true
+        "$ipt" -X SAVIOUR-WLAN-IN 2>/dev/null || true
+    done
+
+    if is_installed "iptables-persistent"; then
+        run_logged netfilter-persistent save
+    fi
+}
+
+# Pin smbd/nmbd to loopback + the PoE LAN. Written into new installs directly
+# by configure_samba_share()'s heredoc; this patches a device provisioned
+# before that. Returns 0 (and logs) only when it actually changed something,
+# so callers can fold it into their "restart smbd?" decision.
+ensure_smbconf_bind_interfaces() {
+    local conf="/etc/samba/smb.conf"
+    [ -f "$conf" ] || return 1
+    grep -qE '^[[:space:]]*bind interfaces only[[:space:]]*=' "$conf" && return 1
+    sed -i '/^\[global\]/a\   bind interfaces only = yes\n   interfaces = lo eth0' "$conf"
+    log "Hardened smb.conf: bind interfaces only = yes (interfaces = lo eth0)"
+    return 0
 }
 
 configure_service() {
@@ -1613,8 +1772,10 @@ run_configuration() {
         [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
         configure_mdns
         ensure_samba_human_accounts
+        configure_firewall
     else
         disable_mdns
+        disable_firewall
     fi
 
     [ "$DEVICE_ROLE" = "module" ] && create_recording_folder
@@ -1724,6 +1885,29 @@ if [ "${1:-}" = "--regenerate-service" ]; then
     DEVICE_TYPE="$CURRENT_TYPE"
     configure_service
     echo "saviour.service unit regenerated for ${DEVICE_TYPE} ${DEVICE_ROLE} (not restarted -- run 'sudo systemctl restart saviour.service')"
+    exit 0
+fi
+
+# Re-apply just the wlan0/WAN firewall (and the smb.conf interface binding on a
+# controller) without touching role/type/networking. Like --regenerate-service,
+# this is the hook mend.sh uses to reach an already-provisioned fleet with the
+# hardening -- apply_from_config() is a no-op unless ROLE/TYPE/GATEWAY/IP
+# actually changed, so a plain reboot won't pick this up on its own.
+if [ "${1:-}" = "--apply-firewall" ]; then
+    get_current_config          # sources /etc/saviour/config -> WAN_INTERFACE etc.
+    if [ "$CURRENT_ROLE" = "controller" ]; then
+        configure_firewall
+        if ensure_smbconf_bind_interfaces; then
+            systemctl restart smbd nmbd >> "$LOG" 2>&1 || true
+        fi
+        echo "wlan0/WAN firewall applied (untrusted: $(_fw_untrusted_interfaces))."
+    elif [ "$CURRENT_ROLE" = "module" ]; then
+        disable_firewall
+        echo "Not a controller -- firewall removed if present."
+    else
+        echo "No role configured yet -- nothing to do. Run: sudo saviour-config" >&2
+        exit 1
+    fi
     exit 0
 fi
 

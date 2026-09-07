@@ -175,6 +175,15 @@ measures — the two efforts are complementary.
 
 1. **`_StreamCursor` B3** (proportional + mismatch warning). Small, low-risk,
    stops silent skewed output on the whole backlog immediately.
+   **DONE 2026-09-07** (`feat/compose-frame-remap-b3`): `_StreamCursor` takes a
+   `frame_count`, decouples the CSV-row pointer from the decoded-frame pointer,
+   and proportionally maps rows→frames when `|deficit| > 1`; `mismatch_ms`
+   reports the bounded residual. `compose_session_video(warnings=[...])` appends
+   one string per skewed stream; `ComposeJob.warnings` carries it to the
+   frontend (`ComposeVideoPanel` renders them). `compose._prestage_skip` capped
+   at `_MAX_PRESTAGE_SKIP = 2` (a big deficit isn't all leading rows). Tests:
+   `test_video_compose.py` (6). Verified on `NO-NAME-105539` — warns
+   `540 rows vs 537 frames (+3), remapped, up to ~50 ms residual`.
 2. **Module A1 + A2 + A3** (`SyncReady` CSV gate, `sync_discarded` column,
    `_recording.json`). Future data; needs on-hardware validation (client + server
    rig).

@@ -231,17 +231,25 @@ def _video_frame_count(video_path: str) -> int:
         return 0
 
 
-def _prestage_skip(video_path: str, n_csv_rows: int) -> int:
-    """How many leading `*_timestamps.csv` rows have no matching video frame.
+# A genuine pre-stage skip is a couple of frames (the precallback logs rows
+# for frames captured between CSV-open and start_encoder). A *larger*
+# CSV/`.ts` deficit is a sync-client discard skew that is NOT all at the
+# head (found 2026-09-07 -- see
+# plans/multicam-frame-alignment-and-sync-provenance.md): those drops are
+# spread through the recording, so skipping them all as leading rows just
+# moves the misalignment around. Cap the head skip here and let
+# video_compose._StreamCursor remap the residual proportionally.
+_MAX_PRESTAGE_SKIP = 2
 
-    The camera's frame precallback can log rows for a few frames captured
-    before `start_encoder()` actually opened the stream (and, on older
-    firmware, from CSV-open rather than encoder-start -- up to ~1 s). Those
-    head rows shift every downstream `frame i <-> timestamp i` mapping, so
-    they must be dropped. Mirrors tools/make_aligned_video.load_timestamps.
-    """
+
+def _prestage_skip(video_path: str, n_csv_rows: int) -> int:
+    """Leading `*_timestamps.csv` rows to drop so `timestamp[i]` lines up
+    with video frame `i`. Capped -- a bigger deficit is handled downstream
+    (see `_MAX_PRESTAGE_SKIP`)."""
     n_frames = _video_frame_count(video_path)
-    return max(0, n_csv_rows - n_frames) if n_frames else 0
+    if not n_frames:
+        return 0
+    return min(_MAX_PRESTAGE_SKIP, max(0, n_csv_rows - n_frames))
 
 
 # --------------------------------------------------------------------------- #
@@ -534,6 +542,9 @@ class ComposeJob:
     stage: str = "queued"
     output_rel: str | None = None  # path under the session dir, for download
     error: str | None = None
+    # Non-fatal alignment caveats (e.g. a sync-client camera's .ts/CSV
+    # frame-count mismatch) surfaced to the operator alongside the result.
+    warnings: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
@@ -693,6 +704,7 @@ class ComposeWorker:
                 regions=regions, canvas=(canvas_w, canvas_h),
                 fps=spec.fps, progress=phase(0.0, video_hi, "compositing video"),
                 csv_skip={s.name: s.csv_skip for s in streams},
+                warnings=job.warnings,
             )
             if audio.mode != "none":
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,

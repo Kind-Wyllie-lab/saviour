@@ -538,3 +538,45 @@ class TestConfigureModuleSpecialClearsCrop:
         cam.configure_module_special(["camera.fps"])
         applied = cam.picam2.set_controls.call_args[0][0]
         assert "ScalerCrop" not in applied
+
+
+# ---------------------------------------------------------------------------
+# _write_recording_json — the per-segment provenance sidecar (A3 of
+# plans/multicam-frame-alignment-and-sync-provenance.md)
+# ---------------------------------------------------------------------------
+
+class TestRecordingJson:
+    def _cam(self, tmp_path):
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "camera.sync_mode": "client",
+        }.get(key, default)
+        return _make_camera(
+            config=cfg, fps=30, facade=MagicMock(),
+        ), tmp_path
+
+    def test_writes_pre_remux_authoritative_counts(self, tmp_path):
+        import json
+        cam, _ = self._cam(tmp_path)
+        vid = str(tmp_path / "sess_cam_(0_x).ts")
+        cam._write_recording_json(vid, 1_000_000_000, 61_000_000_000, 1800, 4)
+
+        out = tmp_path / "sess_cam_(0_x)_recording.json"
+        data = json.loads(out.read_text())
+        assert data["video_file"] == "sess_cam_(0_x).ts"
+        assert data["csv_rows_written"] == 1800
+        assert data["encoder_window_s"] == pytest.approx(60.0)
+        assert data["sync_mode"] == "client"
+        assert data["fps_target"] == 30
+        assert data["dropped_before_total"] == 4
+        assert data["positioning_timestamps_remuxed"] is True
+        cam.facade.stage_file_for_export.assert_called_once_with(str(out))
+
+    def test_never_raises_out_of_the_stop_path(self, tmp_path):
+        cam, _ = self._cam(tmp_path)
+        cam.facade.add_session_file.side_effect = RuntimeError("boom")
+        # A failure here must not propagate into _stop_recording.
+        cam._write_recording_json(
+            str(tmp_path / "x.ts"), 1, 2, 0, 0
+        )
+        cam.logger.warning.assert_called()

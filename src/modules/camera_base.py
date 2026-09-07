@@ -19,6 +19,7 @@ Author: Andrew SG
 import collections
 import csv
 import datetime
+import json
 import os
 import subprocess
 import sys
@@ -234,6 +235,9 @@ class CameraBase(Module):
         self._encoder_active = False
         self._encoder_start_ns = 0
         self._encoder_stop_ns = 0
+        # Start of the *current* segment's encoder window (advanced on each
+        # segment rotation), for the per-segment _recording.json.
+        self._segment_encoder_start_ns = 0
 
         # Periodic "still capturing" throughput line while recording — makes a
         # silently-wedged pipeline visible after the fact in the journal
@@ -809,6 +813,45 @@ class CameraBase(Module):
                 self.facade.stage_file_for_export(self._current_csv_path)
                 self._current_csv_path = None
 
+    def _write_recording_json(
+        self, video_path: str, encoder_started_ns: int, encoder_stopped_ns: int,
+        csv_rows_written: int, dropped_before_total: int,
+    ) -> None:
+        """A per-segment provenance sidecar written *before* any post-stop
+        `.ts` remux, so `csv_rows_written` is the authoritative frame count a
+        downstream aligner can trust regardless of what
+        `_fix_positioning_timestamps` does to the container. See
+        plans/multicam-frame-alignment-and-sync-provenance.md (A3)."""
+        try:
+            stem = os.path.splitext(video_path)[0]
+            path = f"{stem}_recording.json"
+            window_s = max(0.0, (encoder_stopped_ns - encoder_started_ns) / 1e9)
+            payload = {
+                "video_file": os.path.basename(video_path),
+                "encoder_started_ns": int(encoder_started_ns),
+                "encoder_stopped_ns": int(encoder_stopped_ns),
+                "encoder_window_s": round(window_s, 6),
+                "csv_rows_written": int(csv_rows_written),
+                "fps_target": self.fps,
+                "sync_mode": self.config.get("camera.sync_mode", "none"),
+                "dropped_before_total": int(dropped_before_total),
+                # _stop_recording remuxes every .ts through ffmpeg
+                # (_fix_positioning_timestamps); the container frame count may
+                # differ from csv_rows_written afterwards -- this field is the
+                # pre-remux truth.
+                "positioning_timestamps_remuxed": True,
+            }
+            with open(path, "w") as f:
+                json.dump(payload, f, indent=2)
+            self.facade.add_session_file(path)
+            self.facade.stage_file_for_export(path)
+            self.logger.info(
+                f"Wrote {os.path.basename(path)}: {csv_rows_written} rows, "
+                f"encoder window {window_s:.3f}s")
+        except Exception as e:
+            self.logger.warning(f"Could not write recording.json for "
+                                f"{os.path.basename(video_path)}: {e}")
+
     def _pre_create_first_segment(self, start_at: float) -> None:
         """Pre-create the video file and CSV before sleeping so that only
         start_encoder() needs to run at the scheduled start moment.
@@ -872,6 +915,7 @@ class CameraBase(Module):
         # which would discard any accumulated phase convergence.
         self.picam2.start_encoder(self.main_encoder, name="main")
         self._encoder_start_ns = time.time_ns()
+        self._segment_encoder_start_ns = self._encoder_start_ns
         self._encoder_active = True
         self.recording_start_time = time.time()
         return True
@@ -898,6 +942,14 @@ class CameraBase(Module):
             closing_bytes = os.path.getsize(closing) if closing else 0
         except OSError:
             closing_bytes = -1
+
+        split_ns = time.time_ns()
+        if closing:
+            self._write_recording_json(
+                closing, self._segment_encoder_start_ns, split_ns,
+                closing_frames, closing_dropped,
+            )
+        self._segment_encoder_start_ns = split_ns
 
         self._close_timestamp_csv()
 
@@ -951,6 +1003,18 @@ class CameraBase(Module):
 
             self._stop_recording_video()  # flips _encoder_active off first
             final_segment_rows = self._frame_id  # frozen once the encoder is idle
+            final_segment_dropped = self._segment_dropped
+
+            # Provenance sidecar for the final segment — written *before* the
+            # `.ts` remux below so csv_rows_written is the pre-remux truth.
+            if self.current_video_segment:
+                self._write_recording_json(
+                    self.current_video_segment,
+                    self._segment_encoder_start_ns or self._encoder_start_ns,
+                    self._encoder_stop_ns, final_segment_rows,
+                    final_segment_dropped,
+                )
+
             self._close_timestamp_csv()
 
             # Reconciliation line: the encoder-active window vs the CSV rows

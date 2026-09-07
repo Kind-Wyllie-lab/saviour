@@ -3110,3 +3110,34 @@ class Recording:
             f"Marker '{label}' recorded for session '{session_name}'")
         return {"success": True, "session_name": session_name,
                 "recv_wall_ns": recv_ns, "recv_iso": recv_iso, "label": label}
+
+    def get_markers(self, session_name: str, since_ns: int | None = None,
+                    limit: int | None = None) -> dict:
+        """Read back `<session>/markers.csv`. `since_ns` filters to markers
+        with recv_wall_ns >= that; `limit` keeps only the most recent N."""
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        path = os.path.join(self._get_share_root(), session_name, "markers.csv")
+        rows: list = []
+        try:
+            with self._marker_lock:
+                if os.path.exists(path):
+                    with open(path, newline="") as f:
+                        for r in csv.DictReader(f):
+                            try:
+                                r["recv_wall_ns"] = int(r["recv_wall_ns"])
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                            r["client_wall_ns"] = (
+                                int(r["client_wall_ns"])
+                                if r.get("client_wall_ns") else None)
+                            if since_ns is not None and r["recv_wall_ns"] < since_ns:
+                                continue
+                            rows.append(r)
+        except Exception as e:
+            self.logger.error(
+                f"get_markers: failed reading markers for '{session_name}': {e}")
+            return {"success": False, "error": f"Could not read markers: {e}"}
+        if limit is not None and limit >= 0:
+            rows = rows[-limit:]
+        return {"success": True, "markers": rows, "count": len(rows)}

@@ -14,13 +14,14 @@ included) authenticates with a bearer token:
 
 where <secret> is either the shared admin password (the same credential
 the web UI login uses -- `sudo cat /etc/saviour/admin_credentials`) or a
-named API token minted via POST /api/v1/tokens. The /api/v1/tokens
-management routes themselves require the admin password specifically, so
-a leaked scoped token cannot mint more. The controller serves plain
-HTTP, so the token crosses the LAN in the clear, exactly as the web UI
-login already does; the project's threat model treats the LAN as the
-trust boundary (see CLAUDE.md "Project status & threat model"). Do not
-expose the controller off-LAN.
+named API token minted via POST /api/v1/tokens. A token minted with
+{"readonly": true} may call GET routes only (a fat-finger guard for
+monitoring scripts). The /api/v1/tokens management routes themselves
+require the admin password specifically, so a leaked token cannot mint
+more. The controller serves plain HTTP, so the token crosses the LAN in
+the clear, exactly as the web UI login already does; the project's
+threat model treats the LAN as the trust boundary (see CLAUDE.md
+"Project status & threat model"). Do not expose the controller off-LAN.
 
 Both this API and the Socket.IO handlers call the same ControllerFacade
 methods -- the REST layer is deliberately thin so the two entry points
@@ -37,16 +38,18 @@ Response conventions:
             session not in a state that allows the action)
         503 the export share is configured but unreachable
 
-Scope: read state, an SSE event stream, the recording lifecycle for plain
-sessions, event markers into a running session, and API-token management.
-Arbitrary module commands are intentionally NOT here -- the pre-existing
-POST /facade/send_command still covers that escape hatch. Scheduled and
-Habitat session *creation*, config writes and module management are
-candidates for a later version.
+Scope: read state, a readiness gate, an SSE event stream, the recording
+lifecycle for plain sessions, event markers (write + read-back), an
+OpenAPI spec, and API-token management. Arbitrary module commands are
+intentionally NOT here -- the pre-existing POST /facade/send_command
+still covers that escape hatch. Scheduled and Habitat session
+*creation*, config writes and module management are candidates for a
+later version.
 """
 
 import json
 import logging
+import os
 import queue
 from collections import Counter
 from dataclasses import asdict
@@ -96,13 +99,17 @@ def create_api_blueprint(web) -> Blueprint:
     def require_auth(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            if not web._check_bearer_auth():
+            kind = web._bearer_auth_kind()
+            if kind is None:
                 return _error(
                     "unauthorized",
                     "Provide the admin password or an API token as an "
                     "'Authorization: Bearer <secret>' header",
                     401,
                 )
+            if kind == "token_readonly" and request.method != "GET":
+                return _error(
+                    "forbidden", "This API token is read-only", 403)
             return fn(*args, **kwargs)
         return wrapper
 
@@ -145,12 +152,32 @@ def create_api_blueprint(web) -> Blueprint:
         return jsonify({
             "name": "SAVIOUR controller REST API",
             "version": "v1",
-            "auth": "Authorization: Bearer <admin password>",
+            "auth": "Authorization: Bearer <admin password or API token>",
+            "openapi": f"{API_PREFIX}/openapi.json",
+            "docs": "docs/REST_API.md",
             "endpoints": sorted(
                 rule.rule for rule in web.app.url_map.iter_rules()
                 if rule.rule.startswith(API_PREFIX)
             ),
         })
+
+    @bp.get("/openapi.json")
+    def openapi():
+        """The hand-maintained OpenAPI 3.1 spec (docs/openapi.yaml),
+        rendered to JSON. Open, like the index."""
+        spec_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "docs", "openapi.yaml")
+        try:
+            import yaml
+            with open(spec_path) as f:
+                return jsonify(yaml.safe_load(f))
+        except FileNotFoundError:
+            return _error("not_found", "openapi.yaml not found", 404)
+        except Exception as exc:  # PyYAML missing / parse error
+            return _error(
+                "unavailable",
+                f"Could not render the spec ({exc}); see docs/openapi.yaml",
+                503)
 
     # ------------------------------------------------------------------ #
     # state / health / ptp
@@ -188,6 +215,68 @@ def create_api_blueprint(web) -> Blueprint:
                 "synced": worst is not None and worst <= gate_ns,
             },
             "disk": web._nas_health,
+        })
+
+    @bp.get("/readiness")
+    @require_auth
+    def readiness():
+        """One call answering "can I start recording on this target right
+        now, and if not, why". Assembled from the same checks
+        create_session runs. `?target=` (default "all"). The `share`
+        check reads the controller's cached NAS health (no live mount);
+        create_session still does an authoritative live probe."""
+        target = request.args.get("target", "all")
+        modules = web.facade.get_modules_by_target(target)
+        mod_ids = list(modules.keys())
+        checks: dict = {}
+
+        checks["modules_present"] = {
+            "ok": bool(mod_ids),
+            "detail": (f"{len(mod_ids)} module(s) match '{target}'" if mod_ids
+                       else f"no modules match target '{target}'"),
+        }
+
+        offline = sorted(
+            m for m, d in modules.items()
+            if not (d.get("online") or d.get("status") == "online"))
+        checks["modules_online"] = {
+            "ok": bool(mod_ids) and not offline,
+            "detail": "all online" if not offline
+                      else f"offline: {', '.join(offline)}",
+        }
+
+        ptp = web.facade.check_ptp_sync(target)
+        checks["ptp"] = {
+            "ok": bool(ptp.get("ok")),
+            "worst_offset_us": ptp.get("max_offset_us"),
+            "gate_us": ptp.get(
+                "threshold_us",
+                web.config.get("recording.ptp_start_gate_us", 50)),
+            "detail": ptp.get("error"),
+        }
+
+        nas = web._nas_health or {}
+        nas_status = nas.get("status", "unknown")
+        checks["share"] = {
+            "ok": nas_status in ("ok", "warn"),
+            "status": nas_status,
+            "free_pct": nas.get("free_pct"),
+            "detail": nas.get("error") or (
+                None if nas_status in ("ok", "warn")
+                else "export share health not yet sampled"),
+        }
+
+        busy = web._recording_module_ids(mod_ids) if mod_ids else []
+        checks["not_already_recording"] = {
+            "ok": not busy,
+            "detail": "idle" if not busy
+                      else f"already recording: {', '.join(sorted(busy))}",
+        }
+
+        return jsonify({
+            "target": target,
+            "ready": all(c["ok"] for c in checks.values()),
+            "checks": checks,
         })
 
     @bp.get("/health")
@@ -440,6 +529,38 @@ def create_api_blueprint(web) -> Blueprint:
         })
         return jsonify(result), 201
 
+    @bp.get("/sessions/<session_name>/markers")
+    @require_auth
+    def get_markers(session_name):
+        """Read back the session's markers.csv as JSON. `?since=` (epoch
+        seconds) filters to markers at/after that time; `?limit=` keeps
+        only the most recent N."""
+        if session_name not in _sessions():
+            return _error(
+                "not_found", f"Unknown session '{session_name}'", 404)
+        since_ns = None
+        if request.args.get("since"):
+            try:
+                since_ns = int(float(request.args["since"]) * 1_000_000_000)
+            except ValueError:
+                return _error(
+                    "invalid_request",
+                    "'since' must be a number (epoch seconds)", 400)
+        limit = None
+        if request.args.get("limit"):
+            try:
+                limit = max(0, int(request.args["limit"]))
+            except ValueError:
+                return _error(
+                    "invalid_request", "'limit' must be an integer", 400)
+        result = web.facade.get_markers(session_name, since_ns, limit)
+        if not result.get("success"):
+            return _error(
+                "markers_unavailable",
+                result.get("error", "Could not read markers"), 500)
+        return jsonify({
+            "markers": result["markers"], "count": result["count"]})
+
     @bp.delete("/sessions/<session_name>")
     @require_auth
     def delete_session(session_name):
@@ -472,7 +593,8 @@ def create_api_blueprint(web) -> Blueprint:
     @require_admin
     def create_token():
         data = request.get_json(silent=True) or {}
-        result = web.mint_api_token(str(data.get("name") or ""))
+        result = web.mint_api_token(
+            str(data.get("name") or ""), readonly=bool(data.get("readonly")))
         if not result.get("success"):
             status = 409 if "already exists" in result.get("error", "") else 400
             return _error("token_rejected", result["error"], status)
@@ -480,6 +602,7 @@ def create_api_blueprint(web) -> Blueprint:
             "name": result["name"],
             "token": result["token"],
             "created": result["created"],
+            "readonly": result["readonly"],
         }), 201
 
     @bp.delete("/tokens/<name>")

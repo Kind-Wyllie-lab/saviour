@@ -470,27 +470,46 @@ class Web(ABC):
         return tokens
 
     def _persist_api_tokens(self, tokens: list) -> None:
-        os.makedirs(os.path.dirname(self._API_TOKENS_FILE), exist_ok=True)
-        fd = os.open(self._API_TOKENS_FILE,
-                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(tokens, f, indent=2)
+        """Atomically rewrite the token file (write temp + os.replace), so a
+        crash mid-write can't truncate it and lose every token."""
+        path = self._API_TOKENS_FILE
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(tokens, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         self._api_tokens_cache = (None, [])  # force reload
 
     @staticmethod
     def _hash_api_token(token: str) -> str:
         return hashlib.sha256((token or "").encode()).hexdigest()
 
-    def _api_token_matches(self, token: str) -> bool:
+    def _api_token_entry(self, token: str) -> "dict | None":
+        """The stored token record matching this raw token, or None."""
         if not token:
-            return False
+            return None
         h = self._hash_api_token(token)
-        return any(hmac.compare_digest(t["hash"], h)
-                   for t in self._load_api_tokens())
+        for t in self._load_api_tokens():
+            if hmac.compare_digest(t["hash"], h):
+                return t
+        return None
 
-    def mint_api_token(self, name: str) -> dict:
-        """Create a named API token. Returns {"name", "token", "created"};
-        the raw token is shown here once and never recoverable after."""
+    def _api_token_matches(self, token: str) -> bool:
+        return self._api_token_entry(token) is not None
+
+    def mint_api_token(self, name: str, readonly: bool = False) -> dict:
+        """Create a named API token. Returns {"name", "token", "created",
+        "readonly"}; the raw token is shown here once and never
+        recoverable after. A read-only token can call GET routes only."""
         name = (name or "").strip()
         if not name:
             return {"success": False, "error": "Token name cannot be empty"}
@@ -500,10 +519,13 @@ class Web(ABC):
         raw = secrets.token_urlsafe(32)
         created = datetime.now(UTC).isoformat()
         tokens.append({"name": name, "hash": self._hash_api_token(raw),
-                       "created": created})
+                       "created": created, "readonly": bool(readonly)})
         self._persist_api_tokens(tokens)
-        self.logger.warning(f"Minted API token '{name}' for /api/v1 access")
-        return {"success": True, "name": name, "token": raw, "created": created}
+        self.logger.warning(
+            f"Minted {'read-only ' if readonly else ''}API token '{name}' "
+            f"for /api/v1 access")
+        return {"success": True, "name": name, "token": raw,
+                "created": created, "readonly": bool(readonly)}
 
     def revoke_api_token(self, name: str) -> dict:
         tokens = list(self._load_api_tokens())
@@ -515,8 +537,9 @@ class Web(ABC):
         return {"success": True}
 
     def list_api_tokens(self) -> list:
-        """Public metadata only -- name + created, never the hash."""
-        return [{"name": t["name"], "created": t.get("created")}
+        """Public metadata only -- name, created, readonly; never the hash."""
+        return [{"name": t["name"], "created": t.get("created"),
+                 "readonly": bool(t.get("readonly"))}
                 for t in self._load_api_tokens()]
 
     # -- bearer auth ------------------------------------------------- #
@@ -525,15 +548,26 @@ class Web(ABC):
         auth_header = request.headers.get("Authorization", "")
         return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
-    def _check_bearer_auth(self) -> bool:
-        """True if this request's `Authorization: Bearer <secret>` header
-        carries the admin password OR a provisioned API token. For the
-        /facade/* routes and the read/lifecycle /api/v1 routes -- external
-        scripts (pyControl, a Matlab experiment controller) with no
-        Socket.IO session to check via _is_authenticated/_require_auth."""
+    def _bearer_auth_kind(self) -> "str | None":
+        """Classify this request's `Authorization: Bearer <secret>` header:
+        'admin' (the admin password), 'token' (a full API token),
+        'token_readonly' (a read-only API token), or None (no match)."""
         token = self._bearer_token()
-        return (self._check_admin_password(token)
-                or self._api_token_matches(token))
+        if self._check_admin_password(token):
+            return "admin"
+        entry = self._api_token_entry(token)
+        if entry is None:
+            return None
+        return "token_readonly" if entry.get("readonly") else "token"
+
+    def _check_bearer_auth(self) -> bool:
+        """True if the bearer header carries the admin password OR any
+        provisioned API token. For the /facade/* routes and the
+        read/lifecycle /api/v1 routes -- external scripts (pyControl, a
+        Matlab experiment controller) with no Socket.IO session to check
+        via _is_authenticated/_require_auth. The read-only/full
+        distinction is enforced in rest_api.py via _bearer_auth_kind."""
+        return self._bearer_auth_kind() is not None
 
     def _check_admin_bearer(self) -> bool:
         """Stricter: the admin password ONLY, not an API token. Gates the

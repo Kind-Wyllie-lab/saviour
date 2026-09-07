@@ -60,7 +60,38 @@ export share is configured but unreachable.
 ### `GET /api/v1/` — index
 
 Unauthenticated. Confirms the API is up and lists mounted routes. Discloses
-no state.
+no state. Includes `openapi` (the spec URL) and `docs`.
+
+### `GET /api/v1/openapi.json` — OpenAPI 3.1 spec
+
+Unauthenticated. The hand-maintained `docs/openapi.yaml` rendered to JSON —
+point Bruno / Insomnia / a client generator at it.
+
+### `GET /api/v1/readiness?target=all` — start-gate check
+
+One call answering "can a session start on this target right now, and if not
+why" — the same checks `POST /sessions` runs, so a script doesn't have to
+assemble `/state` + `/modules` + `/ptp` itself and race.
+
+```json
+{
+  "target": "all",
+  "ready": false,
+  "checks": {
+    "modules_present":        {"ok": true,  "detail": "3 module(s) match 'all'"},
+    "modules_online":         {"ok": false, "detail": "offline: camera_d549"},
+    "ptp":                    {"ok": true,  "worst_offset_us": 6.2, "gate_us": 50, "detail": null},
+    "share":                  {"ok": true,  "status": "ok", "free_pct": 42.0, "detail": null},
+    "not_already_recording":  {"ok": true,  "detail": "idle"}
+  }
+}
+```
+
+`ready` is the AND of every check's `ok`. The `share` check reads the
+controller's **cached** NAS health (no live mount, so it's safe to poll);
+`POST /sessions` still does an authoritative live probe. `share.ok` is false
+until the periodic monitor has sampled the share at least once
+(`status: "unknown"`).
 
 ### `GET /api/v1/state` — system rollup
 
@@ -231,6 +262,14 @@ curl -X POST "$base_url/api/v1/sessions/$S/marker" \
   -d '{"label": "trial_1", "source": "pyControl", "t": 1757246400.512}'
 ```
 
+### `GET /api/v1/sessions/<name>/markers` — read the markers back
+
+Returns `{"count": N, "markers": [...]}` — the parsed `markers.csv` rows
+(`recv_wall_ns` as an int, `client_wall_ns` int-or-null). `?since=<epoch
+seconds>` keeps markers at/after that time; `?limit=<N>` keeps the most
+recent N. Useful for a post-blip "did my last markers land?" check and for a
+monitoring view that doesn't want share access. `404` for an unknown name.
+
 ### `DELETE /api/v1/sessions/<name>`
 
 Query params: `files` (`true`/`false`, default `true`) — also delete the
@@ -259,8 +298,13 @@ metadata only, never the hash.
 
 ### `POST /api/v1/tokens`
 
-Body `{"name": "pyControl-rig3"}`. `201` `{"name", "token", "created"}` —
-**record `token` now**. `409` if the name is taken, `400` if empty.
+Body `{"name": "pyControl-rig3", "readonly": false}`. `201`
+`{"name", "token", "created", "readonly"}` — **record `token` now**. `409` if
+the name is taken, `400` if empty.
+
+A `readonly: true` token may call **GET routes only** (including
+`/events`) — any `POST`/`DELETE` with it returns `403` `forbidden`. Use one
+for a monitoring or dashboard script so a bug can't stop a recording.
 
 ### `DELETE /api/v1/tokens/<name>`
 
@@ -322,5 +366,5 @@ abort the run if a module drops.
 Arbitrary module commands (`/facade/send_command` still covers this),
 scheduled-session and Habitat-session *creation*, config reads/writes,
 module management (reboot/update), a per-session file manifest + bearer-minted
-download token. Candidates for a later version; the blueprint is the place to
-add them.
+download token, token `last_used` timestamps. Candidates for a later version;
+the blueprint is the place to add them.

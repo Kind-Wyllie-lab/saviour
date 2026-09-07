@@ -32,6 +32,10 @@ def _web(**config_overrides):
     facade.get_recording_status.return_value = False
     facade.get_uptime.return_value = 123
     facade.get_ptp_sync.return_value = 0
+    facade.get_modules_by_target.return_value = {}
+    facade.is_module_recording.return_value = False
+    facade.check_ptp_sync.return_value = {
+        "ok": True, "max_offset_us": 5.0, "threshold_us": 50}
     web.facade = facade
     web._write_session_metadata = MagicMock()
 
@@ -620,3 +624,194 @@ class TestTokens:
         resp = web.app.test_client().delete(
             "/api/v1/tokens/ghost", headers=_auth(password))
         assert resp.status_code == 404
+
+    def test_persist_is_atomic_no_temp_left_behind(self):
+        web, password = _web()
+        web.mint_api_token("a")
+        web.mint_api_token("b")
+        web.revoke_api_token("a")
+        d = os.path.dirname(web._API_TOKENS_FILE)
+        assert not [f for f in os.listdir(d) if f.endswith(".tmp")]
+        # survives a fresh read from disk
+        web._api_tokens_cache = (None, [])
+        assert [t["name"] for t in web._load_api_tokens()] == ["b"]
+
+
+class TestReadOnlyTokens:
+    def test_readonly_token_can_get(self):
+        web, password = _web()
+        token = web.mint_api_token("dash", readonly=True)["token"]
+        web.facade.get_modules.return_value = {"cam1": {}}
+        resp = web.app.test_client().get(
+            "/api/v1/modules", headers=_auth(token))
+        assert resp.status_code == 200
+
+    def test_readonly_token_blocked_on_post(self):
+        web, password = _web()
+        token = web.mint_api_token("dash", readonly=True)["token"]
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active")}
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/stop", headers=_auth(token))
+        assert resp.status_code == 403
+        assert resp.get_json()["error"]["code"] == "forbidden"
+        web.facade.stop_session.assert_not_called()
+
+    def test_readonly_token_blocked_on_delete(self):
+        web, password = _web()
+        token = web.mint_api_token("dash", readonly=True)["token"]
+        resp = web.app.test_client().delete(
+            "/api/v1/sessions/s1", headers=_auth(token))
+        assert resp.status_code == 403
+
+    def test_full_token_still_allowed_on_post(self):
+        web, password = _web()
+        token = web.mint_api_token("rig", readonly=False)["token"]
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active")}
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/stop", headers=_auth(token))
+        assert resp.status_code == 200
+
+    def test_readonly_flag_surfaced_in_list(self):
+        web, password = _web()
+        web.mint_api_token("ro", readonly=True)
+        web.mint_api_token("rw")
+        resp = web.app.test_client().get(
+            "/api/v1/tokens", headers=_auth(password))
+        by_name = {t["name"]: t["readonly"]
+                   for t in resp.get_json()["tokens"]}
+        assert by_name == {"ro": True, "rw": False}
+
+
+# ---------------------------------------------------------------------------
+# readiness
+# ---------------------------------------------------------------------------
+
+class TestReadiness:
+    def _ready_web(self):
+        web, password = _web()
+        web.facade.get_modules_by_target.return_value = {
+            "cam1": {"online": True}, "cam2": {"online": True},
+        }
+        web.facade.check_ptp_sync.return_value = {
+            "ok": True, "max_offset_us": 6.2, "threshold_us": 50}
+        web.facade.is_module_recording.return_value = False
+        web._nas_health = {"status": "ok", "free_pct": 42.0}
+        return web, password
+
+    def test_all_checks_pass(self):
+        web, password = self._ready_web()
+        data = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert data["ready"] is True
+        assert set(data["checks"]) == {
+            "modules_present", "modules_online", "ptp", "share",
+            "not_already_recording"}
+        assert data["checks"]["ptp"]["worst_offset_us"] == 6.2
+
+    def test_offline_module_makes_not_ready(self):
+        web, password = self._ready_web()
+        web.facade.get_modules_by_target.return_value = {
+            "cam1": {"online": True}, "cam2": {"online": False},
+        }
+        data = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert data["ready"] is False
+        assert data["checks"]["modules_online"]["ok"] is False
+        assert "cam2" in data["checks"]["modules_online"]["detail"]
+
+    def test_ptp_failure_surfaces_detail(self):
+        web, password = self._ready_web()
+        web.facade.check_ptp_sync.return_value = {
+            "ok": False, "error": "PTP not synchronised on 1 module(s)"}
+        data = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert data["ready"] is False
+        assert data["checks"]["ptp"]["ok"] is False
+        assert data["checks"]["ptp"]["detail"].startswith("PTP not")
+
+    def test_unknown_share_health_blocks(self):
+        web, password = self._ready_web()
+        web._nas_health = {"status": "unknown"}
+        data = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert data["checks"]["share"]["ok"] is False
+
+    def test_already_recording_blocks(self):
+        web, password = self._ready_web()
+        web.facade.is_module_recording.side_effect = lambda m: m == "cam1"
+        data = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert data["ready"] is False
+        assert "cam1" in data["checks"]["not_already_recording"]["detail"]
+
+    def test_no_modules_for_target(self):
+        web, password = self._ready_web()
+        web.facade.get_modules_by_target.return_value = {}
+        data = web.app.test_client().get(
+            "/api/v1/readiness?target=ghost", headers=_auth(password)).get_json()
+        assert data["ready"] is False
+        assert data["checks"]["modules_present"]["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# marker read-back
+# ---------------------------------------------------------------------------
+
+class TestMarkerReadback:
+    def test_markers_404_for_unknown_session(self):
+        web, password = _web()
+        resp = web.app.test_client().get(
+            "/api/v1/sessions/nope/markers", headers=_auth(password))
+        assert resp.status_code == 404
+
+    def test_markers_happy(self):
+        web, password = _web()
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active")}
+        web.facade.get_markers.return_value = {
+            "success": True, "count": 1,
+            "markers": [{"recv_wall_ns": 1, "label": "trial_1",
+                         "source": "", "client_wall_ns": None}]}
+        resp = web.app.test_client().get(
+            "/api/v1/sessions/s1/markers", headers=_auth(password))
+        assert resp.status_code == 200
+        assert resp.get_json()["count"] == 1
+        web.facade.get_markers.assert_called_once_with("s1", None, None)
+
+    def test_markers_since_and_limit_forwarded(self):
+        web, password = _web()
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active")}
+        web.facade.get_markers.return_value = {
+            "success": True, "count": 0, "markers": []}
+        web.app.test_client().get(
+            "/api/v1/sessions/s1/markers?since=1700000000&limit=5",
+            headers=_auth(password))
+        web.facade.get_markers.assert_called_once_with(
+            "s1", 1_700_000_000_000_000_000, 5)
+
+    def test_markers_bad_since_is_400(self):
+        web, password = _web()
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active")}
+        resp = web.app.test_client().get(
+            "/api/v1/sessions/s1/markers?since=soon", headers=_auth(password))
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI
+# ---------------------------------------------------------------------------
+
+class TestOpenAPI:
+    def test_openapi_json_is_open_and_valid(self):
+        web, _ = _web()
+        resp = web.app.test_client().get("/api/v1/openapi.json")
+        assert resp.status_code == 200
+        spec = resp.get_json()
+        assert spec["openapi"].startswith("3.")
+        assert "/api/v1/sessions" in spec["paths"]
+        assert "/api/v1/readiness" in spec["paths"]
+        assert "/api/v1/sessions/{session_name}/marker" in spec["paths"]

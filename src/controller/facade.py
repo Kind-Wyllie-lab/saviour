@@ -174,6 +174,11 @@ class ControllerFacade:
         return self.controller.recording.add_marker(
             session_name, label, source, client_wall_ns)
 
+    def get_markers(self, session_name: str, since_ns: int | None = None,
+                    limit: int | None = None) -> dict:
+        return self.controller.recording.get_markers(
+            session_name, since_ns, limit)
+
     def create_habitat_session(self, session_name: str, plans: list,
                                researcher=None, duration_minutes=None) -> dict:
         return self.controller.recording.create_habitat_session(

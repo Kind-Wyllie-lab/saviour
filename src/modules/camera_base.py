@@ -1030,10 +1030,22 @@ class CameraBase(Module):
                     f"final segment wrote {final_segment_rows} CSV rows"
                 )
 
-            for file in self.session_files:
-                if file.endswith(".ts"):
-                    self.logger.info(f"Fixing positioning timestamps for {file}")
-                    self._fix_positioning_timestamps(file)
+            # The `.ts` remux resets mpegts positioning PTS but is a suspect
+            # for dropping edge frames on a sync-client stream (frame count
+            # then disagrees with the CSV -- see
+            # plans/multicam-frame-alignment-and-sync-provenance.md). Toggle
+            # off to measure with/without (A4), or if a consumer is found to
+            # need it it can be made lossless instead.
+            if self.config.get("recording.fix_positioning_timestamps", True):
+                for file in self.session_files:
+                    if file.endswith(".ts"):
+                        self.logger.info(
+                            f"Fixing positioning timestamps for {file}")
+                        self._fix_positioning_timestamps(file)
+            else:
+                self.logger.info(
+                    "recording.fix_positioning_timestamps=false — "
+                    "skipping the .ts remux")
 
             self.facade.stage_file_for_export(self.current_video_segment)
             return True

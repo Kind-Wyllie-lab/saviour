@@ -23,6 +23,7 @@
   "recording": {
     "segment_length_mins": 60,
     "local_min_free_pct": 10,
+    "fix_positioning_timestamps": true,
     "_recording_folder": "/var/lib/saviour/recordings",
     "_record_health_metadata": true,
     "_health_metadata_recording_interval": 5,

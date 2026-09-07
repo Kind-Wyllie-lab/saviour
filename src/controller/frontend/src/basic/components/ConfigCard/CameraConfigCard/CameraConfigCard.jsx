@@ -704,6 +704,14 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.recording?.segment_length_mins ?? 60}
                 onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
             </div>
+            <div className="form-field">
+              <label title="Re-mux each .ts through ffmpeg at stop to reset container positioning timestamps. Under investigation as a cause of a few dropped frames on framesync-client cameras — turn off to compare. Downstream tools read the per-frame CSV, not container timestamps.">
+                Fix .ts positioning timestamps:
+              </label>
+              <input type="checkbox"
+                checked={formData?.recording?.fix_positioning_timestamps !== false}
+                onChange={e => handleChange(["recording", "fix_positioning_timestamps"], e)} />
+            </div>
           </>
         )}
 

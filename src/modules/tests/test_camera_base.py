@@ -570,7 +570,20 @@ class TestRecordingJson:
         assert data["fps_target"] == 30
         assert data["dropped_before_total"] == 4
         assert data["positioning_timestamps_remuxed"] is True
+        # ffprobe absent in the test env -> encoded count unknown, not an error
+        assert data["encoded_frames"] is None
+        assert data["deficit_vs_csv"] is None
         cam.facade.stage_file_for_export.assert_called_once_with(str(out))
+
+    def test_records_the_encoder_drop_deficit_when_ffprobe_available(self, tmp_path):
+        import json
+        cam, _ = self._cam(tmp_path)
+        vid = str(tmp_path / "c_(0_x).ts")
+        with patch.object(cam, "_probe_encoded_frames", return_value=1794):
+            cam._write_recording_json(vid, 0, 60_000_000_000, 1800, 6)
+        data = json.loads((tmp_path / "c_(0_x)_recording.json").read_text())
+        assert data["encoded_frames"] == 1794
+        assert data["deficit_vs_csv"] == 6      # 1800 rows - 1794 in container
 
     def test_never_raises_out_of_the_stop_path(self, tmp_path):
         cam, _ = self._cam(tmp_path)

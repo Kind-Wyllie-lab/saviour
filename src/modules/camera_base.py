@@ -813,6 +813,23 @@ class CameraBase(Module):
                 self.facade.stage_file_for_export(self._current_csv_path)
                 self._current_csv_path = None
 
+    def _probe_encoded_frames(self, video_path: str) -> int | None:
+        """Frames actually in the container, via ffprobe packet count.
+        None if ffprobe is unavailable or the file isn't ready."""
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-count_packets", "-show_entries", "stream=nb_read_packets",
+                 "-of", "csv=p=0", video_path],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            for line in out.stdout.splitlines():
+                if line.strip().isdigit():
+                    return int(line.strip())
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return None
+
     def _write_recording_json(
         self, video_path: str, encoder_started_ns: int, encoder_stopped_ns: int,
         csv_rows_written: int, dropped_before_total: int,
@@ -826,20 +843,27 @@ class CameraBase(Module):
             stem = os.path.splitext(video_path)[0]
             path = f"{stem}_recording.json"
             window_s = max(0.0, (encoder_stopped_ns - encoder_started_ns) / 1e9)
+            encoded = self._probe_encoded_frames(video_path)
             payload = {
                 "video_file": os.path.basename(video_path),
                 "encoder_started_ns": int(encoder_started_ns),
                 "encoder_stopped_ns": int(encoder_stopped_ns),
                 "encoder_window_s": round(window_s, 6),
                 "csv_rows_written": int(csv_rows_written),
+                # Frames actually in the container (ffprobe packet count).
+                # < csv_rows_written => the encoder dropped handed frames
+                # (backpressure on a loaded sync-client camera); that gap is
+                # what breaks video_compose's frame[i]==row[i] assumption.
+                "encoded_frames": encoded,
+                "deficit_vs_csv": (csv_rows_written - encoded
+                                   if encoded is not None else None),
                 "fps_target": self.fps,
                 "sync_mode": self.config.get("camera.sync_mode", "none"),
                 "dropped_before_total": int(dropped_before_total),
-                # _stop_recording remuxes every .ts through ffmpeg
-                # (_fix_positioning_timestamps); the container frame count may
-                # differ from csv_rows_written afterwards -- this field is the
-                # pre-remux truth.
-                "positioning_timestamps_remuxed": True,
+                # Whether _stop_recording's ffmpeg -c copy -reset_timestamps
+                # remux of every .ts (_fix_positioning_timestamps) is applied.
+                "positioning_timestamps_remuxed": self.config.get(
+                    "recording.fix_positioning_timestamps", True),
             }
             with open(path, "w") as f:
                 json.dump(payload, f, indent=2)

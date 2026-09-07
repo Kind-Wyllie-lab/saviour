@@ -106,7 +106,41 @@ use the overlay only to fix the index.**
 
 ### Source side — module, for future recordings
 
-**A4 (do first — measurement, not code). Where is the deficit introduced?**
+### A4 result (2026-09-07, desk rig `a4_test-174323`, remux OFF)
+
+| camera | CSV rows | `.ts` frames | deficit | `dropped_before` | encoder window |
+|---|---|---|---|---|---|
+| `camera` (server) | 586 | 586 | **0** | 0 | 19.53 s |
+| `ai camera` (client) | 579 | 574 | **+5** | 4 | 19.52 s |
+
+Recorded with `recording.fix_positioning_timestamps = false` — **the `.ts`
+remux is ruled out**. The client loses frames in *two* independent places:
+
+1. **~7 at capture** (server got 586, client's CSV only 579; `dropped_before`
+   explicitly logged 4 of them) — the ISP/pipeline dropped frames *before*
+   `_frame_precallback`. Benign for `_StreamCursor`: no CSV row *and* no `.ts`
+   frame, so `frame[i]==row[i]` still holds past the gap.
+2. **+5 CSV-vs-`.ts`** — frames that got a CSV row but never reached the
+   container. This is the encoder dropping *handed* frames under backpressure
+   (H264 encode thread starved — the hailo camera also runs preview inference,
+   and its livestream was visibly lagging in the same run). **This is the
+   alignment skew**, and picamera2 exposes no per-frame "was this encoded?"
+   signal to gate on.
+
+**So A1a is dead** (not the remux) and **A1b is confirmed** (encoder
+backpressure drops). The module *cannot* cleanly prevent it, so:
+- the **consumer-side repair (B1 overlay / B3 proportional) is the fix**, for
+  existing and future footage alike;
+- **A3 extended** to probe the container and record `encoded_frames` /
+  `deficit_vs_csv` in `_recording.json`, so the deficit is stated at record
+  time and B2 is a lookup;
+- **load reduction on the hailo camera** (don't run preview inference during a
+  recording / more encoder buffers / lower preview fps) is a separate
+  mitigation — shrinks the deficit, won't zero it. Follow-up, not the fix.
+
+### A4 method (kept for re-runs)
+
+Where is the deficit introduced?
 On the desk rig (`camera` = sync server, `ai camera` = sync client), for a
 ~60 s recording, count frames at each stage:
 
@@ -204,23 +238,32 @@ measures — the two efforts are complementary.
    at `_MAX_PRESTAGE_SKIP = 2` (a big deficit isn't all leading rows). Tests:
    `test_video_compose.py` (6). Verified on `NO-NAME-105539` — warns
    `540 rows vs 537 frames (+3), remapped, up to ~50 ms residual`.
-2. **A3 `<stem>_recording.json`** (module, `camera_base.py`) — the provenance
-   anchor; useful whatever A4 finds. Needs the desk rig to verify it's written
-   and staged.
-3. **A4 measurement run** on the desk rig — pin whether `_fix_positioning_
-   timestamps` is dropping the frames.
-4. **A1a** — make the remux lossless or remove it (shape set by A4).
-5. **`_StreamCursor` B1 + B2** (overlay repair + sidecar consume). Backlog
-   frame-accuracy.
-6. **Sync-provenance block** across `_align.json` / compose / ethogram + the
+1. **A3 `<stem>_recording.json`** — **DONE 2026-09-07** (`feat/camera-recording-
+   json-provenance` + follow-ups). Per-segment sidecar, pre-remux, staged for
+   export. Extended to probe the container (`encoded_frames`, `deficit_vs_csv`)
+   so the encoder-drop gap is stated at record time. Verified on
+   `a4_test-174323`: `ai camera` json shows `csv_rows_written 579`,
+   `dropped_before_total 4`.
+2. **A4 measurement run** — **DONE 2026-09-07** (`a4_test-174323`, remux off).
+   Result above: remux ruled out, encoder backpressure drops confirmed.
+3. ~~**A1a**~~ — **dropped**, the remux isn't the cause.
+4. **`_StreamCursor` B1** (overlay-timestamp repair) — now the primary fix,
+   since the module can't prevent the encoder drops. Frame-accurate for the
+   backlog and future. **B2** (consume `_recording.json` `encoded_frames` when
+   present) rides along.
+5. **Sync-provenance block** across `_align.json` / compose / ethogram + the
    ethogram caption.
+6. *(mitigation, not a fix)* Reduce hailo-camera load during recording —
+   preview inference off / more encoder buffers / lower preview fps — to shrink
+   the encoder-drop count.
 
 ## Acceptance
 
-- A fresh client+server recording: server `.ts` frames == CSV rows exactly;
-  client within ±1 after A1a, or the residual quantified in `_recording.json`.
-- Re-composing test-143757 / NO-NAME-105539: ai-vs-main-camera clap within
-  **±1 frame** (B1) or ±½-deficit (B3), and the job result names the mismatch.
+- Re-composing test-143757 / NO-NAME-105539 / a4_test-174323: ai-vs-main-camera
+  clap within **±1 frame** (B1) or ±½-deficit (B3), and the job result names
+  the mismatch.
+- `_recording.json` on a fresh client recording states `deficit_vs_csv` > 0 and
+  compose consumes it (B2) rather than probing.
 - Every ethogram / composite carries the sync-provenance block; `audio↔video`
   shows amber + a number, `ephys↔video` shows red until it's validated.
 - Regression test: a synthetic session where the client CSV has more rows than
@@ -230,8 +273,9 @@ measures — the two efforts are complementary.
 
 ## Not doing
 
-- Deep picamera2 / libcamera encoder-internals work — only if A4 rules out the
-  remux (A1a) and shows the loss is real capture/encode drops that still matter.
+- Deep picamera2 / libcamera encoder-internals work to add a per-frame
+  "was this encoded?" gate — A4 showed the loss is encoder backpressure with no
+  clean signal; B1 handles it downstream.
 - Trusting `.ts` container PTS for anything — it's synthetic (exactly
   40 ms/frame, ~3600 s start offset). CSV `timestamp_ns` is the only real
   per-frame clock.

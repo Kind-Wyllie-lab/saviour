@@ -415,9 +415,8 @@ def _print_ptp(summary: dict | None) -> None:
 def cmd_probes(date_dirs: list[str], frame_num: int | None) -> int:
     print("== Step 0: sidecar probe lines "
           "(plans/audio-video-sync-residual-validation.md) ==\n")
-    all_first_ratio: list[float] = []
-    all_first_excess_ms: list[float] = []
-    all_enter_ms: list[float] = []
+    # (frame_num, first_read_ratio, first_excess_ms, enter_ms) per stream
+    rows: list[tuple[int, float | None, float, float | None]] = []
     for date_dir in date_dirs:
         streams = discover_audio_streams(date_dir)
         if not streams:
@@ -430,24 +429,23 @@ def cmd_probes(date_dirs: list[str], frame_num: int | None) -> int:
             fr_ms = p.get("FIRST_RECORD_MS")
             exp_ms = p.get("FIRST_RECORD_EXPECTED_MS")
             enter_ms = p.get("RECORDER_ENTER_MS")
+            ratio = fr_ms / exp_ms if (fr_ms is not None and exp_ms) else None
             ppm = (1e6 * (fit.measured_rate_hz - fit.nominal_rate_hz)
                    / fit.nominal_rate_hz)
             print(f"  {s.label}  ({os.path.basename(s.audio_path)})")
+            print(f"    block size              {fit.frame_num:10d} samples "
+                  f"(~{fit.frame_num / fit.nominal_rate_hz * 1e3:.1f} ms)")
             print(f"    steady-state rate       {fit.measured_rate_hz:10.1f} Hz "
                   f"({ppm:+.0f} ppm)   fit residual p95 "
                   f"{fit.residual_p95_ms:.2f} ms over {fit.n_blocks - 1} blocks")
             if enter_ms is not None:
-                all_enter_ms.append(enter_ms)
                 print(f"    RECORDER_ENTER_MS       {enter_ms:10.1f} ms  "
                       f"(soundcard/PipeWire stream open)")
-            if fr_ms is not None and exp_ms:
-                ratio = fr_ms / exp_ms
-                all_first_ratio.append(ratio)
+            if ratio is not None:
                 fs = p.get("FIRST_RECORD_SAMPLES")
                 print(f"    FIRST_RECORD_MS         {fr_ms:10.1f} ms  "
                       f"expected {exp_ms:.1f}  -> {ratio:.2f}x"
                       + (f"   ({int(fs)} samples)" if fs is not None else ""))
-            all_first_excess_ms.append(fit.first_block_excess_ms)
             print(f"    block-0 vs steady line  {fit.first_block_excess_ms:10.1f} ms  "
                   f"(negative: first stamp sits below the extrapolated cadence)")
             print(f"    STARTED - steady k=0    "
@@ -457,38 +455,64 @@ def cmd_probes(date_dirs: list[str], frame_num: int | None) -> int:
             if lat is not None:
                 print(f"    STARTUP_LATENCY_MS      {lat:10.1f} ms  "
                       f"(STARTED minus intended start-at)")
+            rows.append((fit.frame_num, ratio, fit.first_block_excess_ms, enter_ms))
         print()
 
-    if all_first_ratio:
-        arr = np.asarray(all_first_ratio)
-        exc = np.asarray(all_first_excess_ms)
-        ent = np.asarray(all_enter_ms) if all_enter_ms else np.asarray([np.nan])
-        print("-- reading --")
-        print(f"  FIRST_RECORD_MS / expected : mean {arr.mean():.2f}x  "
-              f"range {arr.min():.2f}-{arr.max():.2f}  (n={arr.size})")
-        print(f"  block-0 below steady line  : mean {exc.mean():+.1f} ms  "
-              f"std {exc.std(ddof=1) if exc.size > 1 else 0.0:.1f} ms")
-        print(f"  RECORDER_ENTER_MS          : mean {np.nanmean(ent):+.1f} ms  "
-              f"range {np.nanmin(ent):.1f}-{np.nanmax(ent):.1f}")
-        print()
-        if arr.mean() < 0.25:
-            print("  << 1x  ->  H1: the first read drains a pre-filled source "
-                  "buffer; sample 0 predates STARTED, aligned audio LAGS video. "
-                  "block_size is the likely knob -> Phase B.")
-        elif arr.mean() > 1.5:
-            print("  ~2x  ->  the first read over-primes PipeWire's ring buffer "
-                  "(one-off software cost, not a capture gap: a prior on-device "
-                  "probe saw real signal within ~20 ms). The ~1-block excess is "
-                  "very stable run-to-run, so whatever the true A/V offset is, "
-                  "it's a fixed per-device constant -> a calibration constant is "
-                  "viable. Sign is NOT decidable from the sidecar alone (sample-0-"
-                  "late vs constant-delivery-delay are degenerate here) -> need "
-                  "Phase A (TTL buzzer) for ground truth. Phase B still worth it "
-                  "to see if the excess scales with block_size.")
-        else:
-            print("  ~1x  ->  H2: the first read blocked waiting for capture; "
-                  "fixed source/USB latency, block_size is a red herring.")
+    if rows:
+        _print_probe_reading(rows)
     return 0
+
+
+def _print_probe_reading(
+    rows: list[tuple[int, float | None, float, float | None]],
+) -> None:
+    print("-- reading --")
+    by_bs: dict[int, list[tuple[float | None, float, float | None]]] = {}
+    for bs, ratio, exc, ent in rows:
+        by_bs.setdefault(bs, []).append((ratio, exc, ent))
+
+    hdr = (f"  {'block_size':>10}  {'n':>3}  {'first_read':>10}  "
+           f"{'excess_ms':>12}  {'excess/blk':>10}  {'enter_ms':>9}")
+    print(hdr)
+    stats: list[tuple[int, float, float]] = []  # (block_size, |excess|, blk_ms)
+    for bs in sorted(by_bs):
+        grp = by_bs[bs]
+        ratios = [r for r, _e, _n in grp if r is not None]
+        excs = np.asarray([abs(e) for _r, e, _n in grp])
+        ents = [n for _r, _e, n in grp if n is not None]
+        blk_ms = bs / 192000 * 1e3
+        mean_exc = float(excs.mean())
+        stats.append((bs, mean_exc, blk_ms))
+        rr = f"{np.mean(ratios):.2f}x" if ratios else "  -  "
+        print(f"  {bs:>10}  {len(grp):>3}  {rr:>10}  "
+              f"{mean_exc:>9.1f}+-{excs.std(ddof=1) if excs.size > 1 else 0:<2.0f}  "
+              f"{mean_exc / blk_ms:>10.2f}  "
+              f"{np.mean(ents) if ents else float('nan'):>9.1f}")
+    print()
+
+    if len(stats) >= 2:
+        bs_arr = np.array([s[0] for s in stats], float)
+        ex_arr = np.maximum(np.array([s[1] for s in stats], float), 1e-6)
+        # power-law slope of first-read excess vs block size
+        slope = float(np.polyfit(np.log(bs_arr), np.log(ex_arr), 1)[0])
+        lo, hi = stats[0], stats[-1]
+        print(f"  first-read excess scales as block_size^{slope:.2f}  "
+              f"({lo[1]:.0f} ms @ {lo[0]} -> {hi[1]:.0f} ms @ {hi[0]})")
+        if slope > 0.5:
+            print("  -> super-linear growth with block_size ==> H1: the first "
+                  "read over-primes PipeWire's ring buffer. block_size IS the "
+                  "knob -- a small block nearly removes the first-read anomaly "
+                  "(the block-0 ambiguity term shrinks with it). Still need "
+                  "Phase A (TTL buzzer) for the residual's SIGN, and a "
+                  "stress-ng run before shipping a small value (xrun headroom).")
+        else:
+            print("  -> flat across block_size ==> H2: fixed source/USB "
+                  "latency; block_size is a red herring.")
+    else:
+        bs, exc, blk_ms = stats[0]
+        print(f"  single block size ({bs}); excess ~{exc:.0f} ms "
+              f"({exc / blk_ms:.2f} blocks). Run the sweep "
+              f"(8192/32768/131072/262144) to tell H1 from H2.")
 
 
 def _report_run(date_dir: str, fit: SidecarFit,

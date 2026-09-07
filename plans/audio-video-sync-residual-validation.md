@@ -280,6 +280,49 @@ buzzer needed, and it's a real deployment option regardless of the outcome.
   Pi). `analyse_audio_sync.py probes` reports the steady-state fit residual p95,
   which spikes when blocks are being dropped.
 
+### Phase B results — sweep run 2026-09-07 (bench, idle, ~10 s recordings, 3 trials × 2 AudioMoths per size)
+
+| `block_size` | block ms | `FIRST_RECORD_MS` ÷ expected | **first-read excess** (block-0 below steady line) | excess ÷ block | `RECORDER_ENTER_MS` |
+|---|---|---|---|---|---|
+| 8192   | 42.7  | 1.14× | **−11.9 ms** (±3) | 0.28 | ~49 ms |
+| 32768  | 170.7 | 1.55× | **−99.8 ms** (±4) | 0.58 | ~52 ms |
+| 131072 | 682.7 | 1.87× | **−596.7 ms** (±6) | 0.87 | ~52 ms |
+| 262144 | 1365  | 1.95× | **−1305 ms** (±4) | 0.96 | ~49 ms |
+
+**The first-read excess scales as `block_size^1.36`** (12 ms → 1305 ms over a 32× range).
+Super-linear, and the excess-per-block ratio climbs monotonically toward ~1 as the
+block grows. This is the **H1** signature: the first `record()` over-primes
+PipeWire's ring buffer, and the cost grows worse-than-linearly with the requested
+read size (buffer fill + copy/settle, not a fixed latency).
+
+**Consequences:**
+- **`block_size` is the knob.** At **8192** the anomaly is nearly gone — the
+  block-0 ambiguity term is **~12 ms** vs ~597 ms at the default, i.e. the
+  first-read contribution to any A/V offset (whatever its sign) is reduced ~50×
+  and is down at `RECORDER_ENTER_MS` scale.
+- **H2 is refuted** — a fixed source/USB latency would be flat across `block_size`.
+- `RECORDER_ENTER_MS` is flat (~50 ms) at every size, as expected (stream open is
+  independent of read size); the ~10 ms per-unit gap between the two AudioMoths
+  persists.
+- **No dropped blocks** at any size on the idle bench (`SEGMENT_TOTAL_SAMPLES ==
+  n_blocks × block_size` exactly; fit residual p95 ~1 ms at 8192). **Not yet
+  stress-tested** — the `stress-ng --cpu 4 --io 2` run is still required before
+  8192 could ship, and the recordings here were only ~10 s.
+- Still **does not give the sign** of the residual — Phase A (TTL buzzer) remains
+  the only thing that does. But it means the sign question now matters much less
+  if `block_size` drops: 12 ms of ambiguity vs 597 ms.
+
+**Open follow-ups from this sweep:**
+- Stress-ng run at 8192 and 32768 (xrun headroom on a loaded Pi).
+- Longer recordings (≥60 s) at each size to tighten the excess estimate and catch
+  rare stalls.
+- The `sample_rate` sweep (hold `block_size`, vary rate) to confirm the excess is
+  fixed in *samples* not *milliseconds*.
+- `monitoring.enabled=false` × `block_size` — does removing the concurrent reader
+  change the exponent or just the constant?
+- Decide a shipped default. 8192 looks attractive but needs the stress + long-run
+  data; 32768 (~100 ms excess, 4× xrun headroom vs 8192) may be the safer pick.
+
 ## Phase C — targeted code probes (only if A/B point here)
 
 - **Drain-then-stamp variant:** issue one throwaway `recorder.record()` *before*

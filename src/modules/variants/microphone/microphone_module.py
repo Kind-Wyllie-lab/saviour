@@ -337,8 +337,14 @@ class AudiomothModule(Module):
     def _record_microphone_segment(self, serial: str, mic_id: str, filename: str, intended_start_at: float | None) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         sample_rate = self.config.get("audiomoth.sample_rate", 192000)
-        frame_num = self.config.get("microphone.frame_num", 1024 * 128)
-        block_size = self.config.get("microphone.block_size", 1024 * 128)
+        # frame_num / block_size are user-settable (Recording tab). Guard a
+        # nonsensical value so a bad config can't wedge the capture loop: a
+        # too-small block starves the read loop, a huge one stalls segment
+        # stop. 4096..1048576 samples covers the useful range.
+        frame_num = int(self.config.get("microphone.frame_num", 1024 * 128))
+        block_size = int(self.config.get("microphone.block_size", 1024 * 128))
+        frame_num = max(4096, min(frame_num, 1024 * 1024))
+        block_size = max(4096, min(block_size, 1024 * 1024))
         clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))
         clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
 
@@ -1213,6 +1219,17 @@ class AudiomothModule(Module):
     def start_streaming(self) -> bool:
         """Start the MJPEG monitoring stream for all connected audiomoths."""
         try:
+            # The monitor stream keeps a second soundcard recorder open on
+            # every AudioMoth for the whole module lifetime. `monitoring.enabled`
+            # (default true) turns it off entirely -- for deployments that don't
+            # need the live view, and for A/V-sync bench tests isolating the
+            # first-record() priming cost (see
+            # plans/audio-video-sync-residual-validation.md).
+            if not self.config.get("monitoring.enabled", True):
+                self.logger.info(
+                    "Monitoring stream disabled (monitoring.enabled = false)")
+                return False
+
             if self.is_streaming:
                 self.logger.warning("Monitoring stream already running")
                 return False
@@ -1283,6 +1300,13 @@ class AudiomothModule(Module):
     def configure_module_special(self, updated_keys=None):
         if updated_keys is None:
             return
+        # React to a monitoring.enabled toggle without a restart.
+        if "monitoring.enabled" in updated_keys:
+            want = self.config.get("monitoring.enabled", True)
+            if want and not self.is_streaming:
+                self.start_streaming()
+            elif not want and self.is_streaming:
+                self.stop_streaming()
         audiomoth_keys = {k for k in updated_keys if k.startswith("audiomoth.")}
         if not audiomoth_keys:
             return

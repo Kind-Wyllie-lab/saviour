@@ -99,6 +99,10 @@ const MIC_COLORMAPS = [
   "jet", "hot", "bone", "ocean", "grayscale",
 ];
 
+// Selectable recorder block sizes (powers of two). 131072 is the long-standing
+// default; smaller values cut first-read latency but risk xruns at 192 kHz.
+const MIC_BLOCK_SIZES = [8192, 16384, 32768, 65536, 131072, 262144];
+
 // Committed swatch PNGs, one per colour map (tools/gen_microphone_colormap_swatches.py).
 // { "inferno": "/assets/.../inferno.png", ... }
 const MIC_COLORMAP_SWATCHES = Object.fromEntries(
@@ -198,7 +202,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     if (!formData) return formData;
     const {
       monitoring: _m, audiomoth: _a, audiomoth_labels: _al,
-      module: _mod, export: _exp, recording: _rec,
+      module: _mod, export: _exp, recording: _rec, microphone: _mic,
       ...rest
     } = formData;
     for (const k of HIDDEN_CONFIG_SECTIONS) delete rest[k];
@@ -207,6 +211,25 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
   const GAIN_LABELS = ["Low", "Low-Medium", "Medium", "Medium-High", "High"];
   const AM_SAMPLE_RATES = [8000, 16000, 32000, 48000, 96000, 192000, 250000, 384000];
+
+  // Recording block size (samples per recorder.record() call). One control
+  // drives both microphone.block_size and microphone.frame_num — they are
+  // kept equal; decouple via the config file if ever needed. Applies to the
+  // next recording, not live.
+  const micCfg     = formData?.microphone ?? {};
+  const blockSize  = Number(micCfg.block_size ?? 131072);
+  const blockMs    = (blockSize / amRate) * 1000;
+  const monEnabled = mon.enabled !== false;
+
+  const setBlockSize = (n) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      if (!cloned.microphone) cloned.microphone = {};
+      cloned.microphone.block_size = n;
+      cloned.microphone.frame_num  = n;
+      return cloned;
+    });
+  };
 
 
   useEffect(() => {
@@ -279,7 +302,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   // Right side of the card is just the live plot, like every other config
   // card's MJPEG stream. The stream-display controls (Stream / Plot / Range /
   // Layout) live only on the Monitor tab — they still drive what renders here.
-  const sidebar = streamEnabled ? (
+  const sidebar = !monEnabled ? (
+    <div className="monitor-stream-paused">Monitoring disabled</div>
+  ) : streamEnabled ? (
     <MicrophoneStream ip={module.ip} port={streamPort}
       plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
   ) : (
@@ -335,6 +360,25 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               value={formData?.recording?.segment_length_mins ?? 60}
               onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
           </div>
+          <div className="form-field">
+            <label title="Samples per recorder read. Smaller blocks cut the first-read priming latency but raise the risk of dropped audio (xruns) at high sample rates. Takes effect on the next recording.">
+              Block size:
+            </label>
+            <select value={blockSize}
+              onChange={e => setBlockSize(Number(e.target.value))}>
+              {MIC_BLOCK_SIZES.map(n => (
+                <option key={n} value={n}>
+                  {n.toLocaleString()} samples (~{((n / amRate) * 1000).toFixed(0)} ms)
+                </option>
+              ))}
+            </select>
+          </div>
+          {blockSize < 32768 && (
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Small blocks (~{blockMs.toFixed(0)} ms) can drop audio at{" "}
+              {(amRate / 1000).toFixed(0)} kHz on a loaded Pi — bench testing only.
+            </div>
+          )}
           <div className="config-section-divider" />
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange} />
@@ -427,6 +471,20 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       {/* MONITOR tab */}
       {activeTab === "monitor" && (
         <>
+          <div className="form-field">
+            <label title="Runs the server-side monitoring stream — a second recorder kept open on every AudioMoth for the module's lifetime. Turn off for deployments that don't need the live view, or to isolate first-read latency in A/V-sync tests. Separate from the display toggle below (that only pauses this browser's view).">
+              Monitoring stream (server):
+            </label>
+            <input type="checkbox" checked={monEnabled}
+              onChange={e => handleChange(["monitoring", "enabled"], e)} />
+          </div>
+          {!monEnabled && (
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Monitoring is off — no live spectrogram, and the CLIP indicator and
+              rolling clip % are unavailable. Recording is unaffected.
+            </div>
+          )}
+          <div className="config-section-divider" />
           <div className="form-field">
             <label>Freq low (kHz):</label>
             <input type="number" min="0" max={nyquistKhz} step="0.5"

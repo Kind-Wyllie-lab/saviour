@@ -335,6 +335,22 @@ def test_prestage_skip_from_frame_count(monkeypatch):
     assert c._prestage_skip("x.ts", 130) == 0      # unknowable -> don't guess
 
 
+def test_video_frame_count_handles_duplicate_ffprobe_lines(monkeypatch):
+    """ffprobe 7.x prints the MPEG-TS stream's csv row twice (once under
+    programs[].streams[], once under the top-level streams[]), with a blank
+    line between -- int()-ing the whole blob raises ValueError and used to
+    silently collapse to 0, disabling the pre-stage-row skip entirely."""
+    import src.controller.compose as c
+
+    class _Result:
+        stdout = "453\n\n453\n"
+
+    monkeypatch.setattr(
+        c.subprocess, "run", lambda *a, **kw: _Result()
+    )
+    assert c._video_frame_count("x.ts") == 453
+
+
 def test_find_microphone_picks_first_or_named(tmp_path):
     dd = tmp_path / "20260805"
     for name in ("microphone_1", "microphone_2"):

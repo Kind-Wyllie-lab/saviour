@@ -9,12 +9,15 @@ const MIN_H = 120;
 //     be squashed; the bottom-right handle changes width only.
 //   "both" — width and height resize independently. Until the user drags the
 //     handle the tile has *no* fixed height and fits its content (no dead
-//     space); once resized it becomes a fixed-height box that scrolls.
-//     Used for non-video widgets (health summary, module list).
+//     space), capped by an optional `maxHeight` (the parent's estimate of
+//     available room) so a long content-sized widget scrolls instead of
+//     overflowing a short screen; once resized it becomes a fixed-height box
+//     that scrolls regardless of maxHeight. Used for non-video widgets
+//     (health summary, module list).
 // Position/size are owned by the parent (persisted there); this just reports
 // deltas via onChange({ x, y } | { width } | { width, height }).
 export default function DraggableTile({
-  x, y, width, height, ratio = 16 / 9, resize = "aspect", zIndex,
+  x, y, width, height, maxHeight, ratio = 16 / 9, resize = "aspect", zIndex,
   bounds, onChange, onRemove, onAutoHeight, onActivate, children,
 }) {
   // onChange is recreated on every parent render; keep the latest so a drag
@@ -118,7 +121,7 @@ export default function DraggableTile({
         className={`dash-tile__body${free ? " dash-tile__body--free" : ""}`}
         style={
           free
-            ? (hasFixedH ? { height: h } : undefined)
+            ? (hasFixedH ? { height: h } : maxHeight ? { maxHeight } : undefined)
             : { "--tile-w": `${Math.round(width)}px`, "--tile-h": `${h}px` }
         }
       >

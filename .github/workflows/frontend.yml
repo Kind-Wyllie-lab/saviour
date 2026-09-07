@@ -1,0 +1,58 @@
+name: Frontend
+
+on:
+  push:
+    branches: [ "main", "staging" ]
+    paths:
+      - "src/controller/frontend/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    branches: [ "main", "staging" ]
+    paths:
+      - "src/controller/frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: src/controller/frontend
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    # Non-blocking for now: `npm run lint` has a pre-existing baseline of
+    # ~18 no-unused-vars errors on staging. Flip continue-on-error to false
+    # (and make this a required check) once that baseline is cleared —
+    # mirrors how python-app.yml treats the full ruff rule set.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/controller/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # basic is the shared component library the others import from, so a
+        # change there can break a variant build without touching its folder.
+        variant: [basic, loom, apa, habitat, acoustic_startle]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/controller/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_VARIANT: ${{ matrix.variant }}

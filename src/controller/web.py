@@ -13,6 +13,7 @@ Created: ?
 
 
 import csv
+import hashlib
 import hmac
 import io
 import json
@@ -40,7 +41,7 @@ from flask import (
 )
 from flask_socketio import SocketIO
 
-from src.controller import compose, framesync_check
+from src.controller import compose, framesync_check, rest_api
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
@@ -206,6 +207,13 @@ class Web(ABC):
     # sitting somewhere "get_controller_config" could ever echo back.
     _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
 
+    # Named API tokens for external programs (pyControl etc.) hitting
+    # /api/v1 -- an alternative to handing out the web-UI admin password,
+    # so a token baked into a script can be revoked on its own. Same
+    # rationale as above for living outside the JSON config: only sha256
+    # hashes are stored here, never the token itself.
+    _API_TOKENS_FILE = "/etc/saviour/api_tokens.json"
+
     # How long NAS free-space history is kept for the Storage page trend.
     _NAS_HISTORY_RETENTION_S = 30 * 24 * 3600
     # Max points returned to the chart / a single CSV export.
@@ -284,6 +292,12 @@ class Web(ABC):
         if self.rest_facade:
             self._register_rest_facade_routes()
 
+        # Resource-oriented REST API (/api/v1) for external experiment
+        # controllers (pyControl etc.) -- see src/controller/rest_api.py.
+        # A thin bearer-authed layer over the same ControllerFacade the
+        # Socket.IO handlers use. The older /facade/* routes stay as-is.
+        self.app.register_blueprint(rest_api.create_api_blueprint(self))
+
         # NAS health state + a rolling free-space history for the Storage page's
         # trend chart. One sample per _nas_monitor_loop pass (default 5 min);
         # pruned by age, so retention is stable if the interval is retuned.
@@ -336,6 +350,43 @@ class Web(ABC):
         # below), token → expiry epoch.
         self._download_tokens: dict = {}
         self._download_token_lock = threading.Lock()
+
+        # Subscribers to the /api/v1/events SSE stream. Each is a bounded
+        # queue.Queue; _publish_api_event() fans an event dict out to all
+        # of them (dropping it for any that are full rather than blocking).
+        self._event_subscribers: list = []
+        self._event_lock = threading.Lock()
+
+
+    def _event_subscribe(self) -> "object":
+        """Register a new SSE subscriber queue and return it."""
+        q = _queue.Queue(maxsize=256)
+        with self._event_lock:
+            self._event_subscribers.append(q)
+        return q
+
+    def _event_unsubscribe(self, q) -> None:
+        with self._event_lock:
+            try:
+                self._event_subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def _publish_api_event(self, event_type: str, payload: dict | None = None) -> None:
+        """Fan a typed event out to every /api/v1/events subscriber.
+        Best-effort and non-blocking: a subscriber whose queue is full
+        misses this event. Safe to call from any thread, and a no-op when
+        nobody is listening."""
+        with self._event_lock:
+            subs = list(self._event_subscribers)
+        if not subs:
+            return
+        event = {"type": event_type, "ts": time.time(), **(payload or {})}
+        for q in subs:
+            try:
+                q.put_nowait(event)
+            except _queue.Full:
+                pass
 
 
     def _generate_experiment_name(self) -> str:
@@ -396,15 +447,133 @@ class Web(ABC):
         return hmac.compare_digest(str(password or ""), expected)
 
 
-    def _check_bearer_auth(self) -> bool:
-        """Check the admin password against this request's `Authorization:
-        Bearer <password>` header -- for the /facade/* REST routes, which
-        are for external scripts (e.g. a Matlab experiment controller)
-        rather than the browser frontend, so they have no Socket.IO session
-        to check via _is_authenticated/_require_auth."""
+    # -- API token store (named bearer tokens for /api/v1) ------------- #
+
+    def _load_api_tokens(self) -> list:
+        """List of {"name", "hash", "created"} dicts from _API_TOKENS_FILE.
+        Cached on the file's mtime. Missing/corrupt file -> []."""
+        try:
+            mtime = os.path.getmtime(self._API_TOKENS_FILE)
+        except OSError:
+            self._api_tokens_cache = (None, [])
+            return []
+        cache = getattr(self, "_api_tokens_cache", (None, []))
+        if cache[0] == mtime:
+            return cache[1]
+        try:
+            with open(self._API_TOKENS_FILE) as f:
+                data = json.load(f)
+            tokens = [t for t in data if isinstance(t, dict) and t.get("hash")]
+        except (OSError, ValueError):
+            tokens = []
+        self._api_tokens_cache = (mtime, tokens)
+        return tokens
+
+    def _persist_api_tokens(self, tokens: list) -> None:
+        """Atomically rewrite the token file (write temp + os.replace), so a
+        crash mid-write can't truncate it and lose every token."""
+        path = self._API_TOKENS_FILE
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(tokens, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        self._api_tokens_cache = (None, [])  # force reload
+
+    @staticmethod
+    def _hash_api_token(token: str) -> str:
+        return hashlib.sha256((token or "").encode()).hexdigest()
+
+    def _api_token_entry(self, token: str) -> "dict | None":
+        """The stored token record matching this raw token, or None."""
+        if not token:
+            return None
+        h = self._hash_api_token(token)
+        for t in self._load_api_tokens():
+            if hmac.compare_digest(t["hash"], h):
+                return t
+        return None
+
+    def _api_token_matches(self, token: str) -> bool:
+        return self._api_token_entry(token) is not None
+
+    def mint_api_token(self, name: str, readonly: bool = False) -> dict:
+        """Create a named API token. Returns {"name", "token", "created",
+        "readonly"}; the raw token is shown here once and never
+        recoverable after. A read-only token can call GET routes only."""
+        name = (name or "").strip()
+        if not name:
+            return {"success": False, "error": "Token name cannot be empty"}
+        tokens = list(self._load_api_tokens())
+        if any(t["name"] == name for t in tokens):
+            return {"success": False, "error": f"Token '{name}' already exists"}
+        raw = secrets.token_urlsafe(32)
+        created = datetime.now(UTC).isoformat()
+        tokens.append({"name": name, "hash": self._hash_api_token(raw),
+                       "created": created, "readonly": bool(readonly)})
+        self._persist_api_tokens(tokens)
+        self.logger.warning(
+            f"Minted {'read-only ' if readonly else ''}API token '{name}' "
+            f"for /api/v1 access")
+        return {"success": True, "name": name, "token": raw,
+                "created": created, "readonly": bool(readonly)}
+
+    def revoke_api_token(self, name: str) -> dict:
+        tokens = list(self._load_api_tokens())
+        kept = [t for t in tokens if t["name"] != name]
+        if len(kept) == len(tokens):
+            return {"success": False, "error": f"Unknown token '{name}'"}
+        self._persist_api_tokens(kept)
+        self.logger.warning(f"Revoked API token '{name}'")
+        return {"success": True}
+
+    def list_api_tokens(self) -> list:
+        """Public metadata only -- name, created, readonly; never the hash."""
+        return [{"name": t["name"], "created": t.get("created"),
+                 "readonly": bool(t.get("readonly"))}
+                for t in self._load_api_tokens()]
+
+    # -- bearer auth ------------------------------------------------- #
+
+    def _bearer_token(self) -> str:
         auth_header = request.headers.get("Authorization", "")
-        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
-        return self._check_admin_password(token)
+        return auth_header[7:] if auth_header.startswith("Bearer ") else ""
+
+    def _bearer_auth_kind(self) -> "str | None":
+        """Classify this request's `Authorization: Bearer <secret>` header:
+        'admin' (the admin password), 'token' (a full API token),
+        'token_readonly' (a read-only API token), or None (no match)."""
+        token = self._bearer_token()
+        if self._check_admin_password(token):
+            return "admin"
+        entry = self._api_token_entry(token)
+        if entry is None:
+            return None
+        return "token_readonly" if entry.get("readonly") else "token"
+
+    def _check_bearer_auth(self) -> bool:
+        """True if the bearer header carries the admin password OR any
+        provisioned API token. For the /facade/* routes and the
+        read/lifecycle /api/v1 routes -- external scripts (pyControl, a
+        Matlab experiment controller) with no Socket.IO session to check
+        via _is_authenticated/_require_auth. The read-only/full
+        distinction is enforced in rest_api.py via _bearer_auth_kind."""
+        return self._bearer_auth_kind() is not None
+
+    def _check_admin_bearer(self) -> bool:
+        """Stricter: the admin password ONLY, not an API token. Gates the
+        /api/v1/tokens management routes, so a leaked scoped token cannot
+        mint or revoke tokens."""
+        return self._check_admin_password(self._bearer_token())
 
 
     def _is_authenticated(self) -> bool:
@@ -1005,6 +1174,7 @@ class Web(ABC):
 
     def push_module_update(self, modules: dict):
         self.socketio.emit('modules_update', modules)
+        self._publish_api_event("modules", {"modules": modules})
 
 
     def _first_run_state(self) -> dict:
@@ -2085,6 +2255,7 @@ class Web(ABC):
                     "id": data.get("id"),
                     "light": data.get("light"),
                     "dark": data.get("dark"),
+                    "source": data.get("source"),
                 })
             except ThemeError as e:
                 self.socketio.emit("custom_theme_error", {"error": str(e)},

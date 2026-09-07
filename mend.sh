@@ -364,9 +364,9 @@ else
     rm -f "$TMP_CONF"
 fi
 
-# ── 9. Restart service ─────────────────────────────────────────────────────────
+# ── 9. Config re-apply + service restart ──────────────────────────────────────
 
-section "9/9  Service restart"
+section "9/9  Config re-apply + service restart"
 
 # saviour-config bakes the current code layout (e.g. src/*/variants/<type>)
 # into /etc/systemd/system/saviour.service as literal text; a plain code
@@ -384,6 +384,15 @@ if [ -f /etc/saviour/config ]; then
             "$SAVIOUR_CONFIG_LINK" --regenerate-service >> "$LOG" 2>&1 \
                 && ok "saviour.service unit regenerated" \
                 || warn "Could not regenerate saviour.service unit — run 'sudo saviour-config' manually"
+
+            # apply_from_config() (the boot-time --apply path) is a no-op
+            # unless ROLE/TYPE/GATEWAY/IP changed, so the wlan0/WAN firewall
+            # and smb.conf interface binding won't reach an existing fleet on
+            # a plain reboot. Re-apply them explicitly here.
+            fix "Applying wlan0/WAN firewall + smb.conf interface binding"
+            "$SAVIOUR_CONFIG_LINK" --apply-firewall >> "$LOG" 2>&1 \
+                && ok "Firewall / interface binding applied" \
+                || warn "Could not apply firewall — run 'sudo saviour-config --apply-firewall' manually"
         else
             warn "saviour-config not installed yet (see step 5 above) — skipping unit regeneration"
         fi

@@ -249,7 +249,24 @@ class PTP:
         self.monitor_thread.start()
 
     def _monitor(self):
-        """Monitor PTP services and parse their output."""
+        """Monitor PTP services and parse their output.
+
+        ptp4l/phc2sys run under systemd with ``Restart=always``, so a service
+        being momentarily not-active is NOT fatal: a transient unit restart, a
+        dbus hiccup that makes ``systemctl is-active`` return ``unknown``, or
+        the brief window while the controller's health watchdog is issuing a
+        ``restart_ptp`` all show up here as a non-``active`` reading. This loop
+        logs the transition once and keeps polling, resuming log parsing as
+        soon as the services are back.
+
+        It previously did ``self.running = False; return`` on the first
+        non-active reading, which permanently killed PTP telemetry -- the
+        latest offset/freq values and the history buffer froze at their last
+        readings, the module went on reporting stale-but-healthy PTP to the
+        controller (so the controller's watchdog never restarted it), and only
+        a full ``saviour.service`` restart brought the thread back.
+        """
+        services_ok = True
         while self.running:
             try:
                 # Check service status
@@ -258,9 +275,19 @@ class PTP:
 
                 if ptp4l_status != 'active' or phc2sys_status != 'active':
                     self.status = f'ptp4l:{ptp4l_status}, phc2sys:{phc2sys_status}'
-                    self.logger.error(f"PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
-                    self.running = False
-                    return
+                    if services_ok:
+                        self.logger.error(
+                            f"PTP services not active: ptp4l={ptp4l_status}, "
+                            f"phc2sys={phc2sys_status} — will keep polling "
+                            f"(systemd Restart=always should recover them)"
+                        )
+                        services_ok = False
+                    time.sleep(1)
+                    continue
+
+                if not services_ok:
+                    self.logger.info("PTP services active again — resuming monitoring")
+                    services_ok = True
 
                 # Get recent logs and parse them
                 ptp4l_logs = self._get_service_logs(self.ptp4l_service, lines=5)

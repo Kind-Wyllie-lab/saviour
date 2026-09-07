@@ -162,7 +162,7 @@ export default function HealthSummaryWidget() {
       )}
 
       {controllerHealth?.uptime != null && (
-        <div className="hsw-row">
+        <div className="hsw-row hsw-row--uptime">
           <span className="hsw-label">Uptime</span>
           <span className="hsw-value val--ok">{formatUptime(controllerHealth.uptime)}</span>
         </div>

@@ -51,7 +51,9 @@ function ControllerConfigCard() {
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
-  const [showThemeImport, setShowThemeImport] = useState(false);
+  // null == closed; "new" == the blank import flow; a theme object == editing
+  // that custom theme.
+  const [themeModal, setThemeModal] = useState(null);
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
@@ -293,19 +295,32 @@ function ControllerConfigCard() {
                           </span>
                           <span className="theme-swatch-name">{t.name}</span>
                           {!BUILTIN_THEME_IDS.has(t.id) && loggedIn && (
-                            <button
-                              type="button"
-                              className="theme-swatch-delete"
-                              title={`Delete "${t.name}"`}
-                              onClick={e => {
-                                e.preventDefault();
-                                if (window.confirm(`Delete the "${t.name}" theme?`)) {
-                                  socket.emit("delete_custom_theme", { id: t.id });
-                                }
-                              }}
-                            >
-                              ×
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                className="theme-swatch-edit"
+                                title={`Edit "${t.name}"`}
+                                onClick={e => {
+                                  e.preventDefault();
+                                  setThemeModal(t);
+                                }}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                className="theme-swatch-delete"
+                                title={`Delete "${t.name}"`}
+                                onClick={e => {
+                                  e.preventDefault();
+                                  if (window.confirm(`Delete the "${t.name}" theme?`)) {
+                                    socket.emit("delete_custom_theme", { id: t.id });
+                                  }
+                                }}
+                              >
+                                ×
+                              </button>
+                            </>
                           )}
                         </label>
                       );
@@ -315,7 +330,7 @@ function ControllerConfigCard() {
                     <button
                       type="button"
                       className="teams-test-btn"
-                      onClick={() => setShowThemeImport(true)}
+                      onClick={() => setThemeModal("new")}
                       disabled={!loggedIn}
                       title={loggedIn ? undefined : "Login required for this action"}
                     >
@@ -362,8 +377,12 @@ function ControllerConfigCard() {
         </div>
       </div>
 
-      {showThemeImport && (
-        <ThemeImportModal onClose={() => setShowThemeImport(false)} />
+      {themeModal && (
+        <ThemeImportModal
+          key={themeModal === "new" ? "new" : themeModal.id}
+          editingTheme={themeModal === "new" ? null : themeModal}
+          onClose={() => setThemeModal(null)}
+        />
       )}
     </div>
   );

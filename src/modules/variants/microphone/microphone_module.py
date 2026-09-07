@@ -360,17 +360,34 @@ class AudiomothModule(Module):
             with open(timestamps_filename, 'w') as timestamps_writer:
                 if intended_start_at is not None:
                     timestamps_writer.write(f"START_AT {intended_start_at:.6f}\n")
+                # Wall time immediately before the soundcard/PulseAudio recorder
+                # is opened — paired with actual_start below to measure how long
+                # stream setup (__enter__) actually takes. Step 0 of
+                # plans/audio-video-sync-residual-validation.md.
+                recorder_open_start = time.time()
                 with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
                     # Timestamp the moment the recorder is open and ready — this is
                     # the tightest available proxy for when the first audio sample
                     # was captured.  Used for post-hoc alignment with video.
                     actual_start = time.time()
                     timestamps_writer.write(f"STARTED {actual_start:.6f}\n")
+                    # Sync-residual diagnostics. Written as "KEY value" trailer
+                    # lines — audio_align.parse_mic_sidecar skips any line
+                    # containing a space, so these don't perturb the block fit.
+                    #   RECORDER_ENTER_MS — stream setup / __enter__ cost.
+                    #   FIRST_RECORD_MS (in the loop) — a fast first read
+                    #     (<< frame_num/sample_rate ms) means the samples were
+                    #     already buffered at open, so sample 0 predates STARTED
+                    #     and aligned audio lags video; a read of ~one full block
+                    #     means it blocked waiting for capture instead.
+                    enter_ms = (actual_start - recorder_open_start) * 1000
+                    timestamps_writer.write(f"RECORDER_ENTER_MS {enter_ms:.1f}\n")
                     if intended_start_at is not None:
                         startup_latency_ms = (actual_start - intended_start_at) * 1000
                         timestamps_writer.write(f"STARTUP_LATENCY_MS {startup_latency_ms:.1f}\n")
                     timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
+                        first_block = True
                         while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
                             # Timestamp BEFORE record() so it marks the start of
                             # the block, not the end (each block is frame_num /
@@ -378,6 +395,18 @@ class AudiomothModule(Module):
                             block_start = time.time()
                             data = recorder.record(numframes=frame_num)
                             timestamps_writer.write(f"{block_start}\n")
+                            if first_block:
+                                # See RECORDER_ENTER_MS note above. FIRST_RECORD_*
+                                # only characterises the very first read of a
+                                # freshly-opened stream.
+                                first_block = False
+                                first_record_ms = (time.time() - block_start) * 1000
+                                expected_ms = frame_num / sample_rate * 1000
+                                timestamps_writer.write(
+                                    f"FIRST_RECORD_MS {first_record_ms:.1f}\n"
+                                    f"FIRST_RECORD_SAMPLES {data.shape[0]}\n"
+                                    f"FIRST_RECORD_EXPECTED_MS {expected_ms:.1f}\n"
+                                )
                             f.write(data)
 
                             mono = data[:, 0] if data.ndim > 1 else data

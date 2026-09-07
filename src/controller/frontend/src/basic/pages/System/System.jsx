@@ -4,6 +4,7 @@ import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
+import UpdateProgressModal from "../../components/UpdateProgressModal/UpdateProgressModal";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { triggerDownload } from "../Recording/sessionFormat";
 import "./System.css";
@@ -345,6 +346,17 @@ export default function System() {
     return rows;
   }, [deviceStatuses, moduleList]);
 
+  // Surface update progress as a modal that follows on from whatever
+  // triggered it (Deploy to All Modules, Update/Revert on the controller,
+  // …) rather than a table quietly appearing at the bottom of the page.
+  // Opens itself the moment there's something to show; closing it doesn't
+  // clear deviceStatuses, so reopening (re-triggering an update) still
+  // shows the latest state.
+  const [showUpdateProgress, setShowUpdateProgress] = useState(false);
+  useEffect(() => {
+    if (updateDevices.length > 0) setShowUpdateProgress(true);
+  }, [updateDevices.length]);
+
   // ── Mend all modules ──────────────────────────────────────────────────────
   // Broadcasts via send_command's module_id: "all", which only ever reaches
   // self.facade.get_modules() on the backend -- the controller is a
@@ -528,43 +540,11 @@ export default function System() {
           </tbody>
         </table>
       </div>
-      {/* ── Update results (shown only while/after update runs) ── */}
-      {updateDevices.length > 0 && (
-        <div className="system-update-section">
-          <div className="system-table-wrapper">
-            <table className="system-table">
-              <thead>
-                <tr>
-                  <th>Device</th>
-                  <th>Result</th>
-                  <th>Output</th>
-                </tr>
-              </thead>
-              <tbody>
-                {updateDevices.map(({ id, name }) => {
-                  const s = deviceStatuses[id];
-                  const isInProgress = s === "updating" || s === "restarting";
-                  return (
-                    <tr key={id} className={id === "controller" ? "system-table__controller-row" : ""}>
-                      <td><span className="device-name">{name}</span></td>
-                      <td>
-                        {isInProgress
-                          ? <span className="cell--muted">{s === "restarting" ? "Restarting…" : "Updating…"}</span>
-                          : s?.success
-                            ? <span className="val--ok">&#10003; Updated</span>
-                            : <span className="val--danger">&#10007; Failed</span>
-                        }
-                      </td>
-                      <td className="cell--muted update-output">
-                        {s && !isInProgress ? s.output : ""}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {showUpdateProgress && updateDevices.length > 0 && (
+        <UpdateProgressModal
+          rows={updateDevices.map(({ id, name }) => ({ id, name, status: deviceStatuses[id] }))}
+          onClose={() => setShowUpdateProgress(false)}
+        />
       )}
 
 

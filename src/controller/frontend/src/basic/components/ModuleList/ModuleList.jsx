@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
+import UpdateProgressModal from "../UpdateProgressModal/UpdateProgressModal";
 import "./ModuleList.css";
 
 function ModuleList({ modules }) {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [updateStatuses, setUpdateStatuses] = useState({}); // { module_id: "updating" | { success, output } }
+  const [showUpdateProgress, setShowUpdateProgress] = useState(false);
 
   useEffect(() => {
     const handler = (data) => {
@@ -21,6 +23,7 @@ function ModuleList({ modules }) {
     const pending = {};
     modules.forEach(m => { pending[m.id] = "updating"; });
     setUpdateStatuses(pending);
+    setShowUpdateProgress(true);
     socket.emit("send_command", { module_id: "all", type: "update_saviour", params: {} });
   };
 
@@ -75,7 +78,6 @@ function ModuleList({ modules }) {
         </div>
 
         {sortedModules.map((module) => {
-          const upd = updateStatuses[module.id];
           const group = module.group || "";
 
           // Emit a group separator row when the group changes
@@ -106,14 +108,6 @@ function ModuleList({ modules }) {
                 <span className="module-version" title={module.version}>
                   {formatVersion(module.version)}
                 </span>
-                {upd && (
-                  <span
-                    className={`module-update-status ${upd === "updating" ? "module-update-status--pending" : upd.success ? "module-update-status--success" : "module-update-status--error"}`}
-                    title={upd !== "updating" ? upd.output : undefined}
-                  >
-                    {upd === "updating" ? "Updating…" : upd.success ? `\u2713 ${upd.output}` : `\u2717 ${upd.output}`}
-                  </span>
-                )}
               </div>
             </div>
           );
@@ -130,6 +124,13 @@ function ModuleList({ modules }) {
             Reboot All
           </button>
         </div>
+      )}
+
+      {showUpdateProgress && (
+        <UpdateProgressModal
+          rows={modules.map(m => ({ id: m.id, name: m.name, status: updateStatuses[m.id] }))}
+          onClose={() => setShowUpdateProgress(false)}
+        />
       )}
 
       {showRebootConfirm && (

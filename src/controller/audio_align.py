@@ -57,10 +57,6 @@ DEFAULT_STRIP_HEIGHT = 240
 # ffmpeg for a 200k-px PNG.
 PLAYHEAD_PPS = 120
 _MAX_STRIP_PX = 48000
-# Blocks skipped from the sidecar timing fit: the first record() call(s)
-# straddle the capture stream warm-up and their pre-call timestamps are
-# unreliable. See parse_mic_sidecar.
-_WARMUP_SKIP_BLOCKS = 2
 
 # ffmpeg showspectrum(pic) enum values we let the caller pick from.
 SPEC_COLORS = (
@@ -324,19 +320,20 @@ def parse_mic_sidecar(
 
     k = np.arange(n_blocks, dtype=np.float64)
     t = np.asarray(block_times, dtype=np.float64)
-    # The first record() call blocks while the capture stream warms up -- on a
-    # 192 kHz / 131072-frame config that's up to a full block (~0.68 s), and on
-    # an AudioMoth sharing the device with the monitoring stream it can be
-    # more. Its pre-call time.time() stamp therefore lands well before any
-    # audio was actually delivered and drags the sample-0 intercept early
-    # (audio ends up leading the video). Blocks after the warm-up are evenly
-    # spaced and clean, so fit the line from there and let it extrapolate
-    # back to block 0.
-    fit_from = _WARMUP_SKIP_BLOCKS if n_blocks >= _WARMUP_SKIP_BLOCKS + 4 else 0
-    slope, intercept, keep_fit = _robust_linfit(k[fit_from:], t[fit_from:])
-    keep = np.ones(n_blocks, dtype=bool)
-    keep[fit_from:] = keep_fit
-    keep[:fit_from] = False
+    # The very first record() call (block 0) routinely takes ~2x a normal
+    # block's duration -- confirmed live (2026-09-04, on-device instrumented
+    # probe against the real AudioMoth + PipeWire stack) to be a one-off
+    # software/buffering cost of the *first* large read, not missing audio:
+    # a tiny first read on the same freshly-opened stream returns real
+    # noise-floor signal (not silence) within ~20 ms. So block 0's own
+    # pre-call stamp is not "early" and must not anchor sample-0 -- it's
+    # `started_wall_ns` (stamped right after the stream opens, before the
+    # read loop) that does, below. `_robust_linfit`'s own n-sigma rejection
+    # already drops block 0 as an outlier on residual alone (it's ~0.6s off
+    # a line the other blocks sit right on), so no explicit block skip is
+    # needed here -- this fit exists purely to recover the true sample
+    # rate (slope) for drift correction.
+    slope, intercept, keep = _robust_linfit(k, t)
     resid_ms = np.abs(t - (slope * k + intercept)) * 1e3
 
     drift_blocks = abs(probe_samples - n_blocks * frame_num) / frame_num
@@ -348,8 +345,12 @@ def parse_mic_sidecar(
             probe_samples, drift_blocks,
         )
 
+    # Anchor sample-0 on the real post-open timestamp, not the fit's
+    # intercept -- see the comment above the fit call.
+    sample0_wall_ns = started_wall_ns or int(round(intercept * 1e9))
+
     return SidecarFit(
-        sample0_wall_ns=int(round(intercept * 1e9)),
+        sample0_wall_ns=sample0_wall_ns,
         measured_rate_hz=frame_num / slope,
         nominal_rate_hz=nominal_rate,
         frame_num=frame_num,
@@ -358,7 +359,7 @@ def parse_mic_sidecar(
         residual_p50_ms=float(np.percentile(resid_ms[keep], 50)),
         residual_p95_ms=float(np.percentile(resid_ms[keep], 95)),
         n_outliers=int(np.count_nonzero(~keep)),
-        started_wall_ns=started_wall_ns or int(round(intercept * 1e9)),
+        started_wall_ns=sample0_wall_ns,
     )
 
 

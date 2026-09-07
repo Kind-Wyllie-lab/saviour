@@ -212,21 +212,40 @@ class PTP:
         self.monitor_thread.start()
 
     def _monitor(self):
-        """Monitor controller PTP services and parse their output."""
+        """Monitor controller PTP services and parse their output.
+
+        Like the module-side monitor, a momentarily non-``active`` ptp4l /
+        phc2sys is not fatal -- both run under ``Restart=always``, and
+        ``systemctl is-active`` returning ``unknown`` on a dbus hiccup or
+        during a restart must not permanently stop this loop. Previously the
+        first non-active reading did ``self.running = False; return``, freezing
+        the controller's own PHC telemetry (and, since nothing watches the
+        controller's PTP the way _check_ptp_health watches modules, with no
+        path back short of a saviour.service restart).
+        """
+        interval = self.config.get("ptp.ptp_monitor_interval") or 1
+        services_ok = True
         while self.running:
             try:
                 # Check CONTROLLER service status
                 ptp4l_status = self._get_service_status(self.ptp4l_service)
                 phc2sys_status = self._get_service_status(self.phc2sys_service)
 
-                if not ptp4l_status or not phc2sys_status:
-                    self.logger.error(f"Bad ptp4l ({ptp4l_status}) or phc2sys ({phc2sys_status})")
-
                 if ptp4l_status != 'active' or phc2sys_status != 'active':
                     self.status = f'ptp4l:{ptp4l_status}, phc2sys:{phc2sys_status}'
-                    self.logger.error(f"PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
-                    self.running = False
-                    return
+                    if services_ok:
+                        self.logger.error(
+                            f"PTP services not active: ptp4l={ptp4l_status}, "
+                            f"phc2sys={phc2sys_status} — will keep polling "
+                            f"(systemd Restart=always should recover them)"
+                        )
+                        services_ok = False
+                    time.sleep(interval)
+                    continue
+
+                if not services_ok:
+                    self.logger.info("PTP services active again — resuming monitoring")
+                    services_ok = True
 
                 # Get recent logs and parse them
                 phc2sys_logs = self._get_service_logs(self.phc2sys_service, lines=5)
@@ -241,7 +260,7 @@ class PTP:
             except Exception as e:
                 self.logger.exception(f"Error in PTP monitoring thread: {e}")
 
-            time.sleep(self.config.get("ptp.ptp_monitor_interval"))  # Check every second
+            time.sleep(interval)  # Check every second
 
     def _check_ptp_offsets(self):
         if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset_ns is None:

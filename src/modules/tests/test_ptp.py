@@ -284,3 +284,43 @@ class TestRestart:
             result = ptp.restart()
         assert result["status"] == "error"
         assert "systemctl wedged" in result["message"]
+
+
+class TestMonitorSurvivesTransientOutage:
+    """_monitor() must NOT set running=False / return on a transient
+    non-active reading — the services run under systemd Restart=always and
+    the loop has to resume once they're back. Regression for the bug where
+    the first 'unknown'/'activating' reading permanently froze PTP telemetry.
+    """
+
+    def _run_monitor_once_per_status(self, ptp, statuses):
+        """Drive _monitor through len(statuses) iterations then stop it."""
+        calls = {"n": 0}
+
+        def fake_status(_service):
+            # two services polled per iteration; advance every 2nd call
+            idx = calls["n"] // 2
+            calls["n"] += 1
+            if idx >= len(statuses):
+                ptp.running = False
+                return "active"
+            return statuses[idx]
+
+        with patch.object(ptp, "_get_service_status", side_effect=fake_status), \
+             patch.object(ptp, "_get_service_logs", return_value=""), \
+             patch("src.modules.ptp.time.sleep"):
+            ptp._monitor()
+
+    def test_keeps_running_through_a_transient_then_recovers(self):
+        ptp = _make_ptp(running=True)
+        # active -> unknown (transient) -> unknown -> active
+        self._run_monitor_once_per_status(
+            ptp, ["active", "unknown", "unknown", "active"]
+        )
+        # The loop only ends because the test flips running=False after the
+        # scripted statuses run out — never because _monitor gave up.
+        assert ptp.running is False  # (set by the test, not by _monitor)
+        # It logged the outage transition and the recovery exactly once each.
+        logged = " ".join(str(c) for c in ptp.logger.method_calls)
+        assert "not active" in logged
+        assert "active again" in logged

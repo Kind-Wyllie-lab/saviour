@@ -1,0 +1,493 @@
+openapi: 3.1.0
+info:
+  title: SAVIOUR Controller REST API
+  version: "1.2.0"
+  description: >
+    Resource-oriented HTTP API on the SAVIOUR controller for external
+    programs on the lab LAN (pyControl, MATLAB, bespoke acquisition
+    scripts) to read system state and drive the recording lifecycle
+    without speaking Socket.IO. Plain HTTP; the LAN is the trust
+    boundary (see CLAUDE.md). Prose reference: docs/REST_API.md.
+servers:
+  - url: http://{controller}:5000
+    variables:
+      controller:
+        default: 192.168.0.98
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: meta
+  - name: state
+  - name: modules
+  - name: sessions
+  - name: markers
+  - name: events
+  - name: tokens
+
+paths:
+  /api/v1/:
+    get:
+      tags: [meta]
+      summary: API index (unauthenticated)
+      security: []
+      responses:
+        "200": { description: OK }
+
+  /api/v1/openapi.json:
+    get:
+      tags: [meta]
+      summary: This spec, as JSON (unauthenticated)
+      security: []
+      responses:
+        "200": { description: OpenAPI document }
+
+  /api/v1/state:
+    get:
+      tags: [state]
+      summary: System rollup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/State" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/readiness:
+    get:
+      tags: [state]
+      summary: Can a session start on this target right now?
+      parameters:
+        - name: target
+          in: query
+          schema: { type: string, default: all }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/health:
+    get:
+      tags: [state]
+      summary: Fleet health summary + per-module health
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/ptp:
+    get:
+      tags: [state]
+      summary: Per-module PTP offsets + the start-gate verdict
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/exports:
+    get:
+      tags: [state]
+      summary: Exported recordings + pending/failed export counts
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/events:
+    get:
+      tags: [events]
+      summary: Server-Sent Events stream (sessions / modules / alert / marker)
+      parameters:
+        - name: types
+          in: query
+          description: Comma-separated event-type allowlist
+          schema: { type: string }
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/modules:
+    get:
+      tags: [modules]
+      summary: Module registry
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/modules/{module_id}:
+    get:
+      tags: [modules]
+      summary: One module
+      parameters: [{ $ref: "#/components/parameters/ModuleId" }]
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/modules/{module_id}/health:
+    get:
+      tags: [modules]
+      summary: One module's health
+      parameters: [{ $ref: "#/components/parameters/ModuleId" }]
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/sessions:
+    get:
+      tags: [sessions]
+      summary: All recording sessions
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [sessions]
+      summary: Create (and optionally start) a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSession" }
+      responses:
+        "201":
+          description: Session created (carries autostart_error if the start gate rejected it)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ShareUnavailable" }
+
+  /api/v1/sessions/{session_name}:
+    get:
+      tags: [sessions]
+      summary: One session
+      parameters: [{ $ref: "#/components/parameters/SessionName" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [sessions]
+      summary: Delete a stopped/errored session
+      parameters:
+        - { $ref: "#/components/parameters/SessionName" }
+        - name: files
+          in: query
+          schema: { type: boolean, default: true }
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/sessions/{session_name}/stop:
+    post:
+      tags: [sessions]
+      summary: Stop a session
+      parameters: [{ $ref: "#/components/parameters/SessionName" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/sessions/{session_name}/pause:
+    post:
+      tags: [sessions]
+      summary: Pause a Habitat Session
+      parameters: [{ $ref: "#/components/parameters/SessionName" }]
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/sessions/{session_name}/resume:
+    post:
+      tags: [sessions]
+      summary: Resume a paused Habitat Session
+      parameters: [{ $ref: "#/components/parameters/SessionName" }]
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/sessions/{session_name}/marker:
+    post:
+      tags: [markers]
+      summary: Append an event marker to the running session
+      parameters: [{ $ref: "#/components/parameters/SessionName" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MarkerCreate" }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarkerAck" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/sessions/{session_name}/markers:
+    get:
+      tags: [markers]
+      summary: Read back the session's markers.csv
+      parameters:
+        - { $ref: "#/components/parameters/SessionName" }
+        - name: since
+          in: query
+          description: Epoch seconds; keep markers at/after this time
+          schema: { type: number }
+        - name: limit
+          in: query
+          description: Keep only the most recent N
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  markers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Marker" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tokens:
+    get:
+      tags: [tokens]
+      summary: List API tokens (metadata only) -- admin password required
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [tokens]
+      summary: Mint an API token -- admin password required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                readonly: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Created (token shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  token: { type: string }
+                  created: { type: string, format: date-time }
+                  readonly: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tokens/{name}:
+    delete:
+      tags: [tokens]
+      summary: Revoke an API token -- admin password required
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        The shared admin password or a named API token. Token-management
+        routes require the admin password specifically.
+
+  parameters:
+    ModuleId:
+      name: module_id
+      in: path
+      required: true
+      schema: { type: string }
+    SessionName:
+      name: session_name
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Read-only API token used on a non-GET route
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Unknown module or session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid request body or query
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: State does not allow the action (module recording, PTP not synced, ...)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ShareUnavailable:
+      description: Export share is configured but unreachable/full
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+          required: [code, message]
+      required: [error]
+
+    State:
+      type: object
+      properties:
+        version: { type: string }
+        uptime_s: { type: number }
+        recording: { type: boolean }
+        sessions:
+          type: object
+          additionalProperties: { type: integer }
+        modules:
+          type: object
+          properties:
+            total: { type: integer }
+            online: { type: integer }
+            offline: { type: integer }
+        ptp:
+          type: object
+          properties:
+            worst_offset_ns: { type: [integer, "null"] }
+            start_gate_ns: { type: integer }
+            synced: { type: boolean }
+        disk: { type: object }
+
+    Readiness:
+      type: object
+      properties:
+        target: { type: string }
+        ready: { type: boolean }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ok: { type: boolean }
+              detail: { type: [string, "null"] }
+
+    CreateSession:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        target: { type: string, default: all }
+        duration_minutes: { type: [number, "null"] }
+        researcher: { type: [string, "null"] }
+        unattended: { type: boolean, default: false }
+        autostart: { type: boolean, default: false }
+
+    Session:
+      type: object
+      description: Serialised RecordingSession dataclass
+      properties:
+        session_name: { type: string }
+        target: { type: string }
+        state:
+          type: string
+          enum: [pending, scheduled, active, paused, stopped, error]
+        modules:
+          type: array
+          items: { type: string }
+        start_time: { type: [string, "null"] }
+        end_time: { type: [string, "null"] }
+        duration_minutes: { type: [number, "null"] }
+        pending_exports: { type: integer }
+        total_exports_failed: { type: integer }
+        autostart_error: { type: string }
+      additionalProperties: true
+
+    MarkerCreate:
+      type: object
+      required: [label]
+      properties:
+        label: { type: string }
+        source: { type: string }
+        t:
+          type: number
+          description: Caller's epoch time for the event, in seconds
+
+    MarkerAck:
+      type: object
+      properties:
+        success: { type: boolean }
+        session_name: { type: string }
+        recv_wall_ns: { type: integer }
+        recv_iso: { type: string }
+        label: { type: string }
+
+    Marker:
+      type: object
+      properties:
+        recv_wall_ns: { type: integer }
+        recv_iso: { type: string }
+        label: { type: string }
+        source: { type: string }
+        client_wall_ns: { type: [integer, "null"] }

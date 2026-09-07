@@ -1,15 +1,16 @@
 """
 Tests for src/modules/network.py.
 
-Network.__init__ calls _find_own_ip(), which on Linux loops forever with
-no timeout waiting for a valid eth0 IP (a known bug -- see CLAUDE.md TODO
-for "module-side network-ready wait has no timeout") and then constructs a
-real Zeroconf object. Every test here constructs via Network.__new__
-instead and never calls the real _find_own_ip(), matching the __new__
-pattern used for the controller-side Network/PTP tests.
+Network.__init__ calls _find_own_ip() (bounded: retries for up to
+network._ip_wait_secs, then raises RuntimeError -- see TestFindOwnIp) and
+then constructs a real Zeroconf object. Every test here constructs via
+Network.__new__ instead and never calls the real _find_own_ip(), matching
+the __new__ pattern used for the controller-side Network/PTP tests.
 """
 
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.modules.network import Network
 
@@ -298,3 +299,42 @@ class TestCleanup:
         net = _make_network(service_browser=None, zeroconf=None)
         net.cleanup()  # must not raise
         assert net.service_registered is False
+
+
+class TestFindOwnIp:
+    """The wait is bounded: it must return on a good IP and raise (not hang)
+    once network._ip_wait_secs has elapsed. (os.name is forced to 'posix' so
+    the Linux path runs even when the test host is Windows.)"""
+
+    def test_returns_as_soon_as_a_valid_ip_appears(self):
+        net = _make_network(ip=None)
+        net.config = _make_config(**{"network._ip_wait_secs": 60})
+        ips = ["", "127.0.0.1", "10.0.0.9"]
+        with patch("src.modules.network.os.name", "posix"), \
+             patch.object(net, "_get_eth0_ip_nm", side_effect=ips), \
+             patch("src.modules.network.time.sleep"):
+            net._find_own_ip()
+        assert net.ip == "10.0.0.9"
+
+    def test_raises_runtimeerror_once_the_deadline_passes(self):
+        net = _make_network(ip=None)
+        net.config = _make_config(**{"network._ip_wait_secs": 5})
+        # First monotonic() sets the deadline (0 + 5); every later call is
+        # past it, so the loop is never entered and we go straight to raise.
+        monotonic_vals = [0.0] + [100.0] * 20
+        with patch("src.modules.network.os.name", "posix"), \
+             patch("src.modules.network.time.monotonic", side_effect=monotonic_vals), \
+             patch("src.modules.network.time.sleep"), \
+             patch.object(net, "_get_eth0_ip_nm", return_value=""):
+            with pytest.raises(RuntimeError, match="5s"):
+                net._find_own_ip()
+
+    def test_nmcli_exception_is_caught_and_retried(self):
+        net = _make_network(ip=None)
+        net.config = _make_config(**{"network._ip_wait_secs": 60})
+        with patch("src.modules.network.os.name", "posix"), \
+             patch.object(net, "_get_eth0_ip_nm",
+                          side_effect=[RuntimeError("nmcli busy"), "10.0.0.4"]), \
+             patch("src.modules.network.time.sleep"):
+            net._find_own_ip()
+        assert net.ip == "10.0.0.4"

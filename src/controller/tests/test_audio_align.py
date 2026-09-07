@@ -185,10 +185,15 @@ def _write_sidecar(path, sample0_wall_s, true_rate_hz, n_blocks,
     with open(path, "w") as f:
         f.write(f"START_AT {sample0_wall_s - 0.01:.6f}\n")
         f.write(f"STARTED {sample0_wall_s:.6f}\n")
+        f.write("RECORDER_ENTER_MS 12.3\n")
         f.write("STARTUP_LATENCY_MS 4.0\n")
         for k in range(n_blocks):
             t = sample0_wall_s + k * slope + rng.normal(0.0, jitter_s)
             f.write(f"{t:.6f}\n")
+            if k == 0:
+                f.write("FIRST_RECORD_MS 8.1\n")
+                f.write(f"FIRST_RECORD_SAMPLES {frame_num}\n")
+                f.write("FIRST_RECORD_EXPECTED_MS 682.7\n")
         f.write("SEGMENT_CLIPPED_SAMPLES 0\n")
         f.write(f"SEGMENT_TOTAL_SAMPLES {n_blocks * frame_num}\n")
 
@@ -301,7 +306,9 @@ def test_fit_ignores_trailer_and_header_lines(tmp_path):
         return_value=(50 * FRAME_NUM, NOMINAL_RATE),
     ):
         fit = parse_mic_sidecar(str(sidecar), "unused.flac")
-    assert fit.n_blocks == 50  # SEGMENT_* / START_AT / STARTED / STARTUP_* excluded
+    # SEGMENT_* / START_AT / STARTED / STARTUP_* / RECORDER_ENTER_MS /
+    # FIRST_RECORD_* are all "KEY value" lines and excluded from the block fit.
+    assert fit.n_blocks == 50
 
 
 def test_fit_warns_on_probe_sample_mismatch(tmp_path, caplog):

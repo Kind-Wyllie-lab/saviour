@@ -89,11 +89,30 @@ class ControllerFacade:
 
 
     def get_system_state(self) -> dict:
+        """A compact rollup of controller state. Consumed by the Socket.IO
+        `get_system_state` event and the REST /api/v1/state route. The
+        `uptime` / `ptp_sync` keys are kept (not renamed) because the
+        habitat Dashboard reads them directly."""
+        sessions = self.get_recording_sessions()
+        counts: dict = {}
+        for s in sessions.values():
+            counts[str(s.state)] = counts.get(str(s.state), 0) + 1
+        summary = self.get_health_summary()
+        try:
+            ptp_ns = self.get_ptp_sync()
+        except Exception:
+            ptp_ns = None
         return {
-            "example": "This is an example system state object",
             "recording": self.get_recording_status(),
-            "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset_ns across modules, in nanoseconds
+            "uptime": self.get_uptime(),  # seconds since controller start
+            "ptp_sync": ptp_ns,  # largest |ptp4l_offset_ns| across modules
+            "sessions_total": len(sessions),
+            "sessions_active": counts.get("active", 0),
+            "sessions_pending": counts.get("pending", 0),
+            "sessions_scheduled": counts.get("scheduled", 0),
+            "modules_total": summary.get("total_modules", 0),
+            "modules_online": summary.get("online_modules", 0),
+            "modules_offline": summary.get("offline_modules", 0),
         }
 
 
@@ -149,6 +168,16 @@ class ControllerFacade:
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
+
+    def add_marker(self, session_name: str, label: str, source: str | None = None,
+                   client_wall_ns: int | None = None) -> dict:
+        return self.controller.recording.add_marker(
+            session_name, label, source, client_wall_ns)
+
+    def get_markers(self, session_name: str, since_ns: int | None = None,
+                    limit: int | None = None) -> dict:
+        return self.controller.recording.get_markers(
+            session_name, since_ns, limit)
 
     def create_habitat_session(self, session_name: str, plans: list,
                                researcher=None, duration_minutes=None) -> dict:
@@ -211,6 +240,11 @@ class ControllerFacade:
     def update_sessions(self, sessions: dict) -> None:
         serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
         self.controller.web.socketio.emit("sessions_update", serializable_sessions)
+        try:
+            self.controller.web._publish_api_event(
+                "sessions", {"sessions": serializable_sessions})
+        except Exception:
+            pass
 
     # -- Sync-quality validation (framesync_check.SyncCheckWorker) ------- #
     def submit_framesync_check(self, spec: dict) -> None:
@@ -483,6 +517,16 @@ class ControllerFacade:
 
     """Notifications"""
     def send_alert(self, key: str, title: str, message: str, severity: str = "error") -> None:
+        # Mirror every alert onto the /api/v1/events SSE stream first --
+        # unlike the Teams path this does not depend on a webhook being
+        # configured or the controller having internet.
+        try:
+            self.controller.web._publish_api_event("alert", {
+                "key": key, "title": title,
+                "message": message, "severity": severity,
+            })
+        except Exception:
+            pass
         self.controller.notifier.send_alert(key, title, message, severity)
 
     def check_internet(self) -> bool:

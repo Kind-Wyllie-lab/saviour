@@ -19,8 +19,25 @@ A theme file is plain and hand-editable:
       "id": "ocean",
       "name": "Ocean",
       "light": { "--bg-color": "#eef4f7", ... 8 keys ... },
-      "dark":  { "--bg-color": "#0f1b22", ... 8 keys ... }
+      "dark":  { "--bg-color": "#0f1b22", ... 8 keys ... },
+      "source": {
+        "palette": ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"],
+        "roles": {"bg": "#e9c46a", "card": "#e9c46a", "text": "#264653",
+                  "accent": "#2a9d8f", "accentAlt": "#f4a261"},
+        "raw": false
+      }
     }
+
+`source` is what lets the "Import from Coolors" modal reopen a saved theme
+for editing instead of only offering delete -- it records the original
+palette and the bg/card/text/accent/accentAlt role assignment (`roles: null`
+means the palette was never manually reassigned; `light`/`dark` were derived
+straight from the palette's darkest/lightest/most-vivid hexes, one pick per
+mode) so the frontend can reconstruct the exact drag-and-drop state rather
+than reverse-engineering it from the final colours. It's entirely optional --
+omitted for a theme saved before this existed, or one hand-written directly
+as a file -- and purely descriptive: this store never reads it, only
+round-trips it verbatim (light/dark, not source, are what's ever rendered).
 """
 
 from __future__ import annotations
@@ -45,6 +62,10 @@ TOKEN_KEYS = (
 
 # Built-in theme ids the frontend ships -- a custom theme may not shadow one.
 RESERVED_IDS = frozenset({"default", "sidb", "uofe", "wood", "kind", "pagan"})
+
+# Mirror of PALETTE_ROLES in src/basic/utils/themes.js -- keep in sync.
+_ROLE_KEYS = ("bg", "card", "text", "accent", "accentAlt")
+_MAX_PALETTE_LEN = 16
 
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
@@ -182,5 +203,59 @@ class ThemeStore:
                 clean[key] = val.lower()
             modes[mode] = clean
 
-        return {"id": theme_id, "name": name, "light": modes["light"],
-                "dark": modes["dark"]}
+        result = {"id": theme_id, "name": name, "light": modes["light"],
+                  "dark": modes["dark"]}
+        source = self._normalise_source(raw.get("source"))
+        if source is not None:
+            result["source"] = source
+        return result
+
+    def _normalise_source(self, raw_source: object) -> dict | None:
+        """Validate the optional provenance block (see the module docstring).
+        Never raises for an absent block -- only a malformed *present* one,
+        since older/hand-written theme files simply won't have it."""
+        if raw_source is None:
+            return None
+        if not isinstance(raw_source, dict):
+            raise ThemeError("Theme source must be an object")
+        out: dict = {}
+
+        palette = raw_source.get("palette")
+        if palette is not None:
+            is_list = isinstance(palette, list)
+            if not is_list or not (1 <= len(palette) <= _MAX_PALETTE_LEN):
+                raise ThemeError(
+                    f"Theme source palette must be a list of "
+                    f"1-{_MAX_PALETTE_LEN} hex colours"
+                )
+            clean_palette = []
+            for val in palette:
+                if not isinstance(val, str) or not _HEX_RE.match(val):
+                    raise ThemeError(
+                        "Theme source palette colour must be a hex colour "
+                        f"like #1a2b3c (got {val!r})"
+                    )
+                clean_palette.append(val.lower())
+            out["palette"] = clean_palette
+
+        roles = raw_source.get("roles")
+        if roles is None:
+            out["roles"] = None
+        else:
+            if not isinstance(roles, dict) or set(roles) != set(_ROLE_KEYS):
+                raise ThemeError(
+                    "Theme source roles must have exactly bg/card/text/accent/accentAlt"
+                )
+            clean_roles = {}
+            for key in _ROLE_KEYS:
+                val = roles[key]
+                if not isinstance(val, str) or not _HEX_RE.match(val):
+                    raise ThemeError(
+                        f"Theme source role '{key}' must be a hex colour "
+                        f"like #1a2b3c (got {val!r})"
+                    )
+                clean_roles[key] = val.lower()
+            out["roles"] = clean_roles
+
+        out["raw"] = bool(raw_source.get("raw", False))
+        return out

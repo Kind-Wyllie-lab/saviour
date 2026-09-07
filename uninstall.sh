@@ -174,6 +174,23 @@ if [ "$CURRENT_ROLE" = "controller" ]; then
         sudo netfilter-persistent save 2>/dev/null || true
         echo "  Removed iptables port-forward 80 → 5000"
     fi
+
+    # Remove the wlan0/WAN firewall (SAVIOUR-WLAN-IN chain + its INPUT hooks)
+    for ipt in iptables ip6tables; do
+        command -v "$ipt" &>/dev/null || continue
+        FW_HOOKS=$(sudo "$ipt" -S INPUT 2>/dev/null | grep -F -- '-j SAVIOUR-WLAN-IN' || true)
+        if [ -n "$FW_HOOKS" ]; then
+            while read -r line; do
+                [ -n "$line" ] || continue
+                # shellcheck disable=SC2086
+                sudo "$ipt" -D ${line#-A } 2>/dev/null || true
+            done <<< "$FW_HOOKS"
+        fi
+        sudo "$ipt" -F SAVIOUR-WLAN-IN 2>/dev/null || true
+        sudo "$ipt" -X SAVIOUR-WLAN-IN 2>/dev/null || true
+    done
+    sudo netfilter-persistent save 2>/dev/null || true
+    echo "  Removed wlan0/WAN firewall chain (if present)"
 else
     echo "  Skipped (not controller)"
 fi

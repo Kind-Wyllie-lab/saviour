@@ -120,11 +120,32 @@ class SpectrogramOpts:
 
 # The microphone recorder loop reads a fixed number of frames per block
 # (`recorder.record(numframes=frame_num)`), writing one sidecar line per
-# block, so every block is exactly this many samples. It is the module's
-# `microphone.frame_num` / `microphone.block_size` default and has been
-# stable; overridable on the CLI. Backing it out of the decoded sample
-# count instead is unreliable -- FLAC reports a padded count.
+# block, so every block is exactly this many samples. This is the module's
+# `microphone.frame_num` / `microphone.block_size` -- a settable value since
+# 2026-09-07, so it must NOT be assumed: `parse_mic_sidecar` reads it from
+# the sidecar's `FIRST_RECORD_SAMPLES` line (falling back to
+# `SEGMENT_TOTAL_SAMPLES / n_blocks`, then this constant). Getting it wrong
+# scales `measured_rate_hz` by the same factor -- e.g. assuming 131072 for
+# an 8192-block recording plays the aligned audio 16x too fast.
 DEFAULT_FRAME_NUM = 1024 * 128
+
+
+def _frame_num_from_sidecar(
+    trailer: dict[str, float], n_blocks: int, override: int | None,
+) -> int:
+    """Samples per sidecar block. Explicit override wins; else the
+    `FIRST_RECORD_SAMPLES` probe line (the exact `numframes` the recorder
+    asked for); else back it out of `SEGMENT_TOTAL_SAMPLES`; else the
+    long-standing default."""
+    if override:
+        return int(override)
+    fs = trailer.get("FIRST_RECORD_SAMPLES")
+    if fs and fs >= 256:
+        return int(fs)
+    tot = trailer.get("SEGMENT_TOTAL_SAMPLES")
+    if tot and n_blocks and tot / n_blocks >= 256:
+        return int(2 ** round(math.log2(tot / n_blocks)))
+    return DEFAULT_FRAME_NUM
 
 
 @dataclass
@@ -202,7 +223,7 @@ class AlignOptions:
     spectrogram: bool = False
     overlay_path: str | None = None
     strip_height: int = DEFAULT_STRIP_HEIGHT
-    frame_num: int = DEFAULT_FRAME_NUM
+    frame_num: int | None = None  # None => auto-detect from the sidecar
     ptp_history: str | None = None
     ethogram: bool = False
     ethogram_fps: int = 15
@@ -277,7 +298,7 @@ def _probe_audio(audio_path: str) -> tuple[int, int]:
 
 
 def parse_mic_sidecar(
-    sidecar_path: str, audio_path: str, frame_num: int = DEFAULT_FRAME_NUM,
+    sidecar_path: str, audio_path: str, frame_num: int | None = None,
 ) -> SidecarFit:
     """Fit block-start wall times against block index.
 
@@ -285,8 +306,12 @@ def parse_mic_sidecar(
     block, so wall time advances `frame_num / true_rate` per line: the
     fit slope gives the true sample rate directly, with no dependency on
     the (FLAC-padded) decoded sample count.
+
+    `frame_num` defaults to what the sidecar itself records
+    (`FIRST_RECORD_SAMPLES`) -- pass an explicit value only to override.
     """
     block_times: list[float] = []
+    trailer: dict[str, float] = {}
     started_wall_ns = 0
     with open(sidecar_path) as f:
         for raw in f:
@@ -297,11 +322,16 @@ def parse_mic_sidecar(
                 started_wall_ns = int(float(line.split(maxsplit=1)[1]) * 1e9)
                 continue
             if " " in line or not _is_float(line):
-                continue  # START_AT / STARTUP_LATENCY_MS / SEGMENT_* trailer
+                # START_AT / STARTUP_LATENCY_MS / SEGMENT_* / FIRST_RECORD_*
+                parts = line.split()
+                if len(parts) == 2 and _is_float(parts[1]):
+                    trailer[parts[0]] = float(parts[1])
+                continue
             block_times.append(float(line))
 
     probe_samples, nominal_rate = _probe_audio(audio_path)
     n_blocks = len(block_times)
+    frame_num = _frame_num_from_sidecar(trailer, n_blocks, frame_num)
     if n_blocks < 2:
         # Degenerate segment -- fall back to STARTED + nominal rate.
         anchor = started_wall_ns or (int(block_times[0] * 1e9) if block_times else 0)
@@ -978,8 +1008,9 @@ def main() -> None:
                         help="video_compose.py output to add a spectrogram strip to")
     parser.add_argument("--strip-height", type=int, default=DEFAULT_STRIP_HEIGHT,
                         help="Overlay spectrogram strip height in px")
-    parser.add_argument("--frame-num", type=int, default=DEFAULT_FRAME_NUM,
-                        help="Samples per sidecar block (microphone.frame_num)")
+    parser.add_argument("--frame-num", type=int, default=None,
+                        help="Samples per sidecar block; default: auto-detect "
+                             "from the sidecar's FIRST_RECORD_SAMPLES line")
     parser.add_argument("--ptp-history", default=None,
                         help="Controller ptp_history.csv to fold PTP quality "
                              "for the recording window into the report")

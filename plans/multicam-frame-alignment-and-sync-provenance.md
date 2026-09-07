@@ -1,11 +1,44 @@
 # Multi-camera frame indexing + quantified sync for the aligned ethogram
 
-- **Status:** proposed
+- **Status:** in progress
 - **Created:** 2026-09-07
 - **Owner:** ascottg
 - **CLAUDE.md ref:** expands the "In-flight" bullet *"`camera_base.py` `_encoder_active`
   gate…"* (the `_StreamCursor` `frame[i]==row[i]` half) and the Post-Process /
   ethogram bullet; sibling to `plans/audio-video-sync-residual-validation.md`.
+
+## Resume here (state as of 2026-09-07 EOD)
+
+**Done & on `staging`:**
+- **B3** — `_StreamCursor` proportional row→frame remap + per-stream mismatch
+  warning → `ComposeJob.warnings` → `ComposeVideoPanel`. Bounds a client-camera
+  skew to ~½ the deficit and never ships it silently. (`d8db4e57`, `1fe2e22d`)
+- **A3** — `<stem>_recording.json` per-segment provenance sidecar, written
+  pre-remux, staged for export. Carries `csv_rows_written`, `encoded_frames`
+  (ffprobe), `deficit_vs_csv`, encoder window, `sync_mode`, `dropped_before_total`.
+  (`700f6f5a`, `a518b6ae`, `ba1255c8`)
+- **`recording.fix_positioning_timestamps`** config toggle + Camera card
+  checkbox + base_config key. (`2b051951`, `bf956b7f`)
+- **`tools/check_frame_counts.py`** — per-camera CSV-rows vs `.ts`-frames report.
+  (`48240028`)
+- **A4 measured** (`a4_test-174323`): the `.ts` remux is **not** the cause; the
+  sync-client's H264 encoder drops handed frames under backpressure. See the A4
+  result box below. A1a (fix the remux) is dropped.
+
+**Next, in order:**
+1. **B1** — overlay-timestamp repair in `_StreamCursor` (frame-accurate; the
+   primary fix now that the module can't prevent the drops). + **B2** (consume
+   `_recording.json` `encoded_frames` when present, skip the ffprobe/OCR).
+   Detail: "Consumer side" section below.
+2. **Sync-provenance block** — the `_align.json` / compose / ethogram caption
+   with per-modality-pair method + residual + verdict. Detail: "Defect 2" below.
+3. *(mitigation, not blocking)* hailo-camera load reduction — preview inference
+   off during recording / more encoder buffers / lower preview fps.
+
+**Open question for B1:** confirm the overlay text position/font is stable
+enough per camera variant (`camera` vs `hailo_camera`) for a numpy
+digit-template match, and whether a `friendly_name`/serial in the overlay
+complicates the parse. Fallback stays B3's proportional map + warning.
 
 ## Why this exists
 

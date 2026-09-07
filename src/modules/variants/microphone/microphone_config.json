@@ -18,8 +18,8 @@
     },
     "microphone": {
         "_sample_rate": 192000,
-        "_frame_num": 131072,
-        "_block_size": 131072,
+        "frame_num": 131072,
+        "block_size": 131072,
         "_processing": {
             "_apply_filter": false,
             "_filter_type": "bandpass",
@@ -38,6 +38,7 @@
         }
     },
     "monitoring": {
+        "enabled": true,
         "_port": 8081,
         "_fft_size": 4096,
         "freq_lo_hz": 20000,

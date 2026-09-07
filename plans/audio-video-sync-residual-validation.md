@@ -93,6 +93,78 @@ it's stable and Phase B can see how it moves with `block_size`.
 and decide whether Phase B's sweep is warranted. The probe lines are temporary —
 remove them (and this note) once the mechanism is settled.
 
+**Tooling (added 2026-09-07):** `tools/analyse_audio_sync.py` — no ffmpeg
+dependency, reads FLAC via `soundfile`, reuses `audio_align`'s block fit and
+PTP-window summary so the sample-0 anchor is identical to the post-hoc aligner.
+
+| Subcommand | Does |
+|---|---|
+| `probes SESSION_DATEDIR [more…]` | Step 0: prints `RECORDER_ENTER_MS` / `FIRST_RECORD_MS` (× expected) / block-fit rate + residual per segment, then the H1-vs-H2 reading from the table above |
+| `ttl SESSION_DATEDIR [more…] [--pin N]` | Phase A: for each rising edge in the TTL `*_events.csv`, finds the transient in the FLAC, times its onset off the `STARTED` anchor + fitted rate, differences it against the edge; reports mean/median signed offset, within-run spread, drift slope, and — across several dirs — the between-run spread against the ±40 ms decision gate |
+| `ref SESSION_DATEDIR --at-ns NS …` | Same, against hand-supplied instants (e.g. a clap frame's `timestamp_ns` from a camera CSV) |
+
+Onset detection: high-pass (default 1.5 kHz) → short-time RMS → first sustained
+crossing of `noise×ratio`, choosing the candidate nearest the predicted
+position so a neighbouring pulse can't hijack it. Tests:
+`src/controller/tests/test_analyse_audio_sync.py` (5, synthetic FLAC + sidecar +
+TTL CSV with an injected offset).
+
+The tool's own block fit **excludes block 0 explicitly** and fits the
+steady-state cadence (k ≥ 1) — see the bug note below; `audio_align`'s in-tree
+fit does not, so on a short (< ~1 min) recording its `measured_rate_hz` is
+garbage. Doesn't matter in production (60-min segments) but bit the bench runs.
+
+### Step 0 results — 5 bench runs, 2 AudioMoths, 2026-09-07
+
+`test_mic_latency-microphone-1509*` — audio-only, ~6 s each, mic module
+`microphone-4703`, both AudioMoths (`2474750264200FAD`, `24FCBD0864934CA8`).
+
+| Quantity | Result | Spread |
+|---|---|---|
+| `FIRST_RECORD_MS` / expected (682.7 ms) | **1.87×** (~1275 ms) | 1.85–1.88×, 10/10 |
+| block 0 vs steady-cadence line | **−597 ms** (block 0 sits ~1 block *below* the extrapolated k≥1 line) | std **6.4 ms** across 10 sidecars |
+| `RECORDER_ENTER_MS` (stream open) | ~52 ms | 42–63 ms; the `24FC…` unit is consistently ~10 ms slower to open than `2474…` |
+| `block[0] − STARTED` | ~0.3 ms | negligible — the `STARTED` line and the first pre-`record()` stamp are the same instant |
+| steady-state rate | 191.9–192.0 kHz (−490…+60 ppm) | the low-residual runs (`…0945`, `…0854`) are trustworthy; `…0910` had scheduler jitter (p95 2.7–4.9 ms) |
+
+**Reading:**
+
+- The first-read anomaly is **~2×**, matching the existing `audio_align.py` note,
+  and is a *one-off software cost* (PipeWire over-priming its ring buffer on the
+  first large read), not a capture gap — consistent with the 2026-09-04 on-device
+  probe. So `FIRST_RECORD_MS` is **not** the ≪1× pure-H1 signature and **not** the
+  ~1× H2 signature; it's the middle case.
+- **The magnitude is a rock-stable per-device constant** (±6 ms run-to-run, across
+  a device power context that included fresh `soundcard.get_microphone` each run).
+  This is the load-bearing precondition for `docs/AUDIO_SYNC_CALIBRATION_DESIGN.md`
+  §6.1 — a single per-device correction constant is viable *if* the sign/size can
+  be pinned.
+- **The sign is still not decidable from the sidecar.** "sample 0 captured ~600 ms
+  after `STARTED`" (→ audio *leads*) and "sample 0 ≈ `STARTED`, but a fixed
+  ~600 ms delivery latency established by the slow first read and never
+  recovered" (→ audio *lags*) fit the block timestamps **identically** — they
+  differ only by an unobservable constant. The `−597 ms` `STARTED − steady k=0`
+  figure is the size of that ambiguity, not a measurement of the offset.
+- **Phase A (TTL buzzer) is now unavoidable** and is the whole ballgame: it's the
+  only thing that breaks the degeneracy. The `NO-NAME-105539` rig already has a
+  TTL module with free pins.
+- **Phase B is still worth doing**: if the ~600 ms first-read excess scales with
+  `block_size`, that both confirms the PipeWire-priming mechanism and makes
+  `block_size` a real mitigation knob.
+
+### Bug found (not yet fixed): `audio_align.parse_mic_sidecar` short-recording fit
+
+`parse_mic_sidecar`'s comment claims `_robust_linfit`'s n-sigma rejection drops
+block 0 on its own. True for a 60-min segment (block 0 is 1/5270). **False for a
+short recording**: with 8–11 blocks, block 0's ~600 ms deviation isn't rejected
+(`n_outliers 0`), the slope is dragged, and `measured_rate_hz` comes out
+40–70 k ppm low (e.g. 181 kHz instead of 192 kHz), with `residual_p95` ~290 ms.
+`tools/analyse_audio_sync.py` works around it by excluding index 0 before the
+fit; `audio_align` should do the same (explicit skip, not rely on statistical
+rejection) so the post-hoc aligner is safe on short clips too. Low urgency —
+real sessions are long — but it's a latent footgun for anyone aligning a test
+recording.
+
 ## Phase A — sign & magnitude, camera out of the loop
 
 Do **not** make hand-clap-vs-video the primary method: a clap is a multi-frame
@@ -129,26 +201,25 @@ than the buzzer.
 
 ## Phase B — mechanism confirmation: `block_size` / `sample_rate` sweep
 
-### How to actually change `block_size` (there are three traps)
+### How to actually change `block_size` — simpler than first thought
 
-1. `microphone.block_size` and `microphone.frame_num` are stored **`_`-prefixed**
-   in `microphone_config.json` (`_block_size` / `_frame_num`, both 131072).
-   `_`-prefixed keys are internal defaults, not part of the user-overridable /
-   frontend-visible / controller-synced surface.
-2. The code reads the **non-underscore** path:
-   `self.config.get("microphone.block_size", 1024*128)` (`microphone_module.py:341`).
-   So today the config file value is inert — that `get()` always returns the
-   hardcoded `1024*128`. To vary it you must add real `microphone.block_size` /
-   `microphone.frame_num` keys (or drop the underscores).
-3. `Config._prune_stale_keys()` runs at **every module startup** and deletes any
-   non-private `active_config.json` key **not present in the static
-   `base_config.json` / `microphone_config.json`** (`config.py:238-265`). So a
-   hand-edit of `/etc/saviour/module/active_config.json` is wiped on the next
-   restart.
+`microphone.block_size` / `microphone.frame_num` are stored `_`-prefixed in
+`microphone_config.json` (`_block_size` / `_frame_num`, both 131072).
+**`Config.get()` resolves a leading-underscore fallback** for every path segment
+(`config.py:402` — `elif f"_{part}" in config`), verified: `get("microphone.
+block_size", 1024*128)` returns `_block_size` (131072), **not** the hardcoded
+default. So the earlier "trap #2" (the config value is inert) was wrong — editing
+`_block_size` / `_frame_num` in the base file **does** take effect.
 
-**→ The only reliable way:** edit `microphone_config.json` on the bench module
-(add real `block_size` / `frame_num` keys), redeploy, restart the service. It's a
-bench module — a redeploy per sweep value is cheap.
+`_`-prefixed keys are also never touched by `Config._prune_stale_keys()` (it
+skips `key.startswith("_")`, `config.py:259`), so there's no stale-key wipe to
+worry about either.
+
+**→ Method:** on the bench module, edit `_block_size` **and** `_frame_num`
+(keep them equal) in `src/modules/variants/microphone/microphone_config.json`,
+redeploy, restart the service. A redeploy per sweep value is cheap on a bench
+module. `tools/analyse_audio_sync.py` auto-detects the block size per recording
+from the sidecar's `FIRST_RECORD_SAMPLES`, so no `--frame-num` bookkeeping.
 
 ### Re: "won't the controller overwrite the module's config?"
 
@@ -169,14 +240,36 @@ None touch a microphone `block_size`. So: run the sweep on a bench rig, and just
 don't Save that module's config from the UI mid-experiment. (Even if you did,
 `set_all` would merge your other keys, not reset the file.)
 
-### The sweep
+### Monitoring on/off (companion probe — `monitoring.enabled`)
+
+The design doc says the always-on monitoring stream "isn't the lever" (the
+`STARTED` anchor is captured before it matters) but concedes it "plausibly
+explains *why* the first-block priming behaviour looks the way it does". Now
+directly testable: **`monitoring.enabled`** (base config `monitoring` section,
+default `true`; added 2026-09-07). `start_streaming()` returns early when false,
+so no second `soundcard` recorder is ever opened on the AudioMoths.
+
+Set it `false` on the bench module, restart, take the same 5 recordings, re-run
+`analyse_audio_sync.py probes`. What to look at:
+
+- Does `FIRST_RECORD_MS` still come in at ~1.87× a block? If it drops to ~1×, the
+  first-read over-prime is a *contention* artefact of the concurrent monitor
+  reader, not intrinsic to opening a fresh PipeWire stream.
+- Does `block-0 vs steady line` (the ~−597 ms ambiguity term) shrink?
+- `RECORDER_ENTER_MS` — expect little change (stream open, not first read).
+
+This isolates "fresh-stream priming" from "two readers on one device". Cheap, no
+buzzer needed, and it's a real deployment option regardless of the outcome.
+
+### The block-size sweep
 
 - `block_size ∈ {8192, 32768, 131072, 262144}` (keep `frame_num == block_size`),
-  3 runs each, buzzer pulses throughout.
-  - offset ∝ `block_size` in **seconds** → **H1** confirmed, and `block_size` is
-    the knob.
-  - offset **flat** across `block_size` → **H2** (fixed source/USB latency);
-    `block_size` is a red herring.
+  3–5 runs each. **Step 0 metrics alone are informative here even before the
+  buzzer:** if `FIRST_RECORD_MS − expected` (the first-read excess) tracks
+  `block_size` in **seconds** (~0.87 blocks at every size), the over-prime is
+  "one extra block" and `block_size` is the knob; if it stays a fixed ~595 ms
+  regardless of `block_size`, it's a fixed time-based buffer and `block_size`
+  won't help. Add the buzzer for the true signed A/V offset once Phase A exists.
 - Then hold `block_size` fixed and sweep `audiomoth.sample_rate`: is the constant
   offset fixed in **milliseconds** (time-based buffer) or in **samples**
   (count-based)? Further pins the mechanism.
@@ -184,7 +277,8 @@ don't Save that module's config from the UI mid-experiment. (Even if you did,
   gaps at the small `block_size` values — 192 kHz on a loaded Pi 5 will drop
   blocks below some threshold. **Test only; do not ship a small value** without
   proving xrun headroom (CLAUDE.md already notes ~4% of blocks stall on a loaded
-  Pi).
+  Pi). `analyse_audio_sync.py probes` reports the steady-state fit residual p95,
+  which spikes when blocks are being dropped.
 
 ## Phase C — targeted code probes (only if A/B point here)
 
@@ -215,16 +309,16 @@ don't Save that module's config from the UI mid-experiment. (Even if you did,
 
 ## Analysis tooling
 
-- Reuse `audio_align.py`'s fit for `rate_est` and the `_align.json` fields
-  (`residual_p50_ms` / `p95_ms`, `ppm`, `n_outliers`).
-- New small script: cross-correlate a transient template into the aligned FLAC,
-  return sample index + `STARTED`-anchored wall time, difference against the
-  reference-event (TTL edge / GPIO) wall time, aggregate across pulses and runs →
-  mean, confidence interval, drift slope. Use the **same anchor** as
-  `parse_mic_sidecar`. This is the "automated multi-trial protocol"
-  `docs/AUDIO_SYNC_CALIBRATION_DESIGN.md` scopes — building the analysis half now
-  against the TTL-buzzer rig is a no-regret step whether or not the piezo-clicker
-  hardware is ever built.
+**Built 2026-09-07: `tools/analyse_audio_sync.py`** (see the Step 0 section for
+the subcommand table). It does what this section scoped: reuses `audio_align.py`'s
+robust block fit for `rate_est` / residuals / `n_outliers`, anchors sample 0 on
+`STARTED` exactly as `parse_mic_sidecar` does, times a transient's onset in the
+raw FLAC, differences it against a TTL edge (or a hand-supplied instant),
+aggregates across pulses (drift slope) and across runs (between-run spread vs the
+±40 ms gate), and folds in `summarise_ptp_window` for the recording window.
+Currently uses an energy-onset detector rather than matched-filter
+cross-correlation — a `--template` hook is the obvious next refinement if the
+between-run spread looks borderline.
 
 ## Decision gates
 

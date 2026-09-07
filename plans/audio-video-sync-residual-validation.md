@@ -335,8 +335,27 @@ read size (buffer fill + copy/settle, not a fixed latency).
 - `monitoring.enabled=false` × `block_size` — does removing the concurrent reader
   change the exponent or just the constant?
 - Phase A (TTL buzzer) for the sign, ideally with a stress run too.
-- Decide a shipped default. 8192 now has idle + stressed + long-run data and looks
-  safe; 32768 (~100 ms excess, more headroom) stays the conservative fallback.
+
+### Shipped default: `block_size` = `frame_num` = **32768** (settled 2026-09-07)
+
+Changed in `microphone_config.json` (`microphone.frame_num` / `.block_size`,
+was 131072). Rationale: 8192 and 32768 gave the same clap alignment (~+15 ms,
+sub-frame) idle *and* under `stress-ng --cpu 4 --io 2 --vm 2`, but 8192 got
+marginal under load (3–6 `record()` stalls >85 ms per mic, `RECORDER_ENTER_MS`
+3–5×) while 32768 rode it with **zero** dropped/stalled blocks. The remaining
+~90 ms first-read term at 32768 is a *fixed, bench-calibratable constant*; an
+xrun is unrecoverable lost audio — so trade the correctable latency for the
+robustness. 8192 stays selectable (Recording tab) for anyone who wants the raw
+term minimal and accepts thinner margins.
+
+**Not retroactive.** Habitat audio already collected at 131072 stays at 131072
+(`audio_align` reads the block size per file from the sidecar). Those recordings
+are still alignable — the ~597 ms first-read excess is absorbed by the `STARTED`
+anchor + robust fit, leaving the ~50 ms residual measured on the 2026-09-04
+sessions (≈1.5 video frames at 30 fps). Fine for coarse USV↔behaviour
+attribution; the per-device calibration constant (Phase A) is what tightens it.
+`monitoring.enabled` was found not to matter for the first-read term (never
+tested paired, but the sweep points at intrinsic PipeWire priming).
 
 ## Phase C — targeted code probes (only if A/B point here)
 

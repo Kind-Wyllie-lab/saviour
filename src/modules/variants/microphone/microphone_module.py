@@ -341,8 +341,8 @@ class AudiomothModule(Module):
         # nonsensical value so a bad config can't wedge the capture loop: a
         # too-small block starves the read loop, a huge one stalls segment
         # stop. 4096..1048576 samples covers the useful range.
-        frame_num = int(self.config.get("microphone.frame_num", 1024 * 128))
-        block_size = int(self.config.get("microphone.block_size", 1024 * 128))
+        frame_num = int(self.config.get("microphone.frame_num", 32768))
+        block_size = int(self.config.get("microphone.block_size", 32768))
         frame_num = max(4096, min(frame_num, 1024 * 1024))
         block_size = max(4096, min(block_size, 1024 * 1024))
         clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))

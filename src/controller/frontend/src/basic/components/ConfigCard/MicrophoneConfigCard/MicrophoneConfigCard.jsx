@@ -99,8 +99,9 @@ const MIC_COLORMAPS = [
   "jet", "hot", "bone", "ocean", "grayscale",
 ];
 
-// Selectable recorder block sizes (powers of two). 131072 is the long-standing
-// default; smaller values cut first-read latency but risk xruns at 192 kHz.
+// Selectable recorder block sizes (powers of two). 32768 is the default
+// (settled 2026-09-07 for A/V-sync latency vs xrun headroom); smaller values
+// cut first-read latency further but risk xruns at 192 kHz on a loaded Pi.
 const MIC_BLOCK_SIZES = [8192, 16384, 32768, 65536, 131072, 262144];
 
 // Committed swatch PNGs, one per colour map (tools/gen_microphone_colormap_swatches.py).
@@ -217,7 +218,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   // kept equal; decouple via the config file if ever needed. Applies to the
   // next recording, not live.
   const micCfg     = formData?.microphone ?? {};
-  const blockSize  = Number(micCfg.block_size ?? 131072);
+  const blockSize  = Number(micCfg.block_size ?? 32768);
   const blockMs    = (blockSize / amRate) * 1000;
   const monEnabled = mon.enabled !== false;
 

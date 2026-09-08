@@ -44,6 +44,7 @@ Inference load CAN cost recorded frames, indirectly.
 Author: Andrew SG
 """
 
+import collections
 import os
 import queue
 import sys
@@ -110,6 +111,12 @@ class HailoCameraModule(CameraBase):
         self._infer_q: queue.Queue = queue.Queue(maxsize=1)
         self._infer_stop = threading.Event()
         self._infer_worker: threading.Thread | None = None
+        # detect() wall-time samples (ms). Feeds a ~30 s p50/p95/p99/max log
+        # line and the _check_hailo message -- the "how much headroom did the
+        # worker thread buy / would a faster HAT help" measurement
+        # (plans/hailo-inference-threading.md, "Amendments").
+        self._infer_ms: collections.deque = collections.deque(maxlen=600)
+        self._infer_ms_logged_at = 0.0
 
         # CameraBase.__init__ runs _configure_camera(), not
         # configure_module_special(), so build the detector explicitly here —
@@ -208,6 +215,7 @@ class HailoCameraModule(CameraBase):
                 if detector is None:
                     self._last_results = []
                     continue
+                t0 = time.monotonic()
                 try:
                     results = detector.detect(frame, labels)
                 except Exception as e:  # noqa: BLE001
@@ -216,8 +224,35 @@ class HailoCameraModule(CameraBase):
                         self._infer_error_logged = True
                     self._last_results = []
                     continue
+                self._infer_ms.append((time.monotonic() - t0) * 1000.0)
             self._last_results = results
+            self._maybe_log_infer_timing()
         self.logger.info("Hailo inference worker stopped")
+
+    def _infer_timing_stats(self) -> dict | None:
+        """p50/p95/p99/max of the last detect() calls (ms), or None if too
+        few samples yet."""
+        s = sorted(self._infer_ms)
+        if len(s) < 30:
+            return None
+        def pct(p):
+            return s[min(len(s) - 1, int(p / 100.0 * len(s)))]
+        return {"n": len(s), "p50": pct(50), "p95": pct(95),
+                "p99": pct(99), "max": s[-1]}
+
+    def _maybe_log_infer_timing(self, interval_s: float = 30.0) -> None:
+        now = time.monotonic()
+        if now - self._infer_ms_logged_at < interval_s:
+            return
+        st = self._infer_timing_stats()
+        if st is None:
+            return
+        self._infer_ms_logged_at = now
+        self.logger.info(
+            "hailo detect(): p50=%.1f p95=%.1f p99=%.1f max=%.1f ms  "
+            "(n=%d, model=%s, infer_every_n=%d)",
+            st["p50"], st["p95"], st["p99"], st["max"], st["n"],
+            self._model_key, self._infer_every_n)
 
     def _hef_path(self, spec: dict) -> str:
         return os.path.join(MODEL_DIR, spec["hef"])
@@ -427,11 +462,17 @@ class HailoCameraModule(CameraBase):
     def _check_hailo(self) -> tuple[bool, str]:
         # Never blocks readiness — the module records fine without inference.
         with self._det_lock:
-            if self.detector is not None:
-                return True, f"Hailo inference active ({self._model_key})"
-            if not self._infer_enabled():
-                return True, "Hailo inference disabled by config (plain camera)"
-            return True, f"Hailo inference off ({self._detector_error or 'no model'}) — recording still works"
+            active = self.detector is not None
+            model = self._model_key
+            err = self._detector_error
+        if active:
+            st = self._infer_timing_stats()
+            timing = (f" — detect p50 {st['p50']:.0f}ms p99 {st['p99']:.0f}ms"
+                      if st else "")
+            return True, f"Hailo inference active ({model}){timing}"
+        if not self._infer_enabled():
+            return True, "Hailo inference disabled by config (plain camera)"
+        return True, f"Hailo inference off ({err or 'no model'}) — recording still works"
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 

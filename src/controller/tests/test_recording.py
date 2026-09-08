@@ -1398,6 +1398,71 @@ class TestApplyFramesyncVerdict:
         assert ("gone", "__session__") not in rec._framesync_inflight
         facade.update_sessions.assert_not_called()
 
+    def test_green_verdict_raises_no_alert(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.apply_framesync_verdict("exp1", "session", None,
+                                    {"status": "green", "reasons": []}, None)
+        facade.send_alert.assert_not_called()
+
+    def test_amber_verdict_alerts_warning_with_reason_and_hint(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.apply_framesync_verdict("exp1", "session", None, {
+            "status": "amber",
+            "reasons": ["ai camera: 0.42% dropped frames",
+                        "ai camera: unstable capture rate (gap CV 0.064)"],
+        }, None)
+        facade.send_alert.assert_called_once()
+        kw = facade.send_alert.call_args.kwargs
+        assert kw["severity"] == "warning"
+        assert "0.42% dropped frames" in kw["message"]
+        assert "infer_every_n" in kw["message"]         # remediation hint
+        assert kw["key"] == "framesync_exp1_session"
+
+    def test_red_verdict_alerts_error(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.apply_framesync_verdict("exp1", "session", None, {
+            "status": "red", "reasons": ["cam vs ai: detrended p95 250 µs"],
+        }, None)
+        assert facade.send_alert.call_args.kwargs["severity"] == "error"
+        assert "phc2sys" in facade.send_alert.call_args.kwargs["message"]
+
+    def test_amber_suppressed_when_notify_disabled(self):
+        rec, facade = _make_recording(teams={"notify_framesync": False})
+        rec._log_session_event = MagicMock()
+        rec._save_sessions = MagicMock()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.apply_framesync_verdict(
+            "exp1", "session", None,
+            {"status": "amber", "reasons": ["x: 1% dropped frames"]}, None)
+        facade.send_alert.assert_not_called()
+
+    def test_amber_on_unattended_folds_into_digest(self):
+        rec, facade = self._rec()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.sessions["exp1"].unattended = True
+        rec.apply_framesync_verdict(
+            "exp1", "session", None,
+            {"status": "amber", "reasons": ["x: 1% dropped frames"]}, None)
+        facade.send_alert.assert_not_called()
+        assert rec._unattended_fault_digest.get("exp1", {}).get("framesync") == 1
+
+
+class TestFramesyncRemediation:
+    def test_drop_reason_gets_load_hint(self):
+        h = recording_module._framesync_remediation(["ai camera: 0.4% dropped frames"])
+        assert "infer_every_n" in h and "fps" in h
+
+    def test_ptp_reason_gets_timing_hint(self):
+        h = recording_module._framesync_remediation(["a vs b: detrended p95 300 µs"])
+        assert "phc2sys" in h and "hop" in h
+
+    def test_unknown_reason_gets_generic(self):
+        h = recording_module._framesync_remediation(["something odd"])
+        assert "checklist" in h.lower()
+
     def test_rollup_all_skipped_days_is_skipped(self):
         assert Recording._rollup_day_verdicts(
             {"20260901": {"status": "skipped"}, "20260902": {"status": "skipped"}}

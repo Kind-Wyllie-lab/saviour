@@ -127,6 +127,8 @@ def _worker_module(detector=None, infer_every_n=1):
     m._max_labels = 40
     m._last_results = []
     m._last_summary = ""
+    m._infer_ms = __import__("collections").deque(maxlen=600)
+    m._infer_ms_logged_at = 0.0
     return m
 
 

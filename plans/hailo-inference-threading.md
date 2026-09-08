@@ -1,7 +1,19 @@
 # Hailo preview inference — move it off the capture thread
 
-- **Status:** in progress — worker thread implemented on `feat/hailo-inference-worker-thread`
-  (2026-09-08), tests pass, **not yet on-device validated**
+- **Status:** worker thread **merged to `staging`** (PR #374, `d42a5839`) and
+  **deployed** (2026-09-08, via `POST /api/v1/system/update` — first live use of
+  that endpoint). **Smoke-validated on hardware, full acceptance run pending.**
+  - 4/4 `infer_every_n=1` recordings clean (`dropped_before=0`, `rate_cv`
+    ~0.0002, deficit 0-1) vs the pre-fix 2/3-degraded (`dropped_before` 8-11,
+    `rate_cv` 0.06-0.08). P(4/4 clean by chance) ~1.2 %.
+  - Clap transient test (`claptest_wt-150623`, `infer_every_n=1` + inference
+    running): both cameras `deficit_vs_csv=0`, `dropped_before=0`;
+    ai_cam − main_cam = **−5.5 ± 12.4 ms (−0.17 fr)** on the clap (the
+    "few frames behind" is gone). Detail:
+    `docs/hailo-inference-sweep-2026-09-08.md` addendum.
+  - **Still owed** (plan acceptance): ~15+ `n1` runs (the ~2 h repeat sweep);
+    10+ model swaps + 10+ start/stop cycles with zero HailoRT SIGABRT; a
+    visual overlay-tracking check; the three plan-amendment refinements below.
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work" → this file; sibling of
@@ -176,17 +188,44 @@ HAT could reach. Also useful as before/after evidence for the worker refactor.
    instrumentation shows `detect()` is >80 % NPU *and* the worker refactor is
    rejected.
 
+## Amendments (2026-09-08, from the intermittency finding)
+
+The n=5 sweep showed `infer_every_n=1` degrades **intermittently — ~2 of 3
+runs**, not every run. That is a *tail-latency* problem (mean `detect()` ≈
+frame budget, so a slow inference coinciding with a GC pause / thermal blip /
+export I/O tips individual frames over). It **strengthens** the worker-thread
+case (decoupling is the right tool for variance) without changing the design.
+Three refinements:
+
+1. **Acceptance must be sized to the failure rate.** "n1 indistinguishable
+   from off" is meaningless at 5 repeats if n1 fails ~1-in-3. Bar:
+   **≥10–15 consecutive `n1` runs with zero drop bursts** post-fix. (The
+   smoke was 4 — good signal, not acceptance.)
+2. **"Ship `infer_every_n=2`" is a shrinking-margin mitigation, not a fix.**
+   n2 is clean *in this data*, but the intermittency shows the preview
+   pipeline runs near the edge; a heavier model, 60 fps, a hotter Pi, or a
+   second on-camera detector erodes that margin. Keep it as the immediate
+   lever; don't treat it as closing the item.
+3. **Instrument the `detect()` *distribution*, not the mean.** p50 vs p99 of
+   `detect()` (resize / infer / decode / draw, rate-limited log line) is what
+   explains the intermittency and quantifies the worker's headroom gain — and
+   it's the one measurement that would justify the 26 TOPS HAT (a fat p99
+   that's mostly NPU). ~20 lines; do it alongside the acceptance run.
+
 ## Acceptance
 
-- Re-run `tools/framesync_sweep.py --repeats 5` (30 fps, and a 60 fps block):
-  `infer_every_n=1` client `deficit`, `dropped_before`, and gap-CV are
-  statistically indistinguishable from the `infer_enabled=false` arm.
+- Re-run `tools/framesync_sweep.py` at `infer_every_n=1`, **≥10–15 repeats**
+  (30 fps; a 60 fps block): client `deficit`, `dropped_before`, and gap-CV
+  every run indistinguishable from the `infer_enabled=false` arm.
+  **Smoke (4 runs) 2026-09-08: passed.** Full run pending.
 - 10-plus detector rebuilds (`hailo.model` swaps) and 10-plus start/stop cycles
   under load with **zero** HailoRT abort / SIGABRT.
 - Overlay still tracks the scene (visually: a moving hand's box is ≤2–3 frames
   behind).
 - `_check_capture_cadence` (the live health check added alongside this
   investigation) stays "ok" during a recording with `infer_every_n=1`.
+- Clap-transient test: ai_cam vs main_cam within ±1 frame in `video_compose`.
+  **2026-09-08: −0.17 fr on `claptest_wt-150623`.**
 
 ## Not doing
 

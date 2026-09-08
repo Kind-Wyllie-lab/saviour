@@ -91,3 +91,52 @@ Sync **server** (`camera_d074`): `deficit = 0`, `dropped_before = 0`, `rate_cv
   more `n1` repeats to pin the failure rate; `sync_mode: none` arm.
 - **Harness:** needs resume-from-`results.csv` and a retrying / snapshot-based
   restore for runs this long (two network drops today).
+
+---
+
+## Addendum — worker thread deployed + validated (later 2026-09-08)
+
+The worker-thread fix (`plans/hailo-inference-threading.md`, PR #374,
+`d42a5839`) was merged and deployed to the controller and all 4 modules via
+`POST /api/v1/system/update` (first live use of that endpoint; needed the
+`sudo -u pi` git fix, PR #375).
+
+### Re-sweep, `infer_every_n=1` × 4, worker thread active
+
+| run | client deficit | `dropped_before` | `rate_cv` |
+|---|---|---|---|
+| n1_r0 | 1 | 0 | 0.00025 |
+| n1_r1 | 0 | 0 | 0.00025 |
+| n1_r2 | 0 | 0 | 0.00024 |
+| n1_r3 | 0 | 0 | 0.00021 |
+
+4/4 clean — indistinguishable from the `infer_enabled=false` baseline. Pre-fix
+`n1` was `dropped_before` 8–11 / `rate_cv` 0.06–0.08 on 2 of 3 runs. Given the
+pre-fix ~1/3 clean rate, P(4/4 clean by chance) ≈ 1.2 %. **Not** the full
+≥10–15-run acceptance bar, but strong signal.
+
+### Clap transient test — `claptest_wt-150623`
+
+`infer_every_n=1` + inference running; ~12 hand claps over a 78 s recording;
+per-camera clap frame from a frame-diff motion peak, audio onset from the
+192 kHz FLAC envelope, all on the PTP wall clock.
+
+`_recording.json`: both cameras `deficit_vs_csv = 0`, `dropped_before_total =
+0`, `csv_rows == encoded_frames`.
+
+| pair (n=6 cleanly-detected claps) | offset | frames |
+|---|---|---|
+| **ai_cam − main_cam** | **−5.5 ± 12.4 ms** | **−0.17** |
+| main_cam − audio (`audio_align.py` `STARTED` anchor) | −24 ± 12 ms | −0.7 |
+| ai_cam − audio (`STARTED` anchor) | −30 ± 7 ms | −0.9 |
+| main_cam − audio (block-index linear fit) | −120 ± 12 ms | −3.6 |
+
+- **ai_cam vs main_cam ≈ 0** — the sync client now captures the transient at
+  the same instant as the frameserver. The "ai camera a few frames behind"
+  observation is resolved.
+- Audio lags video by ~25–30 ms on the `STARTED` anchor (a separate issue —
+  `plans/audio-video-sync-residual-validation.md`). The older block-fit anchor
+  would report ~120 ms, so `audio_align.py`'s current anchor is the better one.
+- Caveats: frame-diff on a hand clap is ±1 frame noisy (6/12 claps cleanly
+  detected on both cams); n=6 is thin; a flash / clapperboard would tighten
+  it. Analysis script: `scratchpad`, not committed (throwaway).

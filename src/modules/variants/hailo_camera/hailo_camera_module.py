@@ -83,15 +83,24 @@ class HailoCameraModule(CameraBase):
 
     # ── config ───────────────────────────────────────────────────────────────
 
+    def _infer_enabled(self) -> bool:
+        """`hailo.infer_enabled` (default true). When false the module skips
+        loading a HEF and runs the preview with no inference — used to
+        characterise how much the inference thread costs the H264 encoder
+        (see plans/multicam-frame-alignment-and-sync-provenance.md)."""
+        return bool(self.config.get("hailo.infer_enabled", True))
+
     def _configure_module_extra(self, updated_keys) -> None:
         hailo_keys = (None if updated_keys is None
                       else {k for k in updated_keys if k.startswith("hailo.")})
         if hailo_keys is not None and not hailo_keys:
             return
-        if hailo_keys is None or "hailo.model" in hailo_keys:
+        if (hailo_keys is None or "hailo.model" in hailo_keys
+                or "hailo.infer_enabled" in hailo_keys):
             # Loading a HEF onto the Hailo device takes a few seconds and the
             # 8L won't hold two VDevices at once, so do it off the config-set
             # handler thread and drop to a plain-camera preview while it swaps.
+            # Toggling infer_enabled goes the same route (load or tear down).
             self._rebuild_detector_async()
         else:
             # threshold / infer_every_n / max_labels / max_detections don't
@@ -118,6 +127,26 @@ class HailoCameraModule(CameraBase):
 
     def _build_detector(self, swap: bool = False) -> None:
         with self._rebuild_lock:
+            if not self._infer_enabled():
+                # Tear down any live detector and run as a plain camera. The
+                # close() is under _det_lock for the same reason the swap path
+                # below is — no frame may be mid-run() on `old`.
+                with self._det_lock:
+                    old, self.detector = self.detector, None
+                    self._detector_error = "disabled (hailo.infer_enabled=false)"
+                    self._model_key = self.config.get("hailo.model", DEFAULT_MODEL)
+                    self._rebuilding = False
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+                self.logger.info(
+                    "Hailo inference disabled by config "
+                    "(hailo.infer_enabled=false) — recording as a plain camera"
+                )
+                return
+
             model_key = self.config.get("hailo.model", DEFAULT_MODEL)
             threshold = float(self.config.get("hailo.threshold", 0.4))
             self._max_labels = int(self.config.get("hailo.max_labels", 40))
@@ -304,6 +333,8 @@ class HailoCameraModule(CameraBase):
         with self._det_lock:
             if self.detector is not None:
                 return True, f"Hailo inference active ({self._model_key})"
+            if not self._infer_enabled():
+                return True, "Hailo inference disabled by config (plain camera)"
             return True, f"Hailo inference off ({self._detector_error or 'no model'}) — recording still works"
 
 

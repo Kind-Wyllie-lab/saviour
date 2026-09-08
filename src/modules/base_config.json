@@ -29,7 +29,12 @@
     "_health_metadata_recording_interval": 5,
     "_health_check_interval_secs": 10,
     "_health_check_strikes": 2,
-    "_health_check_camera_silence_secs": 5
+    "_health_check_camera_silence_secs": 5,
+    "_cadence_window_secs": 10.0,
+    "_cadence_min_samples": 30,
+    "_cadence_rate_cv_warn": 0.08,
+    "_cadence_dropped_frac_warn": 0.005,
+    "_cadence_fps_floor_frac": 0.8
   },
   "export": {
     "auto_export": true,

@@ -21,24 +21,29 @@ few frames in Post-Process compose.
 
 ### Measured (`tools/framesync_sweep.py`, desk rig, sync client = `hailo_camera_3606`)
 
-Smoke run, **n=1**, 30 fps, 60 s, model `yolov8s`, `threshold 0.2`, `max_labels 10`:
+30 fps, 60 s, model `yolov8s`, `threshold 0.2`, `max_labels 10`, shuffled
+conditions. **Full write-up + raw data: `docs/hailo-inference-sweep-2026-09-08.md`
+/ `.csv`.**
 
-| `hailo.infer_every_n` | client encoder deficit | `dropped_before` | gap-CV |
-|---|---|---|---|
-| off (`infer_enabled=false`) | 0 | 0 | 0.0002 |
-| 8 | 0 | 0 | 0.0002 |
-| 2 (file default) | 0 | 0 | 0.0002 |
-| **1 (deployed rig setting)** | **1** | **6** | **0.056** |
+| `hailo.infer_every_n` | n | client deficit | `dropped_before` | gap-CV |
+|---|---:|---|---|---|
+| off (`infer_enabled=false`) | 3 | `1,0,0` | `0,0,0` | ~0.00014 |
+| 8 | 3 | `0,0,0` | `0,0,0` | ~0.00020 |
+| 2 (file default) | 5 | `1,0,0,0,0` | `0,0,0,0,0` | ~0.00027 |
+| **1 (deployed rig setting)** | 3 | **`1, 6, 2`** | **`0, 8, 11`** | **`0.0003, 0.065, 0.082`** |
 
 - Sync **server** (`camera_d074`): 0 deficit / 0 dropped at **every** setting.
-- PTP detrended-p95 ~38 µs throughout — **throughput, not timing.**
-- It is a **step at `infer_every_n=1`**, not a gradient: a 2× cut in inference
-  frequency fully fixes it, which says the cost is dominated by the `detect()`
-  call, not the per-frame draw (unchanged n=1 vs n=2).
+- PTP detrended-p95 34–41 µs throughout — **throughput, not timing.**
+- **`infer_every_n=1` degrades the client intermittently — 2 of 3 runs (1/1
+  in an earlier smoke).** When it fires: 8–11 capture drops + 2–6 encoder
+  drops + cadence CV up ~250–300×. When it doesn't, `n1` == `off`.
+- `n2` / `n8` / `off` are **mutually indistinguishable** — the stray
+  `deficit=1` (once each) is a ~20 %-of-runs trailing-frame artefact.
+- It's a **step at `infer_every_n=1`**, not a gradient → the cost is the
+  `detect()` call, not the per-frame draw.
 
-An n=5 shuffled sweep (30 fps) is running to put error bars on the small counts;
-a 60 fps block and a `sync_mode:none` arm are follow-ups. Numbers here will be
-updated when it lands.
+Not run: 60 fps block, `sync_mode:none` arm, more `n1` repeats to pin the
+failure rate (5 of 20 runs lost to laptop-side network drops).
 
 ### Why `detect()` is expensive
 

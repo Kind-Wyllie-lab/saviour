@@ -42,6 +42,7 @@
         "_level": 4.2
     },
     "hailo": {
+        "infer_enabled": true,
         "model": "yolov8s",
         "threshold": 0.4,
         "max_labels": 40,

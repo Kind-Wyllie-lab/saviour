@@ -51,6 +51,29 @@ def _humanise_minutes(mins: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _framesync_remediation(reasons: list[str]) -> str:
+    """One-line fix hint for a degraded framesync verdict, chosen from the
+    `reasons` strings framesync_check.classify() emits. Capture/rate problems
+    (the operator can act on those now) take priority over PTP/topology."""
+    blob = " ".join(reasons).lower()
+    if "dropped frames" in blob or "unstable capture rate" in blob or "fps is" in blob:
+        return ("A camera is losing frames to on-board load — lower that camera's "
+                "fps, raise `hailo.infer_every_n` (or `hailo.infer_enabled=false`) "
+                "if it's the hailo camera, or check its PoE power. Re-check after "
+                "the change with tools/analyse_framesync.py.")
+    if "detrended p95" in blob or "clock drift" in blob or "offset p95" in blob \
+            or "offset data" in blob:
+        return ("Inter-camera / PTP timing drift — wait 5–10 min after any camera "
+                "reboot for phc2sys to converge, and check the switch topology "
+                "(no camera > 2 hops from the controller; no third switch in the "
+                "PTP path).")
+    return "See docs/CHANGELOG + CLAUDE.md 'Camera framesync' for the checklist."
+
+
+# ---------------------------------------------------------------------------
 # State enums
 # ---------------------------------------------------------------------------
 
@@ -2546,12 +2569,37 @@ class Recording:
             self._framesync_inflight.discard(
                 (session_name, date_dir or "__session__"))
 
+        status = v.get("status")
+        scope_lbl = f"{scope}{' ' + date_dir if date_dir else ''}"
         self._log_session_event(
-            session_name, "INFO",
-            f"Sync-quality validation ({scope}"
-            f"{' ' + date_dir if date_dir else ''}): {v.get('status')}")
+            session_name, "FAULT" if status in ("amber", "red") else "INFO",
+            f"Sync-quality validation ({scope_lbl}): {status}")
         self._save_sessions()
         self.facade.update_sessions(self.sessions)
+
+        # Surface a degraded verdict as an operator alert -- the report is
+        # generated for every session/day but was previously only a session
+        # badge colour on the Post-Process page. reasons come from
+        # framesync_check.classify(); _framesync_remediation() maps them to a
+        # one-line fix hint.
+        if status in ("amber", "red"):
+            reasons = [str(r) for r in (v.get("reasons") or [])]
+            hint = _framesync_remediation(reasons)
+            body = (f"Sync-quality check for **{session_name}** ({scope_lbl}) "
+                    f"came back **{status}**.\n\n"
+                    + "\n".join(f"- {r}" for r in reasons)
+                    + (f"\n\n_{hint}_" if hint else ""))
+            if self._notify_enabled("notify_framesync"):
+                sess = self.sessions.get(session_name)
+                if sess is not None and getattr(sess, "unattended", False):
+                    self._record_unattended_fault(session_name, ["framesync"])
+                else:
+                    self.facade.send_alert(
+                        key=f"framesync_{session_name}_{date_dir or 'session'}",
+                        title=f"Frame-sync {status} — {session_name}",
+                        message=body,
+                        severity="error" if status == "red" else "warning",
+                    )
 
     @classmethod
     def _rollup_day_verdicts(cls, day_verdicts: dict) -> dict:

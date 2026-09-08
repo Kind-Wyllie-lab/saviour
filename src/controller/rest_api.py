@@ -39,18 +39,19 @@ Response conventions:
         503 the export share is configured but unreachable
 
 Scope: read state, a readiness gate, an SSE event stream, the recording
-lifecycle for plain sessions, event markers (write + read-back), an
-OpenAPI spec, and API-token management. Arbitrary module commands are
-intentionally NOT here -- the pre-existing POST /facade/send_command
-still covers that escape hatch. Scheduled and Habitat session
-*creation*, config writes and module management are candidates for a
-later version.
+lifecycle for plain sessions, event markers (write + read-back),
+per-module config read + partial write, an OpenAPI spec, and API-token
+management. Arbitrary module commands are intentionally NOT here -- the
+pre-existing POST /facade/send_command still covers that escape hatch.
+Scheduled and Habitat session *creation*, controller-config writes and
+module management (reboot/update) are candidates for a later version.
 """
 
 import json
 import logging
 import os
 import queue
+import time
 from collections import Counter
 from dataclasses import asdict
 from functools import wraps
@@ -60,6 +61,31 @@ from flask import Blueprint, Response, jsonify, request
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/v1"
+
+# Longest a PATCH .../config?wait=<secs> will block a worker thread polling
+# for the module's set_config ack before returning 202.
+_CONFIG_WAIT_MAX_S = 30.0
+
+
+def _filter_private(d: dict) -> dict:
+    """web._filter_private_keys, imported lazily to dodge the web<->rest_api
+    import cycle (web.py imports this module at its own import time, before
+    _filter_private_keys is defined). Safe at request time."""
+    from src.controller.web import _filter_private_keys
+    return _filter_private_keys(d)
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    """Recursively merge *patch* onto a copy of *base*. Nested dicts merge
+    key-by-key; every other value type (lists included) replaces wholesale
+    -- a list can't be meaningfully partial-patched."""
+    out = dict(base)
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 
 def _running_version() -> str:
@@ -376,6 +402,112 @@ def create_api_blueprint(web) -> Blueprint:
         if module_id not in web.facade.get_modules():
             return _error("not_found", f"Unknown module '{module_id}'", 404)
         return jsonify(web.facade.get_module_health(module_id) or {})
+
+    # ------------------------------------------------------------------ #
+    # module config -- read the shape, write a partial update
+    # ------------------------------------------------------------------ #
+
+    def _config_state(module_id: str) -> dict:
+        return (web.facade.get_module_configs() or {}).get(module_id) or {}
+
+    @bp.get("/modules/<module_id>/config")
+    @require_auth
+    def get_module_config(module_id):
+        """The module's last controller-confirmed config (`config`), plus
+        the controller's intended `target_config` and the sync verdict
+        (`config_sync_status`: SYNCED / PENDING / FAILED / UNKNOWN, with
+        `config_diffs` when FAILED). `config` is the shape a PATCH body
+        slots into. `_`-prefixed internal keys are hidden unless
+        `?include_private=true` (they are readable but never writable)."""
+        if module_id not in web.facade.get_modules():
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+        state = _config_state(module_id)
+        true_config = state.get("true_config") or {}
+        include_private = (
+            request.args.get("include_private", "false").lower() == "true")
+        cfg = true_config if include_private else _filter_private(true_config)
+        return jsonify({
+            "module_id": module_id,
+            "config_sync_status": state.get("status", "UNKNOWN"),
+            "config_diffs": state.get("diffs", []),
+            "config": cfg,
+            "target_config": state.get("target_config") or {},
+        })
+
+    @bp.patch("/modules/<module_id>/config")
+    @require_auth
+    def patch_module_config(module_id):
+        """Deep-merge a partial config object onto the module's current
+        config and push it. Body is `{section: {key: value, ...}, ...}`
+        (one key or many, any number of sections) -- nested objects merge,
+        scalars and lists replace. `_`-prefixed keys are dropped.
+
+        409 `module_recording` if the module is mid-recording (parity with
+        the Socket.IO save path; the /facade/send_command escape hatch
+        skips this guard, this route does not). 409 `config_unavailable`
+        if the module has not yet reported a config to merge onto.
+
+        The apply is a round-trip to the module, so the response is 202
+        with `config_sync_status: "PENDING"` -- poll GET .../config until
+        SYNCED. `?wait=<secs>` (<=30) blocks server-side for the ack and
+        returns 200 once SYNCED (still 202 if it stays pending)."""
+        if module_id not in web.facade.get_modules():
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+
+        patch = request.get_json(silent=True)
+        if not isinstance(patch, dict) or not patch:
+            return _error(
+                "invalid_request",
+                "Body must be a non-empty JSON object of config keys to set",
+                400)
+
+        state = _config_state(module_id)
+        true_config = state.get("true_config") or {}
+        if not true_config:
+            return _error(
+                "config_unavailable",
+                "The module has not reported its current config yet; cannot "
+                "compute a partial update. Retry shortly.",
+                409)
+
+        if web._recording_module_ids([module_id]):
+            return _error(
+                "module_recording",
+                "Cannot change config while this module is recording -- stop "
+                "the session first.",
+                409)
+
+        merged = _deep_merge(
+            _filter_private(true_config), _filter_private(patch))
+
+        # Record intent (-> PENDING) then dispatch the full merged config,
+        # exactly as web.py's save_module_config Socket.IO handler does.
+        web.facade.set_target_module_config(module_id, merged)
+        web.facade.send_command(module_id, "set_config", merged)
+
+        status = _config_state(module_id).get("status", "PENDING")
+        wait_raw = request.args.get("wait")
+        if wait_raw is not None:
+            try:
+                wait_s = float(wait_raw)
+            except ValueError:
+                return _error(
+                    "invalid_request", "'wait' must be a number of seconds", 400)
+            deadline = time.monotonic() + min(max(wait_s, 0.0), _CONFIG_WAIT_MAX_S)
+            while time.monotonic() < deadline:
+                time.sleep(0.25)
+                status = _config_state(module_id).get("status", "PENDING")
+                if status not in ("PENDING", "UNKNOWN"):
+                    break
+
+        body = {
+            "module_id": module_id,
+            "config_sync_status": status,
+            "config_diffs": _config_state(module_id).get("diffs", []),
+            "applied": _filter_private(patch),
+            "target_config": merged,
+        }
+        return jsonify(body), (200 if status == "SYNCED" else 202)
 
     # ------------------------------------------------------------------ #
     # exports

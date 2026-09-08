@@ -140,6 +140,69 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/modules/{module_id}/config:
+    get:
+      tags: [modules]
+      summary: Read a module's config (shape + sync state)
+      description: >
+        The module's last controller-confirmed config, the controller's
+        intended target_config, and the sync verdict. `_`-prefixed internal
+        keys are hidden unless include_private=true.
+      parameters:
+        - $ref: "#/components/parameters/ModuleId"
+        - name: include_private
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModuleConfig" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [modules]
+      summary: Partial config update (one or many keys)
+      description: >
+        Deep-merges the body onto the module's current config and pushes the
+        result. Nested objects merge; scalars and lists replace. `_`-prefixed
+        keys are dropped. Rejected 409 while the module is recording, or 409
+        if the module has not yet reported a config to merge onto. The apply
+        is a module round-trip, so the default response is 202 with
+        config_sync_status "PENDING" -- poll GET .../config until SYNCED, or
+        pass wait=<secs> (<=30) to block for the ack and get 200 on SYNCED.
+      parameters:
+        - $ref: "#/components/parameters/ModuleId"
+        - name: wait
+          in: query
+          description: Seconds to block server-side for the set_config ack (max 30)
+          schema: { type: number }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              example: { camera: { fps: 90, sensor_mode_index: 1 } }
+      responses:
+        "200":
+          description: Applied and confirmed (SYNCED); only when wait= was passed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigPatchResult" }
+        "202":
+          description: Accepted, awaiting the module ack (PENDING)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigPatchResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/sessions:
     get:
       tags: [sessions]
@@ -432,6 +495,43 @@ components:
             properties:
               ok: { type: boolean }
               detail: { type: [string, "null"] }
+
+    ModuleConfig:
+      type: object
+      properties:
+        module_id: { type: string }
+        config_sync_status:
+          type: string
+          enum: [SYNCED, PENDING, FAILED, UNKNOWN]
+        config_diffs:
+          type: array
+          items: { type: string }
+        config:
+          type: object
+          description: Last controller-confirmed config; the shape a PATCH body slots into
+          additionalProperties: true
+        target_config:
+          type: object
+          additionalProperties: true
+
+    ConfigPatchResult:
+      type: object
+      properties:
+        module_id: { type: string }
+        config_sync_status:
+          type: string
+          enum: [SYNCED, PENDING, FAILED, UNKNOWN]
+        config_diffs:
+          type: array
+          items: { type: string }
+        applied:
+          type: object
+          description: The private-key-filtered patch as received
+          additionalProperties: true
+        target_config:
+          type: object
+          description: Full merged config dispatched to the module
+          additionalProperties: true
 
     CreateSession:
       type: object

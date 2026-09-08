@@ -147,6 +147,65 @@ The module registry (`{id: {...}}`), or one module. `404` for an unknown id.
 One module's health dict. `404` for an unknown id; `{}` if the module is
 known but has not reported health yet.
 
+### `GET /api/v1/modules/<id>/config` — read the config shape + sync state
+
+```json
+{
+  "module_id": "camera_a1b2",
+  "config_sync_status": "SYNCED",
+  "config_diffs": [],
+  "config":        {"camera": {"fps": 30, "sensor_mode_index": 0}, "recording": {...}},
+  "target_config": {"camera": {"fps": 30, "sensor_mode_index": 0}, "recording": {...}}
+}
+```
+
+`config` is the module's **last controller-confirmed** config (updated
+whenever the module reports back, including after every `set_config`) — the
+shape a `PATCH` body slots into. `config_sync_status` is `SYNCED` /
+`PENDING` / `FAILED` / `UNKNOWN`; `config_diffs` lists the mismatching keys
+when `FAILED`. `_`-prefixed internal keys are hidden unless
+`?include_private=true` (readable, never writable). `404` for an unknown id;
+`config` is `{}` if the module has not reported a config yet.
+
+### `PATCH /api/v1/modules/<id>/config` — partial config update
+
+Deep-merges the body onto the module's current config and pushes the merged
+result (the same full-config `set_config` the web UI sends). Nested objects
+merge key-by-key; scalars and lists replace wholesale. `_`-prefixed keys are
+dropped.
+
+```bash
+curl -X PATCH "$base_url/api/v1/modules/camera_a1b2/config?wait=8" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"camera": {"fps": 90, "sensor_mode_index": 1},
+       "recording": {"segment_duration_s": 600}}'
+```
+
+Applying is a round-trip to the module, so the default response is **`202`**
+with `config_sync_status: "PENDING"` — poll `GET .../config` until `SYNCED`.
+`?wait=<secs>` (capped at 30) blocks server-side for the ack and returns
+**`200`** once `SYNCED` (still `202` if it stays pending). Response body:
+
+```json
+{"module_id": "camera_a1b2", "config_sync_status": "PENDING",
+ "config_diffs": [], "applied": {"camera": {"fps": 90}},
+ "target_config": { ...full merged config sent to the module... }}
+```
+
+- `409` `module_recording` — the module is mid-recording. (Parity with the
+  Socket.IO save path. The `/facade/send_command` `set_config` escape hatch
+  does **not** enforce this; this route does.)
+- `409` `config_unavailable` — the module has not reported a config yet, so
+  there is nothing to merge onto. Retry shortly.
+- `400` `invalid_request` — empty body, or a non-object body.
+- Keys that change the capture pipeline (camera `sensor_mode_index`,
+  `width`/`height`, `bitrate_mb`, `sync_mode`, flips, `rotation`) trigger a
+  full stop/reconfigure/restart on the module — allow a few seconds and, for
+  PTP-affecting changes, minutes for `phc2sys` to reconverge before the
+  recording-start gate will pass.
+
+A `readonly` API token gets `403` here (non-GET).
+
 ### `GET /api/v1/sessions` · `GET /api/v1/sessions/<name>`
 
 All recording sessions (`{name: {...}}`) or one, serialised from the
@@ -364,7 +423,8 @@ abort the run if a module drops.
 ## Not yet in the API
 
 Arbitrary module commands (`/facade/send_command` still covers this),
-scheduled-session and Habitat-session *creation*, config reads/writes,
-module management (reboot/update), a per-session file manifest + bearer-minted
-download token, token `last_used` timestamps. Candidates for a later version;
-the blueprint is the place to add them.
+scheduled-session and Habitat-session *creation*, controller-config
+reads/writes, bulk config apply across a target (`apply_section_to_type`),
+module management (reboot/update), a per-session file manifest +
+bearer-minted download token, token `last_used` timestamps. Candidates for a
+later version; the blueprint is the place to add them.

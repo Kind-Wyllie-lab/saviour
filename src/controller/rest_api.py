@@ -461,6 +461,16 @@ def create_api_blueprint(web) -> Blueprint:
                 "Body must be a non-empty JSON object of config keys to set",
                 400)
 
+        # Parse ?wait= before any dispatch so a bad value fails clean.
+        wait_s = None
+        wait_raw = request.args.get("wait")
+        if wait_raw is not None:
+            try:
+                wait_s = min(max(float(wait_raw), 0.0), _CONFIG_WAIT_MAX_S)
+            except ValueError:
+                return _error(
+                    "invalid_request", "'wait' must be a number of seconds", 400)
+
         state = _config_state(module_id)
         true_config = state.get("true_config") or {}
         if not true_config:
@@ -486,14 +496,8 @@ def create_api_blueprint(web) -> Blueprint:
         web.facade.send_command(module_id, "set_config", merged)
 
         status = _config_state(module_id).get("status", "PENDING")
-        wait_raw = request.args.get("wait")
-        if wait_raw is not None:
-            try:
-                wait_s = float(wait_raw)
-            except ValueError:
-                return _error(
-                    "invalid_request", "'wait' must be a number of seconds", 400)
-            deadline = time.monotonic() + min(max(wait_s, 0.0), _CONFIG_WAIT_MAX_S)
+        if wait_s is not None:
+            deadline = time.monotonic() + wait_s
             while time.monotonic() < deadline:
                 time.sleep(0.25)
                 status = _config_state(module_id).get("status", "PENDING")

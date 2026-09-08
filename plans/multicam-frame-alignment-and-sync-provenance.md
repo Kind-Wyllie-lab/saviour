@@ -7,9 +7,33 @@
   gate…"* (the `_StreamCursor` `frame[i]==row[i]` half) and the Post-Process /
   ethogram bullet; sibling to `plans/audio-video-sync-residual-validation.md`.
 
-## Resume here (state as of 2026-09-07 EOD)
+## Resume here (state as of 2026-09-08)
 
-**Done & on `staging`:**
+**New since 2026-09-07 (all merged to `staging`, PRs #369–372):**
+- **REST `GET`/`PATCH /api/v1/modules/<id>/config`** — per-module config read +
+  partial (deep-merge) write, live-verified on the controller. This is what
+  `tools/framesync_sweep.py` drives. (`docs/REST_API.md`)
+- **`tools/framesync_sweep.py`** — automated hailo-load × framesync sweep:
+  PATCH both cameras → gate on PTP → timed session → SSH-pull
+  `framesync_report.json` + `_recording.json` + `ffprobe` the `.ts` → one
+  results row + a mean/sd pivot. Config snapshot/restore, shuffled condition
+  order, `-count_packets` for speed.
+- **`hailo.infer_enabled`** config key (default true) — off = skip the HEF,
+  plain camera. Drives the sweep's "inference off" arm.
+- **`camera_base` live capture-cadence check** — rolling window of inter-frame
+  deltas + `dropped_before`; `@check() _check_capture_cadence` (advisory) and a
+  broadened `_check_recording_alive` (was silence-only → now also fails on a
+  sustained elevated drop rate / half-speed capture, feeding the existing
+  `recording_health_warning` → controller alert). `recording._cadence_*` keys.
+- **Item 3 quantified** — see below. Provisional finding: the deployed ai
+  camera runs `infer_every_n=1`, the one setting that costs frames; `≥2` is
+  clean. n=5 sweep running to confirm.
+- **New sibling plan `plans/hailo-inference-threading.md`** — move preview
+  inference off the capture thread (the structural fix for item 3), with a
+  cost/benefit + alternatives matrix (faster HAT, lower preview fps, smaller
+  model, disable-during-recording, do-nothing).
+
+**Done & on `staging` (2026-09-07):**
 - **B3** — `_StreamCursor` proportional row→frame remap + per-stream mismatch
   warning → `ComposeJob.warnings` → `ComposeVideoPanel`. Bounds a client-camera
   skew to ~½ the deficit and never ships it silently. (`d8db4e57`, `1fe2e22d`)
@@ -32,10 +56,9 @@
    Detail: "Consumer side" section below.
 2. **Sync-provenance block** — the `_align.json` / compose / ethogram caption
    with per-modality-pair method + residual + verdict. Detail: "Defect 2" below.
-3. *(mitigation, not blocking)* hailo-camera load reduction — preview inference
-   off during recording / more encoder buffers / lower preview fps.
+3. *(mitigation, not blocking)* hailo-camera load reduction.
    **Quantified 2026-09-08** (`tools/framesync_sweep.py`, REST-API driven,
-   desk rig, sync client = `hailo_camera_3606`, 30 fps, 60 s, n=1):
+   desk rig, sync client = `hailo_camera_3606`, 30 fps, 60 s, n=1 smoke):
 
    | `hailo.infer_every_n` | client encoder deficit | `dropped_before` | gap-CV |
    |---|---|---|---|
@@ -45,12 +68,19 @@
    | **1 (rig was running this)** | **1** | **6** | **0.056** |
 
    Sync *server* (`camera_d074`): 0 deficit / 0 dropped at every setting.
-   PTP detrended-p95 ~38 µs, flat — throughput not timing. It's a **step at
-   `infer_every_n=1`**, not a gradient. New config key `hailo.infer_enabled`
-   (default true) added to drive the "off" arm. **Not yet run:** repeats
-   (n≥5), 60 fps (headroom shrinks?), longer/hotter sessions, `sync_mode:none`
-   arm. Provisional: ship `infer_every_n` default 2 and stop overriding it
-   to 1 on rigs; the deployed ai camera was on 1.
+   PTP detrended-p95 ~38 µs, flat — throughput not timing. A **step at
+   `infer_every_n=1`**, not a gradient → the cost is the `detect()` call, not
+   the per-frame draw. n=5 shuffled sweep + a 60 fps block + a `sync_mode:none`
+   arm are running / queued; numbers land in `plans/hailo-inference-threading.md`.
+   - **Immediate mitigation (do regardless):** the file default `infer_every_n`
+     is already 2 — stop overriding provisioned rigs to 1.
+   - **Structural fix:** move preview inference off the capture-callback thread
+     → **`plans/hailo-inference-threading.md`** (design + cost/benefit +
+     alternatives: 26 TOPS HAT, lower preview fps, `yolov8n`,
+     disable-during-recording).
+   - The 26 TOPS Hailo-8 HAT is **not** the recommended fix — it halves only
+     the NPU half of `detect()`, leaving the CPU-decode + encoder GIL
+     contention. Instrument the NPU/CPU split first if seriously considered.
 4. **Decide `camera.sync_mode` default** — free-run vs framesync. Recommendation
    + reasoning in the "Decision to make" section below; framesync is what
    *causes* the client skew, and behaviour work doesn't need sub-frame

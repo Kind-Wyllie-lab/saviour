@@ -342,6 +342,64 @@ exports without `force` — the latter carries `export_warning`,
 
 ---
 
+## Controller self-update
+
+### `GET /api/v1/system/update`
+
+Whether the controller can `git pull`:
+
+```json
+{"available": true, "branch": "staging", "remote": "git@github.com:org/saviour.git"}
+```
+
+`{"available": false, "reason": "..."}` when `/usr/local/src/saviour` isn't a
+git checkout, is on a detached HEAD, or has no `origin` remote (a device that
+only ever took ZIP updates). This is the precondition for the `POST`.
+
+### `POST /api/v1/system/update` — `git pull` + rebuild + restart
+
+Runs the same flow as the web UI's "Git Pull": `git fetch --prune origin
+<current branch>` → `git reset --hard origin/<branch>` → stage the tree as the
+module update package → optionally rebuild+restart the controller and/or tell
+every module to pull.
+
+**Requires the admin password** (not a scoped API token) — it deploys code
+fleet-wide. Only ever pulls the checkout's own already-configured
+origin/branch; there is no way to pass a URL or ref. The controller is
+snapshotted first (revertible from the web UI's update page).
+
+| body field | type | default | |
+|---|---|---|---|
+| `apply_controller` | bool | `true` | `pip install --no-index` + `npm run build` + `systemctl restart saviour.service` |
+| `deploy_modules` | bool | `false` | send `update_saviour` to every module first (each fetches `GET /update/package`, rsyncs, restarts) |
+
+```bash
+curl -X POST "$base_url/api/v1/system/update" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"apply_controller": true, "deploy_modules": true}'
+```
+
+Response:
+
+```json
+{"branch": "staging", "old_commit": "34a1ab8", "new_commit": "313a302",
+ "modules_notified": 4, "applying": true}
+```
+
+`202` when `apply_controller` is true (a restart is imminent — **the
+connection drops mid-response**; poll `GET /api/v1/state` `version` afterwards
+to confirm). `200` when it's false (staged only, no restart). `409`
+`update_unavailable` if there's no usable git checkout. `500` `git_failed`
+(message carries git's stderr) on a fetch/reset error — the pre-update
+snapshot still exists.
+
+The git reset is **hard** (not a merge) by design: a device that has ever
+taken a ZIP update has a working tree git never checked out, which a merge
+would spuriously conflict against. A hard reset always lands exactly on
+`origin/<branch>`.
+
+---
+
 ## API tokens
 
 Named bearer tokens as an alternative to embedding the web-UI admin password
@@ -425,6 +483,8 @@ abort the run if a module drops.
 Arbitrary module commands (`/facade/send_command` still covers this),
 scheduled-session and Habitat-session *creation*, controller-config
 reads/writes, bulk config apply across a target (`apply_section_to_type`),
-module management (reboot/update), a per-session file manifest +
-bearer-minted download token, token `last_used` timestamps. Candidates for a
-later version; the blueprint is the place to add them.
+per-module reboot/update and revert of a controller self-update, a
+per-session file manifest + bearer-minted download token, token `last_used`
+timestamps. Candidates for a later version; the blueprint is the place to add
+them. (Controller `git pull` self-update **is** now here — see *Controller
+self-update* above.)

@@ -12,7 +12,7 @@ generator lazily on next()).
 import json
 import os
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.controller.recording import RecordingSession
 from src.controller.tests.test_web import _make_web
@@ -372,6 +372,138 @@ class TestModuleConfigPatch:
             json={"camera": {"fps": 60}}, headers=_auth(token))
         assert resp.status_code == 403
         web.facade.send_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# system -- controller self-update
+# ---------------------------------------------------------------------------
+
+class TestSystemUpdate:
+    def _patch_su(self, **over):
+        import src.controller.system_update as su_mod
+        p = {
+            "git_checkout_info": MagicMock(return_value={
+                "available": True, "branch": "staging", "remote": "git@x:y.git"}),
+            "snapshot": MagicMock(return_value={"ok": True, "name": "snap1"}),
+            "pull_and_reset": MagicMock(return_value={
+                "branch": "staging", "old_commit": "aaa", "new_commit": "bbb"}),
+            "stage_zip": MagicMock(return_value={"version": "v1"}),
+            "notify_modules": MagicMock(return_value=3),
+            "build_and_restart": MagicMock(),
+        }
+        p.update(over)
+        return [patch.object(su_mod, name, val) for name, val in p.items()], p
+
+    def test_info_route_passthrough(self):
+        web, password = _web()
+        patches, mocks = self._patch_su()
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().get(
+                "/api/v1/system/update", headers=_auth(password))
+            assert resp.status_code == 200
+            assert resp.get_json()["branch"] == "staging"
+        finally:
+            for pt in patches:
+                pt.stop()
+
+    def test_post_requires_admin_not_token(self):
+        web, password = _web()
+        token = web.mint_api_token("rig")["token"]
+        resp = web.app.test_client().post(
+            "/api/v1/system/update", json={}, headers=_auth(token))
+        assert resp.status_code == 401
+
+    def test_post_no_checkout_is_409(self):
+        web, password = _web()
+        patches, _ = self._patch_su(git_checkout_info=MagicMock(
+            return_value={"available": False, "reason": "No git checkout"}))
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().post(
+                "/api/v1/system/update", json={}, headers=_auth(password))
+            assert resp.status_code == 409
+            assert resp.get_json()["error"]["code"] == "update_unavailable"
+        finally:
+            for pt in patches:
+                pt.stop()
+
+    def test_post_apply_false_is_200_and_no_restart(self):
+        web, password = _web()
+        patches, mocks = self._patch_su()
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().post(
+                "/api/v1/system/update",
+                json={"apply_controller": False}, headers=_auth(password))
+            assert resp.status_code == 200
+            body = resp.get_json()
+            assert body == {"branch": "staging", "old_commit": "aaa",
+                            "new_commit": "bbb", "modules_notified": 0,
+                            "applying": False}
+            mocks["snapshot"].assert_called_once()
+            mocks["pull_and_reset"].assert_called_once_with("staging")
+            mocks["stage_zip"].assert_called_once()
+            mocks["build_and_restart"].assert_not_called()
+        finally:
+            for pt in patches:
+                pt.stop()
+
+    def test_post_default_applies_and_returns_202(self):
+        web, password = _web()
+        patches, mocks = self._patch_su()
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().post(
+                "/api/v1/system/update", json={}, headers=_auth(password))
+            assert resp.status_code == 202
+            assert resp.get_json()["applying"] is True
+        finally:
+            for pt in patches:
+                pt.stop()
+        # the restart thread was started (give it a moment to run the mock)
+        import time as _t
+        _t.sleep(0.1)
+        mocks["build_and_restart"].assert_called_once()
+
+    def test_post_deploy_modules_notifies(self):
+        web, password = _web()
+        web.facade.get_modules.return_value = {"cam_a": {}, "cam_b": {}}
+        patches, mocks = self._patch_su()
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().post(
+                "/api/v1/system/update",
+                json={"apply_controller": False, "deploy_modules": True},
+                headers=_auth(password))
+            assert resp.status_code == 200
+            assert resp.get_json()["modules_notified"] == 3
+            mocks["notify_modules"].assert_called_once()
+        finally:
+            for pt in patches:
+                pt.stop()
+
+    def test_post_git_failure_is_500(self):
+        web, password = _web()
+        import subprocess as _sp
+        patches, _ = self._patch_su(pull_and_reset=MagicMock(
+            side_effect=_sp.CalledProcessError(1, "git", stderr="fatal: boom")))
+        for pt in patches:
+            pt.start()
+        try:
+            resp = web.app.test_client().post(
+                "/api/v1/system/update", json={}, headers=_auth(password))
+            assert resp.status_code == 500
+            assert resp.get_json()["error"]["code"] == "git_failed"
+            assert "boom" in resp.get_json()["error"]["message"]
+        finally:
+            for pt in patches:
+                pt.stop()
 
 
 # ---------------------------------------------------------------------------

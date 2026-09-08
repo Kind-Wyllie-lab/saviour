@@ -40,17 +40,20 @@ Response conventions:
 
 Scope: read state, a readiness gate, an SSE event stream, the recording
 lifecycle for plain sessions, event markers (write + read-back),
-per-module config read + partial write, an OpenAPI spec, and API-token
-management. Arbitrary module commands are intentionally NOT here -- the
-pre-existing POST /facade/send_command still covers that escape hatch.
-Scheduled and Habitat session *creation*, controller-config writes and
-module management (reboot/update) are candidates for a later version.
+per-module config read + partial write, a controller `git pull` self-update
+(+ optional fleet module push), an OpenAPI spec, and API-token management.
+Arbitrary module commands are intentionally NOT here -- the pre-existing
+POST /facade/send_command still covers that escape hatch. Scheduled and
+Habitat session *creation*, controller-config writes and per-module
+reboot/update are candidates for a later version.
 """
 
 import json
 import logging
 import os
 import queue
+import subprocess
+import threading
 import time
 from collections import Counter
 from dataclasses import asdict
@@ -512,6 +515,90 @@ def create_api_blueprint(web) -> Blueprint:
             "target_config": merged,
         }
         return jsonify(body), (200 if status == "SYNCED" else 202)
+
+    # ------------------------------------------------------------------ #
+    # system -- controller self-update (admin password only)
+    # ------------------------------------------------------------------ #
+
+    @bp.get("/system/update")
+    @require_auth
+    def system_update_info():
+        """Whether the controller can `git pull` (a usable checkout on a
+        named branch with an `origin` remote), and which branch it would
+        pull. The precondition for POST /system/update."""
+        from src.controller import system_update as su
+        return jsonify(su.git_checkout_info())
+
+    @bp.post("/system/update")
+    @require_admin
+    def system_update():
+        """`git fetch` + hard-reset the controller checkout to
+        `origin/<current branch>`, stage the module package, and optionally
+        rebuild+restart the controller and/or tell every module to pull.
+
+        Body (all optional):
+          `apply_controller` (bool, default true)  -- pip + frontend build +
+                                                      `systemctl restart`
+          `deploy_modules`   (bool, default false) -- send `update_saviour`
+                                                      to every module first
+
+        Only ever pulls the checkout's own already-configured origin/branch
+        -- no caller-supplied URL or ref. Requires the **admin password**
+        (not a scoped token): it deploys code fleet-wide. The controller is
+        snapshotted first (revertible from the web UI).
+
+        `202` when `apply_controller` (a restart is imminent -- this
+        connection drops mid-response); `200` otherwise. `409` if there is no
+        usable git checkout; `500` on a git error."""
+        from src.controller import system_update as su
+
+        data = request.get_json(silent=True) or {}
+        apply_controller = data.get("apply_controller", True)
+        deploy_modules = bool(data.get("deploy_modules", False))
+
+        info = su.git_checkout_info()
+        if not info.get("available"):
+            return _error(
+                "update_unavailable",
+                info.get("reason", "no usable git checkout on this device"), 409)
+        branch = info["branch"]
+        version = _running_version()
+
+        su.snapshot("pre-rest-git-update", version)
+        try:
+            res = su.pull_and_reset(branch)
+        except subprocess.CalledProcessError as exc:
+            msg = (exc.stderr or exc.stdout or str(exc)).strip() or "git failed"
+            return _error("git_failed", msg, 500)
+        except Exception as exc:  # noqa: BLE001  -- timeout, git missing, ...
+            return _error("git_failed", str(exc), 500)
+
+        su.stage_zip(version=version)
+
+        modules_notified = 0
+        if deploy_modules:
+            try:
+                ip = web.facade.controller.network.ip
+            except Exception:
+                ip = "localhost"
+            modules_notified = su.notify_modules(
+                web.facade.send_command,
+                list(web.facade.get_modules().keys()),
+                f"http://{ip}:5000")
+
+        body = {
+            "branch": branch,
+            "old_commit": res["old_commit"],
+            "new_commit": res["new_commit"],
+            "modules_notified": modules_notified,
+            "applying": bool(apply_controller),
+        }
+        if apply_controller:
+            threading.Thread(
+                target=su.build_and_restart, daemon=True,
+                name="rest-system-update").start()
+            return jsonify(body), 202
+        return jsonify(body), 200
 
     # ------------------------------------------------------------------ #
     # exports

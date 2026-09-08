@@ -203,6 +203,59 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/system/update:
+    get:
+      tags: [system]
+      summary: Whether the controller can git pull
+      description: >
+        {available, branch, remote} when /usr/local/src/saviour is a git
+        checkout on a named branch with an origin remote; {available:false,
+        reason} otherwise. Precondition for the POST.
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [system]
+      summary: git pull + rebuild + restart the controller (and optionally the fleet)
+      description: >
+        git fetch --prune origin <current branch> -> git reset --hard
+        origin/<branch> -> stage the module package -> optionally rebuild+restart
+        the controller and/or tell every module to pull. Only ever pulls the
+        checkout's own configured origin/branch. Requires the admin password
+        (not a scoped token). The controller is snapshotted first. 202 when
+        apply_controller (a restart drops the connection); 200 otherwise.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apply_controller: { type: boolean, default: true }
+                deploy_modules: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Staged (and modules notified); no controller restart
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemUpdateResult" }
+        "202":
+          description: Applied; controller restart imminent, connection drops
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemUpdateResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: No usable git checkout on this device
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: git fetch/reset failed (message carries git stderr)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v1/sessions:
     get:
       tags: [sessions]
@@ -513,6 +566,15 @@ components:
         target_config:
           type: object
           additionalProperties: true
+
+    SystemUpdateResult:
+      type: object
+      properties:
+        branch: { type: string }
+        old_commit: { type: string }
+        new_commit: { type: string }
+        modules_notified: { type: integer }
+        applying: { type: boolean }
 
     ConfigPatchResult:
       type: object

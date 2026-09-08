@@ -1,6 +1,7 @@
 # Hailo preview inference — move it off the capture thread
 
-- **Status:** proposed
+- **Status:** in progress — worker thread implemented on `feat/hailo-inference-worker-thread`
+  (2026-09-08), tests pass, **not yet on-device validated**
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work" → this file; sibling of

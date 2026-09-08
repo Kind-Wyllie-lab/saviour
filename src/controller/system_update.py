@@ -28,7 +28,42 @@ import subprocess
 import zipfile
 from datetime import UTC, datetime
 
+try:
+    import pwd  # POSIX only; the controller is Linux, dev/CI may not be
+except ImportError:  # pragma: no cover
+    pwd = None
+
 _LOG = logging.getLogger(__name__)
+
+
+def _tree_owner(path: str) -> str | None:
+    """Login name that owns *path*, or None if it can't be resolved."""
+    if pwd is None:
+        return None
+    try:
+        return pwd.getpwuid(os.stat(path).st_uid).pw_name
+    except (OSError, KeyError):
+        return None
+
+
+def _current_user() -> str | None:
+    if pwd is None:
+        return None
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except (KeyError, AttributeError):
+        return None
+
+
+def _as_owner(src_root: str, argv: list[str]) -> list[str]:
+    """Prefix *argv* with `sudo -n -u <owner>` when the checkout is owned by
+    a different user than the one running (the service runs as root but the
+    tree — and the SSH key that can pull it — belongs to `pi`). No-op when we
+    already are the owner or can't tell. `sudo -n` fails fast, never prompts."""
+    owner = _tree_owner(src_root)
+    if owner and owner != _current_user():
+        return ["sudo", "-n", "-u", owner, *argv]
+    return argv
 
 SRC_ROOT = "/usr/local/src/saviour"
 UPDATE_STORE = "/var/lib/saviour/updates"
@@ -91,14 +126,16 @@ def git_checkout_info(src_root: str = SRC_ROOT) -> dict:
         return {"available": False, "reason": "No git checkout on this device"}
     try:
         branch = subprocess.run(
-            ["git", "-C", src_root, "rev-parse", "--abbrev-ref", "HEAD"],
+            _as_owner(src_root, ["git", "-C", src_root, "rev-parse",
+                                 "--abbrev-ref", "HEAD"]),
             capture_output=True, text=True, timeout=10, check=False,
         ).stdout.strip()
         if not branch or branch == "HEAD":
             return {"available": False,
                     "reason": "Detached HEAD -- checkout a branch first"}
         remote = subprocess.run(
-            ["git", "-C", src_root, "remote", "get-url", "origin"],
+            _as_owner(src_root, ["git", "-C", src_root, "remote",
+                                 "get-url", "origin"]),
             capture_output=True, text=True, timeout=10, check=False,
         ).stdout.strip()
         if not remote:
@@ -114,10 +151,12 @@ def pull_and_reset(branch: str, src_root: str = SRC_ROOT) -> dict:
     Returns `{"branch", "old_commit", "new_commit"}`."""
     old = _short_head(src_root)
     subprocess.run(
-        ["git", "-C", src_root, "fetch", "--prune", "origin", branch],
+        _as_owner(src_root, ["git", "-C", src_root, "fetch", "--prune",
+                             "origin", branch]),
         check=True, capture_output=True, text=True, timeout=120)
     subprocess.run(
-        ["git", "-C", src_root, "reset", "--hard", f"origin/{branch}"],
+        _as_owner(src_root, ["git", "-C", src_root, "reset", "--hard",
+                             f"origin/{branch}"]),
         check=True, capture_output=True, text=True, timeout=30)
     new = _short_head(src_root)
     _LOG.info("system_update: %s %s -> %s", branch, old, new)
@@ -126,7 +165,8 @@ def pull_and_reset(branch: str, src_root: str = SRC_ROOT) -> dict:
 
 def _short_head(src_root: str) -> str:
     return subprocess.run(
-        ["git", "-C", src_root, "rev-parse", "--short", "HEAD"],
+        _as_owner(src_root, ["git", "-C", src_root, "rev-parse",
+                             "--short", "HEAD"]),
         capture_output=True, text=True, timeout=10, check=False,
     ).stdout.strip()
 
@@ -205,6 +245,8 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -
                 npm = cands[-1] if cands else None
             if npm and os.path.isdir(frontend_dir):
                 _LOG.info("build_and_restart: rebuilding frontend")
+                # NB npm runs as-is (matches web.py's _controller_build_and_restart);
+                # the root-owned-dist ownership drift is a pre-existing CLAUDE.md item.
                 subprocess.run([npm, "install", "--silent"],
                                cwd=frontend_dir, capture_output=True)
                 b = subprocess.run([npm, "run", "build"],

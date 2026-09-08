@@ -15,6 +15,27 @@ import pytest
 from src.controller import system_update as su
 
 # --------------------------------------------------------------------------- #
+# _as_owner
+# --------------------------------------------------------------------------- #
+
+class TestAsOwner:
+    def test_noop_when_owner_is_self(self):
+        with patch.object(su, "_tree_owner", return_value="me"), \
+             patch.object(su, "_current_user", return_value="me"):
+            assert su._as_owner("/x", ["git", "status"]) == ["git", "status"]
+
+    def test_wraps_in_sudo_when_owner_differs(self):
+        with patch.object(su, "_tree_owner", return_value="pi"), \
+             patch.object(su, "_current_user", return_value="root"):
+            assert su._as_owner("/x", ["git", "fetch"]) == [
+                "sudo", "-n", "-u", "pi", "git", "fetch"]
+
+    def test_noop_when_owner_unresolvable(self):
+        with patch.object(su, "_tree_owner", return_value=None):
+            assert su._as_owner("/x", ["git", "x"]) == ["git", "x"]
+
+
+# --------------------------------------------------------------------------- #
 # git_checkout_info
 # --------------------------------------------------------------------------- #
 

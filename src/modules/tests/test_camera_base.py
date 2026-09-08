@@ -443,6 +443,122 @@ class TestCheckPicam:
         assert message == "imx708 present"
 
 
+class TestCaptureCadence:
+    """_record_cadence_sample / _capture_cadence_status / _check_capture_cadence
+    and the broadened _check_recording_alive (see camera_base)."""
+
+    def _cam(self, fps=30, overrides=None):
+        defaults = {
+            "recording._cadence_window_secs": 10.0,
+            "recording._cadence_min_samples": 30,
+            "recording._cadence_rate_cv_warn": 0.08,
+            "recording._cadence_dropped_frac_warn": 0.005,
+            "recording._cadence_fps_floor_frac": 0.8,
+            "recording._health_check_camera_silence_secs": 5.0,
+        }
+        defaults.update(overrides or {})
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda k, d=None: defaults.get(k, d)
+        return _make_camera(
+            picam2=MagicMock(), fps=fps, config=cfg,
+            _cadence_window=__import__("collections").deque(),
+            _last_frame_wall_time=None,
+        )
+
+    def _fill(self, cam, n, delta_ms, dropped=0):
+        import time as _t
+        base = _t.monotonic()
+        for i in range(n):
+            cam._cadence_window.append((base + i * (delta_ms / 1000.0),
+                                        float(delta_ms), int(dropped)))
+
+    def test_insufficient_until_min_samples(self):
+        cam = self._cam()
+        self._fill(cam, 10, 33.3)
+        level, detail, stats = cam._capture_cadence_status()
+        assert level == "insufficient"
+        assert stats == {}
+
+    def test_steady_stream_is_ok(self):
+        cam = self._cam(fps=30)
+        self._fill(cam, 90, 33.3)
+        level, detail, stats = cam._capture_cadence_status()
+        assert level == "ok"
+        assert stats["measured_fps"] == pytest.approx(30, abs=1.0)
+        assert stats["rate_cv"] < 0.08
+
+    def test_high_drop_fraction_warns(self):
+        cam = self._cam(fps=30)
+        # 80 clean frames + 10 each preceded by 1 dropped frame
+        self._fill(cam, 80, 33.3, dropped=0)
+        self._fill(cam, 10, 66.6, dropped=1)
+        level, detail, _ = cam._capture_cadence_status()
+        assert level == "warn"
+        assert "dropped" in detail
+        assert "infer_every_n" in detail  # remediation hint present
+
+    def test_jittery_cadence_warns_on_cv(self):
+        cam = self._cam(fps=30)
+        import collections
+        w = collections.deque()
+        t = 0.0
+        for i in range(90):
+            d = 20.0 if i % 2 else 46.0     # alternating -> high CV, ~mean 33
+            t += d / 1000.0
+            w.append((t, d, 0))
+        cam._cadence_window = w
+        level, detail, stats = cam._capture_cadence_status()
+        assert level == "warn"
+        assert stats["rate_cv"] > 0.08
+
+    def test_measured_fps_below_floor_warns(self):
+        cam = self._cam(fps=30)
+        self._fill(cam, 60, 50.0)          # ~20 fps, target 30, floor 0.8*30=24
+        level, detail, _ = cam._capture_cadence_status()
+        assert level == "warn"
+        assert "vs target 30" in detail
+
+    def test_check_capture_cadence_never_blocks(self):
+        cam = self._cam(fps=30)
+        self._fill(cam, 60, 50.0)          # a clear warn condition
+        ok, message = cam._check_capture_cadence()
+        assert ok is True                  # advisory only
+        assert "unstable capture" in message
+
+    def test_check_capture_cadence_no_camera(self):
+        cam = self._cam()
+        cam.picam2 = None
+        assert cam._check_capture_cadence() == (True, "no camera")
+
+    def test_record_cadence_sample_prunes_old(self):
+        cam = self._cam(overrides={"recording._cadence_window_secs": 1.0})
+        # old entry way outside the 1 s window
+        cam._cadence_window.append((0.0, 33.3, 0))
+        cam._record_cadence_sample(33.3, 0)
+        assert len(cam._cadence_window) == 1   # the stale one was pruned
+
+    def test_recording_alive_silence_still_fails(self):
+        cam = self._cam()
+        cam._last_frame_wall_time = __import__("time").time() - 30
+        ok, detail = cam._check_recording_alive()
+        assert ok is False
+        assert "no frames" in detail
+
+    def test_recording_alive_ok_when_frames_flow_and_cadence_ok(self):
+        cam = self._cam(fps=30)
+        cam._last_frame_wall_time = __import__("time").time()
+        self._fill(cam, 90, 33.3)
+        assert cam._check_recording_alive() == (True, None)
+
+    def test_recording_alive_fails_on_sustained_drops(self):
+        cam = self._cam(fps=30)
+        cam._last_frame_wall_time = __import__("time").time()
+        self._fill(cam, 60, 50.0)          # ~20 fps -> cadence warn
+        ok, detail = cam._check_recording_alive()
+        assert ok is False
+        assert "unstable capture" in detail
+
+
 class TestStartNewRecordingNoHardware:
     def test_returns_false_and_reports_status_without_touching_picam2(self):
         # picam2=None on purpose -- if the guard didn't fire first, any of the

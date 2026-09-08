@@ -34,6 +34,23 @@
    with per-modality-pair method + residual + verdict. Detail: "Defect 2" below.
 3. *(mitigation, not blocking)* hailo-camera load reduction — preview inference
    off during recording / more encoder buffers / lower preview fps.
+   **Quantified 2026-09-08** (`tools/framesync_sweep.py`, REST-API driven,
+   desk rig, sync client = `hailo_camera_3606`, 30 fps, 60 s, n=1):
+
+   | `hailo.infer_every_n` | client encoder deficit | `dropped_before` | gap-CV |
+   |---|---|---|---|
+   | off (`infer_enabled=false`) | 0 | 0 | 0.0002 |
+   | 8 | 0 | 0 | 0.0002 |
+   | 2 (file default) | 0 | 0 | 0.0002 |
+   | **1 (rig was running this)** | **1** | **6** | **0.056** |
+
+   Sync *server* (`camera_d074`): 0 deficit / 0 dropped at every setting.
+   PTP detrended-p95 ~38 µs, flat — throughput not timing. It's a **step at
+   `infer_every_n=1`**, not a gradient. New config key `hailo.infer_enabled`
+   (default true) added to drive the "off" arm. **Not yet run:** repeats
+   (n≥5), 60 fps (headroom shrinks?), longer/hotter sessions, `sync_mode:none`
+   arm. Provisional: ship `infer_every_n` default 2 and stop overriding it
+   to 1 on rigs; the deployed ai camera was on 1.
 4. **Decide `camera.sync_mode` default** — free-run vs framesync. Recommendation
    + reasoning in the "Decision to make" section below; framesync is what
    *causes* the client skew, and behaviour work doesn't need sub-frame

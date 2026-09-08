@@ -17,7 +17,7 @@ Per sweep point:
   2. Gate on /readiness + /ptp (retry until PTP is under the start gate).
   3. POST /sessions {duration_minutes, autostart:true}; poll to "stopped".
   4. Wait for export; SSH-pull framesync_report.json + each camera's
-     <stem>_recording.json; ffprobe -count_frames each .ts.
+     <stem>_recording.json; ffprobe -count_packets each .ts.
   5. Append one row to results.csv.
 Original config on both cameras is snapshotted at the start and restored at
 the end (also on Ctrl-C / error).
@@ -40,6 +40,8 @@ import argparse
 import csv
 import json
 import os
+import posixpath
+import random
 import subprocess
 import sys
 import time
@@ -122,14 +124,16 @@ def ssh(host: str, cmd: str, timeout: float = 60.0) -> str:
 
 
 def ffprobe_frames(host: str, path: str) -> int | None:
-    """nb_read_frames of the first video stream (exact, decodes)."""
-    q = (f'ffprobe -v error -count_frames -select_streams v:0 '
-         f'-show_entries stream=nb_read_frames -of csv=p=0 "{path}"')
+    """Video frame count. Uses -count_packets (reads the container index,
+    no decode) -- for this clean h264-in-mpegts stream packets == frames
+    (verified), and it's ~3 s vs ~40 s for -count_frames."""
+    q = (f'ffprobe -v error -count_packets -select_streams v:0 '
+         f'-show_entries stream=nb_read_packets -of csv=p=0 "{path}"')
     try:
-        out = ssh(host, q, timeout=180).strip().splitlines()
+        out = ssh(host, q, timeout=60).strip().splitlines()
         return int(out[0]) if out and out[0].isdigit() else None
     except Exception as e:                              # noqa: BLE001
-        print(f"    ! ffprobe failed on {os.path.basename(path)}: {e}")
+        print(f"    ! ffprobe failed on {posixpath.basename(path)}: {e}")
         return None
 
 
@@ -137,18 +141,24 @@ def ffprobe_frames(host: str, path: str) -> int | None:
 # sweep matrix
 # --------------------------------------------------------------------------- #
 
-def default_matrix(repeats: int, fps_values: list[int]) -> list[dict]:
-    """fps as the OUTER loop so only one PTP re-settle per fps value."""
+def default_matrix(repeats: int, fps_values: list[int], seed: int = 0) -> list[dict]:
+    """fps is the OUTER loop (one phc2sys re-settle per fps value). Within a
+    repeat the inference conditions are SHUFFLED so a slow thermal drift over
+    the run doesn't masquerade as an inference effect -- each condition lands
+    at a different point in the warm-up across repeats."""
     infer_variants = [
         ("off", {"infer_enabled": False}),
         ("n1", {"infer_enabled": True, "infer_every_n": 1}),
         ("n2", {"infer_enabled": True, "infer_every_n": 2}),
         ("n8", {"infer_enabled": True, "infer_every_n": 8}),
     ]
+    rng = random.Random(seed)
     points = []
     for fps in fps_values:
-        for name, hailo in infer_variants:
-            for r in range(repeats):
+        for r in range(repeats):
+            order = infer_variants[:]
+            rng.shuffle(order)
+            for name, hailo in order:
                 points.append({
                     "label": f"fps{fps}_{name}_r{r}",
                     "fps": fps,
@@ -194,7 +204,8 @@ def collect(host: str, date_dir: str) -> dict:
     for rj in rec_jsons:
         data = json.loads(ssh(host, f'cat "{rj}"'))
         mode = data.get("sync_mode", "?")
-        ts_file = os.path.join(os.path.dirname(rj), data["video_file"])
+        # remote path is always POSIX -- os.path.join would use "\" on Windows
+        ts_file = posixpath.join(posixpath.dirname(rj), data["video_file"])
         data["_ts_frames"] = ffprobe_frames(host, ts_file)
         cams[mode] = data
 
@@ -322,23 +333,25 @@ def wait_stopped(api: Api, session_name: str, timeout: float) -> None:
 
 
 def wait_for_report(args, session_name: str, timeout: float) -> str:
-    """Poll the share until framesync_report.json + both _recording.json exist."""
+    """Poll the share until the DATE-DIR framesync_report.json (the one
+    collect() reads -- the session-root copy is a rollup with a thinner
+    schema) and both per-camera _recording.json exist. Returns the date dir."""
     deadline = time.monotonic() + timeout
     sess = f"{args.share_path}/{session_name}"
-    rec_q = f'find "{sess}" -name "*_recording.json" 2>/dev/null | wc -l'
-    fr_q = f'find "{sess}" -name "framesync_report.json" 2>/dev/null | wc -l'
+    rec_q = f'find "{sess}" -mindepth 2 -name "*_recording.json" 2>/dev/null | wc -l'
+    # the report inside a YYYYMMDD dir, not the one at the session root
+    fr_q = (f'find "{sess}" -mindepth 2 -maxdepth 2 '
+            f'-name "framesync_report.json" 2>/dev/null | head -1')
+    last = ""
     while time.monotonic() < deadline:
         n_rec = ssh(args.ssh_host, rec_q).strip()
-        n_fr = ssh(args.ssh_host, fr_q).strip()
-        if n_rec.isdigit() and int(n_rec) >= 2 and n_fr == "1":
-            return find_session_dir(args.ssh_host, args.share_path, session_name)
+        fr = ssh(args.ssh_host, fr_q).strip()
+        if n_rec.isdigit() and int(n_rec) >= 2 and fr:
+            return posixpath.dirname(fr)
+        last = f"recording.json={n_rec} datedir_report={'yes' if fr else 'no'}"
         time.sleep(10)
-    # best effort: return whatever dir exists
-    try:
-        return find_session_dir(args.ssh_host, args.share_path, session_name)
-    except Exception as e:
-        raise RuntimeError(
-            f"export sidecars never appeared for {session_name}") from e
+    print(f"  ! export/report wait timed out ({last}); collecting best-effort")
+    return find_session_dir(args.ssh_host, args.share_path, session_name)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,7 +441,7 @@ def main() -> None:
     p.add_argument("--sync-timeout", type=float, default=60.0)
     p.add_argument("--ptp-gate-timeout", type=float, default=360.0)
     p.add_argument("--stop-grace", type=float, default=120.0)
-    p.add_argument("--export-timeout", type=float, default=240.0)
+    p.add_argument("--export-timeout", type=float, default=360.0)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 

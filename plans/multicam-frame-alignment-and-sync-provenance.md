@@ -28,10 +28,11 @@
 - **Item 3 quantified** — see below. Provisional finding: the deployed ai
   camera runs `infer_every_n=1`, the one setting that costs frames; `≥2` is
   clean. n=5 sweep running to confirm.
-- **New sibling plan `plans/hailo-inference-threading.md`** — move preview
-  inference off the capture thread (the structural fix for item 3), with a
-  cost/benefit + alternatives matrix (faster HAT, lower preview fps, smaller
-  model, disable-during-recording, do-nothing).
+- **`plans/hailo-inference-threading.md` — SHIPPED 2026-09-08.** Preview
+  inference moved to a worker thread; the capture thread no longer runs
+  `detect()`. This is the structural fix for item 3 below: a new hailo-camera
+  recording now has `deficit_vs_csv=0` (validated: 4/4 re-sweep, clap
+  ai−main −0.17 fr). B1/B3 in this plan still needed for the pre-fix backlog.
 
 **Done & on `staging` (2026-09-07):**
 - **B3** — `_StreamCursor` proportional row→frame remap + per-stream mismatch
@@ -70,17 +71,16 @@
    Sync *server* (`camera_d074`): 0 deficit / 0 dropped at every setting.
    PTP detrended-p95 ~38 µs, flat — throughput not timing. A **step at
    `infer_every_n=1`**, not a gradient → the cost is the `detect()` call, not
-   the per-frame draw. n=5 shuffled sweep + a 60 fps block + a `sync_mode:none`
-   arm are running / queued; numbers land in `plans/hailo-inference-threading.md`.
-   - **Immediate mitigation (do regardless):** the file default `infer_every_n`
-     is already 2 — stop overriding provisioned rigs to 1.
-   - **Structural fix:** move preview inference off the capture-callback thread
-     → **`plans/hailo-inference-threading.md`** (design + cost/benefit +
-     alternatives: 26 TOPS HAT, lower preview fps, `yolov8n`,
-     disable-during-recording).
-   - The 26 TOPS Hailo-8 HAT is **not** the recommended fix — it halves only
-     the NPU half of `detect()`, leaving the CPU-decode + encoder GIL
-     contention. Instrument the NPU/CPU split first if seriously considered.
+   the per-frame draw.
+   - **✅ FIXED 2026-09-08** — preview inference moved to a worker thread
+     (`plans/hailo-inference-threading.md`, SHIPPED). Capture thread no longer
+     runs `detect()`. Re-sweep 4/4 clean at `infer_every_n=1`; clap test
+     ai_cam − main_cam = −0.17 fr; both cameras `deficit_vs_csv=0`. So a
+     *new* hailo-camera recording no longer feeds `_StreamCursor` a deficit —
+     but B1 (below) still matters for the pre-fix backlog.
+   - The 26 TOPS Hailo-8 HAT was **not** the fix — it halves only the NPU half
+     of `detect()`, leaving the CPU-decode + encoder GIL contention. Full
+     alternatives matrix in the threading plan.
 4. **Decide `camera.sync_mode` default** — free-run vs framesync. Recommendation
    + reasoning in the "Decision to make" section below; framesync is what
    *causes* the client skew, and behaviour work doesn't need sub-frame

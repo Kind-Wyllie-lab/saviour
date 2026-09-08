@@ -196,6 +196,185 @@ class TestModules:
 
 
 # ---------------------------------------------------------------------------
+# module config -- read + partial write
+# ---------------------------------------------------------------------------
+
+class TestModuleConfigRead:
+    def _cfg_web(self, **states):
+        web, password = _web()
+        web.facade.get_modules.return_value = {"cam1": {"type": "camera"}}
+        web.facade.get_module_configs.return_value = states
+        return web, password
+
+    def test_unknown_module_404(self):
+        web, password = self._cfg_web()
+        resp = web.app.test_client().get(
+            "/api/v1/modules/ghost/config", headers=_auth(password))
+        assert resp.status_code == 404
+
+    def test_returns_shape_and_sync_state(self):
+        web, password = self._cfg_web(cam1={
+            "true_config": {"camera": {"fps": 30}, "_codec": "h264"},
+            "target_config": {"camera": {"fps": 30}},
+            "status": "SYNCED",
+            "diffs": [],
+        })
+        data = web.app.test_client().get(
+            "/api/v1/modules/cam1/config", headers=_auth(password)).get_json()
+        assert data["config"] == {"camera": {"fps": 30}}  # _codec filtered
+        assert data["config_sync_status"] == "SYNCED"
+        assert data["target_config"] == {"camera": {"fps": 30}}
+
+    def test_include_private_shows_underscore_keys(self):
+        web, password = self._cfg_web(cam1={
+            "true_config": {"camera": {"fps": 30}, "_codec": "h264"},
+            "status": "SYNCED",
+        })
+        data = web.app.test_client().get(
+            "/api/v1/modules/cam1/config?include_private=true",
+            headers=_auth(password)).get_json()
+        assert data["config"]["_codec"] == "h264"
+
+    def test_no_config_state_yet_is_unknown(self):
+        web, password = self._cfg_web()
+        data = web.app.test_client().get(
+            "/api/v1/modules/cam1/config", headers=_auth(password)).get_json()
+        assert data["config"] == {}
+        assert data["config_sync_status"] == "UNKNOWN"
+
+
+class TestModuleConfigPatch:
+    def _patch_web(self, true_config=None, status="SYNCED"):
+        web, password = _web()
+        web.facade.get_modules.return_value = {"cam1": {"type": "camera"}}
+        web.facade.is_module_recording.return_value = False
+        state = {
+            "true_config": true_config if true_config is not None else {
+                "camera": {"fps": 30, "sensor_mode_index": 0},
+                "recording": {"segment_duration_s": 3600},
+            },
+            "target_config": {},
+            "status": status,
+            "diffs": [],
+        }
+        web.facade.get_module_configs.return_value = {"cam1": state}
+
+        # Mirror the real set_target_module_config: it records intent and
+        # flips the sync status to PENDING before the command goes out.
+        def _record_intent(mid, cfg):
+            state["target_config"] = cfg
+            state["status"] = "PENDING"
+
+        web.facade.set_target_module_config.side_effect = _record_intent
+        return web, password, state
+
+    def test_unknown_module_404(self):
+        web, password, _ = self._patch_web()
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/ghost/config", json={"camera": {"fps": 60}},
+            headers=_auth(password))
+        assert resp.status_code == 404
+
+    def test_empty_body_is_400(self):
+        web, password, _ = self._patch_web()
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config", json={}, headers=_auth(password))
+        assert resp.status_code == 400
+        assert resp.get_json()["error"]["code"] == "invalid_request"
+
+    def test_merges_partial_and_dispatches_full_config(self):
+        web, password, _ = self._patch_web()
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 90}}, headers=_auth(password))
+        assert resp.status_code == 202
+        assert resp.get_json()["config_sync_status"] == "PENDING"
+        # full merged config reaches both the intent-record and the wire
+        expected = {
+            "camera": {"fps": 90, "sensor_mode_index": 0},
+            "recording": {"segment_duration_s": 3600},
+        }
+        web.facade.set_target_module_config.assert_called_once_with(
+            "cam1", expected)
+        web.facade.send_command.assert_called_once_with(
+            "cam1", "set_config", expected)
+
+    def test_multiple_sections_and_keys_at_once(self):
+        web, password, _ = self._patch_web()
+        web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 120, "sensor_mode_index": 2},
+                  "recording": {"segment_duration_s": 600}},
+            headers=_auth(password))
+        sent = web.facade.send_command.call_args[0][2]
+        assert sent["camera"] == {"fps": 120, "sensor_mode_index": 2}
+        assert sent["recording"] == {"segment_duration_s": 600}
+
+    def test_private_keys_stripped_from_patch(self):
+        web, password, _ = self._patch_web()
+        web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 60}, "_codec": "hevc",
+                  "recording": {"_secret": 1}},
+            headers=_auth(password))
+        sent = web.facade.send_command.call_args[0][2]
+        assert "_codec" not in sent
+        assert "_secret" not in sent.get("recording", {})
+
+    def test_rejected_while_recording_409(self):
+        web, password, _ = self._patch_web()
+        web.facade.is_module_recording.return_value = True
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 60}}, headers=_auth(password))
+        assert resp.status_code == 409
+        assert resp.get_json()["error"]["code"] == "module_recording"
+        web.facade.send_command.assert_not_called()
+
+    def test_no_reported_config_is_409(self):
+        web, password, _ = self._patch_web(true_config={})
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 60}}, headers=_auth(password))
+        assert resp.status_code == 409
+        assert resp.get_json()["error"]["code"] == "config_unavailable"
+
+    def test_wait_returns_200_once_synced(self):
+        web, password, state = self._patch_web(status="PENDING")
+
+        calls = {"n": 0}
+
+        def _configs():
+            calls["n"] += 1
+            st = dict(state)
+            st["status"] = "SYNCED" if calls["n"] > 2 else "PENDING"
+            return {"cam1": st}
+
+        web.facade.get_module_configs.side_effect = _configs
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config?wait=5",
+            json={"camera": {"fps": 60}}, headers=_auth(password))
+        assert resp.status_code == 200
+        assert resp.get_json()["config_sync_status"] == "SYNCED"
+
+    def test_bad_wait_value_is_400(self):
+        web, password, _ = self._patch_web()
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config?wait=soon",
+            json={"camera": {"fps": 60}}, headers=_auth(password))
+        assert resp.status_code == 400
+
+    def test_readonly_token_blocked_on_patch(self):
+        web, password, _ = self._patch_web()
+        token = web.mint_api_token("dash", readonly=True)["token"]
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 60}}, headers=_auth(token))
+        assert resp.status_code == 403
+        web.facade.send_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # exports
 # ---------------------------------------------------------------------------
 

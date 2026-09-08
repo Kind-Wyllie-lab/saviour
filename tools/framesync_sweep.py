@@ -40,6 +40,7 @@ import argparse
 import csv
 import json
 import os
+import posixpath
 import subprocess
 import sys
 import time
@@ -194,7 +195,8 @@ def collect(host: str, date_dir: str) -> dict:
     for rj in rec_jsons:
         data = json.loads(ssh(host, f'cat "{rj}"'))
         mode = data.get("sync_mode", "?")
-        ts_file = os.path.join(os.path.dirname(rj), data["video_file"])
+        # remote path is always POSIX -- os.path.join would use "\" on Windows
+        ts_file = posixpath.join(posixpath.dirname(rj), data["video_file"])
         data["_ts_frames"] = ffprobe_frames(host, ts_file)
         cams[mode] = data
 
@@ -322,23 +324,25 @@ def wait_stopped(api: Api, session_name: str, timeout: float) -> None:
 
 
 def wait_for_report(args, session_name: str, timeout: float) -> str:
-    """Poll the share until framesync_report.json + both _recording.json exist."""
+    """Poll the share until the DATE-DIR framesync_report.json (the one
+    collect() reads -- the session-root copy is a rollup with a thinner
+    schema) and both per-camera _recording.json exist. Returns the date dir."""
     deadline = time.monotonic() + timeout
     sess = f"{args.share_path}/{session_name}"
-    rec_q = f'find "{sess}" -name "*_recording.json" 2>/dev/null | wc -l'
-    fr_q = f'find "{sess}" -name "framesync_report.json" 2>/dev/null | wc -l'
+    rec_q = f'find "{sess}" -mindepth 2 -name "*_recording.json" 2>/dev/null | wc -l'
+    # the report inside a YYYYMMDD dir, not the one at the session root
+    fr_q = (f'find "{sess}" -mindepth 2 -maxdepth 2 '
+            f'-name "framesync_report.json" 2>/dev/null | head -1')
+    last = ""
     while time.monotonic() < deadline:
         n_rec = ssh(args.ssh_host, rec_q).strip()
-        n_fr = ssh(args.ssh_host, fr_q).strip()
-        if n_rec.isdigit() and int(n_rec) >= 2 and n_fr == "1":
-            return find_session_dir(args.ssh_host, args.share_path, session_name)
+        fr = ssh(args.ssh_host, fr_q).strip()
+        if n_rec.isdigit() and int(n_rec) >= 2 and fr:
+            return posixpath.dirname(fr)
+        last = f"recording.json={n_rec} datedir_report={'yes' if fr else 'no'}"
         time.sleep(10)
-    # best effort: return whatever dir exists
-    try:
-        return find_session_dir(args.ssh_host, args.share_path, session_name)
-    except Exception as e:
-        raise RuntimeError(
-            f"export sidecars never appeared for {session_name}") from e
+    print(f"  ! export/report wait timed out ({last}); collecting best-effort")
+    return find_session_dir(args.ssh_host, args.share_path, session_name)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,7 +432,7 @@ def main() -> None:
     p.add_argument("--sync-timeout", type=float, default=60.0)
     p.add_argument("--ptp-gate-timeout", type=float, default=360.0)
     p.add_argument("--stop-grace", type=float, default=120.0)
-    p.add_argument("--export-timeout", type=float, default=240.0)
+    p.add_argument("--export-timeout", type=float, default=360.0)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 

@@ -17,7 +17,7 @@ Per sweep point:
   2. Gate on /readiness + /ptp (retry until PTP is under the start gate).
   3. POST /sessions {duration_minutes, autostart:true}; poll to "stopped".
   4. Wait for export; SSH-pull framesync_report.json + each camera's
-     <stem>_recording.json; ffprobe -count_frames each .ts.
+     <stem>_recording.json; ffprobe -count_packets each .ts.
   5. Append one row to results.csv.
 Original config on both cameras is snapshotted at the start and restored at
 the end (also on Ctrl-C / error).
@@ -41,6 +41,7 @@ import csv
 import json
 import os
 import posixpath
+import random
 import subprocess
 import sys
 import time
@@ -123,14 +124,16 @@ def ssh(host: str, cmd: str, timeout: float = 60.0) -> str:
 
 
 def ffprobe_frames(host: str, path: str) -> int | None:
-    """nb_read_frames of the first video stream (exact, decodes)."""
-    q = (f'ffprobe -v error -count_frames -select_streams v:0 '
-         f'-show_entries stream=nb_read_frames -of csv=p=0 "{path}"')
+    """Video frame count. Uses -count_packets (reads the container index,
+    no decode) -- for this clean h264-in-mpegts stream packets == frames
+    (verified), and it's ~3 s vs ~40 s for -count_frames."""
+    q = (f'ffprobe -v error -count_packets -select_streams v:0 '
+         f'-show_entries stream=nb_read_packets -of csv=p=0 "{path}"')
     try:
-        out = ssh(host, q, timeout=180).strip().splitlines()
+        out = ssh(host, q, timeout=60).strip().splitlines()
         return int(out[0]) if out and out[0].isdigit() else None
     except Exception as e:                              # noqa: BLE001
-        print(f"    ! ffprobe failed on {os.path.basename(path)}: {e}")
+        print(f"    ! ffprobe failed on {posixpath.basename(path)}: {e}")
         return None
 
 
@@ -138,18 +141,24 @@ def ffprobe_frames(host: str, path: str) -> int | None:
 # sweep matrix
 # --------------------------------------------------------------------------- #
 
-def default_matrix(repeats: int, fps_values: list[int]) -> list[dict]:
-    """fps as the OUTER loop so only one PTP re-settle per fps value."""
+def default_matrix(repeats: int, fps_values: list[int], seed: int = 0) -> list[dict]:
+    """fps is the OUTER loop (one phc2sys re-settle per fps value). Within a
+    repeat the inference conditions are SHUFFLED so a slow thermal drift over
+    the run doesn't masquerade as an inference effect -- each condition lands
+    at a different point in the warm-up across repeats."""
     infer_variants = [
         ("off", {"infer_enabled": False}),
         ("n1", {"infer_enabled": True, "infer_every_n": 1}),
         ("n2", {"infer_enabled": True, "infer_every_n": 2}),
         ("n8", {"infer_enabled": True, "infer_every_n": 8}),
     ]
+    rng = random.Random(seed)
     points = []
     for fps in fps_values:
-        for name, hailo in infer_variants:
-            for r in range(repeats):
+        for r in range(repeats):
+            order = infer_variants[:]
+            rng.shuffle(order)
+            for name, hailo in order:
                 points.append({
                     "label": f"fps{fps}_{name}_r{r}",
                     "fps": fps,

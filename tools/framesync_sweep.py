@@ -455,13 +455,28 @@ def main() -> None:
     else:
         matrix = default_matrix(args.repeats, fps_values)
 
+    # resume: skip labels already present (non-FAILED) in an existing
+    # results.csv under --out, so a re-run continues after a network drop.
+    os.makedirs(args.out, exist_ok=True)
+    results_path = os.path.join(args.out, "results.csv")
+    done_rows: list[dict] = []
+    if os.path.exists(results_path):
+        with open(results_path, newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("label") and not (r.get("notes") or "").startswith("FAILED"):
+                    done_rows.append(r)
+        done = {r["label"] for r in done_rows}
+        if done:
+            matrix = [p for p in matrix if p["label"] not in done]
+            print(f"resume: {len(done)} runs already in {results_path}, "
+                  f"{len(matrix)} left")
+
     print(f"{len(matrix)} runs planned:")
     for pt in matrix:
         print(f"  {pt['label']}")
     if args.dry_run:
         return
 
-    os.makedirs(args.out, exist_ok=True)
     api = Api(args.base_url, args.token)
 
     # sanity: reachable + both cameras known
@@ -491,13 +506,14 @@ def main() -> None:
         api.wait_synced([args.server_cam, args.client_cam], timeout=args.sync_timeout)
         args.target = args.group
 
-    results_path = os.path.join(args.out, "results.csv")
-    rows: list[dict] = []
+    rows: list[dict] = list(done_rows)
     prev_fps: int | None = None
+    new_file = not done_rows
     try:
-        with open(results_path, "w", newline="") as f:
+        with open(results_path, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=RESULT_FIELDS)
-            w.writeheader()
+            if new_file:
+                w.writeheader()
             for i, point in enumerate(matrix, 1):
                 print(f"\n----- run {i}/{len(matrix)} -----")
                 try:

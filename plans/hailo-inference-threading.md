@@ -1,19 +1,21 @@
 # Hailo preview inference — move it off the capture thread
 
-- **Status:** worker thread **merged to `staging`** (PR #374, `d42a5839`) and
-  **deployed** (2026-09-08, via `POST /api/v1/system/update` — first live use of
-  that endpoint). **Smoke-validated on hardware, full acceptance run pending.**
-  - 4/4 `infer_every_n=1` recordings clean (`dropped_before=0`, `rate_cv`
-    ~0.0002, deficit 0-1) vs the pre-fix 2/3-degraded (`dropped_before` 8-11,
-    `rate_cv` 0.06-0.08). P(4/4 clean by chance) ~1.2 %.
-  - Clap transient test (`claptest_wt-150623`, `infer_every_n=1` + inference
-    running): both cameras `deficit_vs_csv=0`, `dropped_before=0`;
-    ai_cam − main_cam = **−5.5 ± 12.4 ms (−0.17 fr)** on the clap (the
-    "few frames behind" is gone). Detail:
-    `docs/hailo-inference-sweep-2026-09-08.md` addendum.
-  - **Still owed** (plan acceptance): ~15+ `n1` runs (the ~2 h repeat sweep);
-    10+ model swaps + 10+ start/stop cycles with zero HailoRT SIGABRT; a
-    visual overlay-tracking check; the three plan-amendment refinements below.
+- **Status: SHIPPED** — worker thread merged (PR #374, `d42a5839`), deployed to
+  the controller + all 4 modules via `POST /api/v1/system/update` (2026-09-08),
+  validated on hardware. This file stays as the design/rationale record; the
+  one-line completed note + residuals live in `CLAUDE.md` "In-flight branches".
+  Findings: `docs/hailo-inference-sweep-2026-09-08.md` (+ addendum).
+  - **Validated:** 4/4 `infer_every_n=1` re-sweep clean (`dropped_before=0`,
+    `rate_cv` ~0.0002) vs pre-fix 2/3-degraded (`dropped_before` 8-11,
+    `rate_cv` 0.06-0.08), P(4/4 by chance) ~1.2 %; clap-transient test
+    `claptest_wt-150623` ai_cam − main_cam = **−5.5 ± 12.4 ms (−0.17 fr)**,
+    both cameras `deficit_vs_csv=0`; 6 detector swap/toggle cycles via the API
+    with the camera staying online + SYNCED (no HailoRT SIGABRT); operator
+    visual check of a clap in compose = frame-identical.
+  - **Residual (follow-ups, not blockers):** the ≥15-rep acceptance sweep +
+    60 fps block; 10+ swap/restart cycles (did 6); `detect()` p50/p99
+    instrumentation; a generic cross-variant worker abstraction. See
+    "Amendments" and "Acceptance" below.
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work" → this file; sibling of

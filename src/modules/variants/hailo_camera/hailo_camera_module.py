@@ -13,9 +13,28 @@ Deliberately generic and demo-oriented:
   - `hailo.model` picks one; the "AI" tab in the camera config card is a
     dropdown over the curated list, grouped by category.
   - No Hailo device / missing HEF → runs as a plain camera (overlay shows why).
-  - Recording is untouched: the overlay is on the lores/preview stream, the
-    recorded "main" stream never sees it. A synchronized detection sidecar is
-    a deliberate later step (see CLAUDE.md).
+  - Recording is untouched *pixel-wise*: the overlay is on the lores/preview
+    stream, the recorded "main" stream never sees it. A synchronized detection
+    sidecar is a deliberate later step (see CLAUDE.md).
+
+Inference load CAN cost recorded frames, indirectly.
+  The inference + draw work runs on the same Pi as the H264 encoder, and
+  under load the encoder drops handed frames (a CSV row is written, no
+  container frame) and the capture cadence gets jittery. This shows up as
+  the sync *client* camera lagging the sync server by a few frames in
+  Post-Process compose. Measured on the desk rig (`tools/framesync_sweep.py`,
+  30 fps, 60 s, sync client): `hailo.infer_every_n=1` (inference on EVERY
+  frame) → ~6 capture drops + 1 encoder drop, gap-CV 0.056; `infer_every_n≥2`
+  → indistinguishable from inference off (0 drops, gap-CV ~0.0002). The
+  sync *server* stays clean at every setting.
+  Mitigations, cheapest first: raise `hailo.infer_every_n` (2 is the file
+  default and already clean at 30 fps); set `hailo.infer_enabled=false` for a
+  recording where the live overlay isn't needed; or run the camera free-run
+  (`camera.sync_mode="none"`) so there is no phase-nudging for the encoder
+  jitter to compound with. ALWAYS check `framesync_report.json` (or
+  `tools/analyse_framesync.py`) after changing model / infer_every_n / fps /
+  sensor mode, before trusting a multi-camera session's alignment.
+  See plans/multicam-frame-alignment-and-sync-provenance.md item 3.
 
 Author: Andrew SG
 """

@@ -1,181 +1,144 @@
 # PTP-synced non-recording companion module (pyControl clock alignment)
 
-- **Status:** proposed
+- **Status:** proposed — design settled, not yet built.
 - **Created:** 2026-09-14
 - **Owner:** ascottg
-- **CLAUDE.md ref:** new item — see below.
+- **CLAUDE.md ref:** none — turned out small enough not to need an Open Work
+  bullet; see revision history below for why.
 
 ## Why
 
 A user runs pyControl on a Raspberry Pi alongside a SAVIOUR fleet and wants
 to compare a pyControl-logged event (e.g. a nosepoke) against the equivalent
 SAVIOUR video frame. Confirmed with Andrew: this is a **manual, post-hoc
-comparison** — not an automated closed-loop integration, and not per-event
-markers. The two systems' logs just need to share the same wall-clock
-reference closely enough that a human can look up "which frame corresponds
-to this nosepoke timestamp" and trust the answer.
+comparison** ("just need the clocks to agree") — not automated closed-loop,
+not per-event markers. Putting the pyControl Pi's system clock on the same
+PTP domain as the fleet (same mechanism every camera/mic/TTL module already
+uses) is the right fix; the only open question was *how* to add it as a
+module without side effects on real sessions.
 
-That's exactly what PTP gives every SAVIOUR module already (`docs/`'s
-documented settling figures: <20µs mid-convergence, <5µs once `phc2sys` is
-fully settled) — so the fix is putting the pyControl Pi's system clock on
-the same PTP domain as the fleet, the same way every camera/mic/TTL module
-already is. No REST marker calls, no physical TTL wiring — this file exists
-because *how* to put a Pi on that domain safely (as a visible, monitored
-SAVIOUR module, per the decision below) has one real gotcha worth designing
-around up front rather than hitting live.
+## Revision: the first draft of this plan was solving the wrong problem
 
-**Confirmed with Andrew:** the pyControl Pi should be a **real, visible
-SAVIOUR module** — dashboard entry, live PTP-offset readout, heartbeat
-monitoring — not a bare `ptp4l`/`phc2sys` client invisible to the
-controller. That's the harder path (below), chosen deliberately for the
-visibility.
+**Original design (superseded):** treat the module as something that should
+be *excluded* from `target: "all"` — a `module.recording_capable: false`
+opt-out — on the theory that a companion device shouldn't be able to
+PTP-gate-block or fault-monitor real recordings.
 
-## The gotcha: `target: "all"` means literally every registered module
+**Andrew's correction:** we *do* want it to block session start if its
+clock isn't converged — that's the whole point, and excluding it would have
+thrown that away. He also pointed out the module doesn't need to be a pure
+no-op: let it "record" in the sense every module already does by default —
+the generic health/system-state metadata, not real data.
 
-`Modules.get_modules_by_target()` (`modules.py:575`) resolves `"all"` to
-`self.get_modules()` — every module, unconditionally. `"all"` is also the
-default `target` everywhere a session gets created: the frontend
-(`RecordingLayout.jsx`'s `usePersistedState(..., "all")`), the REST API's
-own `docs/REST_API.md` pyControl integration sketch, and almost certainly
-how this lab already runs real sessions day to day.
+Checking the code confirmed this is not just correct but nearly free:
 
-`recording.py::create_session()` sources its module list from exactly that
-call (`:512`) and feeds it straight into `_check_ptp_sync()` (`:517`). So a
-dummy module that's a real, visible SAVIOUR module would, by default, be
-swept into *every real recording session*:
+- **`Recording._record_health_metadata()`** (`src/modules/recording.py:709`)
+  already runs for **every** module type, unconditionally, for the duration
+  of any session it's part of — samples `facade.get_health()` every
+  `health_metadata_recording_interval` seconds (default 1s) into a
+  `<session>_<module>_health_metadata_(<segment>_<ts>).csv`, rotates with
+  segments, stages for export exactly like real data. `Health.get_health()`
+  (`src/modules/health.py:94`) already includes `ptp4l_offset_ns`,
+  `phc2sys_offset_ns`, both with min/max over the sample window, plus freq,
+  cpu/disk/mem, throttled state, version. **This is already the durable,
+  per-session PTP-quality record the comparison workflow needs** — nothing
+  to build.
+- **`_check_ptp_sync`** (`recording.py:266`, the session-start gate) and
+  **`_check_ptp_mid_recording`** (`recording.py:2374`, warns on transitions
+  into/out of degraded PTP *during* a session) both iterate
+  `session.modules` with zero module-type special-casing. A module that's a
+  normal `session.modules` member gets both for free.
+- **`Recording.stop_recording()`** also exports a session journal snapshot
+  (`_export_session_journal`) for every module type unconditionally.
 
-- **The PTP start-gate would wait on it too.** `_check_ptp_sync` only skips
-  a module if its health status is already `"offline"` (`recording.py:301`)
-  — an *online-but-not-yet-converged* pyControl Pi (plausible: it's running
-  someone else's realtime Python workload, competing for CPU/scheduling with
-  `phc2sys`) would block every real session's start, not just fail its own
-  meaningless no-op recording.
-- **It becomes a session participant for fault-monitoring purposes** —
-  `session.modules` includes it, so if it reboots mid-session (again,
-  plausible — it's not SAVIOUR's to keep alive) it reads as a session fault
-  on an unrelated real recording, not just a general fleet-offline alert.
+So the corrected design is the *opposite* of the original: don't build an
+exclusion mechanism at all. Let the module be a completely normal, if
+minimal, session participant — same shape as the TTL/RFID modules, just
+with no per-type data of its own. **Zero controller-side code changes
+needed.** The "gotcha" from the first draft (an unsynced/flaky companion
+Pi blocking or fault-flagging real sessions) is real, but it's not a bug to
+route around here — it's the desired signal: if this Pi's clock isn't
+trustworthy, or it drops out mid-session, the timestamps it was supposed to
+make comparable to SAVIOUR's aren't valid for that window, and the session
+should say so exactly the way it would for any other module.
 
-This isn't hypothetical risk-aversion — `"all"` is the default target
-*today*, unconditionally, and this module's whole point is to sit there
-being sometimes-flaky (it's not a SAVIOUR-dedicated device) while still
-being visible. Needs a real fix, not "remember to pick a different target."
+## The module itself
 
-## Fix: a self-declared `recording_capable` opt-out
+Still near-zero new code — `src/modules/variants/template/template_module.py`
+is already the right shape. Its three recording hooks are no-ops returning
+`True`:
 
-Mirrors the existing `module.group` pattern exactly (`modules.py:654`,
-`_update_module_name`, reads `config.get("module", {}).get("group", "")`
-off the module's own confirmed config) — a module declares this about
-itself, no controller-admin bookkeeping, no per-deployment config drift.
+```python
+def _start_new_recording(self) -> bool: return True
+def _start_next_recording_segment(self) -> bool: return True
+def _stop_recording(self) -> bool: return True
+```
 
-- **`src/controller/models.py`** — `Module` dataclass gets
-  `recording_capable: bool = True`. Default preserves every existing module
-  type's behaviour untouched.
-- **`src/controller/modules.py::_update_module_name`** (rename or leave —
-  it already syncs more than the name) — add a sibling read:
-  `self._modules[module_id].recording_capable = config.get("module", {}).get("recording_capable", True)`.
-- **`src/controller/modules.py::get_modules_by_target`** — the `"all"`
-  branch filters:
-  ```python
-  if target.lower() == "all":
-      return {mid: asdict(m) for mid, m in self._modules.items() if m.recording_capable}
-  ```
-  Explicit targeting (by `module_id` or by `group`) is **unaffected** — you
-  can still target this module directly or via its group if you ever
-  deliberately want to. Only the `"all"` convenience target excludes it.
-- **Frontend `targetModules.js`** (`target === "all"` branch, `:17`) needs
-  the same filter for consistency — otherwise the New Session form's
-  module-preview/readiness-check list would show this module while the
-  session actually created on submit wouldn't include it. Mirror the same
-  `recording_capable !== false` check (module objects from the frontend's
-  `useModules` hook already carry every `Module` dataclass field verbatim).
-- This is the **single correct choke point** — `create_session`,
-  `_check_ptp_sync`, and the resulting `session.modules` list all source
-  from `get_modules_by_target`, so fixing it there means the new module
-  never enters a real session's world at all: not PTP-gated, not
-  fault-monitored, nothing. It still fully participates in **fleet-wide**
-  visibility (`get_modules()`, the dashboard, health/PTP display, the
-  generic heartbeat-offline alert) — which is the whole point.
+`_create_initial_recording_segment()` (`recording.py:420`) only treats a
+literal `False` as failure, so these no-ops are a clean "I have no per-type
+data of my own, but the generic health/PTP/journal machinery runs anyway"
+signal — which is exactly what's wanted.
 
-## The module itself: near-zero new code
-
-`src/modules/variants/template/template_module.py` already **is** this —
-its three recording hooks are no-ops returning `True`
-(`_start_new_recording`/`_start_next_recording_segment`/`_stop_recording`).
-Everything else (PTP slave setup, Zeroconf registration, ZMQ heartbeat,
-config layering, health reporting) comes from the `Module` base class
-unconditionally — none of it is gated on module type. So this is genuinely
-just:
-
-1. Copy `variants/template/` → `variants/external_host/` (name chosen to be
-   reusable beyond pyControl specifically — any lab PC/Pi that just needs
-   fleet-shared PTP time and visibility, not recording — rename if a more
-   specific name is preferred, e.g. `pycontrol_host`).
-2. Strip the placeholder `do_this`/`do_that`/`get_something` commands —
-   nothing needed beyond what `Module` already provides.
-3. `external_host_config.json`:
-   ```json
-   { "module": { "group": "external", "recording_capable": false } }
-   ```
+1. Copy `variants/template/` → `variants/external_host/` (generic name —
+   reusable for any lab PC/Pi that wants fleet-shared PTP time and
+   visibility with no real recording, not pyControl-specific hardware;
+   rename to `pycontrol_host` if a more specific name is preferred).
+2. Strip the placeholder `do_this`/`do_that`/`get_something` commands from
+   the template copy — nothing needed beyond what `Module`/`Recording`
+   already provide.
+3. `external_host_config.json`: just `{"module": {"group": "external"}}` —
+   a `group` for operator clarity in the module list, nothing else. No new
+   config keys.
 4. `variant.conf`:
    ```
    NAME="External Host (no recording)"
-   DESCRIPTION="PTP-synced, fleet-visible companion device -- no recording capability (e.g. a pyControl host Pi)"
+   DESCRIPTION="PTP-synced fleet member with no data of its own -- records only the generic health/PTP metadata trail (e.g. a pyControl host Pi)"
    ```
 5. `sudo saviour-config` on the pyControl Pi → role `module`, type
-   `external_host` (auto-discovered from `variant.conf`, per the existing
-   menu-generation CLAUDE.md already documents). PTP client setup happens
-   automatically as part of the generic module role — nothing
-   variant-specific to wire.
+   `external_host`. PTP client setup is generic to the module role, not
+   variant-specific — nothing to wire.
 
 **Optional, not required for v1:** a `@check()` reporting whether pyControl
-itself looks alive (e.g. its process/port), so the dashboard shows more
-than "the Pi is up." Skip unless asked — no obvious cheap signal (pyControl
-isn't a SAVIOUR-managed process) without knowing pyControl's actual setup
-on this Pi.
+itself looks alive (its process/port) — skip unless asked; no obvious cheap
+signal without knowing this Pi's actual pyControl setup.
 
 ## What Andrew's user needs to do (outside SAVIOUR)
 
-Nothing SAVIOUR-specific — just run pyControl on the newly-provisioned Pi
-as normal. The only thing that matters is that pyControl's own session data
-anchors event timestamps to that Pi's **system wall clock** (`time.time()`/
-`datetime.now()`) at some point (pyControl's standard `.txt` session output
-already does this — a `started_on` datetime plus board-relative event
-offsets) — once that anchor is taken on a PTP-disciplined clock, every
-event in the file reconstructs to the same wall-clock reference SAVIOUR's
-per-frame CSV timestamps use, and can be compared directly. Worth a quick
-sanity check with a real pyControl session before relying on it, but this
-isn't a SAVIOUR-side risk.
+Nothing SAVIOUR-specific — run pyControl on the newly-provisioned Pi as
+normal. The only thing that matters is that pyControl's own session data
+anchors event timestamps to that Pi's **system wall clock** at some point
+(pyControl's standard `.txt` output already does this — a `started_on`
+datetime plus board-relative event offsets); once that anchor is on a
+PTP-disciplined clock, every event in the file reconstructs to the same
+wall-clock reference SAVIOUR's per-frame CSV timestamps use. Worth a quick
+sanity check with a real pyControl session before relying on it.
 
 ## Acceptance
 
-- A module of type `external_host` registers, appears in the dashboard,
-  shows a live PTP offset like any other module, and settles to the same
-  sub-20µs (mid-convergence) / sub-5µs (settled) figures already documented
-  for the fleet.
-- Creating a session with `target: "all"` while this module is online does
-  **not** include it in `session.modules`, does **not** wait on its PTP
-  offset, and does **not** fault the session if it goes offline mid-run.
-- Explicitly targeting it by `module_id` or by its `group` ("external")
-  still works (it responds to commands, reports health) — the exclusion is
-  `"all"`-only.
-- A real pyControl session's timestamps, once reconstructed to wall-clock,
-  land within the fleet's normal PTP settling window of the equivalent
-  SAVIOUR frame timestamp — validated on a real bench setup, not just unit
-  tests, since the whole point is a real cross-device comparison.
-- Regression: existing module types (all default `recording_capable=True`)
-  are unaffected — full existing test suite green, no change to any
-  existing session's module list for a fleet with no `external_host`
-  module present.
+- A module of type `external_host` registers, appears in the dashboard with
+  a live PTP-offset readout, settles to the fleet's normal figures (<20µs
+  mid-convergence, <5µs settled).
+- Creating a session with `target: "all"` (the default everywhere) includes
+  it in `session.modules` like any other module, and **blocks session start**
+  if its PTP offset isn't converged — the behaviour explicitly wanted.
+- The session's exported data includes an
+  `<session>_external_host_<mac>_health_metadata_(...).csv` with per-second
+  `ptp4l_offset_ns`/`phc2sys_offset_ns` for the whole session — this is the
+  artefact the manual comparison actually leans on.
+- A real pyControl session's reconstructed wall-clock timestamps, checked
+  against this CSV and the equivalent SAVIOUR camera frame timestamps, agree
+  within the fleet's normal PTP settling window — validated on a real bench
+  setup, not just code review, since the entire point is a real cross-device
+  comparison.
 
 ## Not doing
 
+- Any `recording_capable`/`"all"`-exclusion mechanism — see the revision
+  above for why this was dropped.
 - The REST `POST /api/v1/sessions/<name>/marker` integration — already
-  built, still the right tool if a *specific behavioral event* needs to be
-  tagged into a session in real time, but not what was asked for here
-  (bulk/manual post-hoc comparison, not per-event markers).
-- A physical TTL bridge (pyControl GPIO → a SAVIOUR TTL module input pin,
-  timestamped via `pulse_pin`/input-edge capture) — the sub-frame-accurate,
-  wiring-required option, one tier up in precision and effort from what's
-  needed here. Worth revisiting only if PTP-clock-sharing precision turns
-  out to be insufficient in practice.
+  built, right tool for tagging a *specific* behavioral event into a session
+  in real time, but not what's needed for a bulk/manual post-hoc comparison.
+- A physical TTL bridge (pyControl GPIO → a SAVIOUR TTL module input pin) —
+  a tier up in precision and effort; revisit only if PTP-clock-sharing turns
+  out insufficient in practice.
 - Any pyControl-side code — out of SAVIOUR's repo entirely.

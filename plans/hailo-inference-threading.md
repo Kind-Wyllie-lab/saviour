@@ -3,7 +3,9 @@
 - **Status: SHIPPED** — worker thread merged (PR #374, `d42a5839`), deployed to
   the controller + all 4 modules via `POST /api/v1/system/update` (2026-09-08),
   validated on hardware. This file stays as the design/rationale record; the
-  one-line completed note + residuals live in `CLAUDE.md` "In-flight branches".
+  one-line completed note + residuals live in `CLAUDE.md` "In-flight branches",
+  and the full archived write-up is in `docs/CHANGELOG.md` "2026-09-08"
+  (condensing pass done 2026-09-14).
   Findings: `docs/hailo-inference-sweep-2026-09-08.md` (+ addendum).
   - **Validated:** 4/4 `infer_every_n=1` re-sweep clean (`dropped_before=0`,
     `rate_cv` ~0.0002) vs pre-fix 2/3-degraded (`dropped_before` 8-11,

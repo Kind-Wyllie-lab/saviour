@@ -280,6 +280,7 @@ poll. Event types:
 | `modules` | `{"modules": {id: {...}}}` | the module registry changes (online/offline, discovery) |
 | `alert` | `{"key", "title", "message", "severity"}` | any controller fault — module offline, PTP degraded, export stall, low disk, … (independent of whether Teams alerting is configured) |
 | `marker` | `{"session", "label", "recv_wall_ns"}` | a marker is accepted |
+| `ttl_edge` | `{"module_id", "pin", "state", "mode", "description", "timestamp_ns"}` | a TTL module input pin edge (fires live, before the session's CSV exports — see `pulse_pin`'s note above on why there's no equivalent synchronous signal the other direction) |
 
 Every event also carries `type` and `ts` (controller epoch seconds). Optional
 `?types=marker,alert` restricts the stream. Comment lines (`: keep-alive`)

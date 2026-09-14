@@ -4380,6 +4380,25 @@ class Web(ABC):
                     message = status.get("message")
                     self.facade.handle_recording_health_status(module_id, health_status, message)
 
+                # A TTL module input-pin edge (ttl_module.py::_send_edge_status),
+                # fired live rather than waiting for the session's CSV to export.
+                # Fanned out both ways: Socket.IO for the web UI (no listener
+                # wired to it yet -- a future task, same as module_config_error)
+                # and the /api/v1/events SSE stream, which is the point of this
+                # one -- an external experiment controller reacting to a TTL
+                # input (lever press, an external trigger) without polling.
+                case "ttl_edge":
+                    edge = {
+                        "module_id": module_id,
+                        "pin": status.get("pin"),
+                        "state": status.get("state"),
+                        "mode": status.get("mode"),
+                        "description": status.get("description"),
+                        "timestamp_ns": status.get("timestamp_ns"),
+                    }
+                    self.socketio.emit("ttl_edge", edge)
+                    self._publish_api_event("ttl_edge", edge)
+
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
                 # Previously silently dropped the same way as above. Not escalated to

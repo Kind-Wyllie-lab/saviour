@@ -98,7 +98,7 @@ paths:
   /api/v1/events:
     get:
       tags: [events]
-      summary: Server-Sent Events stream (sessions / modules / alert / marker)
+      summary: Server-Sent Events stream (sessions / modules / alert / marker / ttl_edge)
       parameters:
         - name: types
           in: query

@@ -1,7 +1,8 @@
 # TTL module hardening: dead config/code, liveness signal, API-triggered pulse
 
-- **Status:** in progress — items 1-4 implemented on `fix/ttl-module-hardening`
-  (not yet on-device tested); item 5 not started.
+- **Status:** in progress — items 1-4 and the follow-ups (6, 7, frontend fix
+  for item 4) implemented on `fix/ttl-module-hardening` (not yet on-device
+  tested); item 5 not started.
 - **Created:** 2026-09-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (new one-liner); also
@@ -195,6 +196,82 @@ branch, `_write_ttl_event`'s `source` param;
 `test_ttl_module.py::TestPulsePin`/`TestAssignPinsManualOutputMode`/
 `TestWriteTtlEvent`, `test_rest_api.py::TestTtlPulse`.
 
+## 4a. Frontend follow-up: `TTLConfigCard.jsx` didn't know about the new `"None"` mode
+
+Found while closing out item 4: the frontend explicitly filtered `"None"`
+out of the mode dropdown (`.filter((m) => m !== "None")`) and classified a
+pin as OUTPUT purely via a hardcoded `OUTPUT_MODES` set that didn't include
+it — so a pin configured with the new manual mode would render with an
+`INPUT` badge and no Test button, making the feature unreachable from the
+web UI (config-file edit or a raw REST `PATCH` only).
+
+**✅ Done** — `TTLConfigCard.jsx`: `OUTPUT_MODES` now includes `"None"`, the
+dropdown filter removed, both mode `<select>`s render a friendlier
+`"None (manual output)"` label via a small `MODE_LABELS` map.
+`schema["_None"]` being absent already degrades correctly (no extra
+per-pin fields rendered) — no schema change needed. `npm run build` clean.
+
+## 6. Segment-rotation race could silently drop a TTL event (found reviewing item 3's work)
+
+`_start_next_recording_segment()` closes the current CSV handle then opens
+the next one — a real window where `self._ttl_file_handle` is `None`.
+`_write_ttl_event` only checked `if self._ttl_file_handle:` with no lock and
+no `try`/`except` around the actual `.write()` — so an input edge or
+generator pulse landing in that window (a different thread entirely: a
+gpiozero callback thread or a generator worker thread) either silently
+vanished (handle legitimately `None`) or, in a narrower TOCTOU, hit a
+`ValueError` writing to a handle that got closed out from under it mid-call.
+For a generator thread, that exception is caught by the worker's own
+`except Exception`, which logs and **exits the thread** — meaning this race
+could surface as a false "TTL generator thread(s) died" alert from the
+liveness check added in item 3, with the real cause being a rotation race,
+not an actual dead generator.
+
+**Confirmed real, not theoretical**, by reproducing the pre-fix behaviour in
+isolation: 2000 concurrent writes racing 200 rotations produced a
+`ValueError('write to closed file')` and **1995/2000 events silently
+dropped**.
+
+**✅ Done** — `self._ttl_file_lock` (a `threading.RLock`, not `Lock`, because
+`_start_next_recording_segment` holds it across its own nested calls into
+`_close_ttl_event_file`/`_open_ttl_file`) now guards every open/close/write.
+A concurrent writer blocks for the (sub-millisecond) duration of a rotation
+and lands in whichever file is open once it resumes — never sees the `None`
+window, never touches a handle mid-close. Regression test
+(`test_ttl_module.py::TestSegmentRotationLock::test_no_event_lost_racing_concurrent_rotation`)
+hammers 500 writes against 50 concurrent rotations and asserts zero errors
+and zero dropped rows (verified failing without the fix, per the repro
+above; passing with it).
+
+## 7. TTL input edges were invisible to the controller until export
+
+`_handle_input_pin_low/high` only wrote the CSV row and logged at `DEBUG` —
+no live signal anywhere, unlike RFID's `_record_ping` (which also calls
+`communication.send_status(...)`). Given item 4 just gave an external
+experiment controller a way to *write* a marker into a session, the natural
+counterpart is letting it *read* one back live — e.g. "wait for this input
+pin to go active, then fire a stimulus" needs the edge to be visible in
+real time, not just after export.
+
+**✅ Done** — new `_send_edge_status()` (module side), called from both edge
+handlers with the same `timestamp_ns` used for the CSV row. Sends
+`{"type": "ttl_edge", "pin", "state", "mode", "description",
+"timestamp_ns"}` via `communication.send_status()`. Only wired into the
+input-pin callbacks, not generator-driven pulses (would be a much
+higher-rate, much less interesting thing to broadcast live) or `pulse_pin`
+(the API caller already knows it just fired one). Unrate-limited, same
+precedent as RFID.
+
+Controller side: `web.py::handle_module_status` gained a `case "ttl_edge"`
+that both `socketio.emit`s it (frontend listener not wired — same
+dead-event-class caveat as `module_config_error`, a separate task) and
+`_publish_api_event`s it, so it's the `ttl_edge` type on `/api/v1/events`
+described below.
+
+Docs: `docs/REST_API.md`'s SSE event-type table, `docs/openapi.yaml`'s
+`/events` summary. Tests: `test_ttl_module.py::TestSendEdgeStatus`,
+`test_web.py::TestTtlEdgeStatus`.
+
 ## 5. Smaller: no live pulse-count/rate surfaced
 
 The monitor stream (`_render_monitor_frame`) shows a scrolling waveform per
@@ -227,10 +304,23 @@ label per row. Nice-to-have, not blocking; do only if 1-4 land cleanly.
   only so far** (module-side `TestPulsePin`, REST-side `TestTtlPulse`) — the
   REST→ZMQ→module round trip and the CSV's actual on-disk content are not
   yet exercised end to end.
+- Segment rotation: no event lost or exception raised racing
+  `_start_next_recording_segment` against concurrent `_write_ttl_event`
+  calls. **Verified both ways** — reproduced the pre-fix failure in
+  isolation (1995/2000 dropped, plus a `ValueError`), and the same shape of
+  test passes clean with the fix
+  (`TestSegmentRotationLock::test_no_event_lost_racing_concurrent_rotation`).
+  This one has real evidence behind it, not just unit coverage of the happy
+  path.
+- Live edges: an input-pin edge produces a `ttl_edge` status that reaches
+  both `socketio.emit` and an `/api/v1/events` SSE subscriber with the same
+  `timestamp_ns` as the CSV row. **Unit-level only** (`TestSendEdgeStatus`,
+  `TestTtlEdgeStatus`) — not exercised through a real ZMQ round trip.
 - **Still needed before closing this plan out:** an on-device pass — real
-  GPIO hardware for the debounce/liveness/pulse-pin behaviour, and a live
-  `POST /api/v1/modules/<id>/pulse` against a running controller + TTL
-  module to confirm the ZMQ round trip and CSV row actually land.
+  GPIO hardware for the debounce/liveness/pulse-pin/rotation behaviour, and
+  a live `POST /api/v1/modules/<id>/pulse` + a real input edge against a
+  running controller + TTL module to confirm the ZMQ round trips and the
+  CSV/SSE content actually land.
 
 ## Not doing
 

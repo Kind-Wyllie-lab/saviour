@@ -33,9 +33,11 @@ def _make_ttl(**attrs) -> TTLModule:
     m.MONITOR_COLS = 500
     m.is_recording = False
     m._ttl_file_handle = None
+    m._ttl_file_lock = threading.RLock()
     m.config = MagicMock()
     m.facade = MagicMock()
     m.communication = MagicMock()
+    m.communication.controller_ip = "10.0.0.1"
     for k, v in attrs.items():
         setattr(m, k, v)
     return m
@@ -275,3 +277,140 @@ class TestWriteTtlEvent:
         m._write_ttl_event(1, 19, TTLValue.HIGH, source="api")
         line = m._ttl_file_handle.write.call_args.args[0]
         assert line == "1,19,None,TTLValue.HIGH,[api]\n"
+
+
+# ---------------------------------------------------------------------------
+# _send_edge_status: input edges pushed live to the controller
+# ---------------------------------------------------------------------------
+
+class TestSendEdgeStatus:
+    def test_low_edge_sends_status_and_writes_csv(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 4
+        m = _make_ttl(pin_configs={4: {"mode": "input", "description": "lever"}})
+        m._ttl_file_handle = MagicMock()
+
+        with patch(
+            "src.modules.variants.ttl.ttl_module.time.time_ns", return_value=1_000
+        ):
+            m._handle_input_pin_low(pin_obj)
+
+        line = m._ttl_file_handle.write.call_args.args[0]
+        assert line == "1000,4,input,TTLValue.LOW,lever\n"
+        m.communication.send_status.assert_called_once_with({
+            "type": "ttl_edge",
+            "pin": 4,
+            "state": "LOW",
+            "mode": "input",
+            "description": "lever",
+            "timestamp_ns": 1_000,
+        })
+
+    def test_high_edge_sends_status(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 4
+        m = _make_ttl(pin_configs={4: {"mode": "input"}})
+        m._ttl_file_handle = MagicMock()
+
+        with patch(
+            "src.modules.variants.ttl.ttl_module.time.time_ns", return_value=2_000
+        ):
+            m._handle_input_pin_high(pin_obj)
+
+        sent = m.communication.send_status.call_args.args[0]
+        assert sent["state"] == "HIGH"
+        assert sent["timestamp_ns"] == 2_000
+        assert sent["description"] == ""  # missing key -> "" not None
+
+    def test_no_controller_no_status_sent(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 4
+        m = _make_ttl(pin_configs={4: {"mode": "input"}})
+        m._ttl_file_handle = MagicMock()
+        m.communication.controller_ip = None
+
+        m._handle_input_pin_low(pin_obj)
+
+        m.communication.send_status.assert_not_called()
+
+    def test_generator_pulses_do_not_send_edge_status(self):
+        """_send_edge_status is only wired into the input-pin callbacks --
+        generator-driven pulses go through _write_ttl_event directly and
+        must not also flood the ZMQ status channel."""
+        m = _make_ttl(pin_configs={19: {"mode": "experiment_clock"}})
+        m._ttl_file_handle = MagicMock()
+        m._write_ttl_event(1, 19, TTLValue.HIGH)
+        m.communication.send_status.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Segment-rotation lock: no event dropped racing _start_next_recording_segment
+# ---------------------------------------------------------------------------
+
+class TestSegmentRotationLock:
+    def test_lock_is_reentrant_rlock(self):
+        m = _make_ttl()
+        assert isinstance(m._ttl_file_lock, type(threading.RLock()))
+
+    def test_rotation_closes_stages_and_reopens(self, tmp_path):
+        m = _make_ttl(pin_configs={19: {"mode": "None"}})
+        first = str(tmp_path / "seg0.csv")
+        second = str(tmp_path / "seg1.csv")
+        m._get_ttl_filename = MagicMock(return_value=second)
+        m._open_ttl_file(first)
+        m.current_ttl_events_filename = first
+
+        m._start_next_recording_segment()
+
+        m.facade.stage_file_for_export.assert_called_once_with(first)
+        m.facade.add_session_file.assert_called_once_with(second)
+        assert m.current_ttl_events_filename == second
+        assert m._ttl_file_handle is not None
+        m._ttl_file_handle.close()
+
+    def test_no_event_lost_racing_concurrent_rotation(self, tmp_path):
+        """Regression test for the TOCTOU this session's plan flagged:
+        hammer _write_ttl_event from one thread while another repeatedly
+        rotates the segment file, and confirm every single write lands in
+        *some* file -- none silently dropped because _ttl_file_handle was
+        briefly None, and no exception from writing to a closed handle."""
+        m = _make_ttl(pin_configs={19: {"mode": "None"}})
+        seg_counter = iter(range(10_000))
+        m._get_ttl_filename = MagicMock(
+            side_effect=lambda: str(tmp_path / f"seg{next(seg_counter)}.csv"))
+        first = str(tmp_path / "seg_start.csv")
+        m._open_ttl_file(first)
+        m.current_ttl_events_filename = first
+
+        n_writes = 500
+        errors = []
+
+        def writer():
+            try:
+                for i in range(n_writes):
+                    m._write_ttl_event(i, 19, TTLValue.HIGH)
+            except Exception as exc:  # pragma: no cover -- fails the test below
+                errors.append(exc)
+
+        def rotator():
+            try:
+                for _ in range(50):
+                    m._start_next_recording_segment()
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        t_write = threading.Thread(target=writer)
+        t_rotate = threading.Thread(target=rotator)
+        t_write.start()
+        t_rotate.start()
+        t_write.join(timeout=30)
+        t_rotate.join(timeout=30)
+
+        assert not errors, f"exception(s) during concurrent write/rotate: {errors}"
+        m._close_ttl_event_file()
+
+        total_rows = 0
+        for csv_file in tmp_path.glob("*.csv"):
+            with open(csv_file) as f:
+                total_rows += sum(1 for line in f) - 1  # minus header
+        assert total_rows == n_writes

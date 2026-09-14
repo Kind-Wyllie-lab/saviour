@@ -1165,6 +1165,55 @@ class TestSendCommandDispatch:
             assert re.fullmatch(r"exp-\d{8}_\d{6}", params["experiment_name"])
 
 
+class TestTtlEdgeStatus:
+    """handle_module_status's 'ttl_edge' case -- a TTL module input-pin edge
+    (ttl_module.py::_send_edge_status), fanned out to both the Socket.IO
+    frontend and the /api/v1/events SSE stream so an edge is visible live,
+    not just after the session exports."""
+
+    def _status(self, **overrides):
+        status = {
+            "type": "ttl_edge", "pin": 4, "state": "LOW",
+            "mode": "input", "description": "lever", "timestamp_ns": 123,
+        }
+        status.update(overrides)
+        return status
+
+    def test_emits_to_socketio(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+
+        web.handle_module_status("ttl_ab12", self._status())
+
+        events = [e for e in client.get_received() if e["name"] == "ttl_edge"]
+        assert len(events) == 1
+        assert events[0]["args"][0] == {
+            "module_id": "ttl_ab12", "pin": 4, "state": "LOW",
+            "mode": "input", "description": "lever", "timestamp_ns": 123,
+        }
+
+    def test_published_to_sse_subscribers(self):
+        web, _ = _make_web_with_facade()
+        q = web._event_subscribe()
+
+        web.handle_module_status("ttl_ab12", self._status(state="HIGH"))
+
+        event = q.get_nowait()
+        assert event["type"] == "ttl_edge"
+        assert event["module_id"] == "ttl_ab12"
+        assert event["state"] == "HIGH"
+
+    def test_generator_pulse_status_types_are_unaffected(self):
+        """Sanity check this case is additive -- an unrelated status type
+        still falls through to handle_special_module_status untouched."""
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+
+        web.handle_module_status("ttl_ab12", {"type": "something_else"})
+
+        assert [e for e in client.get_received() if e["name"] == "ttl_edge"] == []
+
+
 class TestLogin:
     def test_correct_password_authenticates_and_acks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

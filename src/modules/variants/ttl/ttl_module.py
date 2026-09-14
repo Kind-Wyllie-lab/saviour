@@ -82,6 +82,15 @@ class TTLModule(Module):
 
         # TTL specific variables
         self._ttl_file_handle = None # The open .csv file for storing events
+        # Guards open/close/write on _ttl_file_handle. Without this, an input
+        # edge or generator pulse landing in the window between closing one
+        # segment's CSV and opening the next (_start_next_recording_segment)
+        # races _write_ttl_event's `if self._ttl_file_handle:` check -- best
+        # case the event is silently dropped (handle is legitimately None),
+        # worst case the handle gets closed out from under an in-flight
+        # write. RLock (not Lock) because _start_next_recording_segment holds
+        # it across its own calls into _close_ttl_event_file/_open_ttl_file.
+        self._ttl_file_lock = threading.RLock()
 
         # Initialize GPIO
         self.output_pins = []
@@ -172,15 +181,21 @@ class TTLModule(Module):
     def _start_next_recording_segment(self):
         """Stage and close the current CSV, then open a new one for the next segment.
 
-        Input pin callbacks and generators keep running across segments — no restart needed.
+        Input pin callbacks and generators keep running across segments — no
+        restart needed. Holds _ttl_file_lock across the whole close+reopen
+        (not just each call individually -- RLock lets the same thread
+        re-enter it) so a concurrent _write_ttl_event either completes
+        before this starts or blocks until the new file is open and lands
+        there, rather than falling into the gap between the two calls.
         """
-        self.facade.stage_file_for_export(self.current_ttl_events_filename)
-        self._close_ttl_event_file()
+        with self._ttl_file_lock:
+            self.facade.stage_file_for_export(self.current_ttl_events_filename)
+            self._close_ttl_event_file()
 
-        filename = self._get_ttl_filename()
-        self.current_ttl_events_filename = filename
-        self.facade.add_session_file(filename)
-        self._open_ttl_file(filename)
+            filename = self._get_ttl_filename()
+            self.current_ttl_events_filename = filename
+            self.facade.add_session_file(filename)
+            self._open_ttl_file(filename)
 
 
     def configure_module_special(self, updated_keys: list):
@@ -498,7 +513,9 @@ class TTLModule(Module):
 
     def _handle_input_pin_low(self, pin):
         """Handle input pin going low (pressed)"""
-        self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.LOW)
+        ts = time.time_ns()
+        self._write_ttl_event(ts, pin.pin.number, TTLValue.LOW)
+        self._send_edge_status(pin.pin.number, TTLValue.LOW, ts)
         # DEBUG, not INFO: fires on every edge. An experiment-clock or pulse
         # train at even 10-50 Hz would flood the journal (and trip journald's
         # per-service rate limit, dropping unrelated lines). The authoritative
@@ -508,19 +525,54 @@ class TTLModule(Module):
 
     def _handle_input_pin_high(self, pin):
         """Handle input pin going high (released)"""
-        self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.HIGH)
+        ts = time.time_ns()
+        self._write_ttl_event(ts, pin.pin.number, TTLValue.HIGH)
+        self._send_edge_status(pin.pin.number, TTLValue.HIGH, ts)
         self.logger.debug(f"Input pin {pin.pin} went high (released)")
+
+
+    def _send_edge_status(self, pin_number: int, state: TTLValue, timestamp_ns: int):
+        """Push a live status message for an input-pin edge, so the
+        controller can surface it (Socket.IO, and the /api/v1/events SSE
+        stream for an external experiment controller) without waiting for
+        export -- the CSV write above is otherwise the only record, and
+        that's only readable after the session ends.
+
+        Only called for genuine input edges (_handle_input_pin_low/high),
+        never for generator-driven output pulses -- those already have the
+        controller-side session_started/stopped bracket and would be a much
+        higher-rate, much less interesting source to broadcast live.
+
+        Fires on every edge, unrated-limited (same precedent as RFID's
+        _record_ping) -- a very high-rate input source could flood the ZMQ
+        status channel; revisit if that's ever a real signal, not a lever
+        press or an external trigger.
+        """
+        comms = getattr(self, "communication", None)
+        if comms and comms.controller_ip:
+            pin_cfg = self.pin_configs.get(pin_number, {})
+            self.communication.send_status({
+                "type": "ttl_edge",
+                "pin": pin_number,
+                "state": state.name,  # "HIGH"/"LOW" -- Enum isn't JSON-serialisable
+                "mode": pin_cfg.get("mode"),
+                "description": pin_cfg.get("description") or "",
+                "timestamp_ns": timestamp_ns,
+            })
 
 
     def _open_ttl_file(self, filename: str):
         """Open a TTL events CSV file for writing and write the column header."""
         self.logger.info(f"Opening TTL events file: {filename}")
-        try:
-            self._ttl_file_handle = open(filename, "w", buffering=1)  # line-buffered
-            self._ttl_file_handle.write("Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
-        except Exception as e:
-            self.logger.error(f"Failed to open TTL events file {filename}: {e}")
-            self._ttl_file_handle = None
+        with self._ttl_file_lock:
+            try:
+                # line-buffered
+                self._ttl_file_handle = open(filename, "w", buffering=1)
+                self._ttl_file_handle.write(
+                    "Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
+            except Exception as e:
+                self.logger.error(f"Failed to open TTL events file {filename}: {e}")
+                self._ttl_file_handle = None
 
 
     def _write_ttl_event(
@@ -532,27 +584,36 @@ class TTLModule(Module):
         pin_description field so a pulse fired via pulse_pin() is
         distinguishable from one fired by an input edge or a running
         generator -- without changing the CSV's column schema.
+
+        Holds _ttl_file_lock for the check-and-write so this can't race
+        _start_next_recording_segment's close/reopen (see the lock's
+        docstring in __init__) -- an event that arrives mid-rotation just
+        blocks briefly and lands in whichever file is open once the lock is
+        released, instead of silently vanishing or hitting a closed handle.
         """
-        if self._ttl_file_handle:
-            mode = self.pin_configs[pin_number].get("mode")
-            description = self.pin_configs[pin_number].get("description") or ""
-            if source:
-                description = f"{description} [{source}]".strip()
-            self._ttl_file_handle.write(
-                f"{timestamp_ns},{pin_number},{mode},{state},{description}\n")
+        with self._ttl_file_lock:
+            if self._ttl_file_handle:
+                mode = self.pin_configs[pin_number].get("mode")
+                description = self.pin_configs[pin_number].get("description") or ""
+                if source:
+                    description = f"{description} [{source}]".strip()
+                self._ttl_file_handle.write(
+                    f"{timestamp_ns},{pin_number},{mode},{state},{description}\n")
 
 
     def _close_ttl_event_file(self, filename=None):
         """Flush and close the current TTL events file."""
-        try:
-            if self._ttl_file_handle:
-                self._ttl_file_handle.flush()
-                self._ttl_file_handle.close()
+        with self._ttl_file_lock:
+            try:
+                if self._ttl_file_handle:
+                    self._ttl_file_handle.flush()
+                    self._ttl_file_handle.close()
+                    self._ttl_file_handle = None
+                    closed_name = filename or self.current_ttl_events_filename
+                    self.logger.info(f"Closed TTL events file: {closed_name}")
+            except Exception as e:
+                self.logger.warning(f"Error closing TTL events file: {e}")
                 self._ttl_file_handle = None
-                self.logger.info(f"Closed TTL events file: {filename or self.current_ttl_events_filename}")
-        except Exception as e:
-            self.logger.warning(f"Error closing TTL events file: {e}")
-            self._ttl_file_handle = None
 
 
     def assign_pins(self):

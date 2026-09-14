@@ -1,6 +1,8 @@
 # PTP-synced non-recording companion module (pyControl clock alignment)
 
-- **Status:** proposed — design settled, not yet built.
+- **Status:** built on `feat/external-host-module`
+  (`src/modules/variants/external_host/`) — not yet on-device tested (no
+  real pyControl Pi run through it yet).
 - **Created:** 2026-09-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** none — turned out small enough not to need an Open Work
@@ -102,6 +104,21 @@ signal — which is exactly what's wanted.
 itself looks alive (its process/port) — skip unless asked; no obvious cheap
 signal without knowing this Pi's actual pyControl setup.
 
+**Built** (`feat/external-host-module`) as
+`src/modules/variants/external_host/` — `external_host_module.py`,
+`external_host_config.json`, `variant.conf`, plus a `README.md` (use cases +
+what it actually does, matching the convention other variants like `rfid`
+have). One correction from the steps above: Andrew flagged that
+`variants/template/` is meant as an onboarding aid for people writing a new
+*real* module type, not something a real module should be derived from —
+so this was written fresh (same trivial shape, since there's genuinely
+little to do, but its own docstring/rationale rather than a template
+copy-and-rename) rather than literally copying the template folder. Tests:
+`src/modules/tests/test_external_host_module.py` — the abstract-methods
+check plus pinning the three recording hooks to return `True` specifically
+(not just something truthy), since `_create_initial_recording_segment`
+only treats a literal `False` as "could not start."
+
 ## What Andrew's user needs to do (outside SAVIOUR)
 
 Nothing SAVIOUR-specific — run pyControl on the newly-provisioned Pi as
@@ -117,19 +134,26 @@ sanity check with a real pyControl session before relying on it.
 
 - A module of type `external_host` registers, appears in the dashboard with
   a live PTP-offset readout, settles to the fleet's normal figures (<20µs
-  mid-convergence, <5µs settled).
+  mid-convergence, <5µs settled). **Not yet verified** — needs a real Pi
+  provisioned via `saviour-config`.
 - Creating a session with `target: "all"` (the default everywhere) includes
   it in `session.modules` like any other module, and **blocks session start**
   if its PTP offset isn't converged — the behaviour explicitly wanted.
+  **Structurally true by construction** (the module does nothing to opt out
+  of the generic path every module goes through — confirmed by the unit
+  tests pinning `_start_new_recording()` etc. to `True`) but not yet run
+  through a real session.
 - The session's exported data includes an
   `<session>_external_host_<mac>_health_metadata_(...).csv` with per-second
   `ptp4l_offset_ns`/`phc2sys_offset_ns` for the whole session — this is the
-  artefact the manual comparison actually leans on.
+  artefact the manual comparison actually leans on. **Not yet verified**
+  on-device.
 - A real pyControl session's reconstructed wall-clock timestamps, checked
   against this CSV and the equivalent SAVIOUR camera frame timestamps, agree
   within the fleet's normal PTP settling window — validated on a real bench
   setup, not just code review, since the entire point is a real cross-device
-  comparison.
+  comparison. **Not yet done** — the real test of whether this plan actually
+  achieves what was asked.
 
 ## Not doing
 

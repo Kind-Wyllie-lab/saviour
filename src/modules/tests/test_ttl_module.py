@@ -11,6 +11,7 @@ wiring and the "None"-mode manual-output-pin path are covered end to end.
 """
 
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,6 +28,7 @@ def _make_ttl(**attrs) -> TTLModule:
     m.experiment_clock_pins = []
     m.pseudorandom_pins = []
     m.interval_pulse_pins = []
+    m.experiment_start_pins = []
     m.generator_threads = {}
     m.pin_state_buffers = {}
     m.pin_state_lock = threading.Lock()
@@ -34,6 +36,7 @@ def _make_ttl(**attrs) -> TTLModule:
     m.is_recording = False
     m._ttl_file_handle = None
     m._ttl_file_lock = threading.RLock()
+    m._pin_test_stop_flags = {}
     m.config = MagicMock()
     m.facade = MagicMock()
     m.communication = MagicMock()
@@ -109,6 +112,7 @@ class TestAssignPinsManualOutputMode:
             "19": {"mode": "experiment_clock"},
             "26": {"mode": "pseudorandom"},
             "27": {"mode": "interval_pulse"},
+            "22": {"mode": "experiment_start"},
         })
         with patch("src.modules.variants.ttl.ttl_module.gpiozero") as gz:
             gz.LED.return_value = MagicMock()
@@ -116,6 +120,56 @@ class TestAssignPinsManualOutputMode:
         assert m.experiment_clock_pins == [19]
         assert m.pseudorandom_pins == [26]
         assert m.interval_pulse_pins == [27]
+        assert m.experiment_start_pins == [22]
+
+
+# ---------------------------------------------------------------------------
+# experiment_start: a single delayed pulse fired once at recording start
+# ---------------------------------------------------------------------------
+
+class TestExperimentStart:
+    def test_reuses_interval_pulse_worker_with_repeat_one(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 22
+        m = _make_ttl(
+            pin_configs={22: {"mode": "experiment_start", "delay_s": 3.0,
+                               "pulse_duration_s": 0.05}},
+            output_pins=[pin_obj],
+        )
+        with patch(
+            "src.modules.variants.ttl.ttl_module.threading.Thread"
+        ) as thread_cls:
+            thread_obj = MagicMock()
+            thread_cls.return_value = thread_obj
+            result = m._start_experiment_start(22)
+
+        assert result is True
+        thread_cls.assert_called_once()
+        _, kwargs = thread_cls.call_args
+        assert kwargs["target"] == m._interval_pulse_worker
+        assert kwargs["args"] == (pin_obj, 22, 3.0, 0.05, 1)
+        thread_obj.start.assert_called_once()
+        assert m.generator_threads[22] is thread_obj
+
+    def test_missing_pin_object_fails_cleanly(self):
+        m = _make_ttl(pin_configs={22: {"mode": "experiment_start"}}, output_pins=[])
+        assert m._start_experiment_start(22) is False
+
+    def test_defaults_when_config_keys_absent(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 22
+        m = _make_ttl(
+            pin_configs={22: {"mode": "experiment_start"}},
+            output_pins=[pin_obj],
+        )
+        with patch(
+            "src.modules.variants.ttl.ttl_module.threading.Thread"
+        ) as thread_cls:
+            thread_cls.return_value = MagicMock()
+            m._start_experiment_start(22)
+        _, kwargs = thread_cls.call_args
+        # delay_s default 0.001, pulse_duration_s default 0.02, repeat=1
+        assert kwargs["args"] == (pin_obj, 22, 0.001, 0.02, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +243,18 @@ class TestCheckRecordingAlive:
         assert ok is False
         assert "19" in detail
 
+    def test_experiment_start_finishing_is_not_a_fault(self):
+        """experiment_start always fires exactly one pulse (repeat_count
+        hardcoded to 1) -- its thread finishing is success, not a crash,
+        with no repeat_count field needed in config to signal that."""
+        finished = MagicMock(is_alive=lambda: False)
+        m = _make_ttl(
+            is_recording=True,
+            generator_threads={22: finished},
+            pin_configs={22: {"mode": "experiment_start"}},
+        )
+        assert m._check_recording_alive() == (True, None)
+
 
 # ---------------------------------------------------------------------------
 # pulse_pin
@@ -198,6 +264,33 @@ def _output_pin(number: int):
     p = MagicMock()
     p.pin.number = number
     return p
+
+
+class TestTestPinExperimentStart:
+    """test_pin()'s bench-test replay of the experiment_start mode --
+    the actual generator-dispatch logic is covered by TestExperimentStart;
+    this just confirms the mode-faithful test path exists and drives the
+    pin (a single active pulse after the delay, not a repeating train)."""
+
+    def test_dispatches_and_fires_one_pulse(self):
+        pin_obj = MagicMock()
+        pin_obj.pin.number = 19
+        m = _make_ttl(
+            pin_configs={19: {"mode": "experiment_start", "delay_s": 0.01,
+                               "pulse_duration_s": 0.02}},
+            output_pins=[pin_obj],
+        )
+        m.config.get.side_effect = lambda k, d=None: d  # "active_low" default
+
+        result = m.test_pin(19, duration=0.5)
+
+        assert result["result"] == "success"
+        assert "experiment_start" in result["message"]
+        # Let the background thread run past delay + pulse_duration.
+        time.sleep(0.15)
+        # active_low: active = off(), inactive = on() -- one of each.
+        pin_obj.off.assert_called_once()
+        pin_obj.on.assert_called_once()
 
 
 class TestPulsePin:

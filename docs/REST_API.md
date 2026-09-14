@@ -223,8 +223,12 @@ curl -X POST "$base_url/api/v1/modules/ttl_ab12/pulse" \
 The pin must be configured as an output with **no automatic generator**
 (`ttl.pins.<pin>.mode: "None"` — a plain output pin, held inactive, added
 specifically so `pulse_pin`/`test_pin` can drive it without racing a running
-`experiment_clock`/`pseudorandom`/`interval_pulse` generator thread on the
-same GPIO line).
+`experiment_clock`/`pseudorandom`/`interval_pulse`/`experiment_start`
+generator thread on the same GPIO line). If what you actually want is a
+single pulse fired automatically the moment a recording starts — not
+triggered by an external API call — that's `mode: "experiment_start"`
+(`delay_s`/`pulse_duration_s`), not this endpoint; see `TTLConfigCard` or
+`PATCH .../config`.
 
 - `404` unknown module id.
 - `400` `wrong_module_type` — the module isn't a `ttl` module.

@@ -14,8 +14,17 @@ import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleAct
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
 // pin to drive without racing experiment_clock/pseudorandom/interval_pulse.
-const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse", "None"]);
-const MODE_LABELS = { None: "None (manual output)" };
+// "experiment_start" fires a single delayed pulse once, at recording start --
+// sugar over interval_pulse(repeat_count=1) with its own honest mode name and
+// a simpler delay_s/pulse_duration_s-only schema (both server-driven from
+// _mode_settings_schema, nothing hardcoded here beyond the label/badge).
+const OUTPUT_MODES = new Set([
+  "experiment_clock", "pseudorandom", "interval_pulse", "experiment_start", "None",
+]);
+const MODE_LABELS = {
+  None: "None (manual output)",
+  experiment_start: "Experiment Start (one pulse)",
+};
 
 const TAB_COPY_SECTION = {
   basic:  { key: "module",    label: "Basic"  },

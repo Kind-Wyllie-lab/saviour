@@ -23,6 +23,7 @@
             "pseudorandom",
             "experiment_clock",
             "interval_pulse",
+            "experiment_start",
             "input"
         ],
         "_mode_settings_schema": {
@@ -39,6 +40,10 @@
                 "_interval_s": {"type": "float", "min": 0.001, "default": 120.0, "description": "Onset-to-onset period in seconds (e.g. 120 = every 2 minutes)"},
                 "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"},
                 "_repeat_count": {"type": "int", "min": 0, "default": 15, "description": "Number of pulses to deliver; 0 = run until recording stops"}
+            },
+            "_experiment_start": {
+                "_delay_s": {"type": "float", "min": 0.001, "default": 0.001, "description": "Delay after recording starts before the pulse fires, in seconds (e.g. 0.001 = as close to immediate as the schema allows)"},
+                "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"}
             },
             "_input": {
                 "_debounce_ms": {"type": "int", "min": 0, "default": 50}

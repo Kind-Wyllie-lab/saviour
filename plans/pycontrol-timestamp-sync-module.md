@@ -155,6 +155,15 @@ sanity check with a real pyControl session before relying on it.
   comparison. **Not yet done** — the real test of whether this plan actually
   achieves what was asked.
 
+## Follow-on
+
+Deeper software integration (SAVIOUR exporting pyControl's own `.tsv`
+automatically, a live event bridge onto the dashboard, and the GUI-fusion
+alternatives considered and rejected) is scoped separately in
+**`plans/pycontrol-live-event-bridge.md`** — this plan's job was just
+getting the Pi onto the fleet's PTP domain as a real module; that one picks
+up from there.
+
 ## Not doing
 
 - Any `recording_capable`/`"all"`-exclusion mechanism — see the revision

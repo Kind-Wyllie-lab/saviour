@@ -322,6 +322,32 @@ label per row. Nice-to-have, not blocking; do only if 1-4 land cleanly.
   running controller + TTL module to confirm the ZMQ round trips and the
   CSV/SSE content actually land.
 
+## 8. Added mid-branch: `experiment_start` mode — one pulse at recording start
+
+Not in the original scope — came out of a conversation about
+`interval_pulse`+`repeat_count: 1` already being a working (if non-obvious)
+way to get a delayed "recording started" marker pulse. Two things followed
+from actually using it: it directly exercises the item-3 liveness-check
+finite-completion edge case (a `repeat_count>0` interval_pulse pin finishing
+normally must not read as a dead generator — fixed as its own small commit,
+since it's a real bug independent of this feature and the exact thing this
+pattern would have tripped), and it's not discoverable enough to recommend
+as-is (nothing in the mode dropdown suggests "you can get a start marker out
+of this").
+
+**Done:** a real `experiment_start` mode — `delay_s`/`pulse_duration_s` only
+(no `interval_s`/`repeat_count` to be confused by), reusing
+`_interval_pulse_worker` directly (already generic, not tied to the
+`interval_pulse` mode string) with `repeat_count` hardcoded to `1`. CSV rows
+show the honest mode name. `_check_recording_alive` gives it the same
+finite-completion pass as `interval_pulse`. `test_pin` gained a matching
+mode-faithful single-pulse test branch. Frontend needed only two lines
+(`OUTPUT_MODES` + a `MODE_LABELS` entry) — the mode dropdown and per-mode
+fields are already schema-driven from the backend's `_available_modes`/
+`_mode_settings_schema`.
+
+**Not yet on-device tested**, same as everything else on this branch.
+
 ## Not doing
 
 - Any of the edge-timestamp-acquisition-jitter work — that's

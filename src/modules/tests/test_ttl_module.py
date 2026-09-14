@@ -149,6 +149,46 @@ class TestCheckRecordingAlive:
         assert ok is False
         assert "26" in detail
 
+    def test_finite_interval_pulse_finishing_is_not_a_fault(self):
+        """A repeat_count > 0 interval_pulse pin (e.g. a single delayed
+        "recording started" marker, or any bounded burst) is *supposed* to
+        finish and its thread exit once it's delivered its configured
+        pulses -- see _interval_pulse_worker's own break condition. That's
+        success, not a crash."""
+        finished = MagicMock(is_alive=lambda: False)
+        m = _make_ttl(
+            is_recording=True,
+            generator_threads={19: finished},
+            pin_configs={19: {"mode": "interval_pulse", "repeat_count": 1}},
+        )
+        assert m._check_recording_alive() == (True, None)
+
+    def test_infinite_interval_pulse_dying_is_still_a_fault(self):
+        """repeat_count == 0 means "run until the recording stops" -- that
+        thread dying early is a real fault, same as any other generator."""
+        dead = MagicMock(is_alive=lambda: False)
+        m = _make_ttl(
+            is_recording=True,
+            generator_threads={19: dead},
+            pin_configs={19: {"mode": "interval_pulse", "repeat_count": 0}},
+        )
+        ok, detail = m._check_recording_alive()
+        assert ok is False
+        assert "19" in detail
+
+    def test_other_modes_dying_are_still_a_fault(self):
+        """experiment_clock/pseudorandom are infinite for the life of the
+        recording -- only interval_pulse gets the finite-completion pass."""
+        dead = MagicMock(is_alive=lambda: False)
+        m = _make_ttl(
+            is_recording=True,
+            generator_threads={19: dead},
+            pin_configs={19: {"mode": "experiment_clock"}},
+        )
+        ok, detail = m._check_recording_alive()
+        assert ok is False
+        assert "19" in detail
+
 
 # ---------------------------------------------------------------------------
 # pulse_pin

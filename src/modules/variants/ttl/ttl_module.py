@@ -214,10 +214,28 @@ class TTLModule(Module):
         noticing it stopped producing pulses. Input-only recordings (no
         generator pins configured) have nothing to check here; RFID/TTL
         input edges have no equivalent liveness signal (see CLAUDE.md).
+
+        A finite-repeat_count interval_pulse pin (repeat_count > 0 -- e.g. a
+        single delayed "recording started" marker, or any bounded burst) is
+        *supposed* to finish and exit once it's delivered its configured
+        pulses -- see _interval_pulse_worker's own break condition. That's a
+        successful terminal state, not a crash, so it's excluded here; only
+        an unexpectedly-dead thread (experiment_clock/pseudorandom, which
+        are infinite for the life of the recording, or an interval_pulse pin
+        configured to run until the recording stops -- repeat_count == 0)
+        counts as a fault.
         """
         if not self.is_recording:
             return True, None
-        dead = [pn for pn, t in self.generator_threads.items() if not t.is_alive()]
+        dead = []
+        for pn, t in self.generator_threads.items():
+            if t.is_alive():
+                continue
+            cfg = self.pin_configs.get(pn, {})
+            repeat_count = int(cfg.get("repeat_count", 0) or 0)
+            if cfg.get("mode") == "interval_pulse" and repeat_count > 0:
+                continue  # expected to have finished -- not a fault
+            dead.append(pn)
         if dead:
             return False, f"TTL generator thread(s) died: pin(s) {dead}"
         return True, None

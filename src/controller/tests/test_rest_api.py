@@ -375,6 +375,107 @@ class TestModuleConfigPatch:
 
 
 # ---------------------------------------------------------------------------
+# TTL module -- one-shot API-triggered pulse
+# ---------------------------------------------------------------------------
+
+class TestTtlPulse:
+    def _pulse_web(self, pins=None, module_type="ttl"):
+        web, password = _web()
+        web.facade.get_modules.return_value = {"ttl1": {"type": module_type}}
+        web.facade.get_module_configs.return_value = {"ttl1": {
+            "true_config": {"ttl": {"pins": pins if pins is not None else {
+                "19": {"mode": "None"},
+                "26": {"mode": "experiment_clock"},
+                "4": {"mode": "input"},
+            }}},
+        }}
+        return web, password
+
+    def test_unknown_module_404(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ghost/pulse", json={"pin": 19},
+            headers=_auth(password))
+        assert resp.status_code == 404
+
+    def test_wrong_module_type_400(self):
+        web, password = self._pulse_web(module_type="camera")
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 19},
+            headers=_auth(password))
+        assert resp.status_code == 400
+        assert resp.get_json()["error"]["code"] == "wrong_module_type"
+
+    def test_missing_pin_400(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={}, headers=_auth(password))
+        assert resp.status_code == 400
+        assert resp.get_json()["error"]["code"] == "invalid_request"
+
+    def test_unconfigured_pin_400(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 99},
+            headers=_auth(password))
+        assert resp.status_code == 400
+
+    def test_input_pin_409(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 4},
+            headers=_auth(password))
+        assert resp.status_code == 409
+        assert resp.get_json()["error"]["code"] == "pin_not_output"
+        web.facade.send_command.assert_not_called()
+
+    def test_generator_driven_pin_409(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 26},
+            headers=_auth(password))
+        assert resp.status_code == 409
+        assert resp.get_json()["error"]["code"] == "pin_busy"
+        web.facade.send_command.assert_not_called()
+
+    def test_valid_pulse_dispatches_and_returns_202(self):
+        web, password = self._pulse_web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 19, "duration_ms": 50},
+            headers=_auth(password))
+        assert resp.status_code == 202
+        body = resp.get_json()
+        assert body == {
+            "module_id": "ttl1", "pin": 19, "duration_ms": 50.0,
+            "dispatched": True,
+        }
+        web.facade.send_command.assert_called_once_with(
+            "ttl1", "pulse_pin", {"pin": 19, "duration_ms": 50.0})
+
+    def test_duration_ms_defaults_and_clamps(self):
+        web, password = self._pulse_web()
+        web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 19},
+            headers=_auth(password))
+        assert web.facade.send_command.call_args[0][2]["duration_ms"] == 20.0
+
+        web.facade.send_command.reset_mock()
+        web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse",
+            json={"pin": 19, "duration_ms": 999_999}, headers=_auth(password))
+        assert web.facade.send_command.call_args[0][2]["duration_ms"] == 2000.0
+
+    def test_readonly_token_blocked(self):
+        web, password = self._pulse_web()
+        token = web.mint_api_token("dash", readonly=True)["token"]
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 19},
+            headers=_auth(token))
+        assert resp.status_code == 403
+        web.facade.send_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # system -- controller self-update
 # ---------------------------------------------------------------------------
 

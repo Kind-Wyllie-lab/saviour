@@ -69,6 +69,12 @@ API_PREFIX = "/api/v1"
 # for the module's set_config ack before returning 202.
 _CONFIG_WAIT_MAX_S = 30.0
 
+# Client-side clamp for POST .../pulse duration_ms, matching
+# TTLModule._MAX_PULSE_MS (the module clamps its own copy too -- this just
+# gives an obviously-wrong caller value a quick rejection without a round
+# trip to the module).
+_TTL_MAX_PULSE_MS = 2000.0
+
 
 def _filter_private(d: dict) -> dict:
     """web._filter_private_keys, imported lazily to dodge the web<->rest_api
@@ -515,6 +521,86 @@ def create_api_blueprint(web) -> Blueprint:
             "target_config": merged,
         }
         return jsonify(body), (200 if status == "SYNCED" else 202)
+
+    # ------------------------------------------------------------------ #
+    # TTL module -- one-shot API-triggered pulse
+    # ------------------------------------------------------------------ #
+
+    @bp.post("/modules/<module_id>/pulse")
+    @require_auth
+    def pulse_ttl_pin(module_id):
+        """Fire a single timestamped pulse on a TTL module's output pin --
+        for an external experiment controller marking a moment during an
+        active recording (a closed-loop stimulus, a detected-behaviour
+        marker), distinct from the bench-only test_pin reachable via the
+        /facade/send_command escape hatch.
+
+        Body: {"pin": <int>, "duration_ms": <float, optional, default 20>}.
+        The pin must be configured as an output with no automatic generator
+        (ttl.pins.<pin>.mode = "None") -- one already driven by
+        experiment_clock/pseudorandom/interval_pulse is refused with 409 to
+        avoid two threads racing the same GPIO line (the module re-checks
+        this live at pulse time too, in case config and reality have
+        drifted).
+
+        Dispatches the command and returns 202 immediately -- this does
+        NOT wait for or return the actual onset/offset timestamps. There is
+        no ZMQ command/ack correlation mechanism yet (see CLAUDE.md "No
+        correlation IDs on ZMQ commands"), so the authoritative edge times
+        only exist in the module's TTL events CSV (rows tagged with a
+        "[api]" suffix on pin_description), read back after export.
+        """
+        modules = web.facade.get_modules()
+        if module_id not in modules:
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+        if modules[module_id].get("type") != "ttl":
+            return _error(
+                "wrong_module_type",
+                f"Module '{module_id}' is not a TTL module", 400)
+
+        payload = request.get_json(silent=True) or {}
+        if "pin" not in payload:
+            return _error("invalid_request", "Body must include \"pin\"", 400)
+        try:
+            pin = int(payload["pin"])
+        except (TypeError, ValueError):
+            return _error("invalid_request", "\"pin\" must be an integer", 400)
+
+        try:
+            duration_ms = float(payload.get("duration_ms", 20.0))
+        except (TypeError, ValueError):
+            return _error(
+                "invalid_request", "\"duration_ms\" must be a number", 400)
+        duration_ms = min(max(duration_ms, 0.0), _TTL_MAX_PULSE_MS)
+
+        true_config = _config_state(module_id).get("true_config") or {}
+        pins_cfg = (true_config.get("ttl") or {}).get("pins") or {}
+        pin_cfg = pins_cfg.get(str(pin))
+        if pin_cfg is None:
+            return _error(
+                "invalid_request",
+                f"Pin {pin} is not configured on '{module_id}'", 400)
+        mode = pin_cfg.get("mode")
+        if mode == "input":
+            return _error(
+                "pin_not_output",
+                f"Pin {pin} on '{module_id}' is configured as an input, not "
+                f"an output", 409)
+        if mode not in (None, "None", "none"):
+            return _error(
+                "pin_busy",
+                f"Pin {pin} on '{module_id}' is driven by a running '{mode}' "
+                f"generator -- set its mode to \"None\" for API-triggered "
+                f"pulses", 409)
+
+        web.facade.send_command(
+            module_id, "pulse_pin", {"pin": pin, "duration_ms": duration_ms})
+        return jsonify({
+            "module_id": module_id,
+            "pin": pin,
+            "duration_ms": duration_ms,
+            "dispatched": True,
+        }), 202
 
     # ------------------------------------------------------------------ #
     # system -- controller self-update (admin password only)

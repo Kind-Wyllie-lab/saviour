@@ -206,6 +206,55 @@ with `config_sync_status: "PENDING"` — poll `GET .../config` until `SYNCED`.
 
 A `readonly` API token gets `403` here (non-GET).
 
+### `POST /api/v1/modules/<id>/pulse` — TTL one-shot pulse
+
+Fires a single timestamped pulse on a **TTL module's** output pin — for
+marking a moment during an active recording (a closed-loop stimulus, a
+detected-behaviour marker) from the external experiment controller this API
+is for, as opposed to the bench-only `test_pin` reachable via the
+`/facade/send_command` escape hatch.
+
+```bash
+curl -X POST "$base_url/api/v1/modules/ttl_ab12/pulse" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"pin": 19, "duration_ms": 20}'
+```
+
+The pin must be configured as an output with **no automatic generator**
+(`ttl.pins.<pin>.mode: "None"` — a plain output pin, held inactive, added
+specifically so `pulse_pin`/`test_pin` can drive it without racing a running
+`experiment_clock`/`pseudorandom`/`interval_pulse` generator thread on the
+same GPIO line).
+
+- `404` unknown module id.
+- `400` `wrong_module_type` — the module isn't a `ttl` module.
+- `400` `invalid_request` — missing/non-integer `pin`, non-numeric
+  `duration_ms`, or a `pin` not present in the module's reported config.
+  `duration_ms` defaults to `20`, and is clamped to `2000` (2 s) rather than
+  rejected.
+- `409` `pin_not_output` — the pin is configured as `mode: "input"`.
+- `409` `pin_busy` — the pin is configured with a generator mode; switch it
+  to `"None"` first.
+
+**Response is `202`, not the pulse result:**
+
+```json
+{"module_id": "ttl_ab12", "pin": 19, "duration_ms": 20.0, "dispatched": true}
+```
+
+This dispatches the command and returns immediately — it does **not** wait
+for or report the actual onset/offset timestamps. There is no ZMQ
+command/ack correlation mechanism yet (every command is a fire-and-forget
+ROUTER/DEALER string, see `CLAUDE.md` "No correlation IDs on ZMQ commands"),
+so the only authoritative record of exactly when the pulse fired is the
+module's own TTL events CSV, written synchronously by the module process
+(`pulse_pin`'s `_write_ttl_event` calls happen before it acks the command) —
+rows carry a `[api]` suffix on `pin_description` so they're distinguishable
+from input edges and generator-driven pulses. Read it back after the
+session exports, or via a live `tail` over SSH if you need it sooner.
+
+A `readonly` API token gets `403` here (non-GET).
+
 ### `GET /api/v1/sessions` · `GET /api/v1/sessions/<name>`
 
 All recording sessions (`{name: {...}}`) or one, serialised from the

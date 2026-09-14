@@ -203,6 +203,47 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/modules/{module_id}/pulse:
+    post:
+      tags: [modules]
+      summary: Fire a one-shot pulse on a TTL module's output pin
+      description: >
+        For a TTL module only. The pin must be configured with mode "None"
+        (a plain output, no automatic generator) -- 409 if it's an input, or
+        driven by a running experiment_clock/pseudorandom/interval_pulse
+        generator. Dispatches the command and returns 202 immediately; this
+        does NOT wait for or return the actual onset/offset timestamps (no
+        ZMQ ack-correlation mechanism exists yet). The authoritative edge
+        times land in the module's TTL events CSV, tagged with a "[api]"
+        suffix on pin_description.
+      parameters:
+        - $ref: "#/components/parameters/ModuleId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: integer }
+                duration_ms:
+                  type: number
+                  default: 20
+                  description: Clamped to [0, 2000]
+              example: { pin: 19, duration_ms: 20 }
+      responses:
+        "202":
+          description: Dispatched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TtlPulseResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/system/update:
     get:
       tags: [system]
@@ -594,6 +635,14 @@ components:
           type: object
           description: Full merged config dispatched to the module
           additionalProperties: true
+
+    TtlPulseResult:
+      type: object
+      properties:
+        module_id: { type: string }
+        pin: { type: integer }
+        duration_ms: { type: number }
+        dispatched: { type: boolean }
 
     CreateSession:
       type: object

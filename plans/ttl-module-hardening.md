@@ -1,6 +1,7 @@
 # TTL module hardening: dead config/code, liveness signal, API-triggered pulse
 
-- **Status:** proposed
+- **Status:** in progress — items 1-4 implemented on `fix/ttl-module-hardening`
+  (not yet on-device tested); item 5 not started.
 - **Created:** 2026-09-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (new one-liner); also
@@ -34,10 +35,12 @@ read `pin_config.get("debounce_ms", 0)` in `assign_pins()` and pass
 **Note:** `plans/ttl-kernel-timestamping.md` Phase 1 also plans to plumb
 `debounce_ms` through, but as a kernel `debounce_period` on the libgpiod
 reader (different semantics — "stable for N" vs gpiozero's "ignore edges
-within N of the last edge", per that plan's Risks section). If this fix lands
-first on the gpiozero path, update that plan's Phase 1 config bullet to note
-the interim `bounce_time` behaviour it's replacing rather than introducing
-debounce from scratch.
+within N of the last edge", per that plan's Risks section). This fix landed
+first on the gpiozero path — Phase 1's config bullet there should be updated
+to note the interim `bounce_time` behaviour it's replacing.
+
+**✅ Done** (`ttl_module.py::assign_pins`). Tests:
+`test_ttl_module.py::TestAssignPinsDebounce`.
 
 ## 2. Dead code sweep
 
@@ -58,6 +61,8 @@ debounce from scratch.
 **Fix:** delete both blocks. Small diff, no behaviour change — verify with
 `ruff check src/modules/variants/ttl/` and `pytest
 src/modules/tests/test_ttl_module.py` (or wherever TTL tests live) after.
+
+**✅ Done.**
 
 ## 3. No liveness signal — generator threads can die silently
 
@@ -100,6 +105,11 @@ fail recording health (it's a preview-only concern) — a simple restart-on-
 death or just leaving it as a known gap is fine; call this out explicitly if
 skipped rather than silently doing nothing.
 
+**✅ Done** (`ttl_module.py::_check_recording_alive`, matches the sketch above
+save for returning `pins` as their real int keys, not a formatted string).
+`_sample_pins` liveness left as the noted known gap. Tests:
+`test_ttl_module.py::TestCheckRecordingAlive`.
+
 ## 4. Missing primitive: one-shot API-triggered pulse for closed-loop use
 
 `test_pin` (`ttl_module.py:195-332`) is a bench-test primitive — fixed
@@ -140,6 +150,51 @@ generator-mode-name) via a new column, or is packing it into
 schema every downstream tool reads — lean towards reusing
 `pin_description` unless a real analysis need says otherwise.
 
+**✅ Done, with two corrections found during implementation:**
+
+1. **The REST endpoint cannot return real onset/offset timestamps** — as
+   originally proposed above. `ControllerFacade.send_command()` is a
+   fire-and-forget ROUTER/DEALER string send with no return value and no
+   ack-correlation mechanism (`web.py`'s `config_sync_status` polling trick
+   works for `set_config` because the *module's regular status broadcast*
+   already reports full config state; there's no equivalent standing state
+   for "did my last pulse fire yet"). `POST /api/v1/modules/<id>/pulse`
+   dispatches and returns **`202`** with just `{module_id, pin, duration_ms,
+   dispatched: true}` — the authoritative onset/offset only ever exist in
+   the module's own TTL events CSV (written synchronously, before the
+   module's `cmd_ack`, by `pulse_pin` itself — see point 2). This is the
+   same class of gap as CLAUDE.md's "No correlation IDs on ZMQ commands";
+   fixing it generally is out of scope here.
+2. **A pin already driven by an automatic generator can't safely be used for
+   `pulse_pin`** — every output mode (`experiment_clock`/`pseudorandom`/
+   `interval_pulse`) starts its generator thread unconditionally at
+   recording start (`_start_pin_generators`), so an API pulse on that pin
+   would race the generator's own thread on the same GPIO line. Fixed by
+   also implementing the schema's already-declared-but-unhandled `"None"`
+   mode in `assign_pins()`: a plain output pin, held inactive, added to
+   `output_pins`/`pin_configs` but to none of the generator-pin lists — the
+   pin you configure specifically for API-triggered pulses.
+   `pulse_pin`/the REST route both refuse (409) a pin whose mode isn't
+   `"None"`, checked on both sides: REST does a static check against the
+   module's reported config (fast rejection, no round trip), the module
+   re-checks its live `generator_threads` at pulse time (race-proof against
+   stale/PENDING config).
+
+`pulse_pin`'s own thread-blocking model: it blocks the calling
+command-dispatch thread for `duration_ms` (capped at `_MAX_PULSE_MS = 2000`)
+so it can compute real onset/offset timestamps itself and log them via
+`_write_ttl_event(..., source="api")` (renders as a `[api]` suffix on
+`pin_description`) — deliberately not backgrounded, since backgrounding would
+reintroduce the same "how does the caller learn the real timestamp" problem
+point 1 describes, just one layer further out.
+
+Implementation: `ttl_module.py::pulse_pin`, `assign_pins`' new `"None"`-mode
+branch, `_write_ttl_event`'s `source` param;
+`rest_api.py::pulse_ttl_pin`. Docs: `docs/REST_API.md` §"POST
+/api/v1/modules/<id>/pulse", `docs/openapi.yaml`. Tests:
+`test_ttl_module.py::TestPulsePin`/`TestAssignPinsManualOutputMode`/
+`TestWriteTtlEvent`, `test_rest_api.py::TestTtlPulse`.
+
 ## 5. Smaller: no live pulse-count/rate surfaced
 
 The monitor stream (`_render_monitor_frame`) shows a scrolling waveform per
@@ -153,18 +208,29 @@ label per row. Nice-to-have, not blocking; do only if 1-4 land cleanly.
 
 - `debounce_ms` fix: bench test with a bouncy input source, confirm the
   configured value changes callback count; `bounce_time=0` behaviour
-  unchanged when `debounce_ms` is absent/0 (default preserved).
-- Dead code removal: `ruff check` clean, existing TTL tests green, no grep
-  hits for the removed symbols outside the diff.
+  unchanged when `debounce_ms` is absent/0 (default preserved). **Unit-level
+  only so far** (`TestAssignPinsDebounce` asserts the `gpiozero.Button` call
+  args) — no bench hardware test done yet.
+- Dead code removal: `ruff check` clean ✅, existing + new TTL tests green ✅,
+  no grep hits for the removed symbols outside the diff ✅.
 - Liveness: kill a generator thread's underlying pin object mid-recording
   (or monkeypatch to raise), confirm `_check_recording_alive()` flips to
   `False` and the controller-side `recording_health_warning` fires within one
-  10 s poll cycle.
-- Pulse API: `POST .../pulse` on a configured output pin during an active
-  recording produces exactly one onset/offset pair in the events CSV at the
-  requested duration (±scheduling jitter, not the sub-µs target of the
-  kernel-timestamping plan); 409 on a non-output or unconfigured pin; 404 on
-  a non-TTL module id.
+  10 s poll cycle. **Unit-level only so far** (`TestCheckRecordingAlive`
+  drives the method directly with a dead-thread double) — not exercised
+  through a real recording session or the controller's poll loop.
+- Pulse API: `POST .../pulse` on a `mode: "None"` output pin during an
+  active recording produces exactly one onset/offset pair in the events CSV
+  (tagged `[api]`) at the requested duration (±scheduling jitter, not the
+  sub-µs target of the kernel-timestamping plan); 409 on an input/generator-
+  driven pin or an unconfigured pin; 404 on a non-TTL module id. **Unit-level
+  only so far** (module-side `TestPulsePin`, REST-side `TestTtlPulse`) — the
+  REST→ZMQ→module round trip and the CSV's actual on-disk content are not
+  yet exercised end to end.
+- **Still needed before closing this plan out:** an on-device pass — real
+  GPIO hardware for the debounce/liveness/pulse-pin behaviour, and a live
+  `POST /api/v1/modules/<id>/pulse` against a running controller + TTL
+  module to confirm the ZMQ round trip and CSV row actually land.
 
 ## Not doing
 

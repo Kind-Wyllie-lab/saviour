@@ -192,6 +192,16 @@ if [ "$ec" -ge 4 ]; then
   echo "  Re-capture from the source card; do not trust this image."
   exit 1
 fi
+# exit 1/2 means e2fsck found AND fixed errors -- below the >=4 threshold
+# that aborts the run. This checks the freshly-dd'd .img file, i.e. whether
+# the raw copy from the source card came out clean -- a corrupted master
+# image poisons every clone made from it, so flag it loudly rather than
+# silently shrinking and shipping it.
+FSCK_DIRTY=0
+if [ "$ec" -ne 0 ]; then
+  FSCK_DIRTY=1
+  echo "WARNING: e2fsck found and auto-repaired filesystem errors on the captured image (exit $ec) -- see the Pass 1-5 output above for what was recovered into lost+found."
+fi
 sudo resize2fs -M "${LOOPDEV}p2"
 
 BLOCK_COUNT=$(sudo dumpe2fs -h "${LOOPDEV}p2" 2>/dev/null | grep -i '^Block count:' | awk '{print $3}')
@@ -232,4 +242,15 @@ echo
 echo "=== Done ==="
 echo "Master image: $OUT_IMG"
 ls -lh "$OUT_IMG"
+if [ "$FSCK_DIRTY" -ne 0 ]; then
+  echo ""
+  echo "=================================================================="
+  echo " WARNING: e2fsck found and auto-repaired filesystem corruption while"
+  echo " capturing this image (see above) -- the source card, reader, cable,"
+  echo " or USB port may be unreliable. This image is structurally valid now,"
+  echo " but some files may have been orphaned into lost+found rather than"
+  echo " recovered under their real names. Consider re-capturing from the"
+  echo " source card before cloning from this image."
+  echo "=================================================================="
+fi
 echo "Use with: sudo scripts/multiclone.sh $OUT_IMG <device1> [device2] ..."

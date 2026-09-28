@@ -306,6 +306,15 @@ fix_identity() {
     echo "ERROR: e2fsck found unrecoverable errors on /dev/${dev}2 (exit $ec)"
     return 1
   fi
+  if [ "$ec" -ne 0 ]; then
+    # exit 1/2 means e2fsck found AND fixed errors -- below the >=4 threshold
+    # that aborts the run, so without this the device sails through with no
+    # distinct signal. Each target independently re-reads /dev/$SRC, so if
+    # other targets from this same run came out clean, suspect this specific
+    # target's card, reader, cable or USB port rather than the source card.
+    echo "WARNING: e2fsck found and auto-repaired filesystem errors on /dev/${dev}2 (exit $ec) -- see the Pass 1-5 output above for what was recovered into lost+found."
+    touch "${LOGDIR}/${dev}.fsck_dirty"
+  fi
   sudo resize2fs "/dev/${dev}2"
 
   sudo mount "/dev/${dev}2" "$mnt"
@@ -377,10 +386,29 @@ for dev in "${DEVICES[@]}"; do
     echo "  WARNING: no SSH host keys on /dev/$dev -- sshd will refuse to start on boot!" >&2
     verify_fail=1
   fi
+  if [ -f "${LOGDIR}/${dev}.fsck_dirty" ]; then
+    echo "  WARNING: filesystem corruption was found and auto-repaired on this device" >&2
+    verify_fail=1
+  fi
 done
 
 if [ "$verify_fail" -ne 0 ]; then
-  echo "=== WARNING: one or more devices are missing SSH host keys -- fix before deploying ==="
+  echo "=== WARNING: one or more devices need attention -- see above -- before deploying ==="
+fi
+dirty_devices=()
+for dev in "${DEVICES[@]}"; do
+  [ -f "${LOGDIR}/${dev}.fsck_dirty" ] && dirty_devices+=("$dev")
+done
+if [ ${#dirty_devices[@]} -gt 0 ]; then
+  echo ""
+  echo "=================================================================="
+  echo " e2fsck found and auto-repaired filesystem corruption on: ${dirty_devices[*]}"
+  echo " Other targets read independently from /dev/$SRC in this same run were"
+  echo " clean, so the source card is presumably fine -- this points at that"
+  echo " specific target card, reader, cable, or USB port. Do not deploy"
+  echo " ${dirty_devices[*]} without re-flashing (ideally on a different port)"
+  echo " and re-checking."
+  echo "=================================================================="
 fi
 echo "=== Done. Boot-test at least one card before deploying the rest. ==="
 echo "=== On first boot, run 'sudo saviour-config' on each -- it auto-detects the clone ==="

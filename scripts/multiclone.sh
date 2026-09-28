@@ -176,6 +176,13 @@ for d in "${DEVICES[@]}"; do
   pids+=("$!")
 done
 
+# Each dd's progress goes to its own log file (see above), so without this
+# nothing shows on screen for the whole write. Poll and redraw a status
+# line per device until every job finishes.
+source "$(dirname "$(readlink -f "$0")")/lib/dd_progress.sh"
+live_progress_dashboard "$LOGDIR" "${DEVICES[@]}" &
+MONITOR_PID=$!
+
 fail=0
 for i in "${!pids[@]}"; do
   if ! wait "${pids[$i]}"; then
@@ -183,6 +190,9 @@ for i in "${!pids[@]}"; do
     fail=1
   fi
 done
+kill "$MONITOR_PID" 2>/dev/null || true
+wait "$MONITOR_PID" 2>/dev/null || true
+echo
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

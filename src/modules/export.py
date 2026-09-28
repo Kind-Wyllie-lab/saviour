@@ -326,9 +326,19 @@ class Export:
 
             self.logger.info(f"Successfully exported {exported_count} file(s) across {len(session_file_map)} session(s)")
 
-            # Ensure triggered session always has an entry (handles empty to_export case)
+            # The caller (`_run_export`) checks session_results[triggered_session].
+            # The loop keys results by _extract_session_from_filename(), which
+            # can legitimately differ from triggered_session -- or be the full
+            # export_path when extraction fails (it always does for the
+            # microphone: filenames say "audiomoth_<id>", module_id says
+            # "microphone_<id>"). Fill the triggered key from the REAL outcome,
+            # never an unconditional True: that masked a total mount failure
+            # (umount: target is busy under load) as a clean export and let the
+            # controller mark the session done, 2026-09-07.
             if triggered_session and triggered_session not in session_results:
-                session_results[triggered_session] = True
+                session_results[triggered_session] = (
+                    exported_count == len(all_files)
+                )
 
             return session_results
 
@@ -345,7 +355,9 @@ class Export:
     def _delete_local_files(self, files: list) -> None:
         deleted_count = 0
         if len(files) == 0:
-            self.logger.error("No files provided to delete")
+            # Normal no-op: nothing exported this pass (e.g. share was
+            # unreachable), so there is nothing to clean up locally.
+            self.logger.debug("No exported files to delete this pass")
             return
         for filename in files:
             try:
@@ -657,23 +669,60 @@ class Export:
     _MOUNT_RETRY_DELAY_S = 2.0
     _MOUNT_TIMEOUT_S = 30
 
+    def _mount_is_usable(self) -> bool:
+        """True only if the mount point is mounted AND a file can be created
+        and removed under it -- i.e. the share is really reachable and
+        writable, not a stale handle to a gone server."""
+        if not os.path.ismount(self.mount_point):
+            return False
+        probe = os.path.join(self.mount_point, f".export_probe_{os.getpid()}")
+        try:
+            with open(probe, "w") as f:
+                f.write("ok")
+            os.remove(probe)
+            return True
+        except OSError as e:
+            self.logger.warning(
+                f"Existing mount at {self.mount_point} is not usable: {e}")
+            return False
+
     def _mount_share(self) -> bool:
-        """Mount Samba share, retrying up to _MOUNT_MAX_ATTEMPTS times with a
-        per-attempt timeout so a unreachable NAS never hangs the export thread."""
+        """Ensure the Samba share is mounted and writable at self.mount_point.
+
+        A healthy existing mount is reused as-is -- unconditionally tearing it
+        down first turned a transient `umount: target is busy` into a total
+        export failure (found live 2026-09-07 under stress-ng load, with the
+        share perfectly reachable the whole time). Only a dead/stale mount is
+        replaced, and a failed umount there is non-fatal.
+        """
         try:
             self._update_samba_settings()
+
+            if self._mount_is_usable():
+                self.logger.info(f"Reusing existing mount at {self.mount_point}")
+                return True
+
             self.logger.info(
                 f"Attempting to mount share: //{self.samba_share_ip}/{self.samba_share_path} "
                 f"as user {self.samba_share_username}"
             )
 
             if os.path.ismount(self.mount_point):
-                self.logger.info(f"Unmounting existing mount at {self.mount_point}")
-                subprocess.run(
-                    ['sudo', 'umount', self.mount_point],
-                    check=True,
-                    timeout=self._MOUNT_TIMEOUT_S,
-                )
+                self.logger.info(
+                    f"Existing mount at {self.mount_point} is stale; replacing it")
+                for umount_cmd in (['sudo', 'umount', self.mount_point],
+                                   ['sudo', 'umount', '-l', self.mount_point]):
+                    try:
+                        r = subprocess.run(
+                            umount_cmd, capture_output=True, text=True,
+                            timeout=self._MOUNT_TIMEOUT_S,
+                        )
+                        if r.returncode == 0:
+                            break
+                        self.logger.warning(
+                            f"{' '.join(umount_cmd)} failed: {r.stderr.strip()}")
+                    except subprocess.TimeoutExpired:
+                        self.logger.warning(f"{' '.join(umount_cmd)} timed out")
 
             auth_opts = (
                 f'username={self.samba_share_username},password={self.samba_share_password}'
@@ -708,6 +757,12 @@ class Export:
                 if attempt < self._MOUNT_MAX_ATTEMPTS:
                     time.sleep(self._MOUNT_RETRY_DELAY_S)
 
+            # A fresh mount failed -- but if the (stale-looking) existing mount
+            # actually works now, use it rather than failing the export.
+            if self._mount_is_usable():
+                self.logger.warning(
+                    "Fresh mount failed but the existing mount is usable; proceeding")
+                return True
             self.logger.error(
                 f"Failed to mount //{self.samba_share_ip}/{self.samba_share_path} "
                 f"after {self._MOUNT_MAX_ATTEMPTS} attempts"
@@ -716,6 +771,13 @@ class Export:
 
         except Exception as e:
             self.logger.warning(f"Error mounting share: {e}")
+            try:
+                if self._mount_is_usable():
+                    self.logger.warning(
+                        "Mount raised, but the existing mount is usable; proceeding")
+                    return True
+            except Exception:
+                pass
             return False
 
 

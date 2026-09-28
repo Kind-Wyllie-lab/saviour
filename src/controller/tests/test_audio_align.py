@@ -311,6 +311,40 @@ def test_fit_ignores_trailer_and_header_lines(tmp_path):
     assert fit.n_blocks == 50
 
 
+def test_fit_auto_detects_non_default_block_size(tmp_path):
+    """A recording made at microphone.block_size = 8192 must be read at
+    8192, not the 131072 default -- otherwise measured_rate_hz is 16x off
+    and the aligned audio plays 16x too fast (the post-process page bug,
+    2026-09-07). No --frame-num passed."""
+    sidecar = tmp_path / "mic_timestamps.txt"
+    n_blocks = 400
+    true_rate = 191_950.0
+    sample0 = 1_700_000_000.0
+    _write_sidecar(sidecar, sample0, true_rate, n_blocks,
+                   frame_num=8192, jitter_s=0.001)
+
+    with patch(
+        "src.controller.audio_align._probe_audio",
+        return_value=(n_blocks * 8192, NOMINAL_RATE),
+    ):
+        fit = parse_mic_sidecar(str(sidecar), "unused.flac")
+
+    assert fit.frame_num == 8192
+    assert fit.measured_rate_hz == pytest.approx(true_rate, rel=1e-4)
+
+
+def test_fit_explicit_frame_num_overrides_sidecar(tmp_path):
+    sidecar = tmp_path / "mic_timestamps.txt"
+    _write_sidecar(sidecar, 1_700_000_000.0, NOMINAL_RATE, n_blocks=50,
+                   frame_num=8192)
+    with patch(
+        "src.controller.audio_align._probe_audio",
+        return_value=(50 * 8192, NOMINAL_RATE),
+    ):
+        fit = parse_mic_sidecar(str(sidecar), "unused.flac", frame_num=65536)
+    assert fit.frame_num == 65536
+
+
 def test_fit_warns_on_probe_sample_mismatch(tmp_path, caplog):
     """A decoded sample count far from n_blocks * frame_num means a
     truncated recording or the wrong --frame-num -- warn, don't fail."""

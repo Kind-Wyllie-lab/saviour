@@ -107,6 +107,13 @@ function JobRow({ job, onCancel, onDownload }) {
       {job.state === "error" && (
         <div className="compose-job__error">{job.error}</div>
       )}
+      {Array.isArray(job.warnings) && job.warnings.length > 0 && (
+        <ul className="compose-job__warnings">
+          {job.warnings.map((w, i) => (
+            <li key={i} className="compose-job__warning">⚠ {w}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

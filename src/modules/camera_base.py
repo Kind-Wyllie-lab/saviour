@@ -19,6 +19,7 @@ Author: Andrew SG
 import collections
 import csv
 import datetime
+import json
 import os
 import subprocess
 import sys
@@ -175,6 +176,17 @@ class CameraBase(Module):
         # delivering frames at all" for every camera variant.
         self._last_frame_wall_time = None
 
+        # Rolling capture-cadence window: (monotonic_s, delta_ms, dropped_before)
+        # appended every frame with a numeric inter-frame delta by
+        # _frame_precallback (streaming OR recording), pruned to the last
+        # recording._cadence_window_secs. _capture_cadence_status() turns it
+        # into a rate-CV / estimated-drop-fraction / measured-fps reading,
+        # consumed by the _check_capture_cadence health check (advisory) and
+        # by _check_recording_alive (so sustained drops raise the same
+        # recording-health warning as total silence). One append + a short
+        # popleft loop per frame.
+        self._cadence_window = collections.deque()
+
         # Configure camera -- skipped entirely if no sensor was found above.
         # A configure-time failure (sensor present but unhappy, e.g. a bad
         # ribbon cable) is folded into the same hardware_fault/picam2=None
@@ -234,6 +246,9 @@ class CameraBase(Module):
         self._encoder_active = False
         self._encoder_start_ns = 0
         self._encoder_stop_ns = 0
+        # Start of the *current* segment's encoder window (advanced on each
+        # segment rotation), for the per-segment _recording.json.
+        self._segment_encoder_start_ns = 0
 
         # Periodic "still capturing" throughput line while recording — makes a
         # silently-wedged pipeline visible after the fact in the journal
@@ -269,6 +284,24 @@ class CameraBase(Module):
         if not self.picam2:
             return False, self.hardware_fault or "No camera hardware detected"
         return True, f"{self.sensor_model or 'camera'} present"
+
+    @check()
+    def _check_capture_cadence(self) -> tuple:
+        """Advisory: capture-rate stability + estimated drop rate over the
+        last ~recording._cadence_window_secs (streaming or recording). Never
+        blocks readiness -- a bad reading predicts that this camera will
+        drop frames in a recording, usually from CPU/NPU contention
+        (hailo inference, high preview fps, a loaded Pi). It bites the
+        libcamera sync *client* worst. Cross-check with framesync_report.json
+        / tools/analyse_framesync.py before trusting a multi-camera session."""
+        if not self.picam2:
+            return True, "no camera"
+        level, detail, _ = self._capture_cadence_status()
+        if level == "insufficient":
+            return True, "capture cadence: warming up"
+        if level == "warn":
+            return True, detail
+        return True, f"capture cadence ok ({detail})"
 
 
     @command()
@@ -505,6 +538,9 @@ class CameraBase(Module):
             # below rather than through a full _configure_camera() restart — other
             # code (dropped-frame CSV math, subclass tracking-rate decimation) reads
             # self.fps and would otherwise see a stale value from the last restart.
+            if fps != self.fps and hasattr(self, "_cadence_window"):
+                # mixed old/new inter-frame deltas would spike the cadence CV
+                self._cadence_window.clear()
             self.fps = fps
             if self.config.get("camera.manual_exposure", False):
                 exposure_time = self.config.get("camera.exposure_time", 10000)
@@ -809,6 +845,69 @@ class CameraBase(Module):
                 self.facade.stage_file_for_export(self._current_csv_path)
                 self._current_csv_path = None
 
+    def _probe_encoded_frames(self, video_path: str) -> int | None:
+        """Frames actually in the container, via ffprobe packet count.
+        None if ffprobe is unavailable or the file isn't ready."""
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-count_packets", "-show_entries", "stream=nb_read_packets",
+                 "-of", "csv=p=0", video_path],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            for line in out.stdout.splitlines():
+                if line.strip().isdigit():
+                    return int(line.strip())
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return None
+
+    def _write_recording_json(
+        self, video_path: str, encoder_started_ns: int, encoder_stopped_ns: int,
+        csv_rows_written: int, dropped_before_total: int,
+    ) -> None:
+        """A per-segment provenance sidecar written *before* any post-stop
+        `.ts` remux, so `csv_rows_written` is the authoritative frame count a
+        downstream aligner can trust regardless of what
+        `_fix_positioning_timestamps` does to the container. See
+        plans/multicam-frame-alignment-and-sync-provenance.md (A3)."""
+        try:
+            stem = os.path.splitext(video_path)[0]
+            path = f"{stem}_recording.json"
+            window_s = max(0.0, (encoder_stopped_ns - encoder_started_ns) / 1e9)
+            encoded = self._probe_encoded_frames(video_path)
+            payload = {
+                "video_file": os.path.basename(video_path),
+                "encoder_started_ns": int(encoder_started_ns),
+                "encoder_stopped_ns": int(encoder_stopped_ns),
+                "encoder_window_s": round(window_s, 6),
+                "csv_rows_written": int(csv_rows_written),
+                # Frames actually in the container (ffprobe packet count).
+                # < csv_rows_written => the encoder dropped handed frames
+                # (backpressure on a loaded sync-client camera); that gap is
+                # what breaks video_compose's frame[i]==row[i] assumption.
+                "encoded_frames": encoded,
+                "deficit_vs_csv": (csv_rows_written - encoded
+                                   if encoded is not None else None),
+                "fps_target": self.fps,
+                "sync_mode": self.config.get("camera.sync_mode", "none"),
+                "dropped_before_total": int(dropped_before_total),
+                # Whether _stop_recording's ffmpeg -c copy -reset_timestamps
+                # remux of every .ts (_fix_positioning_timestamps) is applied.
+                "positioning_timestamps_remuxed": self.config.get(
+                    "recording.fix_positioning_timestamps", True),
+            }
+            with open(path, "w") as f:
+                json.dump(payload, f, indent=2)
+            self.facade.add_session_file(path)
+            self.facade.stage_file_for_export(path)
+            self.logger.info(
+                f"Wrote {os.path.basename(path)}: {csv_rows_written} rows, "
+                f"encoder window {window_s:.3f}s")
+        except Exception as e:
+            self.logger.warning(f"Could not write recording.json for "
+                                f"{os.path.basename(video_path)}: {e}")
+
     def _pre_create_first_segment(self, start_at: float) -> None:
         """Pre-create the video file and CSV before sleeping so that only
         start_encoder() needs to run at the scheduled start moment.
@@ -872,6 +971,7 @@ class CameraBase(Module):
         # which would discard any accumulated phase convergence.
         self.picam2.start_encoder(self.main_encoder, name="main")
         self._encoder_start_ns = time.time_ns()
+        self._segment_encoder_start_ns = self._encoder_start_ns
         self._encoder_active = True
         self.recording_start_time = time.time()
         return True
@@ -898,6 +998,14 @@ class CameraBase(Module):
             closing_bytes = os.path.getsize(closing) if closing else 0
         except OSError:
             closing_bytes = -1
+
+        split_ns = time.time_ns()
+        if closing:
+            self._write_recording_json(
+                closing, self._segment_encoder_start_ns, split_ns,
+                closing_frames, closing_dropped,
+            )
+        self._segment_encoder_start_ns = split_ns
 
         self._close_timestamp_csv()
 
@@ -951,6 +1059,18 @@ class CameraBase(Module):
 
             self._stop_recording_video()  # flips _encoder_active off first
             final_segment_rows = self._frame_id  # frozen once the encoder is idle
+            final_segment_dropped = self._segment_dropped
+
+            # Provenance sidecar for the final segment — written *before* the
+            # `.ts` remux below so csv_rows_written is the pre-remux truth.
+            if self.current_video_segment:
+                self._write_recording_json(
+                    self.current_video_segment,
+                    self._segment_encoder_start_ns or self._encoder_start_ns,
+                    self._encoder_stop_ns, final_segment_rows,
+                    final_segment_dropped,
+                )
+
             self._close_timestamp_csv()
 
             # Reconciliation line: the encoder-active window vs the CSV rows
@@ -966,10 +1086,22 @@ class CameraBase(Module):
                     f"final segment wrote {final_segment_rows} CSV rows"
                 )
 
-            for file in self.session_files:
-                if file.endswith(".ts"):
-                    self.logger.info(f"Fixing positioning timestamps for {file}")
-                    self._fix_positioning_timestamps(file)
+            # The `.ts` remux resets mpegts positioning PTS but is a suspect
+            # for dropping edge frames on a sync-client stream (frame count
+            # then disagrees with the CSV -- see
+            # plans/multicam-frame-alignment-and-sync-provenance.md). Toggle
+            # off to measure with/without (A4), or if a consumer is found to
+            # need it it can be made lossless instead.
+            if self.config.get("recording.fix_positioning_timestamps", True):
+                for file in self.session_files:
+                    if file.endswith(".ts"):
+                        self.logger.info(
+                            f"Fixing positioning timestamps for {file}")
+                        self._fix_positioning_timestamps(file)
+            else:
+                self.logger.info(
+                    "recording.fix_positioning_timestamps=false — "
+                    "skipping the .ts remux")
 
             self.facade.stage_file_for_export(self.current_video_segment)
             return True
@@ -985,14 +1117,86 @@ class CameraBase(Module):
         per-frame dropped_before count in the CSV sidecar (occasional missed
         frames): this catches the pipeline stalling or the encoder dying
         outright, which dropped_before can't, since it's only ever computed
-        from frames that did arrive."""
+        from frames that did arrive.
+
+        Also fails on a *sustained* elevated drop rate / jittery cadence
+        while frames are still flowing -- the silence check alone would pass
+        a camera running at half its target fps or shedding 5% of frames to
+        CPU/NPU contention. Feeds the same 2-strike _monitor_recording_health
+        -> recording_health_warning path, so the operator alert is raised
+        with a specific reason. Segment-rotation gaps are absorbed by that
+        strike count plus the rolling window."""
         if self._last_frame_wall_time is None:
             return True, None
         silence_secs = time.time() - self._last_frame_wall_time
         max_silence_secs = self.config.get("recording._health_check_camera_silence_secs", 5.0)
         if silence_secs > max_silence_secs:
             return False, f"no frames processed in {silence_secs:.1f}s"
+        level, detail, _ = self._capture_cadence_status()
+        if level == "warn":
+            return False, detail
         return True, None
+
+    def _record_cadence_sample(self, delta_ms, dropped_before) -> None:
+        """Append one inter-frame sample and prune the window. Called from
+        _frame_precallback for every frame that has a numeric delta_ms."""
+        now = time.monotonic()
+        w = self._cadence_window
+        w.append((now, float(delta_ms), int(dropped_before or 0)))
+        window_s = self.config.get("recording._cadence_window_secs", 10.0)
+        cutoff = now - window_s
+        while w and w[0][0] < cutoff:
+            w.popleft()
+
+    def _capture_cadence_status(self) -> tuple[str, str | None, dict]:
+        """Summarise the rolling capture-cadence window.
+
+        Returns (level, detail, stats) where level is:
+          "insufficient" - not enough samples yet (just started / very low fps)
+          "ok"           - rate stable, drop fraction low
+          "warn"         - measured fps well below target, OR estimated drop
+                           fraction / inter-frame CV over threshold
+        stats carries the raw numbers for logging / the health payload."""
+        w = list(self._cadence_window)
+        min_n = int(self.config.get("recording._cadence_min_samples", 30))
+        if len(w) < min_n:
+            return "insufficient", None, {}
+        deltas = [d for _, d, _ in w]
+        dropped = sum(dr for _, _, dr in w)
+        n = len(w)
+        mean = sum(deltas) / n
+        if mean <= 0:
+            return "insufficient", None, {}
+        var = sum((x - mean) ** 2 for x in deltas) / n
+        rate_cv = (var ** 0.5) / mean
+        dropped_frac = dropped / (n + dropped)
+        span_s = w[-1][0] - w[0][0]
+        measured_fps = n / span_s if span_s > 0 else 0.0
+        stats = {
+            "rate_cv": round(rate_cv, 4),
+            "dropped_frac": round(dropped_frac, 5),
+            "measured_fps": round(measured_fps, 1),
+            "target_fps": self.fps,
+            "window_s": round(span_s, 1),
+            "samples": n,
+        }
+        cv_warn = self.config.get("recording._cadence_rate_cv_warn", 0.08)
+        drop_warn = self.config.get("recording._cadence_dropped_frac_warn", 0.005)
+        fps_floor = self.config.get("recording._cadence_fps_floor_frac", 0.8)
+        problems = []
+        if self.fps and measured_fps < fps_floor * self.fps:
+            problems.append(f"{measured_fps:.1f} fps vs target {self.fps}")
+        if dropped_frac > drop_warn:
+            problems.append(f"{dropped_frac * 100:.1f}% frames dropped")
+        if rate_cv > cv_warn:
+            problems.append(f"gap CV {rate_cv:.3f}")
+        if problems:
+            return "warn", (
+                "unstable capture (" + ", ".join(problems)
+                + f", {span_s:.0f}s) -- CPU/NPU load? "
+                "(hailo infer_every_n / preview inference, sync client)"
+            ), stats
+        return "ok", f"{measured_fps:.1f} fps, gap CV {rate_cv:.3f}", stats
 
 
     """Timestamping frames"""
@@ -1137,6 +1341,7 @@ class CameraBase(Module):
                 expected_ms    = 1000.0 / self.fps
                 dropped_before = max(0, round(delta_ms / expected_ms) - 1)
                 self._segment_dropped += dropped_before
+                self._record_cadence_sample(delta_ms, dropped_before)
             else:
                 delta_ms = dropped_before = ""
             self._csv_prev_ns = timestamp

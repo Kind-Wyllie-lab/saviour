@@ -4,8 +4,13 @@ SAVIOUR System - Hailo AI Camera Module
 
 Built on CameraBase (src/modules/camera_base.py): normal segmented recording +
 MJPEG stream + timestamp-CSV sidecar, unchanged. This variant adds a live
-inference overlay on the MJPEG preview only — it runs a stock pre-compiled HEF
-from the Hailo model zoo over each streamed frame and draws the detections.
+inference overlay on the MJPEG preview only — a stock pre-compiled HEF from the
+Hailo model zoo. Inference runs on its OWN thread (_inference_worker), NOT the
+libcamera capture callback: that thread also feeds the H264 encoder, and a
+synchronous detect() there stalls capture + the encoder — the sync-client
+frame-drop bug (docs/hailo-inference-sweep-2026-09-08.md,
+plans/hailo-inference-threading.md). The capture thread hands the worker every
+Nth frame (drop-oldest) and draws the result the worker last published.
 
 Deliberately generic and demo-oriented:
   - No training, no DFC conversion. Models come from `download_hefs.sh`
@@ -13,14 +18,35 @@ Deliberately generic and demo-oriented:
   - `hailo.model` picks one; the "AI" tab in the camera config card is a
     dropdown over the curated list, grouped by category.
   - No Hailo device / missing HEF → runs as a plain camera (overlay shows why).
-  - Recording is untouched: the overlay is on the lores/preview stream, the
-    recorded "main" stream never sees it. A synchronized detection sidecar is
-    a deliberate later step (see CLAUDE.md).
+  - Recording is untouched *pixel-wise*: the overlay is on the lores/preview
+    stream, the recorded "main" stream never sees it. A synchronized detection
+    sidecar is a deliberate later step (see CLAUDE.md).
+
+Inference load CAN cost recorded frames, indirectly.
+  The inference + draw work runs on the same Pi as the H264 encoder, and
+  under load the encoder drops handed frames (a CSV row is written, no
+  container frame) and the capture cadence gets jittery. This shows up as
+  the sync *client* camera lagging the sync server by a few frames in
+  Post-Process compose. Measured on the desk rig (`tools/framesync_sweep.py`,
+  30 fps, 60 s, sync client): `hailo.infer_every_n=1` (inference on EVERY
+  frame) → ~6 capture drops + 1 encoder drop, gap-CV 0.056; `infer_every_n≥2`
+  → indistinguishable from inference off (0 drops, gap-CV ~0.0002). The
+  sync *server* stays clean at every setting.
+  Mitigations, cheapest first: raise `hailo.infer_every_n` (2 is the file
+  default and already clean at 30 fps); set `hailo.infer_enabled=false` for a
+  recording where the live overlay isn't needed; or run the camera free-run
+  (`camera.sync_mode="none"`) so there is no phase-nudging for the encoder
+  jitter to compound with. ALWAYS check `framesync_report.json` (or
+  `tools/analyse_framesync.py`) after changing model / infer_every_n / fps /
+  sensor mode, before trusting a multi-camera session's alignment.
+  See plans/multicam-frame-alignment-and-sync-provenance.md item 3.
 
 Author: Andrew SG
 """
 
+import collections
 import os
+import queue
 import sys
 import threading
 import time
@@ -67,31 +93,59 @@ class HailoCameraModule(CameraBase):
         self._max_labels = 40
         self._infer_error_logged = False
         self._rebuilding = False
-        # Inference throttle: run the net every Nth streamed frame and redraw
-        # the cached result on the frames in between. The overlay is 1-2 frames
-        # stale, imperceptible for a demo, and it roughly doubles preview fps.
+        # Inference throttle: hand the net every Nth streamed frame (the
+        # worker below redraws the cached result on the frames in between).
         self._infer_every_n = 2
         self._infer_counter = 0
         self._last_results: list = []
         self._last_summary = ""
+
+        # Inference runs on its OWN thread, not the libcamera capture-callback
+        # thread that _process_lores_frame is called on — that thread also
+        # feeds the H264 encoder, and a synchronous detect() there stalls
+        # capture + the encoder (the sync-client frame-drop bug, quantified in
+        # docs/hailo-inference-sweep-2026-09-08.md; design in
+        # plans/hailo-inference-threading.md). The capture thread now only
+        # copies the frame into _infer_q (drop-oldest, maxsize 1) and draws
+        # the last published result; the worker does the detect().
+        self._infer_q: queue.Queue = queue.Queue(maxsize=1)
+        self._infer_stop = threading.Event()
+        self._infer_worker: threading.Thread | None = None
+        # detect() wall-time samples (ms). Feeds a ~30 s p50/p95/p99/max log
+        # line and the _check_hailo message -- the "how much headroom did the
+        # worker thread buy / would a faster HAT help" measurement
+        # (plans/hailo-inference-threading.md, "Amendments").
+        self._infer_ms: collections.deque = collections.deque(maxlen=600)
+        self._infer_ms_logged_at = 0.0
+
         # CameraBase.__init__ runs _configure_camera(), not
         # configure_module_special(), so build the detector explicitly here —
         # same pattern as habitat_camera's _configure_habitat_motion() call.
         # Synchronous on first construction (nothing is streaming yet); every
         # later rebuild goes through _rebuild_detector_async().
         self._build_detector()
+        self._start_inference_worker()
 
     # ── config ───────────────────────────────────────────────────────────────
+
+    def _infer_enabled(self) -> bool:
+        """`hailo.infer_enabled` (default true). When false the module skips
+        loading a HEF and runs the preview with no inference — used to
+        characterise how much the inference thread costs the H264 encoder
+        (see plans/multicam-frame-alignment-and-sync-provenance.md)."""
+        return bool(self.config.get("hailo.infer_enabled", True))
 
     def _configure_module_extra(self, updated_keys) -> None:
         hailo_keys = (None if updated_keys is None
                       else {k for k in updated_keys if k.startswith("hailo.")})
         if hailo_keys is not None and not hailo_keys:
             return
-        if hailo_keys is None or "hailo.model" in hailo_keys:
+        if (hailo_keys is None or "hailo.model" in hailo_keys
+                or "hailo.infer_enabled" in hailo_keys):
             # Loading a HEF onto the Hailo device takes a few seconds and the
             # 8L won't hold two VDevices at once, so do it off the config-set
             # handler thread and drop to a plain-camera preview while it swaps.
+            # Toggling infer_enabled goes the same route (load or tear down).
             self._rebuild_detector_async()
         else:
             # threshold / infer_every_n / max_labels / max_detections don't
@@ -113,11 +167,118 @@ class HailoCameraModule(CameraBase):
         threading.Thread(target=self._build_detector, args=(True,),
                          daemon=True, name="hailo-rebuild").start()
 
+    # ── inference worker thread ──────────────────────────────────────────────
+
+    def _start_inference_worker(self) -> None:
+        if self._infer_worker and self._infer_worker.is_alive():
+            return
+        self._infer_stop.clear()
+        self._infer_worker = threading.Thread(
+            target=self._inference_worker, daemon=True, name="hailo-infer")
+        self._infer_worker.start()
+
+    def _stop_inference_worker(self, timeout: float = 3.0) -> bool:
+        """Signal + join the worker. MUST return True before any
+        detector.close() (module stop) — closing HailoRT under an in-flight
+        run() is a hard SIGABRT. A live swap via _build_detector does NOT
+        need this: it closes the old device under _det_lock, which the worker
+        also holds around detect(), so the swap already waits for the current
+        frame. Returns False if the worker did not stop in `timeout` (caller
+        must then NOT close the detector)."""
+        self._infer_stop.set()
+        w = self._infer_worker
+        if w and w.is_alive():
+            w.join(timeout=timeout)
+            if w.is_alive():
+                self.logger.warning(
+                    "hailo inference worker did not stop in %.1fs — "
+                    "leaving the Hailo device open to avoid a close-mid-run abort",
+                    timeout)
+                return False
+        self._infer_worker = None
+        return True
+
+    def _inference_worker(self) -> None:
+        """Pull the freshest handed lores frame and run detect() on it, off
+        the capture thread. Publishes self._last_results for
+        _process_lores_frame to draw. _det_lock is held only around detect(),
+        so _build_detector's close() still serialises against it."""
+        self.logger.info("Hailo inference worker started")
+        while not self._infer_stop.is_set():
+            try:
+                frame = self._infer_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            with self._det_lock:
+                detector = self.detector
+                labels = self._labels
+                if detector is None:
+                    self._last_results = []
+                    continue
+                t0 = time.monotonic()
+                try:
+                    results = detector.detect(frame, labels)
+                except Exception as e:  # noqa: BLE001
+                    if not self._infer_error_logged:
+                        self.logger.error(f"Hailo inference failed: {e}")
+                        self._infer_error_logged = True
+                    self._last_results = []
+                    continue
+                self._infer_ms.append((time.monotonic() - t0) * 1000.0)
+            self._last_results = results
+            self._maybe_log_infer_timing()
+        self.logger.info("Hailo inference worker stopped")
+
+    def _infer_timing_stats(self) -> dict | None:
+        """p50/p95/p99/max of the last detect() calls (ms), or None if too
+        few samples yet."""
+        s = sorted(self._infer_ms)
+        if len(s) < 30:
+            return None
+        def pct(p):
+            return s[min(len(s) - 1, int(p / 100.0 * len(s)))]
+        return {"n": len(s), "p50": pct(50), "p95": pct(95),
+                "p99": pct(99), "max": s[-1]}
+
+    def _maybe_log_infer_timing(self, interval_s: float = 30.0) -> None:
+        now = time.monotonic()
+        if now - self._infer_ms_logged_at < interval_s:
+            return
+        st = self._infer_timing_stats()
+        if st is None:
+            return
+        self._infer_ms_logged_at = now
+        self.logger.info(
+            "hailo detect(): p50=%.1f p95=%.1f p99=%.1f max=%.1f ms  "
+            "(n=%d, model=%s, infer_every_n=%d)",
+            st["p50"], st["p95"], st["p99"], st["max"], st["n"],
+            self._model_key, self._infer_every_n)
+
     def _hef_path(self, spec: dict) -> str:
         return os.path.join(MODEL_DIR, spec["hef"])
 
     def _build_detector(self, swap: bool = False) -> None:
         with self._rebuild_lock:
+            if not self._infer_enabled():
+                # Tear down any live detector and run as a plain camera. The
+                # close() is under _det_lock for the same reason the swap path
+                # below is — no frame may be mid-run() on `old`.
+                with self._det_lock:
+                    old, self.detector = self.detector, None
+                    self._detector_error = "disabled (hailo.infer_enabled=false)"
+                    self._model_key = self.config.get("hailo.model", DEFAULT_MODEL)
+                    self._rebuilding = False
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+                self.logger.info(
+                    "Hailo inference disabled by config "
+                    "(hailo.infer_enabled=false) — recording as a plain camera"
+                )
+                return
+
             model_key = self.config.get("hailo.model", DEFAULT_MODEL)
             threshold = float(self.config.get("hailo.threshold", 0.4))
             self._max_labels = int(self.config.get("hailo.max_labels", 40))
@@ -198,33 +359,32 @@ class HailoCameraModule(CameraBase):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
-        # Hold _det_lock for the WHOLE inference call, not just the read —
-        # _build_detector()'s swap path closes the old device under this same
-        # lock, and closing it mid-run() aborts HailoRT hard (see that method).
-        # The rebuild thread waits one frame (~30-50 ms) for this to release.
-        with self._det_lock:
-            detector = self.detector
-            if detector is None:
-                self._last_results = []
-                if self._rebuilding:
-                    self._status_line(m, "AI: loading model…", (0, 191, 255))
-                else:
-                    self._status_line(m, f"AI off: {self._detector_error or 'no model'}", (0, 0, 255))
-                return
-            model_key, task, labels = self._model_key, self._task, self._labels
-            self._infer_counter += 1
-            run_now = (self._infer_counter % self._infer_every_n) == 0
-            if run_now:
-                try:
-                    self._last_results = detector.detect(m.array, labels)
-                except Exception as e:
-                    if not self._infer_error_logged:
-                        self.logger.error(f"Hailo inference failed: {e}")
-                        self._infer_error_logged = True
-                    self._last_results = []
-                    self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
-                    return
-            results = self._last_results
+        # Capture-thread side: NO detect() here (see _inference_worker). Hand
+        # every Nth frame to the worker (drop-oldest) and draw the result the
+        # worker last published. _det_lock is not taken on this path.
+        detector = self.detector          # atomic read; may flip during a swap
+        if detector is None:
+            self._last_results = []
+            if self._rebuilding:
+                self._status_line(m, "AI: loading model…", (0, 191, 255))
+            else:
+                self._status_line(
+                    m, f"AI off: {self._detector_error or 'no model'}", (0, 0, 255))
+            return
+
+        self._infer_counter += 1
+        if self._infer_counter % max(1, self._infer_every_n) == 0:
+            try:
+                self._infer_q.get_nowait()          # drop the stale frame
+            except queue.Empty:
+                pass
+            try:
+                self._infer_q.put_nowait(m.array.copy())
+            except queue.Full:
+                pass
+
+        model_key, task, labels = self._model_key, self._task, self._labels
+        results = self._last_results
 
         if task == "pose":
             summary = self._draw_poses(m.array, results)
@@ -302,9 +462,34 @@ class HailoCameraModule(CameraBase):
     def _check_hailo(self) -> tuple[bool, str]:
         # Never blocks readiness — the module records fine without inference.
         with self._det_lock:
-            if self.detector is not None:
-                return True, f"Hailo inference active ({self._model_key})"
-            return True, f"Hailo inference off ({self._detector_error or 'no model'}) — recording still works"
+            active = self.detector is not None
+            model = self._model_key
+            err = self._detector_error
+        if active:
+            st = self._infer_timing_stats()
+            timing = (f" — detect p50 {st['p50']:.0f}ms p99 {st['p99']:.0f}ms"
+                      if st else "")
+            return True, f"Hailo inference active ({model}){timing}"
+        if not self._infer_enabled():
+            return True, "Hailo inference disabled by config (plain camera)"
+        return True, f"Hailo inference off ({err or 'no model'}) — recording still works"
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def stop(self) -> bool:
+        """Tear the inference worker down BEFORE the detector so no frame is
+        mid-detect() when the Hailo device closes (that's a hard SIGABRT).
+        If the worker won't stop, skip the close — the process is exiting and
+        the OS reclaims the device anyway."""
+        if self._stop_inference_worker():
+            with self._det_lock:
+                det, self.detector = self.detector, None
+                if det is not None:
+                    try:
+                        det.close()
+                    except Exception:
+                        pass
+        return super().stop()
 
 
 def main():

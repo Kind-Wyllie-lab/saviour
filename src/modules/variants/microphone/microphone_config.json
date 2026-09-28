@@ -18,8 +18,9 @@
     },
     "microphone": {
         "_sample_rate": 192000,
-        "frame_num": 131072,
-        "block_size": 131072,
+        "frame_num": 32768,
+        "block_size": 32768,
+        "_block_size_note": "Samples per recorder.record() call. 32768 (~171 ms @ 192 kHz) settled 2026-09-07: the first read over-primes PipeWire's ring buffer by ~block_size^1.36, so a smaller block cuts the fixed A/V-sync latency term (~597 ms at 131072 -> ~90 ms here). 32768 rode a stress-ng-hammered Pi with zero dropped blocks where 8192 got marginal. The residual is a fixed per-device constant (bench-calibrate + subtract in audio_align.parse_mic_sidecar); a dropped block is lost audio. See plans/audio-video-sync-residual-validation.md.",
         "_processing": {
             "_apply_filter": false,
             "_filter_type": "bandpass",

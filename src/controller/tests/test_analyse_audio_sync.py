@@ -163,7 +163,32 @@ def test_cmd_probes_reads_first_record_ratio(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "FIRST_RECORD_MS" in out
-    # 1275 / 682.7 ~= 1.87x -> the "~2x, need Phase A for the sign" branch.
-    assert "1.87x" in out
-    assert "Phase A" in out
     assert "STARTED - steady k=0" in out
+    # 1275 / 682.7 ~= 1.87x shows in the per-block-size summary row; one
+    # block size only -> the "run the sweep" reading.
+    assert "1.87x" in out
+    assert "single block size" in out
+
+
+def test_probe_reading_sweep_detects_super_linear_scaling(capsys):
+    """Excess growing super-linearly with block size -> the H1 verdict."""
+    rows = [
+        (8192, 1.14, -12.0, 50.0), (8192, 1.10, -10.0, 52.0),
+        (32768, 1.55, -100.0, 52.0), (32768, 1.57, -102.0, 62.0),
+        (131072, 1.87, -597.0, 52.0), (131072, 1.85, -590.0, 43.0),
+    ]
+    aas._print_probe_reading(rows)
+    out = capsys.readouterr().out
+    assert "block_size^1." in out          # slope ~1.3-1.4
+    assert "block_size IS the" in out
+    # per-block-size table rows
+    assert "8192" in out and "131072" in out
+
+
+def test_probe_reading_sweep_flat_excess_is_h2(capsys):
+    rows = [
+        (8192, 1.0, -40.0, 50.0), (32768, 1.0, -42.0, 52.0),
+        (131072, 1.0, -41.0, 51.0),
+    ]
+    aas._print_probe_reading(rows)
+    assert "red herring" in capsys.readouterr().out

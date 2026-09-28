@@ -147,6 +147,65 @@ The module registry (`{id: {...}}`), or one module. `404` for an unknown id.
 One module's health dict. `404` for an unknown id; `{}` if the module is
 known but has not reported health yet.
 
+### `GET /api/v1/modules/<id>/config` — read the config shape + sync state
+
+```json
+{
+  "module_id": "camera_a1b2",
+  "config_sync_status": "SYNCED",
+  "config_diffs": [],
+  "config":        {"camera": {"fps": 30, "sensor_mode_index": 0}, "recording": {...}},
+  "target_config": {"camera": {"fps": 30, "sensor_mode_index": 0}, "recording": {...}}
+}
+```
+
+`config` is the module's **last controller-confirmed** config (updated
+whenever the module reports back, including after every `set_config`) — the
+shape a `PATCH` body slots into. `config_sync_status` is `SYNCED` /
+`PENDING` / `FAILED` / `UNKNOWN`; `config_diffs` lists the mismatching keys
+when `FAILED`. `_`-prefixed internal keys are hidden unless
+`?include_private=true` (readable, never writable). `404` for an unknown id;
+`config` is `{}` if the module has not reported a config yet.
+
+### `PATCH /api/v1/modules/<id>/config` — partial config update
+
+Deep-merges the body onto the module's current config and pushes the merged
+result (the same full-config `set_config` the web UI sends). Nested objects
+merge key-by-key; scalars and lists replace wholesale. `_`-prefixed keys are
+dropped.
+
+```bash
+curl -X PATCH "$base_url/api/v1/modules/camera_a1b2/config?wait=8" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"camera": {"fps": 90, "sensor_mode_index": 1},
+       "recording": {"segment_duration_s": 600}}'
+```
+
+Applying is a round-trip to the module, so the default response is **`202`**
+with `config_sync_status: "PENDING"` — poll `GET .../config` until `SYNCED`.
+`?wait=<secs>` (capped at 30) blocks server-side for the ack and returns
+**`200`** once `SYNCED` (still `202` if it stays pending). Response body:
+
+```json
+{"module_id": "camera_a1b2", "config_sync_status": "PENDING",
+ "config_diffs": [], "applied": {"camera": {"fps": 90}},
+ "target_config": { ...full merged config sent to the module... }}
+```
+
+- `409` `module_recording` — the module is mid-recording. (Parity with the
+  Socket.IO save path. The `/facade/send_command` `set_config` escape hatch
+  does **not** enforce this; this route does.)
+- `409` `config_unavailable` — the module has not reported a config yet, so
+  there is nothing to merge onto. Retry shortly.
+- `400` `invalid_request` — empty body, or a non-object body.
+- Keys that change the capture pipeline (camera `sensor_mode_index`,
+  `width`/`height`, `bitrate_mb`, `sync_mode`, flips, `rotation`) trigger a
+  full stop/reconfigure/restart on the module — allow a few seconds and, for
+  PTP-affecting changes, minutes for `phc2sys` to reconverge before the
+  recording-start gate will pass.
+
+A `readonly` API token gets `403` here (non-GET).
+
 ### `GET /api/v1/sessions` · `GET /api/v1/sessions/<name>`
 
 All recording sessions (`{name: {...}}`) or one, serialised from the
@@ -283,6 +342,64 @@ exports without `force` — the latter carries `export_warning`,
 
 ---
 
+## Controller self-update
+
+### `GET /api/v1/system/update`
+
+Whether the controller can `git pull`:
+
+```json
+{"available": true, "branch": "staging", "remote": "git@github.com:org/saviour.git"}
+```
+
+`{"available": false, "reason": "..."}` when `/usr/local/src/saviour` isn't a
+git checkout, is on a detached HEAD, or has no `origin` remote (a device that
+only ever took ZIP updates). This is the precondition for the `POST`.
+
+### `POST /api/v1/system/update` — `git pull` + rebuild + restart
+
+Runs the same flow as the web UI's "Git Pull": `git fetch --prune origin
+<current branch>` → `git reset --hard origin/<branch>` → stage the tree as the
+module update package → optionally rebuild+restart the controller and/or tell
+every module to pull.
+
+**Requires the admin password** (not a scoped API token) — it deploys code
+fleet-wide. Only ever pulls the checkout's own already-configured
+origin/branch; there is no way to pass a URL or ref. The controller is
+snapshotted first (revertible from the web UI's update page).
+
+| body field | type | default | |
+|---|---|---|---|
+| `apply_controller` | bool | `true` | `pip install --no-index` + `npm run build` + `systemctl restart saviour.service` |
+| `deploy_modules` | bool | `false` | send `update_saviour` to every module first (each fetches `GET /update/package`, rsyncs, restarts) |
+
+```bash
+curl -X POST "$base_url/api/v1/system/update" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"apply_controller": true, "deploy_modules": true}'
+```
+
+Response:
+
+```json
+{"branch": "staging", "old_commit": "34a1ab8", "new_commit": "313a302",
+ "modules_notified": 4, "applying": true}
+```
+
+`202` when `apply_controller` is true (a restart is imminent — **the
+connection drops mid-response**; poll `GET /api/v1/state` `version` afterwards
+to confirm). `200` when it's false (staged only, no restart). `409`
+`update_unavailable` if there's no usable git checkout. `500` `git_failed`
+(message carries git's stderr) on a fetch/reset error — the pre-update
+snapshot still exists.
+
+The git reset is **hard** (not a merge) by design: a device that has ever
+taken a ZIP update has a working tree git never checked out, which a merge
+would spuriously conflict against. A hard reset always lands exactly on
+`origin/<branch>`.
+
+---
+
 ## API tokens
 
 Named bearer tokens as an alternative to embedding the web-UI admin password
@@ -364,7 +481,10 @@ abort the run if a module drops.
 ## Not yet in the API
 
 Arbitrary module commands (`/facade/send_command` still covers this),
-scheduled-session and Habitat-session *creation*, config reads/writes,
-module management (reboot/update), a per-session file manifest + bearer-minted
-download token, token `last_used` timestamps. Candidates for a later version;
-the blueprint is the place to add them.
+scheduled-session and Habitat-session *creation*, controller-config
+reads/writes, bulk config apply across a target (`apply_section_to_type`),
+per-module reboot/update and revert of a controller self-update, a
+per-session file manifest + bearer-minted download token, token `last_used`
+timestamps. Candidates for a later version; the blueprint is the place to add
+them. (Controller `git pull` self-update **is** now here — see *Controller
+self-update* above.)

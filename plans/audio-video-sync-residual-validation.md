@@ -280,6 +280,83 @@ buzzer needed, and it's a real deployment option regardless of the outcome.
   Pi). `analyse_audio_sync.py probes` reports the steady-state fit residual p95,
   which spikes when blocks are being dropped.
 
+### Phase B results — sweep run 2026-09-07 (bench, idle, ~10 s recordings, 3 trials × 2 AudioMoths per size)
+
+| `block_size` | block ms | `FIRST_RECORD_MS` ÷ expected | **first-read excess** (block-0 below steady line) | excess ÷ block | `RECORDER_ENTER_MS` |
+|---|---|---|---|---|---|
+| 8192   | 42.7  | 1.14× | **−11.9 ms** (±3) | 0.28 | ~49 ms |
+| 32768  | 170.7 | 1.55× | **−99.8 ms** (±4) | 0.58 | ~52 ms |
+| 131072 | 682.7 | 1.87× | **−596.7 ms** (±6) | 0.87 | ~52 ms |
+| 262144 | 1365  | 1.95× | **−1305 ms** (±4) | 0.96 | ~49 ms |
+
+**The first-read excess scales as `block_size^1.36`** (12 ms → 1305 ms over a 32× range).
+Super-linear, and the excess-per-block ratio climbs monotonically toward ~1 as the
+block grows. This is the **H1** signature: the first `record()` over-primes
+PipeWire's ring buffer, and the cost grows worse-than-linearly with the requested
+read size (buffer fill + copy/settle, not a fixed latency).
+
+**Consequences:**
+- **`block_size` is the knob.** At **8192** the anomaly is nearly gone — the
+  block-0 ambiguity term is **~12 ms** vs ~597 ms at the default, i.e. the
+  first-read contribution to any A/V offset (whatever its sign) is reduced ~50×
+  and is down at `RECORDER_ENTER_MS` scale.
+- **H2 is refuted** — a fixed source/USB latency would be flat across `block_size`.
+- `RECORDER_ENTER_MS` is flat (~50 ms) at every size, as expected (stream open is
+  independent of read size); the ~10 ms per-unit gap between the two AudioMoths
+  persists.
+- **No dropped blocks** at any size on the idle bench (`SEGMENT_TOTAL_SAMPLES ==
+  n_blocks × block_size` exactly; fit residual p95 ~1 ms at 8192). **Not yet
+  stress-tested** — the `stress-ng --cpu 4 --io 2` run is still required before
+  8192 could ship, and the recordings here were only ~10 s.
+- Still **does not give the sign** of the residual — Phase A (TTL buzzer) remains
+  the only thing that does. But it means the sign question now matters much less
+  if `block_size` drops: 12 ms of ambiguity vs 597 ms.
+
+### Stress run — 8192, `stress-ng --cpu 4 --io 2 --vm 2` on the mic Pi, ~65 s, monitor on (2026-09-07, session `8192_transient_monitoron_stress`)
+
+| Quantity | Idle 8192 | **Stressed 8192** |
+|---|---|---|
+| First-read excess (block-0 vs steady line) | ~12 ms | **0.3 / 15 ms** — still negligible |
+| `RECORDER_ENTER_MS` | ~50 ms | **157 / 234 ms** (3–5× slower; pre-recording, harmless) |
+| Steady-fit residual p95 | ~1 ms | **7.6 / 13.3 ms** (scheduler jitter on the per-block `time.time()`) |
+| Blocks with a `record()` stall >85 ms | 0 | **3–6 per mic** (worst single stall ~290 ms) |
+| `SEGMENT_TOTAL_SAMPLES == n_blocks × 8192` | exact | **exact** — no samples dropped |
+| Apparent measured rate | −6…+60 ppm | **−975 / −1088 ppm** — *fit degradation from the stalls, not a real clock shift* |
+| Clap A/V offset (16 claps, matched-motion) | mean +17 ms | **mean +9.3 ms, std 10 ms, no drift across 65 s** |
+
+**Verdict: 8192 survives a hammered Pi for recording + timing.** `soundcard.record(numframes=8192)` blocks until it genuinely has 8192 fresh samples, so a stalled read costs a late *timestamp*, not lost *audio* — `_robust_linfit` + the `STARTED` anchor drop the stalled blocks and the alignment still lands sub-frame (mean +9 ms, no drift, despite the −1000 ppm the raw slope reports). Alignment accuracy degrades from <1 ms (idle) to ~10 ms p95 (stressed) — still well inside a video frame.
+
+**But the stress run also surfaced a real export bug** (fixed, `fix/export-mount-reuse-and-false-success`): under `--io 2` the mic module's Samba export failed and reported **success in 0 s** having transferred zero files — `_mount_share()` tore down the working mount, `umount` hit `target is busy`, and `export_staged` fabricated a `True` for the triggered session. Data was recoverable (`to_export/` on the module). See CLAUDE.md "Correctness / data loss".
+
+**Open follow-ups:**
+- Same stress run at 32768 and 131072 for comparison (does the p95 residual scale, do stalls get worse).
+- The `sample_rate` sweep (hold `block_size`, vary rate) to confirm the excess is
+  fixed in *samples* not *milliseconds*.
+- `monitoring.enabled=false` × `block_size` — does removing the concurrent reader
+  change the exponent or just the constant?
+- Phase A (TTL buzzer) for the sign, ideally with a stress run too.
+
+### Shipped default: `block_size` = `frame_num` = **32768** (settled 2026-09-07)
+
+Changed in `microphone_config.json` (`microphone.frame_num` / `.block_size`,
+was 131072). Rationale: 8192 and 32768 gave the same clap alignment (~+15 ms,
+sub-frame) idle *and* under `stress-ng --cpu 4 --io 2 --vm 2`, but 8192 got
+marginal under load (3–6 `record()` stalls >85 ms per mic, `RECORDER_ENTER_MS`
+3–5×) while 32768 rode it with **zero** dropped/stalled blocks. The remaining
+~90 ms first-read term at 32768 is a *fixed, bench-calibratable constant*; an
+xrun is unrecoverable lost audio — so trade the correctable latency for the
+robustness. 8192 stays selectable (Recording tab) for anyone who wants the raw
+term minimal and accepts thinner margins.
+
+**Not retroactive.** Habitat audio already collected at 131072 stays at 131072
+(`audio_align` reads the block size per file from the sidecar). Those recordings
+are still alignable — the ~597 ms first-read excess is absorbed by the `STARTED`
+anchor + robust fit, leaving the ~50 ms residual measured on the 2026-09-04
+sessions (≈1.5 video frames at 30 fps). Fine for coarse USV↔behaviour
+attribution; the per-device calibration constant (Phase A) is what tightens it.
+`monitoring.enabled` was found not to matter for the first-read term (never
+tested paired, but the sweep points at intrinsic PipeWire priming).
+
 ## Phase C — targeted code probes (only if A/B point here)
 
 - **Drain-then-stamp variant:** issue one throwaway `recorder.record()` *before*

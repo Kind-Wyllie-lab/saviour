@@ -2,6 +2,12 @@
 # I have chosen not to ignore these at present as it will speed up cross-device development.
 Lib/
 Scripts/
+# On a case-insensitive filesystem (Windows/macOS default), the bare
+# "Scripts/" pattern above also matches our top-level scripts/ directory
+# (fleet provisioning tools) -- unignore it explicitly so new files there
+# aren't silently untracked.
+!/scripts/
+!/scripts/**
 Include/
 pyvenv.cfg
  .env

@@ -1,24 +1,117 @@
 #!/bin/bash
+# SAVIOUR Multi-Clone Script
+#
+# Usage: sudo scripts/multiclone.sh                                (interactive TUI)
+#        sudo scripts/multiclone.sh <image.img> <device1> [device2] ...   (scriptable)
+# Example: sudo scripts/multiclone.sh /mnt/export/saviour-image.img sda sdb sdc sdd
+
 set -euo pipefail
 
-IMAGE="$1"
-shift
-DEVICES=("$@")
+ROOT_DEV=$(findmnt -n -o SOURCE / | sed -E 's/p?[0-9]+$//')
+ROOT_DISK=$(basename "$(readlink -f "$ROOT_DEV")")
 
-if [ -z "$IMAGE" ] || [ ${#DEVICES[@]} -eq 0 ]; then
-  echo "Usage: $0 <image.img> <device1> [device2] [device3] ..."
-  echo "Example: $0 /mnt/export/saviour-image.img sda sdb sdc sdd"
-  exit 1
-fi
+if [ "$#" -gt 0 ]; then
+  # ── Scriptable path ────────────────────────────────────────────────────────
+  IMAGE="$1"
+  shift
+  DEVICES=("$@")
 
-echo "=== Target devices: ${DEVICES[*]} ==="
-echo "=== Source image: $IMAGE ==="
-lsblk
-echo
-read -p "Confirm these are correct, blank, intended target devices? (yes/no): " confirm
-if [ "$confirm" != "yes" ]; then
-  echo "Aborted."
-  exit 1
+  if [ -z "$IMAGE" ] || [ ${#DEVICES[@]} -eq 0 ]; then
+    echo "Usage: $0 [<image.img> <device1> [device2] [device3] ...]"
+    echo "Example: $0 /mnt/export/saviour-image.img sda sdb sdc sdd"
+    echo "(or run with no arguments for an interactive device picker)"
+    exit 1
+  fi
+
+  echo "=== Target devices: ${DEVICES[*]} ==="
+  echo "=== Source image: $IMAGE ==="
+  lsblk
+  echo
+  read -p "Confirm these are correct, blank, intended target devices? (yes/no): " confirm
+  if [ "$confirm" != "yes" ]; then
+    echo "Aborted."
+    exit 1
+  fi
+
+else
+  # ── Interactive path: whiptail image + target picker ───────────────────────
+  if [ ! -t 0 ]; then
+    echo "ERROR: no arguments given and this isn't an interactive terminal."
+    echo "Usage: $0 <image.img> <device1> [device2] [device3] ..."
+    exit 1
+  fi
+
+  if ! command -v whiptail &>/dev/null; then
+    echo "whiptail not found -- installing..."
+    sudo apt-get install -y whiptail
+  fi
+
+  source "$(dirname "$(readlink -f "$0")")/lib/identify_disk.sh"
+
+  W=78
+  H=20
+  wt() { whiptail "$@" 3>&1 1>&2 2>&3; }
+
+  # Offer a pick-list of *.img files found in common spots, but always let
+  # the user type/edit a path -- inputbox pre-filled with the newest match.
+  found_img=$(find /mnt /home /root -maxdepth 3 -name '*.img' -newer /etc/hostname 2>/dev/null | head -1 || true)
+  [ -z "$found_img" ] && found_img=$(find /mnt /home /root -maxdepth 3 -name '*.img' 2>/dev/null | sort | tail -1 || true)
+
+  IMAGE=$(wt --title "Source Image" --inputbox \
+    "\nPath to the master image to flash (from capture_master_image.sh):\n" \
+    10 $W "${found_img:-/mnt/export/saviour-image.img}") || { echo "Aborted."; exit 1; }
+
+  if [ -z "$IMAGE" ] || [ ! -f "$IMAGE" ]; then
+    whiptail --title "Image Not Found" --msgbox "\n$IMAGE does not exist." 8 $W
+    exit 1
+  fi
+
+  echo "Identifying connected cards (mounting each briefly, read-only)..."
+  candidates=()
+  while IFS= read -r line; do
+    NAME="" SIZE="" MODEL="" TRAN="" TYPE=""
+    eval "$line"
+    [ "$TYPE" = "disk" ] || continue
+    [ "$NAME" = "$ROOT_DISK" ] && continue
+    [[ "$NAME" == mmcblk0* ]] && continue
+    id=$(identify_disk "$NAME")
+    echo "  /dev/$NAME: $id"
+    candidates+=("$NAME" "${SIZE:-?} -- ${id}" "OFF")
+  done < <(sudo lsblk -dn -P -o NAME,SIZE,MODEL,TRAN,TYPE)
+
+  if [ ${#candidates[@]} -eq 0 ]; then
+    whiptail --title "No Devices Found" \
+      --msgbox "\nNo candidate block devices found (other than the running system disk).\n\nCheck the SD card readers are plugged in, then re-run." 12 $W
+    exit 1
+  fi
+
+  tgt_raw=$(wt --title "Select Target Cards" --checklist \
+    "\nWhich devices should be OVERWRITTEN with $IMAGE?\nUse space to select, enter to confirm.\n" \
+    $H $W $((${#candidates[@]} / 3)) \
+    "${candidates[@]}") || { echo "Aborted."; exit 1; }
+
+  if [ -z "$tgt_raw" ]; then
+    whiptail --title "No Selection" --msgbox "\nNo target devices selected." 8 $W
+    exit 1
+  fi
+  DEVICES=()
+  eval "DEVICES=($tgt_raw)"
+
+  summary="Image: $IMAGE\n\nTargets (WILL BE OVERWRITTEN):\n"
+  for d in "${DEVICES[@]}"; do
+    summary+="  /dev/$d\n"
+  done
+  summary+="\nThis cannot be undone. Proceed?"
+
+  if ! whiptail --title "Confirm Flash" --yesno "\n$summary" $((10 + ${#DEVICES[@]})) $W \
+    --yes-button "Flash" --no-button "Cancel"; then
+    echo "Aborted."
+    exit 1
+  fi
+
+  clear
+  echo "=== Target devices: ${DEVICES[*]} ==="
+  echo "=== Source image: $IMAGE ==="
 fi
 
 # Safety: refuse to touch the running root device

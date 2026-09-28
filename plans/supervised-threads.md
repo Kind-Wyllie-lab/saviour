@@ -23,7 +23,7 @@ This is the root-cause *class* behind several separately-filed bugs:
 |---|---|
 | `ptp.py::_monitor()` exits permanently on the first transient hiccup | loop self-terminates, nothing restarts it *(fixed 2026-09-07, branch `fix/ptp-monitor-*`)* |
 | `is_recording` write-once, wedged pipeline invisible | `_monitor_recording_health` is the only backstop and it's an unsupervised daemon |
-| libzmq heartbeat-reconnect `abort()` mid-recording | `_force_reconnect` / listener-thread teardown race, no supervision |
+| libzmq heartbeat-reconnect `abort()` mid-recording | command-socket teardown race — *fixed* (PRs #324/#333: watchdog only sets `_reconnect_requested`, teardown is in-listener-thread under `_reconnect_lock`). **Still open: the status PUB socket** is written from several threads with no lock — same concurrent-close-vs-in-flight-send bug, latent |
 | "a crashed monitor/retry thread dies silently" (CLAUDE.md) | general case |
 
 ## Non-goals
@@ -85,8 +85,14 @@ grep.
 4. `src/controller/health.py::monitor_health`,
    `src/controller/web.py::_nas_monitor_loop`.
 5. `src/modules/communication.py` listener + heartbeat-monitor threads —
-   needs care (the libzmq teardown race is here; do this one with the
-   `_reconnect_lock` unification in the same pass).
+   the command-socket teardown race is **already fixed** (PRs #324/#333:
+   watchdog only sets `_reconnect_requested`, all teardown runs on the
+   listener thread under `_reconnect_lock`). Remaining scope for this step:
+   (a) move the listener + heartbeat loops onto `supervise` so an
+   *unexpected* exception recovers and shows in health, and (b) close the
+   sibling gap the fix left — the status **PUB** socket is still written
+   from several threads with no lock (`_attempt_reconnection` also still
+   doesn't take `_reconnect_lock`). Same care applies.
 6. `apa_arduino` `send_state_loop`, `modules.py` ready-timeout / dropout
    threads.
 

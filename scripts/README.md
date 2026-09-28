@@ -6,11 +6,20 @@ The core install/uninstall/update path (`setup.sh`, `install.sh`, `uninstall.sh`
 
 ## Imaging a fleet of devices
 
-1. **`capture_master_image.sh`** — capture a template SD card (booted, `install.sh` run, role left unset) into a shrunk `.img` file.
-2. **`multiclone.sh`** — flash that image to multiple target devices in parallel.
-3. **`fix_ssh_and_hostname.sh`** — repair SD cards flashed with a pre-fix `multiclone.sh` (missing SSH host keys / empty hostname). Safe to run without reflashing.
-4. **`clone_prep.sh`** — run *on* a Pi whose SD card was copied from another SAVIOUR device, to reset instance-specific state before `switch_role.sh`/`saviour-config`.
-5. **`push_credentials.sh`** — run on the controller after `switch_role.sh` to push Samba credentials and the controller IP to a module.
+All three imaging scripts (`clone_direct.sh`, `capture_master_image.sh`, `multiclone.sh`) run as an interactive `whiptail` TUI when invoked with no arguments, or non-interactively when given the old positional args (for scripting). The TUI device pickers briefly mount each candidate card read-only and show its actual hostname/role/type/version (via `lib/identify_disk.sh`) instead of just size/model — so two identical-looking SanDisk cards in a USB hub are distinguishable by what's actually on them, not by guessing which port is which.
+
+Two paths, pick one:
+
+- **One-off clone of a handful of cards, no reusable image needed** — `clone_direct.sh`. Reads the source card once per target and writes straight to each target device; no intermediate `.img` file, so the host needs no spare disk space. Slower per-target than writing a pre-shrunk image (copies the full raw card, not just used space) and ties up the source card for the run.
+- **Reusable master image, cloned repeatedly** — `capture_master_image.sh` then `multiclone.sh`. Needs a host with free disk space >= the source card's *full* raw capacity (it dd's the whole device before shrinking) — run it on the controller (NVMe) or another machine with real spare storage, not another Pi's own SD card, or the capture runs out of space mid-write. `capture_master_image.sh`'s TUI checks free space against the source card's full size before starting and refuses upfront rather than failing mid-copy; the scriptable form checks too.
+
+1. **`clone_direct.sh`** — clone a source SD card straight to N target SD cards in one step, no intermediate image file. `sudo scripts/clone_direct.sh` for the TUI, or `sudo scripts/clone_direct.sh <source_device> <target1> [target2] ...` to script it.
+2. **`capture_master_image.sh`** — capture a template SD card (booted, `install.sh` run, role left unset) into a shrunk `.img` file. `sudo scripts/capture_master_image.sh` for the TUI (picks source + output path, checks free space), or `sudo scripts/capture_master_image.sh <source_device> <output.img>` to script it.
+3. **`multiclone.sh`** — flash that image to multiple target devices in parallel. `sudo scripts/multiclone.sh` for the TUI (picks the `.img` + targets), or `sudo scripts/multiclone.sh <image.img> <device1> [device2] ...` to script it.
+4. **`fix_ssh_and_hostname.sh`** — repair SD cards flashed with a pre-fix `multiclone.sh`/`clone_direct.sh` (missing SSH host keys / empty hostname). Safe to run without reflashing.
+5. **`clone_prep.sh`** — older, manual alternative to `saviour-config`'s built-in clone-detect/"Refresh Identity" flow (run `sudo saviour-config` on a freshly cloned Pi — it auto-detects the mismatched hostname and offers to fix it). Still useful for scripted resets or if that flow doesn't trigger.
+6. **`push_credentials.sh`** — run on the controller if Samba credentials were rotated since the source device was cloned, to push the new password + controller IP to a module.
+7. **`lib/identify_disk.sh`** — shared helper sourced by the three scripts above; not run directly.
 
 ## One-off repair tools
 

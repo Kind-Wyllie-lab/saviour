@@ -161,6 +161,7 @@ if [ "$BOOT_FSTYPE" != "vfat" ] || [ "$ROOT_FSTYPE" != "ext4" ]; then
 fi
 echo "OK -- partition 1 = vfat (boot), partition 2 = ext4 (root)"
 
+IMAGE_BYTES=$(stat -c%s "$IMAGE" 2>/dev/null || echo 0)
 LOGDIR=$(mktemp -d /tmp/multiclone.XXXXXX)
 echo "=== Writing image to all targets in parallel (logs: $LOGDIR) ==="
 # dcfldd's multi-of= writes to each device sequentially per block (one
@@ -180,7 +181,7 @@ done
 # nothing shows on screen for the whole write. Poll and redraw a status
 # line per device until every job finishes.
 source "$(dirname "$(readlink -f "$0")")/lib/dd_progress.sh"
-live_progress_dashboard "$LOGDIR" "${DEVICES[@]}" &
+live_progress_dashboard "$LOGDIR" "$IMAGE_BYTES" "${DEVICES[@]}" &
 MONITOR_PID=$!
 
 fail=0

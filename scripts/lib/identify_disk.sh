@@ -28,7 +28,14 @@ identify_disk() {
   desc="Raspberry Pi OS card, no SAVIOUR install found"
 
   if sudo mount -o ro "$devpart" "$mnt" 2>/dev/null; then
-    local hn role type ver
+    # Initialized empty, not just declared: this file is `source`d into
+    # scripts running `set -u`, and role/type are only assigned inside the
+    # `-f .../saviour/config` branch below -- an unconfigured/blank card
+    # skips that branch, leaving a bare `local role` genuinely unset, and
+    # referencing $role a few lines down aborts the whole calling script
+    # with "role: unbound variable" (found live on a fresh multiclone
+    # target card with no SAVIOUR install yet).
+    local hn="" role="" type="" ver=""
     hn=$(sudo cat "$mnt/etc/hostname" 2>/dev/null | tr -d '[:space:]')
     if [ -f "$mnt/etc/saviour/config" ]; then
       role=$(sudo grep '^ROLE=' "$mnt/etc/saviour/config" 2>/dev/null | cut -d= -f2)

@@ -243,7 +243,7 @@ done
 # nothing shows on screen for the whole write. Poll and redraw a status
 # line per device until every job finishes.
 source "$(dirname "$(readlink -f "$0")")/lib/dd_progress.sh"
-live_progress_dashboard "$LOGDIR" "${DEVICES[@]}" &
+live_progress_dashboard "$LOGDIR" "$SRC_BYTES" "${DEVICES[@]}" &
 MONITOR_PID=$!
 
 fail=0

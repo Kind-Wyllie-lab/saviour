@@ -449,7 +449,7 @@ class Module(ABC):
                 # down after a fleet-wide run_mend). Detached, mend outlives
                 # the restart; its outcome is in /var/log/saviour-mend.log.
                 argv = ["sudo", "systemd-run", f"--unit={MEND_UNIT}", "--collect",
-                        "--quiet", "bash", mend_script]
+                        "--quiet", "--setenv=HOME=/root", "bash", mend_script]
                 if reboot:
                     argv.append("--reboot")
                 self.logger.info(f"Starting mend.sh as systemd unit {MEND_UNIT}")

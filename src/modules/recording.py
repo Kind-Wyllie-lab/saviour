@@ -26,6 +26,7 @@ import threading
 import time
 
 from src.modules.config import Config
+from src.shared.supervised import supervise
 
 
 def _journalctl(args: list, timeout: int = 20) -> str:
@@ -74,6 +75,7 @@ class Recording:
         # capturing data, and reports to the controller if not.
         self.recording_health_thread = None
         self.recording_health_stop_flag = threading.Event()
+        self._health_was_unhealthy = False
 
         # Measured recording data rate — a reality check against the
         # config-derived estimate (src/shared/data_rate.py). Sampled from the
@@ -463,11 +465,14 @@ class Recording:
 
 
     """Segment Length Monitoring"""
-    def _monitor_recording_length(self):
+    def _monitor_recording_length(self, stop_event: threading.Event | None = None):
         """
-        Runs in a thread and monitors length of current recording.
-        If it exceeds segment length limit, stops and starts a new recording.
+        Runs in a supervised thread (src/shared/supervised.py) and monitors
+        length of current recording. If it exceeds segment length limit, stops
+        and starts a new recording. An unexpected exception propagates to the
+        supervisor, which logs it and restarts this loop.
         """
+        stop_event = stop_event or self.monitor_recording_segments_stop_flag
         segment_length = self.config.get("recording.segment_length_mins", 30) * 60 # Get segment length in mins and convert to seconds
         self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
@@ -486,7 +491,7 @@ class Recording:
         export_signal_interval = 300
         last_export_signal     = 0.0
 
-        while not self.monitor_recording_segments_stop_flag.is_set():
+        while not stop_event.is_set():
             now = time.time()
             segment_due = now - self.segment_start_time > segment_length
 
@@ -494,7 +499,7 @@ class Recording:
                 last_disk_check = now
                 try:
                     free_pct, free_mb = self._local_disk_free()
-                except Exception as e:
+                except OSError as e:
                     self.logger.warning(f"Could not check local disk space: {e}")
                 else:
                     if free_pct < min_free_pct:
@@ -530,10 +535,10 @@ class Recording:
                         )
                         self.facade.signal_export_ready(export_path)
                         last_export_signal = now
-                except Exception as e:
+                except OSError as e:
                     self.logger.warning(f"Export re-signal check failed: {e}")
 
-            time.sleep(0.1) # Avoid busy waiting
+            stop_event.wait(0.1)  # Avoid busy waiting
 
 
     # ----- Local disk protection (roadmap A4) --------------------------------
@@ -613,11 +618,15 @@ class Recording:
             })
 
     def _start_recording_segment_monitoring(self):
-        self.monitor_recording_segments_stop_flag.clear()
+        # A fresh Event per recording, not clear() on the old one: if the last
+        # recording's join timed out, clearing its event would revive that
+        # loop and leave two monitors running.
+        self.monitor_recording_segments_stop_flag = threading.Event()
         self.segment_start_time = self.recording_start_time
         self.segment_id = 0
-        self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True)
-        self.monitor_recording_segments_thread.start()
+        self.monitor_recording_segments_thread = supervise(
+            "recording.segment_monitor", self._monitor_recording_length,
+            stop_event=self.monitor_recording_segments_stop_flag, logger=self.logger)
 
 
     def _stop_recording_segment_monitoring(self):
@@ -635,7 +644,7 @@ class Recording:
 
 
     """Recording self-monitoring"""
-    def _monitor_recording_health(self):
+    def _monitor_recording_health(self, stop_event: threading.Event | None = None):
         """
         Runs in a thread for the whole recording (not per-segment, unlike
         the health-metadata thread). Periodically asks the module-specific
@@ -649,45 +658,50 @@ class Recording:
         the short window during segment rotation where a module's capture
         threads are legitimately down while old ones are joined and new
         ones started.
+
+        Supervised (src/shared/supervised.py): an exception from the
+        module's check_recording_alive() is no longer swallowed every tick --
+        it propagates, is logged once with a traceback, the loop restarts,
+        and a repeat shows up as a crash-looping thread in module health.
+        The unhealthy flag lives on self so a restart can't lose a pending
+        "recovered".
         """
+        stop_event = stop_event or self.recording_health_stop_flag
         interval = self.config.get("recording._health_check_interval_secs", 10)
         strikes_threshold = self.config.get("recording._health_check_strikes", 2)
         strikes = 0
-        was_unhealthy = False
 
-        while not self.recording_health_stop_flag.wait(timeout=interval):
+        while not stop_event.wait(timeout=interval):
+            # The data-rate sampler is auxiliary telemetry; it must never take
+            # the liveness check down with it.
             try:
                 self._sample_recording_bytes()
             except Exception as e:
                 self.logger.debug(f"Recording byte sampler failed: {e}")
 
-            try:
-                alive, detail = self.facade.check_recording_alive()
-            except Exception as e:
-                self.logger.warning(f"Recording health check raised an exception: {e}")
-                continue
+            alive, detail = self.facade.check_recording_alive()
 
             if not alive:
                 strikes += 1
                 self.logger.warning(
                     f"Recording health check failed ({strikes}/{strikes_threshold}): {detail}"
                 )
-                if strikes >= strikes_threshold and not was_unhealthy:
-                    was_unhealthy = True
+                if strikes >= strikes_threshold and not self._health_was_unhealthy:
+                    self._health_was_unhealthy = True
                     self.facade.send_status({
                         "type": "recording_health_warning",
                         "status": "unhealthy",
                         "message": detail or "Recording health check failed",
                     })
             else:
-                if was_unhealthy:
+                if self._health_was_unhealthy:
                     self.logger.info("Recording health check recovered")
                     self.facade.send_status({
                         "type": "recording_health_warning",
                         "status": "recovered",
                     })
                 strikes = 0
-                was_unhealthy = False
+                self._health_was_unhealthy = False
 
 
     # ----- Measured recording data rate --------------------------------------
@@ -737,9 +751,11 @@ class Recording:
                 0.0, (cum - self._rec_bytes_baseline) / elapsed)
 
     def _start_recording_health_monitoring(self):
-        self.recording_health_stop_flag.clear()
-        self.recording_health_thread = threading.Thread(target=self._monitor_recording_health, daemon=True)
-        self.recording_health_thread.start()
+        self.recording_health_stop_flag = threading.Event()  # fresh, see above
+        self._health_was_unhealthy = False
+        self.recording_health_thread = supervise(
+            "recording.health_monitor", self._monitor_recording_health,
+            stop_event=self.recording_health_stop_flag, logger=self.logger)
 
 
     def _stop_recording_health_monitoring(self):

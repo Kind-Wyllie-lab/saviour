@@ -676,6 +676,10 @@ components:
           type: array
           items: { type: string }
           description: Modules whose export failed permanently and has not since succeeded; blocks a non-forced delete.
+        self_stopped_modules:
+          type: object
+          additionalProperties: true
+          description: Modules that stopped themselves mid-session (e.g. reason disk_critical) and are waiting to be resumed, keyed by module id.
         autostart_error: { type: string }
       additionalProperties: true
 

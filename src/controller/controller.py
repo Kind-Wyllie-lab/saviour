@@ -237,9 +237,13 @@ class Controller(ABC):
                     self.modules.notify_recording_started(module_id, status_data)
 
                 case 'recording_stopped':
-                    self.logger.info(f"{module_id} has stopped recording")
+                    reason = status_data.get('reason', 'operator')
+                    self.logger.info(
+                        f"{module_id} has stopped recording (reason: {reason})")
                     self.modules.notify_recording_stopped(module_id, status_data)
                     self.facade.module_stopped(module_id)
+                    if reason != 'operator':
+                        self.facade.module_self_stopped(module_id, status_data)
 
                 case 'cmd_ack':
                     command = status_data.get('command', 'unknown')

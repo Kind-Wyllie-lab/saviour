@@ -4390,7 +4390,9 @@ class Web(ABC):
                 case "recording_health_warning":
                     health_status = status.get("status", "unhealthy")
                     message = status.get("message")
-                    self.facade.handle_recording_health_status(module_id, health_status, message)
+                    source = status.get("source", "liveness")
+                    self.facade.handle_recording_health_status(
+                        module_id, health_status, message, source)
 
                 # A TTL module input-pin edge (ttl_module.py::_send_edge_status),
                 # fired live rather than waiting for the session's CSV to export.

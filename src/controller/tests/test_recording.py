@@ -2049,3 +2049,55 @@ class TestRearmPtpGate:
         rec.module_back_online("cam1")
         facade.send_command.assert_any_call(
             "cam1", "start_recording", {"duration": 0, "session_name": "exp1"})
+
+
+class TestGapEscalation:
+    """roadmap A1: a gap still open 10 min / 1 h in escalates, so sustained
+    silence doesn't alert the same as a 30 s blip."""
+
+    def _rec(self, tmpdir):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = tmpdir
+        rec._notify_enabled = lambda *a, **k: True
+        rec.sessions["exp1"] = _session(modules=["cam1"],
+                                        module_stop_states={"cam1": "recording"})
+        return rec, facade
+
+    def _open(self, rec, cause, age_s):
+        return rec._open_gap("exp1", ["cam1"], cause, "error", "x",
+                             start_ns=time.time_ns() - int(age_s * 1e9))
+
+    def test_escalates_once_per_step(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "module_offline", 11 * 60)
+            s = rec.sessions["exp1"]
+            rec._escalate_open_gaps("exp1", s)
+            rec._escalate_open_gaps("exp1", s)
+            assert facade.send_alert.call_count == 1
+            assert s.gaps[0]["escalations"] == [600]
+
+            s.gaps[0]["start_ns"] -= int(55 * 60 * 1e9)   # now ~66 min open
+            rec._escalate_open_gaps("exp1", s)
+            assert facade.send_alert.call_count == 2
+            assert s.gaps[0]["escalations"] == [600, 3600]
+
+    def test_several_due_at_once_alerts_only_the_highest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "not_recording", 2 * 3600)
+            rec._escalate_open_gaps("exp1", rec.sessions["exp1"])
+            assert facade.send_alert.call_count == 1
+            assert facade.send_alert.call_args.kwargs["key"].endswith("_3600")
+
+    def test_closed_young_and_operator_pause_gaps_do_not_escalate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "liveness", 60)                  # too young
+            rec._open_gap("exp1", ["*"], "pause", "warning", "operator",
+                          start_ns=time.time_ns() - int(7200 * 1e9))
+            closed = self._open(rec, "module_offline", 7200)
+            rec._close_gaps("exp1", causes=("module_offline",))
+            assert closed["end_ns"] is not None
+            rec._escalate_open_gaps("exp1", rec.sessions["exp1"])
+            facade.send_alert.assert_not_called()

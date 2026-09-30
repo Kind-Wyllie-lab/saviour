@@ -3026,6 +3026,11 @@ class Recording:
                     if session.state == SessionState.STOPPED:
                         continue
 
+                    # A gap still open 10 min / 1 h in escalates (roadmap A1):
+                    # otherwise 30 s and 6 h of silence alert exactly alike.
+                    if session.gaps:
+                        self._escalate_open_gaps(session_name, session)
+
                     if session.scheduled:
                         today_weekday = date.today().weekday()
                         yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -3416,6 +3421,54 @@ class Recording:
         except Exception as e:
             self.logger.debug(f"Could not write {self._GAP_FILE} for "
                               f"'{session.session_name}': {e}")
+
+    # Seconds a gap may stay open before each escalation step (one alert +
+    # one ESCALATE event per step). recording._gap_escalation_secs overrides.
+    _GAP_ESCALATION_SECS = (600, 3600)
+    # Deliberate, so never escalated.
+    _GAP_CAUSES_NO_ESCALATION = ("pause", "plan_window")
+
+    def _escalate_open_gaps(self, session_name: str,
+                            session: "RecordingSession") -> None:
+        """Escalate open gaps that have crossed an escalation step since the
+        last pass. Steps already fired are recorded on the gap
+        ("escalations"), so a controller restart doesn't repeat them; if
+        several are due at once (e.g. after a restart) only the highest
+        alerts. Unattended sessions alert too -- a sustained outage is
+        exactly what the daily digest would otherwise hide."""
+        cfg = (self.facade.get_config() or {}).get("recording", {})
+        steps = sorted(cfg.get("_gap_escalation_secs", self._GAP_ESCALATION_SECS))
+        now_ns = time.time_ns()
+        due = []
+        with self._lock:
+            for gap in session.gaps:
+                if (gap["end_ns"] is not None
+                        or gap["cause"] in self._GAP_CAUSES_NO_ESCALATION):
+                    continue
+                age_s = (now_ns - gap["start_ns"]) / 1e9
+                fired = gap.setdefault("escalations", [])
+                new = [s for s in steps if age_s >= s and s not in fired]
+                if new:
+                    fired.extend(new)
+                    due.append((dict(gap), max(new), age_s))
+        if not due:
+            return
+        self._write_gaps(session)
+        self._save_sessions()
+        for gap, step, age_s in due:
+            message = (
+                f"{gap['cause']} gap for {', '.join(gap['modules'])} still open "
+                f"after {age_s / 60:.0f} min — {gap['detail']}"
+            )
+            self.logger.warning(f"Session '{session_name}': {message}")
+            self._log_session_event(session_name, "ESCALATE", message)
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"gap_escalation_{session_name}_{gap['id']}_{step}",
+                    title=f"Recording gap still open — {session_name}",
+                    message=message,
+                    severity="error",
+                )
 
     def module_recording_started(self, module_id: str) -> None:
         """A module confirmed it is recording (recording_started, or

@@ -21,6 +21,7 @@ from enum import StrEnum
 
 from src.controller import framesync_check, recording_plans
 from src.shared.data_rate import estimate_recording_bytes_per_s
+from src.shared.supervised import supervise
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
 _SHARE_ROOT_DEFAULT = "/home/pi/controller_share"
@@ -253,12 +254,13 @@ class Recording:
 
         self._load_sessions()
 
-        self._monitor_thread = threading.Thread(
-            target=self._monitor_sessions,
-            daemon=True,
-            name="session-monitor",
-        )
-        self._monitor_thread.start()
+        # Supervised (src/shared/supervised.py): this is every session's
+        # liveness/PTP/export watchdog, so an unexpected exception (e.g. from
+        # one of the unguarded periodic checks) must restart it, not end it.
+        self._monitor_stop = threading.Event()
+        self._monitor_thread = supervise(
+            "session-monitor", self._monitor_sessions,
+            stop_event=self._monitor_stop, logger=self.logger)
 
 
     # -----------------------------------------------------------------------
@@ -2932,10 +2934,10 @@ class Recording:
 
         return None
 
-    def _monitor_sessions(self) -> None:
+    def _monitor_sessions(self, stop_event: threading.Event | None = None) -> None:
         """Background thread: drive scheduled timers and health-check active sessions."""
-        while True:
-            time.sleep(_MONITOR_INTERVAL_SECS)
+        stop_event = stop_event or self._monitor_stop
+        while not stop_event.wait(_MONITOR_INTERVAL_SECS):
             self._monitor_cycle += 1
             current_time = datetime.now().strftime("%H:%M")
             today = date.today().isoformat()

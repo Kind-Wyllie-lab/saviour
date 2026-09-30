@@ -123,7 +123,9 @@ GATEWAY=${GATEWAY}
 WAN_INTERFACE=${WAN_INTERFACE}
 DEVICE_IP=${DEVICE_IP}
 EOF
-    [ -n "$fw_wlan_ssh" ] && echo "FIREWALL_WLAN_SSH=${fw_wlan_ssh}" >> "$CONFIG_FILE"
+    if [ -n "$fw_wlan_ssh" ]; then
+        echo "FIREWALL_WLAN_SSH=${fw_wlan_ssh}" >> "$CONFIG_FILE"
+    fi
 }
 
 # Marker of what was actually last applied -- see PROVISIONED_FILE above.
@@ -144,10 +146,13 @@ is_installed() { dpkg -s "$1" &>/dev/null; }
 
 # Reads a single KEY=value out of a saviour-style config file without
 # sourcing it (avoids clobbering this script's own globals of the same
-# name). Empty output if the file or key doesn't exist.
+# name). Empty output if the file or key doesn't exist. Always returns 0: a
+# missing key is a normal outcome, but grep exits 1 on no match and, under
+# this script's pipefail, that aborts run_configuration()'s `set -e` (e.g. the
+# optional FIREWALL_WLAN_SSH lookup in write_config()).
 read_config_value() {
     [ -f "$1" ] || return 0
-    grep -E "^${2}=" "$1" | tail -n1 | cut -d= -f2-
+    { grep -E "^${2}=" "$1" || true; } | tail -n1 | cut -d= -f2-
 }
 
 # Same as read_config_value, but strips one layer of surrounding double

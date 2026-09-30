@@ -18,6 +18,8 @@ from typing import Any
 import zmq
 from zmq.utils.monitor import recv_monitor_message
 
+from src.shared.supervised import supervise
+
 
 class Communication:
     def __init__(self,
@@ -53,8 +55,16 @@ class Communication:
         self.command_socket = self.context.socket(zmq.DEALER)
         self.status_socket = self.context.socket(zmq.PUB)
 
-        # Command listener thread
+        # Command listener thread (supervised -- see start_command_listener)
         self.command_thread = None
+        self._listener_stop = threading.Event()
+
+        # Guards every use of the status PUB socket. send_status() is called
+        # from many threads (heartbeats, recording, command handlers) while
+        # cleanup() may close/recreate the socket -- a close racing an
+        # in-flight send is the same libzmq crash class as the command-socket
+        # teardown race fixed in PRs #324/#333.
+        self._status_lock = threading.Lock()
 
         # Heartbeat ack watchdog
         self._ack_lock = threading.Lock()
@@ -73,7 +83,9 @@ class Communication:
         )
 
         # Guards the socket teardown/rebuild in _reconnect_from_listener()
-        # against a concurrent external cleanup()/connect().
+        # against a concurrent external cleanup()/connect()/_attempt_reconnection().
+        # Deliberately NOT re-entrant: a nested attempt on the same thread must
+        # see "already in progress" and skip.
         self._reconnect_lock = threading.Lock()
 
         # Set by the ack watchdog (any thread) and consumed by the command
@@ -143,7 +155,8 @@ class Communication:
             self.logger.info(f"Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
             self.command_socket.connect(f"tcp://{controller_ip}:{command_port}")
             self.logger.info(f"Attempting to connect status socket to tcp://{controller_ip}:{status_port}")
-            self.status_socket.connect(f"tcp://{controller_ip}:{status_port}")
+            with self._status_lock:
+                self.status_socket.connect(f"tcp://{controller_ip}:{status_port}")
 
             # Register with the controller's ROUTER by sending a hello frame.
             # The ROUTER sees our identity (set above) in the envelope and adds
@@ -264,21 +277,32 @@ class Communication:
             return False
 
         self.command_listener_running = True
-        self.command_thread = threading.Thread(target=self.listen_for_commands, daemon=True)
-        self.command_thread.start()
+        # Supervised (src/shared/supervised.py). The target runs *on* the
+        # returned thread, so "only the listener thread touches command_socket"
+        # still holds across restarts. Fresh Event per start; cleanup() sets it.
+        self._listener_stop = threading.Event()
+        self.command_thread = supervise(
+            "comms.command_listener", self.listen_for_commands,
+            stop_event=self._listener_stop, logger=self.logger)
         self.logger.info("Command listener thread started")
         return True
 
 
-    def listen_for_commands(self):
-        """Listen for commands from the controller"""
+    def listen_for_commands(self, stop_event: threading.Event | None = None):
+        """Listen for commands from the controller.
+
+        Runs under supervise(): expected ZMQ / decode errors are handled per
+        iteration; anything else propagates to the supervisor, which logs it
+        once and restarts this loop on the same thread.
+        """
+        stop_event = stop_event or self._listener_stop
         # DEALER receives a single frame: "<command> <params>" (no topic prefix)
         self.logger.info("Starting command listener thread")
 
         # Set socket timeout to prevent blocking indefinitely
         self.command_socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
 
-        while self.command_listener_running:
+        while self.command_listener_running and not stop_event.is_set():
             # Honour a reconnect asked for by the ack watchdog (or the
             # connection-error branch below). Rebuilding the socket has to
             # happen on this thread, never on the watchdog's — see
@@ -316,7 +340,7 @@ class Communication:
                 if not self.command_listener_running:
                     break
                 continue
-            except Exception as e:
+            except (zmq.ZMQError, UnicodeDecodeError) as e:
                 if self.command_listener_running:  # Only log if we're still supposed to be running
                     self.logger.error(f"Error receiving command: {e}")
                     # Connection-level error — rebuild the socket in-thread
@@ -346,7 +370,18 @@ class Communication:
 
 
     def _attempt_reconnection(self):
-        """Attempt to reconnect to the controller"""
+        """Attempt to reconnect to the controller.
+
+        Only reached when the listener isn't running (nothing is blocked in
+        recv), but it still takes _reconnect_lock so it can't overlap a
+        cleanup() or a listener rebuild; skips if one is in progress. Safe to
+        hold across connect(): that only calls cleanup() (which takes the lock
+        too) when switching to a *different* controller, and this always
+        reconnects to the current one.
+        """
+        if not self._reconnect_lock.acquire(blocking=False):
+            self.logger.info("Reconnect already in progress — skipping attempt")
+            return
         try:
             if self.controller_ip and self.controller_port:
                 # Attempt to reconnect
@@ -362,6 +397,8 @@ class Communication:
                 self.logger.warning("No controller information available for reconnection")
         except Exception as e:
             self.logger.error(f"Error during reconnection attempt: {e}")
+        finally:
+            self._reconnect_lock.release()
 
 
     def _on_heartbeat_ack(self):
@@ -425,10 +462,9 @@ class Communication:
         (see _request_listener_reconnect).
 
         Deliberately leaves the status PUB socket and the ZMQ context alone:
-        the PUB socket is written from several other threads with no lock (a
-        concurrent close would be the same class of bug), it reconnects at the
-        TCP layer on its own, and this watchdog only concerns the command
-        channel. Recording, heartbeats and PTP are unaffected.
+        the PUB socket (guarded by _status_lock) reconnects at the TCP layer on
+        its own, and this watchdog only concerns the command channel.
+        Recording, heartbeats and PTP are unaffected.
         """
         if not self._reconnect_lock.acquire(blocking=False):
             self.logger.info("Reconnect already in progress — skipping duplicate")
@@ -502,10 +538,6 @@ class Communication:
             status_data: Dictionary containing status information
         """
         try:
-            if not self.status_socket:
-                self.logger.warning("Status socket not available")
-                return
-
             # Add timestamp and module ID to status data
             status_data['timestamp'] = time.time()
             status_data['module_id'] = self.facade.get_module_id()
@@ -515,8 +547,14 @@ class Communication:
             import json
             message = json.dumps(status_data)
 
-            # Send status
-            self.status_socket.send_string(f"status/{self.facade.get_module_id()} {message}")
+            # Send status. Under _status_lock so cleanup() can't close the
+            # socket mid-send (and two senders never interleave on it).
+            with self._status_lock:
+                if not self.status_socket:
+                    self.logger.warning("Status socket not available")
+                    return
+                topic = f"status/{self.facade.get_module_id()}"
+                self.status_socket.send_string(f"{topic} {message}")
 
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")
@@ -533,8 +571,10 @@ class Communication:
         self.logger.info(f"Cleaning up communication manager for module {self.facade.get_module_id()}")
 
         # Signal the listener thread to stop, and cancel any pending
-        # listener-thread reconnect so it can't race this teardown.
+        # listener-thread reconnect so it can't race this teardown. The stop
+        # event tells its supervisor this is a shutdown, not a crash.
         self.command_listener_running = False
+        self._listener_stop.set()
         self._reconnect_requested.clear()
 
         # Serialise against an in-flight _reconnect_from_listener() — it holds
@@ -604,16 +644,17 @@ class Communication:
                 if not thread_exited:
                     self.logger.warning("Command listener thread did not exit within 6 s after socket close")
 
-        # Close status socket
-        if hasattr(self, 'status_socket') and self.status_socket:
-            self.logger.info("Setting status socket linger to 0")
-            try:
-                self.status_socket.setsockopt(zmq.LINGER, 0)
-                self.logger.info("Closing status socket")
-                self.status_socket.close()
-            except Exception as e:
-                self.logger.warning(f"Error closing status socket: {e}")
-            self.status_socket = None
+        # Close status socket (under _status_lock: no send may be in flight)
+        with self._status_lock:
+            if hasattr(self, 'status_socket') and self.status_socket:
+                self.logger.info("Setting status socket linger to 0")
+                try:
+                    self.status_socket.setsockopt(zmq.LINGER, 0)
+                    self.logger.info("Closing status socket")
+                    self.status_socket.close()
+                except Exception as e:
+                    self.logger.warning(f"Error closing status socket: {e}")
+                self.status_socket = None
 
         # Terminate context. term() blocks until every socket from this context
         # is closed — if the listener thread is somehow still stuck (the 6 s
@@ -641,10 +682,12 @@ class Communication:
         try:
             self.context = zmq.Context()
             self.command_socket = self.context.socket(zmq.DEALER)
-            self.status_socket = self.context.socket(zmq.PUB)
+            with self._status_lock:
+                self.status_socket = self.context.socket(zmq.PUB)
             self.logger.info("ZeroMQ resources cleaned up and recreated")
         except Exception as e:
             self.logger.error(f"Error recreating ZeroMQ resources: {e}")
             self.context = None
             self.command_socket = None
-            self.status_socket = None
+            with self._status_lock:
+                self.status_socket = None

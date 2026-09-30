@@ -18,6 +18,7 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
+import zmq
 
 from src.modules.communication import Communication
 
@@ -49,6 +50,8 @@ def _make_comm(*, listener_running=True, threshold=4) -> Communication:
 
     comm._reconnect_lock = threading.Lock()
     comm._send_lock = threading.Lock()
+    comm._status_lock = threading.Lock()
+    comm._listener_stop = threading.Event()
     comm._reconnect_requested = threading.Event()
 
     comm._monitor_socket = None
@@ -242,7 +245,8 @@ class TestListenerConsumesFlag:
 
         # recv raises a connection-level error while the listener is still
         # meant to be running -> the except branch should reconnect in-thread.
-        comm.command_socket.recv_string.side_effect = RuntimeError("Connection refused")
+        comm.command_socket.recv_string.side_effect = zmq.ZMQError(
+            msg="Connection refused")
 
         comm.listen_for_commands()
 
@@ -281,3 +285,83 @@ class TestCleanupCoordination:
         # lock must not be left held
         assert comm._reconnect_lock.acquire(blocking=False)
         comm._reconnect_lock.release()
+
+
+# ---------------------------------------------------------------------------
+# roadmap A6: supervised listener, status-socket lock, reconnect lock
+# ---------------------------------------------------------------------------
+
+class TestSupervisedListenerAndLocks:
+    def test_send_status_holds_the_status_lock_while_sending(self):
+        comm = _make_comm()
+        seen = {}
+        comm.status_socket.send_string.side_effect = (
+            lambda _msg: seen.setdefault("locked", comm._status_lock.locked()))
+        comm.send_status({"type": "heartbeat"})
+        assert seen["locked"] is True
+        assert not comm._status_lock.locked()
+
+    def test_send_status_skips_cleanly_when_socket_gone(self):
+        comm = _make_comm()
+        comm.status_socket = None
+        comm.send_status({"type": "heartbeat"})  # must not raise
+        assert not comm._status_lock.locked()
+
+    def test_cleanup_sets_the_listener_stop_event(self, monkeypatch):
+        comm = _make_comm()
+        monkeypatch.setattr(comm, "_cleanup_locked", lambda: None)
+        comm.cleanup()
+        assert comm._listener_stop.is_set()
+
+    def test_attempt_reconnection_skips_while_a_reconnect_holds_the_lock(
+            self, monkeypatch):
+        comm = _make_comm(listener_running=False)
+        connect = MagicMock(return_value=True)
+        monkeypatch.setattr(comm, "connect", connect)
+        comm._reconnect_lock.acquire()
+        try:
+            comm._attempt_reconnection()
+        finally:
+            comm._reconnect_lock.release()
+        connect.assert_not_called()
+
+    def test_attempt_reconnection_releases_the_lock(self, monkeypatch):
+        comm = _make_comm(listener_running=False)
+        monkeypatch.setattr(comm, "connect", MagicMock(return_value=True))
+        monkeypatch.setattr(
+            comm, "start_command_listener", MagicMock(return_value=True))
+        comm._attempt_reconnection()
+        assert comm._reconnect_lock.acquire(blocking=False)
+        comm._reconnect_lock.release()
+
+    def test_unexpected_listener_error_propagates_to_the_supervisor(self):
+        comm = _make_comm()
+        comm.command_socket.recv_string.side_effect = KeyError("unexpected")
+        with pytest.raises(KeyError):
+            comm.listen_for_commands(threading.Event())
+
+    def test_command_handler_errors_never_kill_the_listener(self):
+        comm = _make_comm()
+        stop = threading.Event()
+        calls = {"n": 0}
+
+        def recv():
+            calls["n"] += 1
+            if calls["n"] > 1:
+                stop.set()
+                raise zmq.Again()
+            return "shutdown {}"
+
+        comm.command_socket.recv_string.side_effect = recv
+        comm.facade.handle_command.side_effect = RuntimeError("handler bug")
+        comm.listen_for_commands(stop)  # returns normally
+        comm.facade.handle_command.assert_called_once()
+
+    def test_start_command_listener_is_supervised(self, monkeypatch):
+        comm = _make_comm(listener_running=False)
+        sup = MagicMock()
+        monkeypatch.setattr("src.modules.communication.supervise", sup)
+        assert comm.start_command_listener() is True
+        assert sup.call_args.args[:2] == (
+            "comms.command_listener", comm.listen_for_commands)
+        assert sup.call_args.kwargs["stop_event"] is comm._listener_stop

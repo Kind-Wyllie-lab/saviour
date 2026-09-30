@@ -237,6 +237,13 @@ class TestScheduledStart:
             rec, facade = _make_recording(tmpdir)
 
             rec._scheduled_start("exp1", None, time.time())
+            # This really started the (supervised) monitors; stop them so they
+            # don't run on through the rest of the test session.
+            rec.monitor_recording_segments_stop_flag.set()
+            rec.recording_health_stop_flag.set()
+            rec.health_stop_event.set()  # health-metadata CSV writer
+            if rec.health_recording_thread:
+                rec.health_recording_thread.join(timeout=5)
 
             assert rec.is_recording is True
             failure_calls = [
@@ -623,3 +630,59 @@ class TestMonitorLoopDiskCheck:
             assert [s["status"] for s in sent] == ["unhealthy", "recovered"]
             assert all(s["source"] == "disk" for s in sent)
             assert "recording stops at 10%" in sent[0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Supervised monitor loops (roadmap A6)
+# ---------------------------------------------------------------------------
+
+class TestSupervisedRecordingMonitors:
+    def test_liveness_check_exception_propagates_to_the_supervisor(self):
+        """No more swallow-and-continue every tick: the supervisor logs it
+        once, restarts the loop, and counts it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"recording._health_check_interval_secs": 0})
+            facade.check_recording_alive.side_effect = RuntimeError("probe broke")
+            try:
+                rec._monitor_recording_health(threading.Event())
+            except RuntimeError as e:
+                assert "probe broke" in str(e)
+            else:
+                raise AssertionError("expected the exception to propagate")
+
+    def test_pending_recovered_survives_a_loop_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"recording._health_check_interval_secs": 0})
+            rec._health_was_unhealthy = True  # set by the run that crashed
+            stop = threading.Event()
+
+            def alive():
+                stop.set()
+                return True, None
+
+            facade.check_recording_alive.side_effect = alive
+            rec._monitor_recording_health(stop)
+
+            facade.send_status.assert_called_once_with({
+                "type": "recording_health_warning", "status": "recovered",
+            })
+            assert rec._health_was_unhealthy is False
+
+    def test_each_recording_gets_a_fresh_stop_event(self):
+        """Clearing the previous recording's event would revive a monitor
+        whose join timed out; a new Event leaves the old one set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = _make_recording(tmpdir)
+            rec.recording_start_time = time.time()
+            with patch("src.modules.recording.supervise") as sup:
+                rec._start_recording_segment_monitoring()
+                first = rec.monitor_recording_segments_stop_flag
+                first.set()
+                rec._start_recording_segment_monitoring()
+            assert rec.monitor_recording_segments_stop_flag is not first
+            assert first.is_set()
+            stop = rec.monitor_recording_segments_stop_flag
+            assert sup.call_args.kwargs["stop_event"] is stop
+            assert sup.call_args.args[0] == "recording.segment_monitor"

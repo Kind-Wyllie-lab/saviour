@@ -313,7 +313,8 @@ class TestSupervisedListenerAndLocks:
         comm.cleanup()
         assert comm._listener_stop.is_set()
 
-    def test_attempt_reconnection_skips_while_a_reconnect_holds_the_lock(self, monkeypatch):
+    def test_attempt_reconnection_skips_while_a_reconnect_holds_the_lock(
+            self, monkeypatch):
         comm = _make_comm(listener_running=False)
         connect = MagicMock(return_value=True)
         monkeypatch.setattr(comm, "connect", connect)
@@ -327,7 +328,8 @@ class TestSupervisedListenerAndLocks:
     def test_attempt_reconnection_releases_the_lock(self, monkeypatch):
         comm = _make_comm(listener_running=False)
         monkeypatch.setattr(comm, "connect", MagicMock(return_value=True))
-        monkeypatch.setattr(comm, "start_command_listener", MagicMock(return_value=True))
+        monkeypatch.setattr(
+            comm, "start_command_listener", MagicMock(return_value=True))
         comm._attempt_reconnection()
         assert comm._reconnect_lock.acquire(blocking=False)
         comm._reconnect_lock.release()
@@ -360,5 +362,6 @@ class TestSupervisedListenerAndLocks:
         sup = MagicMock()
         monkeypatch.setattr("src.modules.communication.supervise", sup)
         assert comm.start_command_listener() is True
-        assert sup.call_args.args[:2] == ("comms.command_listener", comm.listen_for_commands)
+        assert sup.call_args.args[:2] == (
+            "comms.command_listener", comm.listen_for_commands)
         assert sup.call_args.kwargs["stop_event"] is comm._listener_stop

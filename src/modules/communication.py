@@ -553,7 +553,8 @@ class Communication:
                 if not self.status_socket:
                     self.logger.warning("Status socket not available")
                     return
-                self.status_socket.send_string(f"status/{self.facade.get_module_id()} {message}")
+                topic = f"status/{self.facade.get_module_id()}"
+                self.status_socket.send_string(f"{topic} {message}")
 
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")

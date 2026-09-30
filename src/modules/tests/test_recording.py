@@ -241,6 +241,9 @@ class TestScheduledStart:
             # don't run on through the rest of the test session.
             rec.monitor_recording_segments_stop_flag.set()
             rec.recording_health_stop_flag.set()
+            rec.health_stop_event.set()  # health-metadata CSV writer
+            if rec.health_recording_thread:
+                rec.health_recording_thread.join(timeout=5)
 
             assert rec.is_recording is True
             failure_calls = [
@@ -680,5 +683,6 @@ class TestSupervisedRecordingMonitors:
                 rec._start_recording_segment_monitoring()
             assert rec.monitor_recording_segments_stop_flag is not first
             assert first.is_set()
-            assert sup.call_args.kwargs["stop_event"] is rec.monitor_recording_segments_stop_flag
+            stop = rec.monitor_recording_segments_stop_flag
+            assert sup.call_args.kwargs["stop_event"] is stop
             assert sup.call_args.args[0] == "recording.segment_monitor"

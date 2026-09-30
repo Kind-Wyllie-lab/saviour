@@ -123,3 +123,24 @@ class TestRecordingStateLifecycle:
         assert mgr.get_recording_state("cam_old") is None
         state = mgr.get_recording_state("cam_new")
         assert state.summary["pending"] == {"count": 5}
+
+
+class TestIsModuleRecordingRequiresOnline:
+    """Desk soak 2026-09-30: an unplugged module that still carried a stale
+    RECORDING status was counted as recording by the liveness check."""
+
+    def test_offline_module_is_never_recording(self):
+        from src.controller.modules import ModuleStatus
+        mgr = _make_modules()
+        module = _register(mgr, "cam1")
+        module.online = True
+        module.status = ModuleStatus.RECORDING
+        assert mgr.is_module_recording("cam1") is True
+        module.online = False
+        assert mgr.is_module_recording("cam1") is False
+        assert mgr.is_module_online("cam1") is False
+
+    def test_unknown_module_is_neither(self):
+        mgr = _make_modules()
+        assert mgr.is_module_recording("ghost") is False
+        assert mgr.is_module_online("ghost") is False

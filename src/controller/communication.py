@@ -20,6 +20,8 @@ from collections.abc import Callable
 
 import zmq
 
+from src.shared.cifs import redact_secrets
+
 
 class Communication:
     def __init__(self,
@@ -108,7 +110,10 @@ class Communication:
                     module_id.encode(),
                     payload.encode(),
                 ])
-            self.logger.info(f"Command sent to {module_id}: {payload} at {time.time()}")
+            # Redacted: set_export_config carries the Samba password.
+            self.logger.info(
+                f"Command sent to {module_id}: {redact_secrets(payload)} "
+                f"at {time.time()}")
         except Exception as e:
             self.logger.error(f"Error sending command to {module_id}: {e}")
 

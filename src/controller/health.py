@@ -24,6 +24,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared.supervised import supervise
+
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
 
 
@@ -98,6 +100,7 @@ class Health:
         # Control flags
         self.is_monitoring = False
         self.monitor_thread = None
+        self._monitor_stop = threading.Event()
 
         # Modules explicitly force-offlined (e.g. mDNS goodbye). These must not
         # be re-marked online by stale ZMQ messages or the heartbeat monitor loop;
@@ -419,11 +422,14 @@ class Health:
 
 
     """Health Methods"""
-    def monitor_health(self):
-        """Monitor the health of all modules (runs in separate thread)"""
+    def monitor_health(self, stop_event: threading.Event | None = None):
+        """Monitor the health of all modules (runs in a supervised thread --
+        an unexpected exception restarts it instead of silently ending module
+        offline detection and the PTP health watchdog)."""
+        stop_event = stop_event or self._monitor_stop
         self.logger.info("Starting health monitor thread")
         cycle_count = 0
-        while self.is_monitoring:
+        while self.is_monitoring and not stop_event.is_set():
             current_time = time.time()
             cycle_count += 1
 
@@ -461,7 +467,7 @@ class Health:
             if cycle_count % 2 == 0:
                 self._check_ptp_health()
 
-            time.sleep(self.monitor_interval)
+            stop_event.wait(self.monitor_interval)
 
 
     def _log_controller_status(self) -> None:
@@ -841,14 +847,17 @@ class Health:
             return
 
         self.is_monitoring = True
-        self.monitor_thread = threading.Thread(target=self.monitor_health, daemon=True)
-        self.monitor_thread.start()
+        self._monitor_stop = threading.Event()
+        self.monitor_thread = supervise(
+            "health-monitor", self.monitor_health,
+            stop_event=self._monitor_stop, logger=self.logger)
         self.logger.info(f"Started health monitoring with {self.heartbeat_interval}s interval")
 
 
     def stop_monitoring(self):
         """Stop the health monitoring thread"""
         self.is_monitoring = False
+        self._monitor_stop.set()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
         self.logger.info("Stopped health monitoring")

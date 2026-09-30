@@ -50,6 +50,7 @@ from src.shared.data_rate import (
     estimate_recording_bytes_per_s,
     runway_minutes,
 )
+from src.shared.supervised import supervise
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -3716,13 +3717,15 @@ class Web(ABC):
                            {"token": token, "filename": fn},
                            room=requester_sid)
 
-    def _nas_monitor_loop(self):
+    def _nas_monitor_loop(self, stop_event: threading.Event | None = None):
+        """Supervised (src/shared/supervised.py) NAS health probe loop."""
+        stop_event = stop_event or self._nas_monitor_stop
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)
         # Brief initial delay so the server is fully up before the first probe.
-        self._nas_monitor_stop.wait(30)
-        while not self._nas_monitor_stop.is_set():
+        stop_event.wait(30)
+        while not stop_event.is_set():
             self._run_nas_health_check()
-            self._nas_monitor_stop.wait(NAS_CHECK_INTERVAL_S)
+            stop_event.wait(NAS_CHECK_INTERVAL_S)
 
     def _run_nas_health_check(self):
         now = time.time()
@@ -4078,7 +4081,8 @@ class Web(ABC):
             )
             self.web_thread.start()
             self._nas_monitor_stop.clear()
-            threading.Thread(target=self._nas_monitor_loop, daemon=True).start()
+            supervise("nas-monitor", self._nas_monitor_loop,
+                      stop_event=self._nas_monitor_stop, logger=self.logger)
             return self.web_thread
 
 

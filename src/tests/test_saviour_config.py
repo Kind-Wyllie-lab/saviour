@@ -68,7 +68,10 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-CONFIG = "ROLE=module\nTYPE=camera\nGATEWAY_MODE=\nGATEWAY=\nWAN_INTERFACE=\nDEVICE_IP=\n"
+CONFIG = (
+    "ROLE=module\nTYPE=camera\nGATEWAY_MODE=\nGATEWAY=\n"
+    "WAN_INTERFACE=\nDEVICE_IP=\n"
+)
 
 
 def test_read_config_value_missing_key_is_not_an_error_under_set_e(tmp_path):

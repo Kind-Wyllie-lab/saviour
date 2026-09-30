@@ -457,6 +457,12 @@ export default function System() {
               <td>
                 <span className="device-name">Controller</span>
                 {restartingBadge(controllerHealth?.supervised_threads)}
+                {/* wlan0/WAN firewall missing (src/controller/firewall_status.py) */}
+                {controllerHealth?.firewall?.ok === false && (
+                  <div className="val--danger" title={controllerHealth.firewall.detail}>
+                    Firewall not active on {controllerHealth.firewall.exposed.join(", ")}
+                  </div>
+                )}
               </td>
               <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
               <td><span className="cell--muted">-</span></td>

@@ -250,6 +250,11 @@ class Web(ABC):
 
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
+        # Address the server listens on. The controller sets this to its eth0
+        # address before start() (interface.listen_on = "lan"), so the UI /
+        # REST API aren't served on wlan0; reach it over Tailscale with
+        # `tailscale serve` (docs/NETWORK_FIREWALL.md).
+        self.host = "0.0.0.0"
 
         # Flask setup. static_folder=None here deliberately disables Flask's
         # own auto-registered '/<path:filename>' static route -- it and our
@@ -2472,6 +2477,12 @@ class Web(ABC):
             # Supervised long-lived threads (src/shared/supervised.py)
             from src.shared.supervised import REGISTRY
             health['supervised_threads'] = REGISTRY.snapshot()
+            # wlan0/WAN firewall actually in effect? (System page warning)
+            try:
+                from src.controller.firewall_status import firewall_status
+                health['firewall'] = firewall_status()
+            except Exception:
+                health['firewall'] = None
             self.socketio.emit("controller_health_response", health)
 
 
@@ -4091,7 +4102,8 @@ class Web(ABC):
 
     def _run_server(self):
         """Internal method to run the Flask server"""
-        self.socketio.run(self.app, host='0.0.0.0', port=self.port, debug=False, allow_unsafe_werkzeug=True)
+        self.socketio.run(self.app, host=self.host, port=self.port, debug=False,
+                          allow_unsafe_werkzeug=True)
 
 
     def stop(self):

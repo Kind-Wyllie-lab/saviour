@@ -945,12 +945,21 @@ EOF
 # which ptp.py tails for telemetry and truncates, instead of the journal.
 # ptp4l stays in the journal (1 Hz; its state changes are the useful
 # diagnostics).
+# phc2sys's log dir must exist before systemd starts the unit (see above).
+# tmpfiles.d recreates it early on every boot; create it now as well.
+_ptp_log_dir() {
+    echo "d /run/linuxptp 0755 root root -" > /etc/tmpfiles.d/saviour-linuxptp.conf
+    systemd-tmpfiles --create /etc/tmpfiles.d/saviour-linuxptp.conf 2>/dev/null         || mkdir -p /run/linuxptp
+}
+
 configure_ptp_timetransmitter() {
     progress "Configuring PTP grandmaster (timeTransmitter)…"
     log "Configuring PTP: timeTransmitter"
 
     systemctl stop ptp4l 2>/dev/null || true
     systemctl stop phc2sys 2>/dev/null || true
+
+    _ptp_log_dir
 
     tee /etc/systemd/system/ptp4l.service > /dev/null <<'EOF'
 [Unit]
@@ -981,10 +990,8 @@ Type=simple
 User=root
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/sbin/phc2sys -a -r -r -m -q
-# systemd creates /run/linuxptp before ANY exec -- StandardOutput applies to
-# ExecStartPre too, so an ExecStartPre mkdir can't create it (chicken-and-egg).
-RuntimeDirectory=linuxptp
-RuntimeDirectoryPreserve=yes
+# /run/linuxptp comes from tmpfiles.d (_ptp_log_dir): systemd opens this
+# file before ExecStartPre or RuntimeDirectory= run, so neither can create it.
 StandardOutput=append:/run/linuxptp/phc2sys.log
 StandardError=journal
 Restart=always
@@ -1007,6 +1014,8 @@ configure_ptp_timereceiver() {
     systemctl disable --now systemd-timesyncd 2>/dev/null || true
     systemctl stop ptp4l 2>/dev/null || true
     systemctl stop phc2sys 2>/dev/null || true
+
+    _ptp_log_dir
 
     tee /etc/systemd/system/ptp4l.service > /dev/null <<'EOF'
 [Unit]
@@ -1036,10 +1045,8 @@ Wants=ptp4l.service
 Type=simple
 User=root
 ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -q -R 8
-# systemd creates /run/linuxptp before ANY exec -- StandardOutput applies to
-# ExecStartPre too, so an ExecStartPre mkdir can't create it (chicken-and-egg).
-RuntimeDirectory=linuxptp
-RuntimeDirectoryPreserve=yes
+# /run/linuxptp comes from tmpfiles.d (_ptp_log_dir): systemd opens this
+# file before ExecStartPre or RuntimeDirectory= run, so neither can create it.
 StandardOutput=append:/run/linuxptp/phc2sys.log
 StandardError=journal
 Restart=always

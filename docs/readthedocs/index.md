@@ -13,6 +13,7 @@ To learn about developing modules, GUIs, and the process of contributing to SAVI
 ## All pages
 
 - [Getting Started](getting_started.md) - assigning device roles, connecting modules, running and exporting a recording session.
+- [Setting Up Many Devices](imaging.md) - capture a master SD card image, flash it to many cards, and set each card's role before first boot.
 - [FAQs](faqs.md)
 - [Using SAVIOUR with Ephys](open_ephys.md) - syncing and aligning SAVIOUR recordings with an Open Ephys rig.
 - [Synchronisation](synchronisation.md) - the three layers that put every stream on one clock: fleet-wide PTP, FrameSync, ephys sync.

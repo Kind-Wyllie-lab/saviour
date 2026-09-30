@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/Kind-Wyllie-lab/saviour/main/instal
 
 This clones the repo to `/usr/local/src/saviour` and runs `setup.sh`, which installs everything SAVIOUR needs (PTP, ffmpeg, Picamera2, Samba, etc.). It doesn't assign a role by itself - that's the next step, below.
 
-Doing this one device at a time works fine but is slow for a big rig - once you've got one device fully configured, it's usually faster to clone its SD card/NVMe image onto the rest instead (`scripts/multiclone.sh` in the repo).
+Doing this one device at a time works fine but is slow for a big rig - once you've got one device fully configured, it's usually faster to clone its SD card image onto the rest instead. See [Setting Up Many Devices](imaging.md).
 
 ## Assigning a device role
 

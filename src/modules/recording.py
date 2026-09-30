@@ -537,6 +537,9 @@ class Recording:
                         last_export_signal = now
                 except OSError as e:
                     self.logger.warning(f"Export re-signal check failed: {e}")
+                    # Back off to the normal interval; without this a missing
+                    # to_export/ retried (and logged) ten times a second.
+                    last_export_signal = now
 
             stop_event.wait(0.1)  # Avoid busy waiting
 

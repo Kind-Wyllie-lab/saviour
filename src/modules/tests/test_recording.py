@@ -237,6 +237,10 @@ class TestScheduledStart:
             rec, facade = _make_recording(tmpdir)
 
             rec._scheduled_start("exp1", None, time.time())
+            # This really started the (supervised) monitors; stop them so they
+            # don't run on through the rest of the test session.
+            rec.monitor_recording_segments_stop_flag.set()
+            rec.recording_health_stop_flag.set()
 
             assert rec.is_recording is True
             failure_calls = [

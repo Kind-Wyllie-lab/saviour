@@ -50,6 +50,7 @@ from src.shared.data_rate import (
     estimate_recording_bytes_per_s,
     runway_minutes,
 )
+from src.shared.cifs import cifs_auth_option
 from src.shared.supervised import supervise
 from src.shared.zip_extract import extract_preserving_permissions
 
@@ -706,7 +707,7 @@ class Web(ABC):
             mount_point.mkdir(parents=True, exist_ok=True)
             if mount_point.is_mount():
                 subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-            auth_opts = f"username={username},password={password}" if username else "guest"
+            auth_opts = cifs_auth_option(username, password, "nas-probe")
             result = subprocess.run(
                 ["sudo", "mount", "-t", "cifs",
                  f"//{nas_ip}/{share_path}", str(mount_point),
@@ -791,7 +792,7 @@ class Web(ABC):
                 mount_point.mkdir(parents=True, exist_ok=True)
                 if mount_point.is_mount():
                     subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-                auth_opts = f"username={username},password={password}" if username else "guest"
+                auth_opts = cifs_auth_option(username, password, "metadata")
                 result = subprocess.run(
                     ["sudo", "mount", "-t", "cifs",
                      f"//{nas_ip}/{share_path}", str(mount_point),
@@ -4234,7 +4235,7 @@ class Web(ABC):
             if mount_point.is_mount():
                 subprocess.run(["sudo", "umount", str(mount_point)], check=False)
 
-            auth_opts = f"username={username},password={password}" if username else "guest"
+            auth_opts = cifs_auth_option(username, password, "export-mount")
             mount_cmd = [
                 "sudo", "mount", "-t", "cifs",
                 f"//{nas_ip}/{share_path}",
@@ -4310,7 +4311,7 @@ class Web(ABC):
         username   = self.config.get("export.share_username", "")
         password   = self.config.get("export.share_password", "")
         mount_point.mkdir(parents=True, exist_ok=True)
-        auth_opts = f"username={username},password={password}" if username else "guest"
+        auth_opts = cifs_auth_option(username, password, "export-browse")
         mount_opts = (
             f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
         )

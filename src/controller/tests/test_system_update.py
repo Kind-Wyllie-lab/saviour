@@ -201,3 +201,28 @@ class TestSnapshot:
                               backup_dir=str(tmp_path / "b"))
         assert res["ok"] is False
         assert "error" in res
+
+
+# ---------------------------------------------------------------------------
+# find_npm: nvm's npm needs node on PATH (desk soak 2026-09-30)
+# ---------------------------------------------------------------------------
+
+def test_find_npm_puts_nvm_bin_dir_first_on_path(monkeypatch):
+    from src.controller import system_update
+    fake = "/home/pi/.nvm/versions/node/v22.22.2/bin/npm"
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr("glob.glob", lambda _pat: [
+        "/home/pi/.nvm/versions/node/v20.1.0/bin/npm", fake])
+    monkeypatch.setenv("PATH", "/usr/bin")
+    npm, env = system_update.find_npm()
+    assert npm == fake
+    assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(fake)
+    assert env["PATH"].endswith("/usr/bin")
+
+
+def test_find_npm_none_when_absent(monkeypatch):
+    from src.controller import system_update
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr("glob.glob", lambda _pat: [])
+    npm, _env = system_update.find_npm()
+    assert npm is None

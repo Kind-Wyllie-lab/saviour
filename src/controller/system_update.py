@@ -222,13 +222,31 @@ def notify_modules(send_command, module_ids, controller_url: str) -> int:
     return len(list(module_ids))
 
 
+def find_npm() -> tuple[str | None, dict]:
+    """(npm path, env to run it with). Falls back to the newest nvm install
+    under /home/pi/.nvm, where the controller's node lives. npm's shebang is
+    `#!/usr/bin/env node`, and saviour.service's PATH doesn't include nvm's
+    bin dir, so running that npm by absolute path failed with
+    "env: 'node': No such file or directory" -- every web-UI / REST update
+    silently skipped the frontend rebuild (desk soak 2026-09-30). The env
+    returned puts npm's own bin dir first on PATH."""
+    import glob
+    import shutil
+    npm = shutil.which("npm")
+    if not npm:
+        cands = sorted(glob.glob("/home/pi/.nvm/versions/node/*/bin/npm"))
+        npm = cands[-1] if cands else None
+    env = dict(os.environ)
+    if npm:
+        env["PATH"] = os.path.dirname(npm) + os.pathsep + env.get("PATH", "")
+    return npm, env
+
+
 def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -> None:
     """`pip install --no-index` + (optional) `npm install && npm run build` +
     `systemctl restart saviour.service`. Blocking except the final restart
     (spawned detached) -- run this on a worker thread; the restart kills the
     caller. Mirrors web.py's `_controller_build_and_restart`."""
-    import glob
-    import shutil
     import time
 
     try:
@@ -239,18 +257,15 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -
                          "(new deps need a manual online `pip install .`)")
         if rebuild_frontend:
             frontend_dir = os.path.join(src_root, "src/controller/frontend")
-            npm = shutil.which("npm")
-            if not npm:
-                cands = sorted(glob.glob("/home/pi/.nvm/versions/node/*/bin/npm"))
-                npm = cands[-1] if cands else None
+            npm, npm_env = find_npm()
             if npm and os.path.isdir(frontend_dir):
                 _LOG.info("build_and_restart: rebuilding frontend")
                 # NB npm runs as-is (matches web.py's _controller_build_and_restart);
                 # the root-owned-dist ownership drift is a pre-existing CLAUDE.md item.
                 subprocess.run([npm, "install", "--silent"],
-                               cwd=frontend_dir, capture_output=True)
-                b = subprocess.run([npm, "run", "build"],
-                                   cwd=frontend_dir, capture_output=True, text=True)
+                               cwd=frontend_dir, capture_output=True, env=npm_env)
+                b = subprocess.run([npm, "run", "build"], cwd=frontend_dir,
+                                   capture_output=True, text=True, env=npm_env)
                 if b.returncode != 0:
                     _LOG.warning("build_and_restart: frontend build failed: %s",
                                  b.stderr)

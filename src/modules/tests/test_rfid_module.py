@@ -323,3 +323,34 @@ class TestVisitRecording:
         m.facade.stage_file_for_export.assert_any_call(first_visit)
         assert m.current_visit_filename != first_visit
         assert m._visit_csv_handle is not None
+
+
+class TestCheckRecordingAlive:
+    """roadmap A1: RFID had no liveness signal at all (module.py's default
+    always returned healthy)."""
+
+    def _live(self, **attrs):
+        m = _make_rfid(**attrs)
+        m.bus.is_connected = True
+        m.bus.reader_alive = True
+        return m
+
+    def test_healthy_quiet_bus_is_alive(self):
+        m = self._live(is_recording=True, _csv_handle=MagicMock(closed=False))
+        assert m._check_recording_alive() == (True, None)
+
+    def test_disconnected_bus_is_not_alive(self):
+        m = self._live()
+        m.bus.is_connected = False
+        assert m._check_recording_alive() == (False, "RFID bus disconnected")
+
+    def test_dead_reader_thread_is_not_alive(self):
+        m = self._live()
+        m.bus.reader_alive = False
+        ok, detail = m._check_recording_alive()
+        assert not ok and "reader thread" in detail
+
+    def test_closed_csv_while_recording_is_not_alive(self):
+        m = self._live(is_recording=True, _csv_handle=MagicMock(closed=True))
+        ok, detail = m._check_recording_alive()
+        assert not ok and "CSV" in detail

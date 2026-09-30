@@ -2729,7 +2729,6 @@ class Web(ABC):
             saviour.service. The npm build also doubles as a delay that lets
             modules finish fetching /update/package before the controller
             drops, when this runs as part of an 'update everything'."""
-            import shutil as _shutil
             try:
                 pip_result = subprocess.run([
                     "/usr/local/src/saviour/env/bin/pip", "install", "-q",
@@ -2740,12 +2739,10 @@ class Web(ABC):
                         "pip install --no-index failed (new dependencies may "
                         "need a manual `pip install .` with internet access)")
                 frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
-                npm_bin = _shutil.which("npm")
-                if not npm_bin:
-                    import glob as _glob
-                    candidates = sorted(_glob.glob(
-                        "/home/pi/.nvm/versions/node/*/bin/npm"))
-                    npm_bin = candidates[-1] if candidates else None
+                # nvm's npm needs its own bin dir on PATH to find node
+                # (system_update.find_npm).
+                from src.controller.system_update import find_npm
+                npm_bin, npm_env = find_npm()
                 if not rebuild_frontend:
                     self.logger.info(
                         "Skipping frontend rebuild (dist/ restored from snapshot)")
@@ -2754,9 +2751,11 @@ class Web(ABC):
                                        {"stage": "building_frontend"})
                     self.logger.info("Rebuilding frontend after update...")
                     subprocess.run([npm_bin, "install", "--silent"],
-                                   cwd=frontend_dir, capture_output=True)
+                                   cwd=frontend_dir, capture_output=True,
+                                   env=npm_env)
                     build = subprocess.run([npm_bin, "run", "build"],
-                                           cwd=frontend_dir, capture_output=True)
+                                           cwd=frontend_dir, capture_output=True,
+                                           env=npm_env)
                     if build.returncode == 0:
                         self.logger.info("Frontend rebuilt successfully")
                     else:

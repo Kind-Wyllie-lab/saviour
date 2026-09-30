@@ -24,7 +24,7 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.supervised import supervise
+from src.shared.supervised import REGISTRY, crash_looping, supervise
 
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
 
@@ -101,6 +101,9 @@ class Health:
         self.is_monitoring = False
         self.monitor_thread = None
         self._monitor_stop = threading.Event()
+        # (source, thread name) pairs currently alerted as crash-looping;
+        # source is "controller" or a module_id.
+        self._crash_looping_alerted: set[tuple[str, str]] = set()
 
         # Modules explicitly force-offlined (e.g. mDNS goodbye). These must not
         # be re-marked online by stale ZMQ messages or the heartbeat monitor loop;
@@ -466,6 +469,7 @@ class Health:
             # Check PTP health periodically
             if cycle_count % 2 == 0:
                 self._check_ptp_health()
+                self._check_supervised_threads()
 
             stop_event.wait(self.monitor_interval)
 
@@ -838,6 +842,40 @@ class Health:
                     f"reached, but {backoff}s restart backoff not elapsed "
                     f"({now - h.get('last_ptp_restart', 0):.0f}s since last) — "
                     f"holding off")
+
+
+    def _check_supervised_threads(self) -> None:
+        """Alert when a supervised long-lived thread -- the controller's own
+        or one a module reports in its heartbeat -- is crash-looping (>= 3
+        restarts in the last hour), and log when it stops. roadmap A6."""
+        sources = {"controller": REGISTRY.snapshot()}
+        for module_id, h in list(self.module_health.items()):
+            if h.get("status") == "online" and h.get("supervised_threads"):
+                sources[module_id] = h["supervised_threads"]
+
+        looping = set()
+        for source, snapshot in sources.items():
+            for name in crash_looping(snapshot):
+                looping.add((source, name))
+                if (source, name) in self._crash_looping_alerted:
+                    continue
+                info = snapshot[name]
+                message = (
+                    f"'{name}' on {source} has restarted "
+                    f"{info.get('restarts_last_hour')} times in the last hour "
+                    f"(last error: {info.get('last_error')})"
+                )
+                self.logger.error(f"Supervised thread crash-looping: {message}")
+                self.facade.send_alert(
+                    key=f"thread_crash_loop_{source}_{name}",
+                    title=f"Background thread restarting repeatedly — {source}",
+                    message=message,
+                    severity="warning",
+                )
+
+        for source, name in self._crash_looping_alerted - looping:
+            self.logger.info(f"Supervised thread '{name}' on {source} is stable again")
+        self._crash_looping_alerted = looping
 
 
     def start_monitoring(self):

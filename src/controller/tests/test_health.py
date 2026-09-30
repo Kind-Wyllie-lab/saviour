@@ -741,3 +741,62 @@ class TestCheckPtpHealth:
         )
         self._run(health, 3)
         facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})
+
+
+# ---------------------------------------------------------------------------
+# Crash-looping supervised threads (roadmap A6)
+# ---------------------------------------------------------------------------
+
+class TestSupervisedThreadAlerts:
+    _LOOPING = {"recording.health_monitor": {
+        "state": "running", "restarts": 5, "restarts_last_hour": 4,
+        "last_crash": "2026-09-30T12:00:00+00:00", "last_error": "TypeError('x')",
+    }}
+    _FINE = {"recording.health_monitor": {
+        "state": "running", "restarts": 5, "restarts_last_hour": 1,
+        "last_crash": None, "last_error": None,
+    }}
+
+    def _with_module(self, health, threads, status="online"):
+        health.module_health["cam1"] = {"status": status, "supervised_threads": threads}
+
+    def test_alerts_once_for_a_crash_looping_module_thread(self):
+        health, facade = _make_health()
+        self._with_module(health, self._LOOPING)
+        with patch("src.controller.health.REGISTRY") as reg:
+            reg.snapshot.return_value = {}
+            health._check_supervised_threads()
+            health._check_supervised_threads()
+
+        facade.send_alert.assert_called_once()
+        kwargs = facade.send_alert.call_args.kwargs
+        assert kwargs["key"] == "thread_crash_loop_cam1_recording.health_monitor"
+        assert "4 times" in kwargs["message"]
+
+    def test_re_alerts_after_it_recovers_and_loops_again(self):
+        health, facade = _make_health()
+        with patch("src.controller.health.REGISTRY") as reg:
+            reg.snapshot.return_value = {}
+            self._with_module(health, self._LOOPING)
+            health._check_supervised_threads()
+            self._with_module(health, self._FINE)
+            health._check_supervised_threads()
+            self._with_module(health, self._LOOPING)
+            health._check_supervised_threads()
+        assert facade.send_alert.call_count == 2
+
+    def test_offline_modules_are_ignored(self):
+        health, facade = _make_health()
+        self._with_module(health, self._LOOPING, status="offline")
+        with patch("src.controller.health.REGISTRY") as reg:
+            reg.snapshot.return_value = {}
+            health._check_supervised_threads()
+        facade.send_alert.assert_not_called()
+
+    def test_controllers_own_threads_are_checked(self):
+        health, facade = _make_health()
+        with patch("src.controller.health.REGISTRY") as reg:
+            reg.snapshot.return_value = self._LOOPING
+            health._check_supervised_threads()
+        assert facade.send_alert.call_args.kwargs["key"].startswith(
+            "thread_crash_loop_controller_")

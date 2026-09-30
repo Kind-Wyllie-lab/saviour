@@ -16,7 +16,7 @@ import time
 import psutil
 
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
-from src.shared.supervised import supervise
+from src.shared.supervised import REGISTRY, supervise
 
 
 class Health:
@@ -83,13 +83,14 @@ class Health:
             if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):
                 # Check if communication manager is still valid
                 if not self.facade.get_controller_ip():
-                    self.logger.warning("Controller IP not available, stopping heartbeats")
+                    self.logger.warning(
+                        "Controller IP not available, stopping heartbeats")
                     self.heartbeats_active = False
                     stop_event.set()  # deliberate stop, not a crash
                     break
 
                 status = self.get_health()
-                status['type'] = 'heartbeat' # Add type field to identify heartbeat status
+                status['type'] = 'heartbeat'  # identifies a heartbeat status
                 self.facade.send_status(status)
                 self.facade.notify_heartbeat_sent()
                 last_heartbeat_time = current_time
@@ -131,6 +132,7 @@ class Health:
             frame_clip_pct=self.facade.get_frame_clip_pct(),
             hardware_fault=self.facade.get_hardware_fault(),
             version=self.facade.get_saviour_version(),
+            supervised_threads=REGISTRY.snapshot(),
         )
         return snapshot.to_dict()
 

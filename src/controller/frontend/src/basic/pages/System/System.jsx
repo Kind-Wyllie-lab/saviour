@@ -38,6 +38,23 @@ function decodeThrottled(v) {
   return { now, sinceBoot };
 }
 
+// Supervised background threads crash-looping (>= 3 restarts in the last
+// hour) -- mirror of src/shared/supervised.py crash_looping().
+function restartingBadge(threads) {
+  const looping = Object.entries(threads || {})
+    .filter(([, t]) => (t?.restarts_last_hour ?? 0) >= 3);
+  if (!looping.length) return null;
+  const detail = looping
+    .map(([name, t]) => `${name}: ${t.restarts_last_hour} restarts in the last hour (${t.last_error})`)
+    .join("\n");
+  return (
+    <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+      title={`Background thread restarting repeatedly:\n${detail}`}>
+      RESTARTING
+    </span>
+  );
+}
+
 function tempCell(t, throttled) {
   const { now, sinceBoot } = decodeThrottled(throttled);
   const marker = now.length ? (
@@ -439,6 +456,7 @@ export default function System() {
             <tr className="system-table__controller-row">
               <td>
                 <span className="device-name">Controller</span>
+                {restartingBadge(controllerHealth?.supervised_threads)}
               </td>
               <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
               <td><span className="cell--muted">-</span></td>
@@ -512,6 +530,7 @@ export default function System() {
                           EXPOSURE {row.frame_clip_pct.toFixed(0)}%
                         </span>
                       )}
+                      {isOnline && restartingBadge(row.supervised_threads)}
                       {isOnline && row.hardware_fault && (
                         <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
                           title={row.hardware_fault}>

@@ -2469,6 +2469,9 @@ class Web(ABC):
             health['controller_time'] = datetime.now(UTC).isoformat()
             # Controller uptime in seconds
             health['uptime'] = round(self.facade.get_uptime())
+            # Supervised long-lived threads (src/shared/supervised.py)
+            from src.shared.supervised import REGISTRY
+            health['supervised_threads'] = REGISTRY.snapshot()
             self.socketio.emit("controller_health_response", health)
 
 

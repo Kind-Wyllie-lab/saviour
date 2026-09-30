@@ -846,9 +846,11 @@ class Recording:
         """Retrieve health metadata and write to csv tile"""
         interval = self.config.get("health_metadata_recording_interval", 1)
         csv_filename = self.current_health_segment
-        fieldnames = list(self.facade.get_health().keys())
+        # supervised_threads is a nested dict for heartbeats, not a CSV column.
+        omit = {"supervised_threads"}
+        fieldnames = [k for k in self.facade.get_health() if k not in omit]
         with open(csv_filename, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             while not self.health_stop_event.is_set():
                 data = self.facade.get_health()

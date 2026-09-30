@@ -672,6 +672,10 @@ components:
         duration_minutes: { type: [number, "null"] }
         pending_exports: { type: integer }
         total_exports_failed: { type: integer }
+        export_failed_modules:
+          type: array
+          items: { type: string }
+          description: Modules whose export failed permanently and has not since succeeded; blocks a non-forced delete.
         autostart_error: { type: string }
       additionalProperties: true
 

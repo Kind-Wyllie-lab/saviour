@@ -119,7 +119,17 @@ class RecordingSession:
     module_export_states:      dict = field(default_factory=dict)
     # Cumulative count of completed exports across all segments
     total_exports_complete:    int  = 0
+    # Lifetime count of failed export attempts, *including* ones that were
+    # later retried successfully -- display/digest only, never a delete gate.
     total_exports_failed:      int  = 0
+    # Modules whose most recent export for this session ended in a *final*
+    # failure (retries exhausted) with no later "complete" from that module.
+    # A later complete clears the entry: export_staged() sweeps the module's
+    # whole to_export/ folder, so it carries the previously-failed files too.
+    # This (plus pending_exports) is what blocks a plain delete_session().
+    # Deliberately separate from module_export_states, which is reset to
+    # "idle" whenever a (scheduled/habitat) run restarts.
+    export_failed_modules:     list = field(default_factory=list)
     # Outstanding export_ready signals not yet resolved (complete, or a final
     # give-up after retries) — the "certainty" signal for whether every file
     # this session produced has actually landed on the controller's share.
@@ -777,16 +787,19 @@ class Recording:
         if session.state in (SessionState.ACTIVE, SessionState.SCHEDULED):
             return {"error": f"Cannot delete a session in state '{session.state}' — stop it first"}
 
-        if not force and (session.pending_exports > 0 or session.total_exports_failed > 0):
+        failed_modules = list(session.export_failed_modules)
+        if not force and (session.pending_exports > 0 or failed_modules):
             return {
                 "error": (
                     f"Session '{session_name}' has {session.pending_exports} unresolved "
-                    f"and {session.total_exports_failed} failed export(s) — delete anyway?"
+                    f"export(s) and {len(failed_modules)} module(s) whose export "
+                    f"failed permanently — delete anyway?"
                 ),
                 "export_warning": True,
                 "session_name": session_name,
                 "pending_exports": session.pending_exports,
                 "total_exports_failed": session.total_exports_failed,
+                "export_failed_modules": failed_modules,
             }
 
         if delete_files:
@@ -1320,6 +1333,8 @@ class Recording:
                 session.total_exports_complete += 1
                 self._last_export_success[module_id] = time.time()
                 self._export_failure_streak[module_id] = 0
+                if module_id in session.export_failed_modules:
+                    session.export_failed_modules.remove(module_id)
             elif state == "failed":
                 session.total_exports_failed += 1
                 streak = self._export_failure_streak.get(module_id, 0) + 1
@@ -1330,6 +1345,8 @@ class Recording:
                     + ("" if final else " — will retry"))
                 if final:
                     session.pending_exports = max(0, session.pending_exports - 1)
+                    if module_id not in session.export_failed_modules:
+                        session.export_failed_modules.append(module_id)
 
             if (session.state == SessionState.STOPPED and session.pending_exports == 0
                     and session.export_stall_alerted):
@@ -3046,6 +3063,14 @@ class Recording:
                 data = json.load(f)
             for name, d in data.items():
                 session = RecordingSession(**d)
+                if "export_failed_modules" not in d and session.total_exports_failed:
+                    # Saved before export_failed_modules existed: keep the
+                    # delete guard for any module still showing a failed export
+                    # rather than silently dropping it on upgrade.
+                    session.export_failed_modules = [
+                        m for m, s in session.module_export_states.items()
+                        if s == "failed"
+                    ]
                 if session.state == SessionState.ACTIVE:
                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"

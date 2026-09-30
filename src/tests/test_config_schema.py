@@ -36,7 +36,10 @@ from src.modules.config import Config as ModuleConfig
 REPO = Path(__file__).resolve().parents[2]
 SIDES = {
     "modules": {"root": REPO / "src" / "modules", "suffix": "_config.json"},
-    "controller": {"root": REPO / "src" / "controller", "suffix": "_controller_config.json"},
+    "controller": {
+        "root": REPO / "src" / "controller",
+        "suffix": "_controller_config.json",
+    },
 }
 
 # `<receiver>.config.get("literal"` -- only the Config object, not any dict
@@ -53,7 +56,8 @@ def _variants(side: str) -> list[str]:
 
 
 def _variant_config_path(side: str, variant: str) -> Path:
-    return SIDES[side]["root"] / "variants" / variant / f"{variant}{SIDES[side]['suffix']}"
+    name = f"{variant}{SIDES[side]['suffix']}"
+    return SIDES[side]["root"] / "variants" / variant / name
 
 
 def _load(path: Path) -> dict:
@@ -127,7 +131,8 @@ def _make_config(side: str, variant: str, active_path: str):
         cfg = ModuleConfig(base_config_path=base_path, active_config_path=active_path)
         cfg.load_module_config(variant_path)
     else:
-        cfg = ControllerConfig(base_config_path=base_path, active_config_path=active_path)
+        cfg = ControllerConfig(
+            base_config_path=base_path, active_config_path=active_path)
         cfg.load_controller_config(variant_path)
     return cfg
 
@@ -143,7 +148,8 @@ def test_base_config_is_a_json_object(side):
 def test_variant_config_exists_and_is_a_json_object(side, variant):
     path = _variant_config_path(side, variant)
     assert path.is_file(), f"{variant} has a variant.conf but no {path.name}"
-    assert isinstance(_load(path), dict), f"{path} must be a JSON object (use {{}} if empty)"
+    assert isinstance(_load(path), dict), (
+        f"{path} must be a JSON object (use {{}} if empty)")
 
 
 # ── 2. no section/scalar clashes ──────────────────────────────────────────────
@@ -217,7 +223,9 @@ def test_upgrade_from_an_older_active_config_fills_every_schema_key(
 def _code_key_misses(side: str) -> dict[str, list[str]]:
     root = SIDES[side]["root"]
     base = _keys(_load(root / "base_config.json"))
-    per_variant = {v: _keys(_load(_variant_config_path(side, v))) for v in _variants(side)}
+    per_variant = {
+        v: _keys(_load(_variant_config_path(side, v))) for v in _variants(side)
+    }
     any_variant = set().union(*per_variant.values())
     misses = {}
     for py in sorted(root.rglob("*.py")):
@@ -230,7 +238,8 @@ def _code_key_misses(side: str) -> dict[str, list[str]]:
             schema = base | per_variant[rel[1]]
         else:
             schema = base | any_variant
-        bad = sorted({key for key, tail in _GET_RE.findall(py.read_text(encoding="utf-8"))
+        reads = _GET_RE.findall(py.read_text(encoding="utf-8"))
+        bad = sorted({key for key, tail in reads
                       if tail == ")" and key not in schema})
         if bad:
             misses[str(py.relative_to(REPO))] = bad

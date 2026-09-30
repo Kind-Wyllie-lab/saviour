@@ -275,6 +275,13 @@ class RS485Bus:
         return bool(self._serial and self._serial.is_open)
 
     @property
+    def reader_alive(self) -> bool:
+        """The reader thread is running. A SerialException clears _serial (so
+        is_connected goes False), but any other exception ends the thread
+        while the port still reads as open -- this catches that case."""
+        return bool(self._reader_thread and self._reader_thread.is_alive())
+
+    @property
     def port(self) -> str:
         return self._port
 

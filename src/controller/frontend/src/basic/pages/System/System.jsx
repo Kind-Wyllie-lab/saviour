@@ -439,6 +439,12 @@ export default function System() {
             <tr className="system-table__controller-row">
               <td>
                 <span className="device-name">Controller</span>
+                {/* wlan0/WAN firewall missing (src/controller/firewall_status.py) */}
+                {controllerHealth?.firewall?.ok === false && (
+                  <div className="val--danger" title={controllerHealth.firewall.detail}>
+                    Firewall not active on {controllerHealth.firewall.exposed.join(", ")}
+                  </div>
+                )}
               </td>
               <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
               <td><span className="cell--muted">-</span></td>

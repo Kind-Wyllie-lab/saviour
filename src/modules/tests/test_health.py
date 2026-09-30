@@ -9,7 +9,10 @@ time.sleep flip heartbeats_active off, rather than letting the real loop
 run.
 """
 
+import threading
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.modules.health import Health
 
@@ -95,28 +98,28 @@ class TestStartHeartbeats:
         assert health.start_heartbeats() is False
         assert health.heartbeats_active is False
 
-    def test_success_spawns_daemon_thread(self):
+    def test_success_starts_a_supervised_heartbeat_thread(self):
         health = _make_health()
         health.facade.get_controller_ip.return_value = "10.0.0.1"
-        with patch("src.modules.health.threading.Thread") as mock_thread:
+        with patch("src.modules.health.supervise") as sup:
             result = health.start_heartbeats()
 
         assert result is True
         assert health.heartbeats_active is True
-        kwargs = mock_thread.call_args.kwargs
-        assert kwargs["target"] == health._heartbeat_loop
-        assert kwargs["daemon"] is True
-        mock_thread.return_value.start.assert_called_once()
+        assert sup.call_args.args[:2] == ("health.heartbeat", health._heartbeat_loop)
+        assert sup.call_args.kwargs["stop_event"] is health._heartbeat_stop
+        assert health.heartbeat_thread is sup.return_value
 
 
 class TestHeartbeatLoop:
     def _run_one_iteration(self, health):
-        """Let the loop body run exactly once by having the mocked
-        time.sleep (the last call each iteration) turn the flag off."""
-        def _stop(*_a, **_k):
-            health.heartbeats_active = False
-        with patch("src.modules.health.time.sleep", side_effect=_stop):
-            health._heartbeat_loop()
+        """Let the loop body run exactly once: the wait at the end of each
+        iteration sets the stop event."""
+        class _StopAfterOne(threading.Event):
+            def wait(self, timeout=None):
+                self.set()
+                return True
+        health._heartbeat_loop(_StopAfterOne())
 
     def test_sends_heartbeat_with_type_field(self):
         health = _make_health(**{"module.heartbeat_interval": 0})
@@ -138,14 +141,17 @@ class TestHeartbeatLoop:
         assert health.heartbeats_active is False
         health.facade.send_status.assert_not_called()
 
-    def test_exception_sending_status_stops_heartbeats(self):
+    def test_exception_building_a_heartbeat_does_not_stop_heartbeats(self):
+        """roadmap A6: one failed beat used to end heartbeats for good (and
+        the controller then marked a healthy module offline). Now it goes to
+        the supervisor, which restarts the loop; heartbeats stay active."""
         health = _make_health(**{"module.heartbeat_interval": 0})
         health.heartbeats_active = True
         health.facade.get_controller_ip.return_value = "10.0.0.1"
-        health.facade.send_status.side_effect = RuntimeError("comms down")
-        with patch.object(health, "get_health", return_value={}):
+        with patch.object(health, "get_health", side_effect=RuntimeError("psutil")), \
+             pytest.raises(RuntimeError):
             self._run_one_iteration(health)
-        assert health.heartbeats_active is False
+        assert health.heartbeats_active is True
 
 
 class TestStopHeartbeats:

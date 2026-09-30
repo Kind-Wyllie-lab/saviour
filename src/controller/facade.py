@@ -271,6 +271,10 @@ class ControllerFacade:
         return self.controller.modules.is_module_recording(module_id)
 
 
+    def is_module_online(self, module_id: str) -> bool:
+        return self.controller.modules.is_module_online(module_id)
+
+
     def received_module_config(self, module_id: str, module_config: dict) -> None:
         self.controller.modules.received_module_config(module_id, module_config)
 

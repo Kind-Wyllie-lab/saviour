@@ -13,6 +13,7 @@ a test.
 import json
 import os
 import tempfile
+import threading
 import time
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -1806,3 +1807,68 @@ class TestRecordingHealthSources:
 
         keys = [c.kwargs["key"] for c in facade.send_alert.call_args_list]
         assert keys == ["recording_health_cam1_disk", "recording_health_cam1_liveness"]
+
+
+# ---------------------------------------------------------------------------
+# Desk soak 2026-09-30: offline modules and the timed-stop double-send
+# ---------------------------------------------------------------------------
+
+class TestOfflineModuleLiveness:
+    def _rec(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ERROR,
+            modules=["cam1", "cam2"],
+            module_stop_states={"cam1": "recording", "cam2": "recording"},
+            error_message="cam1 is offline",
+        )
+        facade.is_module_online.side_effect = lambda m: m != "cam1"
+        facade.is_module_recording.side_effect = lambda m: m == "cam2"
+        return rec, facade
+
+    def test_offline_module_is_not_rearmed_into_the_void(self):
+        rec, facade = self._rec()
+        for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD + 2):
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+        starts = [c for c in facade.send_command.call_args_list
+                  if c[0][1] == "start_recording"]
+        assert starts == []
+        facade.notify_module_recording.assert_not_called()
+
+    def test_session_does_not_recover_while_a_module_is_offline(self):
+        rec, _facade = self._rec()
+        rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ERROR
+        assert s.error_message == "cam1 is offline"
+
+    def test_recovers_once_the_module_is_back_and_recording(self):
+        rec, facade = self._rec()
+        facade.is_module_online.side_effect = lambda m: True
+        facade.is_module_recording.side_effect = lambda m: True
+        rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+        assert rec.sessions["exp1"].state == SessionState.ACTIVE
+
+
+class TestTimedStopSentOnce:
+    def test_monitor_does_not_resend_stop_while_stopping(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1"],
+            module_stop_states={"cam1": "recording"},
+            timed_stop_at=time.time() - 1,
+        )
+        rec.stop_session = MagicMock(wraps=rec.stop_session)
+
+        class _Tick(threading.Event):
+            """Run the monitor loop for exactly `n` passes."""
+            def __init__(self, n):
+                super().__init__()
+                self.n = n
+            def wait(self, timeout=None):
+                self.n -= 1
+                return self.n < 0
+
+        rec._monitor_sessions(_Tick(3))
+
+        assert rec.stop_session.call_count == 1

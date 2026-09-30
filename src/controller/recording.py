@@ -2993,6 +2993,14 @@ class Recording:
                                 and time.time() < session.recording_start_at + _STARTUP_GRACE_SECS):
                             continue
 
+                        # A full stop is already in flight (waiting for module
+                        # confirmations): don't re-send it every cycle -- modules
+                        # that had already stopped answered the duplicate with
+                        # "Not recording", logged as a spurious FAULT (desk soak
+                        # 2026-09-30).
+                        if session_name in self._full_stopping:
+                            continue
+
                         # Auto-stop timed sessions when their duration has elapsed
                         if (session.timed_stop_at
                                 and time.time() >= session.timed_stop_at
@@ -3060,8 +3068,16 @@ class Recording:
             m for m in session.modules
             if session.module_stop_states.get(m) == "recording"
         ]
+        # An offline module is already a recorded fault (module_offline) and is
+        # re-armed by its real online event -- never strike it, re-arm it into
+        # the void, or count the session as recovered while it's gone.
+        offline = [m for m in should_be_recording
+                   if not self.facade.is_module_online(m)]
         not_recording = []
         for m in should_be_recording:
+            if m in offline:
+                self._not_recording_strikes.pop((session_name, m), None)
+                continue
             key = (session_name, m)
             if not self.facade.is_module_recording(m):
                 strikes = self._not_recording_strikes.get(key, 0) + 1
@@ -3112,7 +3128,8 @@ class Recording:
             # if already recording) and retries harmlessly next cycle.
             for m in not_recording:
                 self.module_back_online(m)
-        elif should_be_recording and not session.self_stopped_modules and (
+        elif (should_be_recording and not offline
+              and not session.self_stopped_modules) and (
             session.state == SessionState.ERROR
             or (session.unattended and session.error_message)
         ):

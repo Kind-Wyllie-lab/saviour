@@ -594,8 +594,17 @@ class Modules:
 
 
     def is_module_recording(self, module_id: str) -> bool:
+        # An offline module can't be recording as far as the controller can
+        # tell, whatever stale RECORDING status it last had (desk soak
+        # 2026-09-30: the liveness check "recovered" a session from an
+        # unplugged module because its status hadn't flipped yet).
         module = self._modules.get(module_id)
-        return module is not None and module.status == ModuleStatus.RECORDING
+        return (module is not None and module.online
+                and module.status == ModuleStatus.RECORDING)
+
+    def is_module_online(self, module_id: str) -> bool:
+        module = self._modules.get(module_id)
+        return bool(module and module.online)
 
 
     # -----------------------------------------------------------------------

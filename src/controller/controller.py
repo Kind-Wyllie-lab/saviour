@@ -333,8 +333,15 @@ class Controller(ABC):
             status: may be "online" or "offline"
         """
         self.logger.info("On module status change called")
+        # Update the module tracker FIRST, then the recording side: the session
+        # monitor thread reads online/RECORDING state from the tracker, and
+        # updating it afterwards left a window where a session was in ERROR
+        # for an offline module that still looked RECORDING -- the liveness
+        # check "recovered" it and re-armed the unplugged module (desk soak
+        # 2026-09-30).
+        if status in ("online", "offline"):
+            self.modules.notify_module_online_update(module_id, status == "online")
         if status == "online":
-            online = True
             self.facade.module_back_online(module_id)
             # Module came back from offline — its cached config may be from a
             # previous run. Invalidate it so the frontend shows fresh data.
@@ -342,10 +349,7 @@ class Controller(ABC):
             self.logger.info(f"Requesting fresh config from {module_id} after coming back online")
             self.communication.send_command(module_id, "get_config", {})
         elif status == "offline":
-            online = False
             self.facade.module_offline(module_id)
-
-        self.modules.notify_module_online_update(module_id, online)
         # A camera going offline may have been the FrameSync transmitter (needs a
         # replacement elected promptly) or a client (doesn't affect anyone else).
         # A camera coming back online may need correcting away from whatever role

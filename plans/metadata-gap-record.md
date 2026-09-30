@@ -1,6 +1,6 @@
 # Per-session metadata gap record
 
-- **Status:** proposed
+- **Status:** shipped 2026-09-30 (branch `feat/session-gap-record`) - all causes except `plan_window` and `ptp_regressed`
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Correctness / data loss" (A1 liveness — "no
@@ -35,8 +35,8 @@ One small artefact unblocks all of these.
 
 ## The artefact
 
-`<session>/<date>/session_gaps.json` on the share (sibling of
-`session_metadata.json`), appended atomically by the controller. Schema:
+`<session>/session_gaps.json` on the share (sibling of
+`session_metadata.json`, which lives at the session root -- not under `<date>/`), appended atomically by the controller. Schema:
 
 ```json
 {

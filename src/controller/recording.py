@@ -139,6 +139,11 @@ class RecordingSession:
     # resume_free_pct. Entries are removed on resume; the fault stays in
     # session_events.log.
     self_stopped_modules:      dict = field(default_factory=dict)
+    # Machine-readable record of when (part of) the session had no data and
+    # why -- roadmap A1, plans/metadata-gap-record.md. Each entry:
+    # {id, modules, start_ns, end_ns (None while open), cause, severity,
+    #  detail, recovered, source}. Mirrored to <session>/session_gaps.json.
+    gaps:                      list = field(default_factory=list)
     # Outstanding export_ready signals not yet resolved (complete, or a final
     # give-up after retries) — the "certainty" signal for whether every file
     # this session produced has actually landed on the controller's share.
@@ -226,6 +231,9 @@ class Recording:
         self._marker_lock = threading.Lock()  # serialises markers.csv appends
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
+        # (session_name, module_id) → time.time_ns() the liveness check last
+        # saw it recording; where a not_recording gap starts.
+        self._last_seen_recording_ns: dict = {}
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
         # session_name → set of (module_id, source) currently self-reporting unhealthy
         self._recording_health_degraded: dict[str, set] = {}
@@ -1002,6 +1010,10 @@ class Recording:
             if plan.recording:
                 self._stop_plan(session, plan, f"paused ({reason})")
         self._log_session_event(session.session_name, level, message)
+        disk = reason == "disk"
+        self._open_gap(session.session_name, ["*"],
+                       "pause_disk" if disk else "pause",
+                       "error" if disk else "warning", message)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -1023,6 +1035,7 @@ class Recording:
             for plan in session.plans:
                 plan.last_start_date = None
         self._log_session_event(session.session_name, level, message)
+        self._close_gaps(session.session_name, causes=("pause", "pause_disk"))
         self._evaluate_plans(session.session_name, session)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -1822,6 +1835,15 @@ class Recording:
             note = "recorded (unattended)" if session.unattended else "→ ERROR"
             self.logger.info(f"Session '{session_name}' {note}: {module_id} offline")
             self._log_session_event(session_name, "FAULT", f"{module_id} went offline")
+            # The data stopped at the last heartbeat, not when the timeout
+            # confirmed it (~1.5 min later).
+            last_hb = (self.facade.get_module_health(module_id) or {}).get(
+                "last_heartbeat")
+            self._open_gap(
+                session_name, [module_id], "module_offline", "error",
+                f"{module_id} offline (heartbeat timeout)",
+                start_ns=int(last_hb * 1e9) if last_hb else None,
+            )
             if self._notify_enabled("notify_module_offline"):
                 if session.unattended:
                     self._record_unattended_fault(session_name, [module_id])
@@ -1929,6 +1951,8 @@ class Recording:
                 "resume_free_pct": data.get("resume_free_pct"),
             }
         self._not_recording_strikes.pop((session_name, module_id), None)
+        self._open_gap(session_name, [module_id], "self_stopped", "error",
+                       f"{module_id} stopped itself ({reason}): {detail}")
         self.report_module_fault(module_id, f"stopped itself ({reason}): {detail}")
         # report_module_fault saves + pushes only when it changes state; make
         # sure the self_stopped bookkeeping is persisted either way.
@@ -2004,6 +2028,9 @@ class Recording:
             with self._lock:
                 session.recording_health_warning = warning
             self._log_session_event(session_name, "WARNING", warning)
+            if source == "liveness":
+                self._open_gap(session_name, [module_id], "liveness", "warning",
+                               message or "recording health check failed")
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
             if self._notify_enabled("notify_recording_health"):
@@ -2015,6 +2042,9 @@ class Recording:
                 )
         elif status == "recovered":
             degraded.discard(key)
+            if source == "liveness":
+                self._close_gaps(session_name, modules=[module_id],
+                                 causes=("liveness",))
             if degraded:
                 return  # still warned for other module(s) in this session
             self.logger.info(f"Session '{session_name}': recording health recovered ({module_id})")
@@ -2079,6 +2109,24 @@ class Recording:
                 self.logger.info(
                     f"Module {module_id} online event — already recording in '{session_name}', no action needed"
                 )
+                return
+
+            # Same PTP gate as a session start. A module back from a power-loss
+            # reboot has no RTC and runs on a stale clock until PTP converges
+            # (desk soak 2026-09-30: it booted at "31 Aug"); re-arming it then
+            # would stamp frames with the wrong time. Deferred, not dropped:
+            # the liveness check retries every cycle until the gate passes.
+            ptp = self._check_ptp_sync([module_id])
+            if not ptp.get("ok"):
+                failures = ptp.get("failures") or [{}]
+                self.logger.info(
+                    f"{module_id} back in '{session_name}' but PTP not ready "
+                    f"({failures[0].get('reason', ptp.get('error'))}) — re-arm deferred"
+                )
+                # Keep it marked as meant-to-be-recording so the liveness check
+                # retries (a disk-resume path arrives here with "stopped").
+                with self._lock:
+                    session.module_stop_states[module_id] = "recording"
                 return
 
             # Mark as RECORDING immediately so the session monitor doesn't see a
@@ -2193,6 +2241,8 @@ class Recording:
                 new_state = SessionState.STOPPED
 
         self._full_stopping.discard(session_name)
+        if new_state == SessionState.STOPPED:
+            self._close_gaps(session_name, recovered=False)
         self.logger.info(
             f"All modules confirmed stopped — session '{session_name}' → {new_state}"
         )
@@ -2976,6 +3026,11 @@ class Recording:
                     if session.state == SessionState.STOPPED:
                         continue
 
+                    # A gap still open 10 min / 1 h in escalates (roadmap A1):
+                    # otherwise 30 s and 6 h of silence alert exactly alike.
+                    if session.gaps:
+                        self._escalate_open_gaps(session_name, session)
+
                     if session.scheduled:
                         today_weekday = date.today().weekday()
                         yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -3086,6 +3141,23 @@ class Recording:
                     not_recording.append(m)
             else:
                 self._not_recording_strikes.pop(key, None)
+                self._last_seen_recording_ns[key] = time.time_ns()
+
+        open_for = {
+            m for g in session.gaps if g["end_ns"] is None
+            and g["cause"] in self._GAP_CAUSES_CLOSED_BY_RECORDING
+            for m in g["modules"]
+        }
+        for m in not_recording:
+            if m in open_for:
+                continue  # already inside an offline/restart/self-stop gap
+            # Starts when the module was last seen recording, not when the
+            # strikes threshold tripped (desk soak: 21 s late).
+            self._open_gap(
+                session_name, [m], "not_recording", "error",
+                f"{m} online but not recording",
+                start_ns=self._last_seen_recording_ns.get((session_name, m)),
+            )
 
         if not_recording:
             msg = f"Not recording: {', '.join(not_recording)}"
@@ -3219,6 +3291,21 @@ class Recording:
                     self._log_session_event(name, "FAULT",
                         "Controller restarted during active session — awaiting module reconnect")
                 self.sessions[name] = session
+                was_active = d.get("state") == SessionState.ACTIVE
+                if was_active and session.state in (SessionState.ACTIVE,
+                                                    SessionState.ERROR):
+                    # The controller was down from (about) its last save until
+                    # now; each module's gap closes on its confirmed restart.
+                    affected = [m for m, st in session.module_stop_states.items()
+                                if st == "unknown"]
+                    if affected:
+                        try:
+                            last_save_ns = int(os.path.getmtime(SESSIONS_FILE) * 1e9)
+                        except OSError:
+                            last_save_ns = None
+                        self._open_gap(name, affected, "controller_restart", "error",
+                                       "controller restarted during the session",
+                                       start_ns=last_save_ns)
             self.logger.info(f"Loaded {len(self.sessions)} session(s) from disk")
         except Exception as e:
             self.logger.exception(f"Failed to load sessions: {e}")
@@ -3229,6 +3316,167 @@ class Recording:
             return self.facade.get_share_path()
         except AttributeError:
             return _SHARE_ROOT_DEFAULT
+
+    # ----- Session gap record (roadmap A1, plans/metadata-gap-record.md) -----
+    #
+    # Gaps ride along with detection that already exists (offline, not
+    # recording, liveness warning, self-stop, pause, controller restart); they
+    # add no new detection. NB: call these OUTSIDE `with self._lock:` -- they
+    # take the (non-reentrant) lock themselves.
+
+    _GAP_FILE = "session_gaps.json"
+    # A same-cause gap for the same modules that closed less than this long
+    # ago is reopened, not duplicated (a flapping liveness warning = 1 row).
+    _GAP_MERGE_WINDOW_NS = 20 * 1_000_000_000
+    # Causes a module's confirmed recording start closes.
+    _GAP_CAUSES_CLOSED_BY_RECORDING = (
+        "module_offline", "not_recording", "controller_restart", "self_stopped",
+    )
+
+    def _open_gap(self, session_name: str, modules: list, cause: str,
+                  severity: str, detail: str,
+                  start_ns: int | None = None) -> dict | None:
+        """Open a gap, or return the already-open one with the same cause +
+        modules -- so a flapping fault is one row, not forty."""
+        session = self.sessions.get(session_name)
+        if session is None:
+            return None
+        modules = sorted(modules)
+        now_ns = time.time_ns()
+        with self._lock:
+            for gap in reversed(session.gaps):
+                if gap["cause"] != cause or gap["modules"] != modules:
+                    continue
+                if gap["end_ns"] is None:
+                    return gap
+                if now_ns - gap["end_ns"] < self._GAP_MERGE_WINDOW_NS:
+                    # Closed only moments ago: the same episode flapping, so
+                    # reopen it rather than adding a row.
+                    gap["end_ns"] = None
+                    gap["recovered"] = False
+                    break
+                break  # the latest matching gap is old: start a new one
+            else:
+                gap = None
+            if gap is None or gap["end_ns"] is not None:
+                gap = {
+                    "id": f"g{len(session.gaps) + 1:04d}",
+                    "modules": modules,
+                    "start_ns": int(start_ns or now_ns),
+                    "end_ns": None,
+                    "cause": cause,
+                    "severity": severity,
+                    "detail": detail,
+                    "recovered": False,
+                    "source": "controller",
+                }
+                session.gaps.append(gap)
+        self._write_gaps(session)
+        return gap
+
+    def _close_gaps(self, session_name: str, *, modules: list | None = None,
+                    causes: tuple | None = None, end_ns: int | None = None,
+                    recovered: bool = True) -> int:
+        """Close open gaps matching `causes` (any, if None) and touching any of
+        `modules` (every gap, if None). Returns how many were closed."""
+        session = self.sessions.get(session_name)
+        if session is None:
+            return 0
+        end_ns = int(end_ns or time.time_ns())
+        closed = 0
+        with self._lock:
+            for gap in session.gaps:
+                if gap["end_ns"] is not None:
+                    continue
+                if causes is not None and gap["cause"] not in causes:
+                    continue
+                if modules is not None and not set(modules) & set(gap["modules"]):
+                    continue
+                gap["end_ns"] = max(end_ns, gap["start_ns"])
+                gap["recovered"] = recovered
+                closed += 1
+        if closed:
+            self._write_gaps(session)
+        return closed
+
+    def _write_gaps(self, session: "RecordingSession") -> None:
+        """Atomically rewrite <session>/session_gaps.json. Best-effort, like
+        _log_session_event: a share hiccup must never stall a recording (the
+        gaps are also persisted in sessions.json and rewritten next time)."""
+        try:
+            session_dir = os.path.join(self._get_share_root(), session.session_name)
+            os.makedirs(session_dir, exist_ok=True)
+            path = os.path.join(session_dir, self._GAP_FILE)
+            with self._lock:
+                doc = {
+                    "schema": 1,
+                    "session_name": session.session_name,
+                    "generated_by": "recording/1",
+                    "gaps": [dict(g) for g in session.gaps],
+                }
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(doc, f, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            self.logger.debug(f"Could not write {self._GAP_FILE} for "
+                              f"'{session.session_name}': {e}")
+
+    # Seconds a gap may stay open before each escalation step (one alert +
+    # one ESCALATE event per step). recording._gap_escalation_secs overrides.
+    _GAP_ESCALATION_SECS = (600, 3600)
+    # Deliberate, so never escalated.
+    _GAP_CAUSES_NO_ESCALATION = ("pause", "plan_window")
+
+    def _escalate_open_gaps(self, session_name: str,
+                            session: "RecordingSession") -> None:
+        """Escalate open gaps that have crossed an escalation step since the
+        last pass. Steps already fired are recorded on the gap
+        ("escalations"), so a controller restart doesn't repeat them; if
+        several are due at once (e.g. after a restart) only the highest
+        alerts. Unattended sessions alert too -- a sustained outage is
+        exactly what the daily digest would otherwise hide."""
+        cfg = (self.facade.get_config() or {}).get("recording", {})
+        steps = sorted(cfg.get("_gap_escalation_secs", self._GAP_ESCALATION_SECS))
+        now_ns = time.time_ns()
+        due = []
+        with self._lock:
+            for gap in session.gaps:
+                if (gap["end_ns"] is not None
+                        or gap["cause"] in self._GAP_CAUSES_NO_ESCALATION):
+                    continue
+                age_s = (now_ns - gap["start_ns"]) / 1e9
+                fired = gap.setdefault("escalations", [])
+                new = [s for s in steps if age_s >= s and s not in fired]
+                if new:
+                    fired.extend(new)
+                    due.append((dict(gap), max(new), age_s))
+        if not due:
+            return
+        self._write_gaps(session)
+        self._save_sessions()
+        for gap, step, age_s in due:
+            message = (
+                f"{gap['cause']} gap for {', '.join(gap['modules'])} still open "
+                f"after {age_s / 60:.0f} min — {gap['detail']}"
+            )
+            self.logger.warning(f"Session '{session_name}': {message}")
+            self._log_session_event(session_name, "ESCALATE", message)
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"gap_escalation_{session_name}_{gap['id']}_{step}",
+                    title=f"Recording gap still open — {session_name}",
+                    message=message,
+                    severity="error",
+                )
+
+    def module_recording_started(self, module_id: str) -> None:
+        """A module confirmed it is recording (recording_started, or
+        'Already recording' to a re-arm): close its open data gaps."""
+        session_name = self.get_session_name_from_target(module_id)
+        if session_name:
+            self._close_gaps(session_name, modules=[module_id],
+                             causes=self._GAP_CAUSES_CLOSED_BY_RECORDING)
 
     def _log_session_event(self, session_name: str, level: str, message: str) -> None:
         """Append a timestamped event line to session_events.log on the NAS share.

@@ -174,8 +174,7 @@ Detailed plans for prospective features / non-trivial fixes live one-file-each i
 
 - **Desk soak 2026-09-30 (4-module desk fleet, 60-min session, SIGKILL + physical unplug of `camera_0f5d`) — fixed on `fix/soak-offline-rearm-and-double-stop`:** the liveness check "recovered" a session from an *offline* module and re-armed it into the void (session looked healthy for the whole outage); the timed auto-stop fired twice (spurious "Not recording" FAULTs); a salvaged segment was filed under the stale boot clock's date (`20260831/`); the Samba password was logged by sudo on every CIFS mount and by the controller's command log. Data survived intact (4/4 exports, 0 failed, 30.0 fps, clock correct at re-arm). **Still open from the soak:**
   - **phc2sys floods the journal** — every sample, 8 Hz, each line twice — so a module's *volatile* journal only holds a few minutes (this boot's journal started at +359 s; the early-boot recording restart was already gone 20 min later). Explains the "2 h journal window too short" habitat finding. `ptp.py` *parses* those lines for telemetry, so the fix is reading offsets from phc2sys/ptp4l's management socket (`pmc`) and dropping `-m`, plus persistent journald on modules (`mend.sh`).
-  - **Gaps are stamped at detection, not at loss**: test A's gap started 14:04:21 but FAULT+RECOVERY were both logged 14:04:42 — the UI never shows it and nothing records the real span. → `plans/metadata-gap-record.md` (roadmap A1): a gap should start at the module's last-known-recording time.
-  - **No PTP start gate on a re-arm** (`module_back_online` → `start_recording`): after a power-loss reboot the module ran on a stale clock until PTP converged. It happened to be converged by the re-arm here (frame 0 within 20 ms of the command), but nothing guarantees it.
+  - ✅ **Gaps stamped at detection, not loss** and **no PTP gate on re-arm** — both fixed on `feat/session-gap-record` (2026-09-30): `<session>/session_gaps.json` (offline gaps start at the last heartbeat, not-recording gaps at last-seen-recording; `plans/metadata-gap-record.md`) and `module_back_online` now runs the session-start PTP gate, deferring (liveness retries) until it passes.
   - Noise: controller logs `No logic for ... streaming_started` as a WARNING on every module (re)connect.
   - The controller's npm lives under nvm (`~/.nvm`), so a non-login `ssh ... npm run build` fails; source `~/.nvm/nvm.sh` first (`saviour-config` already does).
 
@@ -253,7 +252,7 @@ Larger structural issues requiring significant refactoring — recorded so they 
 
 ### Tests
 
-- **No integration test for multi-module recording** — add a test simulating controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
+- **✅ Integration test for a multi-module session** — `src/controller/tests/test_integration_session.py` (2026-09-30, roadmap C3): real Recording/Modules/facade/status routing vs simulated modules; start/stop, timed stop, dropout (+gap), crash re-arm (+gap), export guard.
 - **✅ Config schema regression test** — `src/tests/test_config_schema.py` (2026-09-30, roadmap C4): every deployable variant's shipped config through the real loaders + a code-vs-schema check on default-less `self.config.get("a.b")` reads. If it fails after you add a config read, add the key to the right `*_config.json` or pass an explicit default.
 - **✅ `saviour-config --apply` provisioning smoke test** — `src/tests/test_saviour_config.py` (on `fix/saviour-config-missing-optional-key`, roadmap C5).
 

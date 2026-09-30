@@ -69,7 +69,8 @@
     "interface": {
         "_cli": false,
         "_web_interface": true,
-        "_web_interface_port": 5000
+        "_web_interface_port": 5000,
+        "listen_on": "lan"
     },
     "teams": {
         "webhook_url": "",

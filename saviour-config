@@ -980,8 +980,11 @@ Wants=ptp4l.service
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 3
-ExecStartPre=/bin/mkdir -p /run/linuxptp
 ExecStart=/usr/sbin/phc2sys -a -r -r -m -q
+# systemd creates /run/linuxptp before ANY exec -- StandardOutput applies to
+# ExecStartPre too, so an ExecStartPre mkdir can't create it (chicken-and-egg).
+RuntimeDirectory=linuxptp
+RuntimeDirectoryPreserve=yes
 StandardOutput=append:/run/linuxptp/phc2sys.log
 StandardError=journal
 Restart=always
@@ -1032,8 +1035,11 @@ Wants=ptp4l.service
 [Service]
 Type=simple
 User=root
-ExecStartPre=/bin/mkdir -p /run/linuxptp
 ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -q -R 8
+# systemd creates /run/linuxptp before ANY exec -- StandardOutput applies to
+# ExecStartPre too, so an ExecStartPre mkdir can't create it (chicken-and-egg).
+RuntimeDirectory=linuxptp
+RuntimeDirectoryPreserve=yes
 StandardOutput=append:/run/linuxptp/phc2sys.log
 StandardError=journal
 Restart=always

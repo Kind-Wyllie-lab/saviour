@@ -96,3 +96,35 @@ class TestHandleStatusUpdateReportRecordingState:
         Controller.handle_status_update(ctx, "status/habitat_camera_a", data)
         ctx.modules.update_recording_state.assert_not_called()
         ctx.web.broadcast_recording_state_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_status_update -- recording_stopped reason routing (roadmap A4)
+# ---------------------------------------------------------------------------
+
+class TestHandleStatusUpdateRecordingStopped:
+    def _send(self, ctx, payload: dict):
+        import json
+        ctx.modules.is_removed.return_value = False
+        data = json.dumps({"type": "recording_stopped", "status": "success",
+                           "recording": False, **payload})
+        Controller.handle_status_update(ctx, "status/cam1", data)
+
+    def test_operator_stop_is_a_plain_stop(self):
+        ctx = _Ctx()
+        self._send(ctx, {"reason": "operator"})
+        ctx.facade.module_stopped.assert_called_once_with("cam1")
+        ctx.facade.module_self_stopped.assert_not_called()
+
+    def test_legacy_stop_without_reason_is_a_plain_stop(self):
+        ctx = _Ctx()
+        self._send(ctx, {})
+        ctx.facade.module_self_stopped.assert_not_called()
+
+    def test_disk_critical_stop_is_routed_as_a_self_stop(self):
+        ctx = _Ctx()
+        self._send(ctx, {"reason": "disk_critical", "detail": "8% free"})
+        ctx.facade.module_stopped.assert_called_once_with("cam1")
+        module_id, data = ctx.facade.module_self_stopped.call_args.args
+        assert module_id == "cam1"
+        assert data["reason"] == "disk_critical"

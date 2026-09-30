@@ -96,6 +96,12 @@ class Recording:
         self.segment_start_time = None
         self.segment_files = []
 
+        # Local disk protection (roadmap A4). Set by a disk-critical auto-stop;
+        # while set, start_recording() refuses until free space is back above
+        # recording.local_warn_free_pct -- hysteresis, so a controller re-arm
+        # can't restart recording onto a still-nearly-full disk and flap.
+        self._disk_stopped = False
+
 
     """Start / Stop Recording"""
     def start_recording(self, session_name: str = None, duration: str = None,
@@ -115,6 +121,16 @@ class Recording:
             self.logger.info("Already recording")
             self.facade.send_status({"type": "recording_start_failed", "error": "Already recording"})
             return {"result": "error", "error": "Already recording"}
+
+        blocked = self._disk_start_block_reason()
+        if blocked:
+            self.logger.error(f"Refusing to start recording: {blocked}")
+            self.facade.send_status({
+                "type": "recording_start_failed",
+                "error": blocked,
+                "reason": "disk_critical",
+            })
+            return {"result": "error", "error": blocked}
 
         self.recording_intended_start_at = start_at
 
@@ -298,8 +314,16 @@ class Recording:
         return {"result": "success"}
 
 
-    def stop_recording(self) -> bool:
-        """Stop recording. Returns True if stopped, False otherwise."""
+    def stop_recording(self, reason: str = "operator", detail: str | None = None,
+                       extra: dict | None = None) -> bool:
+        """Stop recording. Returns True if stopped, False otherwise.
+
+        `reason` rides the recording_stopped status so the controller can tell
+        an operator stop ("operator", the default for the remote command) from
+        a module protecting itself (e.g. "disk_critical"), which it treats as
+        a fault rather than a clean stop. `detail` / `extra` add a human
+        message and structured fields (free_pct, resume_free_pct, ...).
+        """
         self.logger.info(f"Stop recording called. to_export contains: {self.facade.get_staged_files()}")
         try:
             # Check if recording
@@ -335,11 +359,16 @@ class Recording:
             # nobody SSH'd in at the time.
             self._export_session_journal()
 
-            self.facade.send_status({
+            stopped = {
                 "type": "recording_stopped",
                 "status": "success",
                 "recording": False,
-            })
+                "reason": reason,
+            }
+            if detail:
+                stopped["detail"] = detail
+            stopped.update(extra or {})
+            self.facade.send_status(stopped)
 
             self.is_recording = False
             self._measured_rec_bytes_per_s = None
@@ -445,6 +474,13 @@ class Recording:
         recording_folder = self.config.get("recording._recording_folder", "/var/lib/saviour/recordings")
         to_export_folder = f"{recording_folder}/to_export"
         min_free_pct     = self.config.get("recording.local_min_free_pct", 10)
+        warn_free_pct    = self.config.get("recording.local_warn_free_pct", 15)
+        # Disk is checked on its own cadence, not only at segment rotation --
+        # with 60-min segments a disk filling mid-segment used to go unnoticed
+        # for up to an hour (roadmap A4).
+        disk_check_interval = self.config.get("recording._disk_check_interval_secs", 30)
+        last_disk_check     = 0.0
+        disk_warned         = False
         # Re-signal export_ready every 5 minutes while files are waiting,
         # so a controller restart or dropped ZMQ message doesn't silently block exports.
         export_signal_interval = 300
@@ -452,23 +488,25 @@ class Recording:
 
         while not self.monitor_recording_segments_stop_flag.is_set():
             now = time.time()
+            segment_due = now - self.segment_start_time > segment_length
 
-            if (now - self.segment_start_time > segment_length):
-                # Check local disk space before starting a new segment.
+            if segment_due or now - last_disk_check >= disk_check_interval:
+                last_disk_check = now
                 try:
-                    usage = shutil.disk_usage(recording_folder)
-                    free_pct = usage.free / usage.total * 100
-                    free_mb  = usage.free / 1_048_576
-                    if free_pct < min_free_pct:
-                        self.logger.error(
-                            f"Local disk critically low ({free_pct:.1f}% free, {free_mb:.0f} MB) — "
-                            f"stopping recording to protect filesystem. Exports must clear space before recording can resume."
-                        )
-                        self.stop_recording()
-                        return
+                    free_pct, free_mb = self._local_disk_free()
                 except Exception as e:
-                    self.logger.warning(f"Could not check disk space before new segment: {e}")
+                    self.logger.warning(f"Could not check local disk space: {e}")
+                else:
+                    if free_pct < min_free_pct:
+                        self._disk_critical_stop(
+                            free_pct, free_mb, min_free_pct, warn_free_pct)
+                        return
+                    low = free_pct < warn_free_pct
+                    if low != disk_warned:
+                        disk_warned = low
+                        self._send_disk_warning(low, free_pct, free_mb, min_free_pct)
 
+            if segment_due:
                 self._create_new_recording_segment()
                 last_export_signal = now
                 self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
@@ -498,6 +536,82 @@ class Recording:
             time.sleep(0.1) # Avoid busy waiting
 
 
+    # ----- Local disk protection (roadmap A4) --------------------------------
+
+    def _local_disk_free(self) -> tuple[float, float]:
+        """(free %, free MB) of the filesystem holding the recordings folder."""
+        folder = self.config.get(
+            "recording._recording_folder", "/var/lib/saviour/recordings")
+        usage = shutil.disk_usage(folder)
+        return usage.free / usage.total * 100, usage.free / 1_048_576
+
+    def _disk_start_block_reason(self) -> str | None:
+        """Why a start must be refused for disk space, or None if it may go.
+
+        Below local_min_free_pct always blocks. After a disk-critical
+        auto-stop, blocks until free space is back above local_warn_free_pct
+        (hysteresis). An unreadable disk never blocks -- same as before.
+        """
+        min_pct = self.config.get("recording.local_min_free_pct", 10)
+        warn_pct = self.config.get("recording.local_warn_free_pct", 15)
+        try:
+            free_pct, free_mb = self._local_disk_free()
+        except Exception as e:
+            self.logger.warning(f"Could not check local disk space before start: {e}")
+            return None
+        if free_pct < min_pct:
+            return (f"Local disk critically low ({free_pct:.1f}% free, "
+                    f"{free_mb:.0f} MB; minimum {min_pct}%)")
+        if self._disk_stopped:
+            if free_pct < warn_pct:
+                return (f"Stopped earlier for low disk; waiting for {warn_pct}% free "
+                        f"before recording again ({free_pct:.1f}% now)")
+            self.logger.info(
+                f"Local disk back to {free_pct:.1f}% free — recording allowed again")
+            self._disk_stopped = False
+        return None
+
+    def _disk_critical_stop(self, free_pct: float, free_mb: float,
+                            min_pct: float, warn_pct: float) -> None:
+        detail = (f"Local disk critically low ({free_pct:.1f}% free, "
+                  f"{free_mb:.0f} MB; minimum {min_pct}%)")
+        self.logger.error(
+            f"{detail} — stopping recording to protect the filesystem. Recording "
+            f"can resume once exports free space back above {warn_pct}%."
+        )
+        self._disk_stopped = True
+        self.stop_recording(
+            reason="disk_critical",
+            detail=detail,
+            extra={
+                "free_pct": round(free_pct, 1),
+                "free_mb": round(free_mb),
+                "resume_free_pct": warn_pct,
+            },
+        )
+
+    def _send_disk_warning(self, low: bool, free_pct: float, free_mb: float,
+                           min_pct: float) -> None:
+        """Early heads-up on the recording_health_warning channel while
+        there's still time to free space, before the hard stop."""
+        if low:
+            message = (f"Local disk low: {free_pct:.1f}% free ({free_mb:.0f} MB) — "
+                       f"recording stops at {min_pct}%")
+            self.logger.warning(message)
+            self.facade.send_status({
+                "type": "recording_health_warning",
+                "status": "unhealthy",
+                "source": "disk",
+                "message": message,
+            })
+        else:
+            self.logger.info(f"Local disk recovered to {free_pct:.1f}% free")
+            self.facade.send_status({
+                "type": "recording_health_warning",
+                "status": "recovered",
+                "source": "disk",
+            })
+
     def _start_recording_segment_monitoring(self):
         self.monitor_recording_segments_stop_flag.clear()
         self.segment_start_time = self.recording_start_time
@@ -510,7 +624,10 @@ class Recording:
         self.logger.info("Stopping recording segment monitoring.")
         try:
             self.monitor_recording_segments_stop_flag.set()
-            self.monitor_recording_segments_thread.join(timeout=5)
+            # The disk auto-stop calls stop_recording() from *this* thread;
+            # joining yourself raises RuntimeError. It returns right after.
+            if self.monitor_recording_segments_thread is not threading.current_thread():
+                self.monitor_recording_segments_thread.join(timeout=5)
             return True
         except Exception as e:
             self.logger.error(f"Error stopping recording segment monitoring thread: {e}")

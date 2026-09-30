@@ -153,3 +153,20 @@ class TestStatusChangeUpdatesTrackerFirst:
         calls, ctx = self._order("online")
         assert calls == ["tracker", "recording"]
         ctx.modules.notify_module_online_update.assert_called_once_with("cam1", True)
+
+
+class TestRecordingStartedClosesGaps:
+    def _send(self, ctx, payload):
+        import json
+        ctx.modules.is_removed.return_value = False
+        Controller.handle_status_update(ctx, "status/cam1", json.dumps(payload))
+
+    def test_recording_started_is_forwarded(self):
+        ctx = _Ctx()
+        self._send(ctx, {"type": "recording_started", "status": "success"})
+        ctx.facade.module_recording_started.assert_called_once_with("cam1")
+
+    def test_already_recording_counts_as_started(self):
+        ctx = _Ctx()
+        self._send(ctx, {"type": "recording_start_failed", "error": "Already recording"})
+        ctx.facade.module_recording_started.assert_called_once_with("cam1")

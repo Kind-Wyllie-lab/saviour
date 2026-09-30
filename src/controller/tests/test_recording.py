@@ -1872,3 +1872,142 @@ class TestTimedStopSentOnce:
         rec._monitor_sessions(_Tick(3))
 
         assert rec.stop_session.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Session gap record (roadmap A1, plans/metadata-gap-record.md)
+# ---------------------------------------------------------------------------
+
+class TestSessionGapRecord:
+    def _rec(self, tmpdir, **session_kw):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = tmpdir
+        defaults = dict(state=SessionState.ACTIVE, modules=["cam1", "cam2"],
+                        module_stop_states={"cam1": "recording", "cam2": "recording"})
+        defaults.update(session_kw)
+        rec.sessions["exp1"] = _session(**defaults)
+        return rec, facade
+
+    def _file(self, tmpdir):
+        with open(os.path.join(tmpdir, "exp1", "session_gaps.json")) as f:
+            return json.load(f)
+
+    def test_offline_gap_starts_at_last_heartbeat_and_closes_on_restart(self):
+        """Desk soak: the fault was stamped ~1.5 min after the data stopped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {"last_heartbeat": 1_790_000_000.5}
+
+            rec.module_offline("cam1")
+            gap = rec.sessions["exp1"].gaps[0]
+            assert gap["cause"] == "module_offline"
+            assert gap["modules"] == ["cam1"]
+            assert gap["start_ns"] == 1_790_000_000_500_000_000
+            assert gap["end_ns"] is None
+
+            rec.module_recording_started("cam1")
+            doc = self._file(tmpdir)
+            assert doc["schema"] == 1 and doc["session_name"] == "exp1"
+            assert doc["gaps"][0]["end_ns"] is not None
+            assert doc["gaps"][0]["recovered"] is True
+
+    def test_not_recording_gap_starts_when_last_seen_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.is_module_online.return_value = True
+            facade.is_module_recording.side_effect = lambda m: True
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+            last_seen = rec._last_seen_recording_ns[("exp1", "cam1")]
+
+            facade.is_module_recording.side_effect = lambda m: m != "cam1"
+            for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD):
+                rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+            gaps = [g for g in rec.sessions["exp1"].gaps if g["cause"] == "not_recording"]
+            assert len(gaps) == 1
+            assert gaps[0]["start_ns"] == last_seen
+
+    def test_flapping_liveness_warning_is_one_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            for _ in range(3):
+                rec.handle_recording_health_status("cam1", "unhealthy", "silent")
+                rec.handle_recording_health_status("cam1", "recovered", None)
+            gaps = rec.sessions["exp1"].gaps
+            assert len(gaps) == 1
+            assert gaps[0]["cause"] == "liveness"
+            assert gaps[0]["severity"] == "warning"
+            assert gaps[0]["end_ns"] is not None
+
+    def test_low_disk_warning_is_not_a_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            rec.handle_recording_health_status("cam1", "unhealthy", "disk low", "disk")
+            assert rec.sessions["exp1"].gaps == []
+
+    def test_open_gaps_close_unrecovered_at_session_stop(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {}
+            rec.module_offline("cam1")
+            rec.sessions["exp1"].module_stop_states = {"cam1": "stopped", "cam2": "stopped"}
+            rec._full_stopping.add("exp1")
+            rec._check_all_stopped("exp1")
+            gap = rec.sessions["exp1"].gaps[0]
+            assert gap["end_ns"] is not None
+            assert gap["recovered"] is False
+
+    def test_self_stop_opens_an_error_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            rec.module_self_stopped("cam1", {"reason": "disk_critical",
+                                             "detail": "8% free", "resume_free_pct": 15})
+            gap = rec.sessions["exp1"].gaps[0]
+            assert (gap["cause"], gap["severity"]) == ("self_stopped", "error")
+
+    def test_unwritable_share_never_raises(self):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = "/nonexistent/\0bad"
+        rec.sessions["exp1"] = _session(modules=["cam1"],
+                                        module_stop_states={"cam1": "recording"})
+        facade.get_module_health.return_value = {}
+        rec.module_offline("cam1")  # must not raise
+        assert rec.sessions["exp1"].gaps[0]["cause"] == "module_offline"
+
+    def test_gaps_survive_a_sessions_json_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {}
+            rec.module_offline("cam1")
+            rec._save_sessions()
+            rec2, _ = _make_recording(sessions_file=recording_module.SESSIONS_FILE)
+            rec2._load_sessions()
+            assert rec2.sessions["exp1"].gaps[0]["cause"] == "module_offline"
+
+    def test_controller_restart_opens_a_gap_for_unknown_modules(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({"exp1": {
+                    "session_name": "exp1", "target": "camera", "state": "active",
+                    "modules": ["cam1", "cam2"],
+                    "module_stop_states": {"cam1": "recording", "cam2": "recording"},
+                }}, f)
+            rec, facade = _make_recording(sessions_file=sessions_file)
+            facade.get_share_path.return_value = tmpdir
+            rec._load_sessions()
+            gaps = rec.sessions["exp1"].gaps
+            assert len(gaps) == 1
+            assert gaps[0]["cause"] == "controller_restart"
+            assert gaps[0]["modules"] == ["cam1", "cam2"]
+
+    def test_pause_and_resume_is_one_whole_session_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            s = rec.sessions["exp1"]
+            rec._pause(s, "disk", "FAULT", "Auto-paused — share low")
+            rec._resume(s, "RECOVERY", "Auto-resumed")
+            gap = s.gaps[0]
+            assert gap["modules"] == ["*"]
+            assert (gap["cause"], gap["severity"]) == ("pause_disk", "error")
+            assert gap["end_ns"] is not None and gap["recovered"] is True

@@ -11,7 +11,20 @@ import CopyActionsBar from "../CopyActionsBar";
 import ConfigActionBar from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
-const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
+// "None" is a real output mode (a plain output pin held inactive, with no
+// automatic generator) added so test_pin()/the REST /pulse endpoint have a
+// pin to drive without racing experiment_clock/pseudorandom/interval_pulse.
+// "experiment_start" fires a single delayed pulse once, at recording start --
+// sugar over interval_pulse(repeat_count=1) with its own honest mode name and
+// a simpler delay_s/pulse_duration_s-only schema (both server-driven from
+// _mode_settings_schema, nothing hardcoded here beyond the label/badge).
+const OUTPUT_MODES = new Set([
+  "experiment_clock", "pseudorandom", "interval_pulse", "experiment_start", "None",
+]);
+const MODE_LABELS = {
+  None: "None (manual output)",
+  experiment_start: "Experiment Start (one pulse)",
+};
 
 const TAB_COPY_SECTION = {
   basic:  { key: "module",    label: "Basic"  },
@@ -40,7 +53,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
-  const availableModes = (module.config?.ttl?._available_modes ?? []).filter((m) => m !== "None");
+  const availableModes = module.config?.ttl?._available_modes ?? [];
   const schema = module.config?.ttl?._mode_settings_schema ?? {};
   const activeLogicOptions = module.config?.ttl?._active_logic_options ?? ["active_low", "active_high"];
 
@@ -260,7 +273,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                             <label>Mode</label>
                             <select value={mode} onChange={(e) => changeMode(pin, e.target.value)}>
                               {availableModes.map((m) => (
-                                <option key={m} value={m}>{m}</option>
+                                <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>
                               ))}
                             </select>
                           </div>
@@ -302,7 +315,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     <select value={newMode} onChange={(e) => setNewMode(e.target.value)}>
                       <option value="">Mode…</option>
                       {availableModes.map((m) => (
-                        <option key={m} value={m}>{m}</option>
+                        <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>
                       ))}
                     </select>
                     <button type="button" onClick={addPin} disabled={!newPin || !newMode}>

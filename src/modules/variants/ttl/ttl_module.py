@@ -66,6 +66,13 @@ class TTLEvent:
 
 
 class TTLModule(Module):
+    # pulse_pin() blocks the command-dispatch thread for the pulse duration
+    # so it can report real onset/offset timestamps synchronously (no ZMQ
+    # ack-correlation mechanism exists to do this async -- see CLAUDE.md
+    # "No correlation IDs on ZMQ commands"). Capped so a bad caller-supplied
+    # duration can't stall the module's command handling for long.
+    _MAX_PULSE_MS = 2000.0
+
     def __init__(self, module_type="ttl"):
         # Call the parent class constructor first
         super().__init__(module_type)
@@ -75,6 +82,15 @@ class TTLModule(Module):
 
         # TTL specific variables
         self._ttl_file_handle = None # The open .csv file for storing events
+        # Guards open/close/write on _ttl_file_handle. Without this, an input
+        # edge or generator pulse landing in the window between closing one
+        # segment's CSV and opening the next (_start_next_recording_segment)
+        # races _write_ttl_event's `if self._ttl_file_handle:` check -- best
+        # case the event is silently dropped (handle is legitimately None),
+        # worst case the handle gets closed out from under an in-flight
+        # write. RLock (not Lock) because _start_next_recording_segment holds
+        # it across its own calls into _close_ttl_event_file/_open_ttl_file.
+        self._ttl_file_lock = threading.RLock()
 
         # Initialize GPIO
         self.output_pins = []
@@ -85,6 +101,7 @@ class TTLModule(Module):
         self.experiment_clock_pins = []  # Pins configured as experiment clock
         self.pseudorandom_pins = []  # Pins configured as pseudorandom
         self.interval_pulse_pins = []  # Pins configured as interval_pulse
+        self.experiment_start_pins = []  # Pins configured as experiment_start
         self.generator_threads = {}  # Store generator threads
 
         # Rolling pin state buffers: {pin_number: deque of bool (True = electrical HIGH)}
@@ -96,16 +113,6 @@ class TTLModule(Module):
 
         # Assign pins from config
         self.assign_pins()
-
-        # Pulse generation variables
-        self.pulse_generation_active = False
-        self.pulse_generation_thread = None
-        self.pulse_generation_pin = None
-        self.pulse_generation_config = {
-            'min_interval': 1.0,  # Minimum interval between pulses in seconds
-            'max_interval': 10.0,  # Maximum interval between pulses in seconds
-            'pulse_duration': 0.01  # Duration of low pulse in seconds
-        }
 
         # State flags (matching camera module pattern)
         self.is_recording = False
@@ -127,6 +134,7 @@ class TTLModule(Module):
         # Set up TTL-specific callbacks for the command handler
         self.ttl_commands = {
             "test_pin": self.test_pin,
+            "pulse_pin": self.pulse_pin,
         }
         self.command.set_commands(self.ttl_commands) # Append new TTL callbacks
 
@@ -174,15 +182,21 @@ class TTLModule(Module):
     def _start_next_recording_segment(self):
         """Stage and close the current CSV, then open a new one for the next segment.
 
-        Input pin callbacks and generators keep running across segments — no restart needed.
+        Input pin callbacks and generators keep running across segments — no
+        restart needed. Holds _ttl_file_lock across the whole close+reopen
+        (not just each call individually -- RLock lets the same thread
+        re-enter it) so a concurrent _write_ttl_event either completes
+        before this starts or blocks until the new file is open and lands
+        there, rather than falling into the gap between the two calls.
         """
-        self.facade.stage_file_for_export(self.current_ttl_events_filename)
-        self._close_ttl_event_file()
+        with self._ttl_file_lock:
+            self.facade.stage_file_for_export(self.current_ttl_events_filename)
+            self._close_ttl_event_file()
 
-        filename = self._get_ttl_filename()
-        self.current_ttl_events_filename = filename
-        self.facade.add_session_file(filename)
-        self._open_ttl_file(filename)
+            filename = self._get_ttl_filename()
+            self.current_ttl_events_filename = filename
+            self.facade.add_session_file(filename)
+            self._open_ttl_file(filename)
 
 
     def configure_module_special(self, updated_keys: list):
@@ -192,11 +206,55 @@ class TTLModule(Module):
             self.assign_pins()
 
 
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Fail if a pin generator (experiment_clock/pseudorandom/interval_pulse)
+        thread has died mid-recording. Each generator worker sets its own pin
+        inactive and exits on an unhandled exception (see e.g.
+        _experiment_clock_worker's finally block) -- the Thread object then
+        just sits in generator_threads looking "started" with nothing else
+        noticing it stopped producing pulses. Input-only recordings (no
+        generator pins configured) have nothing to check here; RFID/TTL
+        input edges have no equivalent liveness signal (see CLAUDE.md).
+
+        A finite-repeat_count interval_pulse pin (repeat_count > 0 -- any
+        bounded burst) or an experiment_start pin (always exactly one pulse)
+        is *supposed* to finish and exit once it's delivered its configured
+        pulses -- see _interval_pulse_worker's own break condition (which
+        experiment_start also runs, with repeat_count hardcoded to 1). That's
+        a successful terminal state, not a crash, so both are excluded here;
+        only an unexpectedly-dead thread (experiment_clock/pseudorandom,
+        which are infinite for the life of the recording, or an
+        interval_pulse pin configured to run until the recording stops --
+        repeat_count == 0) counts as a fault.
+        """
+        if not self.is_recording:
+            return True, None
+        dead = []
+        for pn, t in self.generator_threads.items():
+            if t.is_alive():
+                continue
+            cfg = self.pin_configs.get(pn, {})
+            mode = cfg.get("mode")
+            repeat_count = int(cfg.get("repeat_count", 0) or 0)
+            if mode == "experiment_start":
+                continue  # always exactly one pulse -- not a fault
+            if mode == "interval_pulse" and repeat_count > 0:
+                continue  # expected to have finished -- not a fault
+            dead.append(pn)
+        if dead:
+            return False, f"TTL generator thread(s) died: pin(s) {dead}"
+        return True, None
+
+
     def test_pin(self, pin: int, duration: float = 5.0) -> dict:
         """Run a mode-faithful test on an output pin for *duration* seconds.
 
         - experiment_clock: runs the configured clock (period/duty_cycle)
         - pseudorandom: runs the configured random pulse train (min/max interval, pulse_duration)
+        - interval_pulse: runs the configured onset-to-onset pulse train
+          (interval/pulse_duration/repeat_count)
+        - experiment_start: fires the configured single delayed pulse once
+          (delay_s/pulse_duration_s)
         - other output: falls back to a 2 Hz square wave
 
         Useful for validating that a signal can be seen on downstream hardware
@@ -304,6 +362,28 @@ class TTLModule(Module):
                     self._pin_test_stop_flags.pop(pin_number, None)
                     self.logger.info(f"test_pin: finished on GPIO {pin_number}")
 
+        elif mode == "experiment_start":
+            delay_s = float(pin_config.get("delay_s", 0.001))
+            pulse_duration_s = float(pin_config.get("pulse_duration_s", 0.02))
+
+            def _run_test(p, stop, dur):
+                self.logger.info(
+                    f"test_pin: experiment_start on GPIO {pin_number} "
+                    f"delay={delay_s}s pulse={pulse_duration_s}s for {dur}s")
+                try:
+                    deadline = time.monotonic() + dur
+                    if stop.wait(min(delay_s, max(0.0, deadline - time.monotonic()))):
+                        return
+                    if time.monotonic() >= deadline:
+                        return
+                    self._set_output_active(p)
+                    remaining = max(0.0, deadline - time.monotonic())
+                    stop.wait(min(pulse_duration_s, remaining))
+                finally:
+                    self._set_output_inactive(p)
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                    self.logger.info(f"test_pin: finished on GPIO {pin_number}")
+
         else:
             # Generic fallback: 2 Hz square wave
             def _run_test(p, stop, dur):
@@ -337,6 +417,69 @@ class TTLModule(Module):
         for stop_event in list(self._pin_test_stop_flags.values()):
             stop_event.set()
         self._pin_test_stop_flags.clear()
+
+
+    def pulse_pin(self, pin: int, duration_ms: float = 20.0) -> dict:
+        """Drive a single one-shot pulse on an output pin and report both
+        edge timestamps.
+
+        For an external caller (REST POST /api/v1/modules/<id>/pulse)
+        marking a moment during an active recording -- a closed-loop
+        stimulus or a detected-behaviour marker -- as opposed to test_pin's
+        bench-only, mode-replaying, cancellable test signal.
+
+        Blocks the calling (command-dispatch) thread for duration_ms
+        (clamped to [0, _MAX_PULSE_MS]) so the returned onset_ns/offset_ns
+        are this module's own measurement, not something the caller has to
+        correlate from a later async ack.
+
+        Refuses a pin currently driven by a running generator
+        (experiment_clock/pseudorandom/interval_pulse) to avoid two threads
+        racing the same GPIO line -- configure the pin with mode "None" (a
+        plain output, held inactive, no generator) to use it for
+        API-triggered pulses.
+        """
+        pin_number = int(pin)
+        duration_ms = max(0.0, min(float(duration_ms), self._MAX_PULSE_MS))
+
+        if pin_number not in self.pin_configs:
+            return {"result": "error", "message": f"Pin {pin_number} is not configured"}
+
+        pin_obj = next(
+            (p for p in self.output_pins if p.pin.number == pin_number), None)
+        if pin_obj is None:
+            return {
+                "result": "error",
+                "message": f"Pin {pin_number} is not an output pin — cannot pulse it",
+            }
+
+        gen_thread = self.generator_threads.get(pin_number)
+        if gen_thread is not None and gen_thread.is_alive():
+            mode = self.pin_configs[pin_number].get("mode")
+            return {
+                "result": "error",
+                "message": (
+                    f"Pin {pin_number} is driven by a running {mode} generator — "
+                    f"set its mode to \"None\" to free it for API-triggered pulses"
+                ),
+            }
+
+        onset_ns = time.time_ns()
+        self._set_output_active(pin_obj)
+        self._write_ttl_event(onset_ns, pin_number, TTLValue.HIGH, source="api")
+        time.sleep(duration_ms / 1000.0)
+        offset_ns = time.time_ns()
+        self._set_output_inactive(pin_obj)
+        self._write_ttl_event(offset_ns, pin_number, TTLValue.LOW, source="api")
+
+        self.logger.info(f"pulse_pin: GPIO {pin_number} for {duration_ms}ms")
+        return {
+            "result": "success",
+            "pin": pin_number,
+            "duration_ms": duration_ms,
+            "onset_ns": onset_ns,
+            "offset_ns": offset_ns,
+        }
 
 
     def _start_recording_all_input_pins(self):
@@ -419,7 +562,9 @@ class TTLModule(Module):
 
     def _handle_input_pin_low(self, pin):
         """Handle input pin going low (pressed)"""
-        self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.LOW)
+        ts = time.time_ns()
+        self._write_ttl_event(ts, pin.pin.number, TTLValue.LOW)
+        self._send_edge_status(pin.pin.number, TTLValue.LOW, ts)
         # DEBUG, not INFO: fires on every edge. An experiment-clock or pulse
         # train at even 10-50 Hz would flood the journal (and trip journald's
         # per-service rate limit, dropping unrelated lines). The authoritative
@@ -429,200 +574,95 @@ class TTLModule(Module):
 
     def _handle_input_pin_high(self, pin):
         """Handle input pin going high (released)"""
-        self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.HIGH)
+        ts = time.time_ns()
+        self._write_ttl_event(ts, pin.pin.number, TTLValue.HIGH)
+        self._send_edge_status(pin.pin.number, TTLValue.HIGH, ts)
         self.logger.debug(f"Input pin {pin.pin} went high (released)")
+
+
+    def _send_edge_status(self, pin_number: int, state: TTLValue, timestamp_ns: int):
+        """Push a live status message for an input-pin edge, so the
+        controller can surface it (Socket.IO, and the /api/v1/events SSE
+        stream for an external experiment controller) without waiting for
+        export -- the CSV write above is otherwise the only record, and
+        that's only readable after the session ends.
+
+        Only called for genuine input edges (_handle_input_pin_low/high),
+        never for generator-driven output pulses -- those already have the
+        controller-side session_started/stopped bracket and would be a much
+        higher-rate, much less interesting source to broadcast live.
+
+        Fires on every edge, unrated-limited (same precedent as RFID's
+        _record_ping) -- a very high-rate input source could flood the ZMQ
+        status channel; revisit if that's ever a real signal, not a lever
+        press or an external trigger.
+        """
+        comms = getattr(self, "communication", None)
+        if comms and comms.controller_ip:
+            pin_cfg = self.pin_configs.get(pin_number, {})
+            self.communication.send_status({
+                "type": "ttl_edge",
+                "pin": pin_number,
+                "state": state.name,  # "HIGH"/"LOW" -- Enum isn't JSON-serialisable
+                "mode": pin_cfg.get("mode"),
+                "description": pin_cfg.get("description") or "",
+                "timestamp_ns": timestamp_ns,
+            })
 
 
     def _open_ttl_file(self, filename: str):
         """Open a TTL events CSV file for writing and write the column header."""
         self.logger.info(f"Opening TTL events file: {filename}")
-        try:
-            self._ttl_file_handle = open(filename, "w", buffering=1)  # line-buffered
-            self._ttl_file_handle.write("Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
-        except Exception as e:
-            self.logger.error(f"Failed to open TTL events file {filename}: {e}")
-            self._ttl_file_handle = None
+        with self._ttl_file_lock:
+            try:
+                # line-buffered
+                self._ttl_file_handle = open(filename, "w", buffering=1)
+                self._ttl_file_handle.write(
+                    "Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
+            except Exception as e:
+                self.logger.error(f"Failed to open TTL events file {filename}: {e}")
+                self._ttl_file_handle = None
 
 
-    def _create_ttl_file(self):
-        """Legacy helper used by _start_recording. Delegates to _open_ttl_file."""
-        self.current_ttl_events_filename = f"{self.facade.get_filename_prefix()}_events.csv"
-        self.facade.add_session_file(self.current_ttl_events_filename)
-        self._open_ttl_file(self.current_ttl_events_filename)
+    def _write_ttl_event(
+        self, timestamp_ns: int, pin_number: int, state: TTLValue, source: str = ""
+    ):
+        """Write a TTL event to file.
 
+        `source`, when given (e.g. "api"), is appended to the free-text
+        pin_description field so a pulse fired via pulse_pin() is
+        distinguishable from one fired by an input edge or a running
+        generator -- without changing the CSV's column schema.
 
-    def _write_ttl_event(self, timestamp_ns: int, pin_number: int, state: TTLValue):
-        """Write a TTL event to file"""
-        if self._ttl_file_handle:
-            self._ttl_file_handle.write(f'{timestamp_ns},{pin_number},{self.pin_configs[pin_number].get("mode")},{state},{self.pin_configs[pin_number].get("description")}\n')
+        Holds _ttl_file_lock for the check-and-write so this can't race
+        _start_next_recording_segment's close/reopen (see the lock's
+        docstring in __init__) -- an event that arrives mid-rotation just
+        blocks briefly and lands in whichever file is open once the lock is
+        released, instead of silently vanishing or hitting a closed handle.
+        """
+        with self._ttl_file_lock:
+            if self._ttl_file_handle:
+                mode = self.pin_configs[pin_number].get("mode")
+                description = self.pin_configs[pin_number].get("description") or ""
+                if source:
+                    description = f"{description} [{source}]".strip()
+                self._ttl_file_handle.write(
+                    f"{timestamp_ns},{pin_number},{mode},{state},{description}\n")
 
 
     def _close_ttl_event_file(self, filename=None):
         """Flush and close the current TTL events file."""
-        try:
-            if self._ttl_file_handle:
-                self._ttl_file_handle.flush()
-                self._ttl_file_handle.close()
+        with self._ttl_file_lock:
+            try:
+                if self._ttl_file_handle:
+                    self._ttl_file_handle.flush()
+                    self._ttl_file_handle.close()
+                    self._ttl_file_handle = None
+                    closed_name = filename or self.current_ttl_events_filename
+                    self.logger.info(f"Closed TTL events file: {closed_name}")
+            except Exception as e:
+                self.logger.warning(f"Error closing TTL events file: {e}")
                 self._ttl_file_handle = None
-                self.logger.info(f"Closed TTL events file: {filename or self.current_ttl_events_filename}")
-        except Exception as e:
-            self.logger.warning(f"Error closing TTL events file: {e}")
-            self._ttl_file_handle = None
-
-
-    def start_pseudo_random_pulses(self, pin_number, min_interval=1.0, max_interval=10.0, pulse_duration=0.01):
-        """
-        Start generating pseudo-random pulses on a specified output pin.
-        
-        Args:
-            pin_number: GPIO pin number to generate pulses on
-            min_interval: Minimum interval between pulses in seconds (default: 1.0)
-            max_interval: Maximum interval between pulses in seconds (default: 10.0)
-            pulse_duration: Duration of low pulse in seconds (default: 0.01)
-            
-        Returns:
-            bool: True if started successfully, False otherwise
-        """
-        try:
-            # Check if pin is valid
-            if pin_number not in self.ttl_output_pins:
-                self.logger.error(f"Pin {pin_number} is not configured as an output pin")
-                return False
-
-            # Stop any existing pulse generation
-            if self.pulse_generation_active:
-                self.stop_pseudo_random_pulses()
-
-            # Find the pin object
-            pin_obj = None
-            for pin in self.output_pins:
-                if pin.pin.number == pin_number:
-                    pin_obj = pin
-                    break
-
-            if not pin_obj:
-                self.logger.error(f"Could not find pin object for pin {pin_number}")
-                return False
-
-            # Update configuration
-            self.pulse_generation_config.update({
-                'min_interval': min_interval,
-                'max_interval': max_interval,
-                'pulse_duration': pulse_duration
-            })
-
-            # Set initial state to low
-            pin_obj.off()
-            self.logger.info(f"Set pin {pin_number} to initial low state")
-
-            # Start pulse generation thread
-            self.pulse_generation_active = True
-            self.pulse_generation_pin = pin_obj
-
-            self.pulse_generation_thread = threading.Thread(
-                target=self._pulse_generation_worker,
-                args=(pin_obj,),
-                daemon=True
-            )
-            self.pulse_generation_thread.start()
-
-            self.logger.info(f"Started pseudo-random pulse generation on pin {pin_number}")
-            self.logger.info(f"Configuration: min_interval={min_interval}s, max_interval={max_interval}s, pulse_duration={pulse_duration}s")
-
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error starting pseudo-random pulses: {e}")
-            return False
-
-
-    def stop_pseudo_random_pulses(self):
-        """
-        Stop generating pseudo-random pulses.
-        
-        Returns:
-            bool: True if stopped successfully, False otherwise
-        """
-        try:
-            if not self.pulse_generation_active:
-                self.logger.info("Pulse generation was not active")
-                return True
-
-            # Stop the thread
-            self.pulse_generation_active = False
-
-            # Wait for thread to finish
-            if self.pulse_generation_thread and self.pulse_generation_thread.is_alive():
-                self.pulse_generation_thread.join(timeout=2.0)
-
-            # Set pin back to high state
-            if self.pulse_generation_pin:
-                self.pulse_generation_pin.on()
-                self.logger.info(f"Set pin {self.pulse_generation_pin.pin.number} back to high state")
-
-            self.pulse_generation_pin = None
-            self.pulse_generation_thread = None
-
-            self.logger.info("Stopped pseudo-random pulse generation")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error stopping pseudo-random pulses: {e}")
-            return False
-
-
-    def _pulse_generation_worker(self, pin_obj):
-        """
-        Worker thread for generating pseudo-random pulses.
-        
-        Args:
-            pin_obj: GPIO pin object to generate pulses on
-        """
-        try:
-            # Set pin to high initially
-            pin_obj.on()
-            self.logger.info(f"Pulse generation worker started on pin {pin_obj.pin.number}")
-
-            while self.pulse_generation_active:
-                # Generate random interval
-                interval = random.uniform(
-                    self.pulse_generation_config['min_interval'],
-                    self.pulse_generation_config['max_interval']
-                )
-
-                # Wait for the interval
-                time.sleep(interval)
-
-                # Check if we should still be running
-                if not self.pulse_generation_active:
-                    break
-
-                # Generate pulse (set low, then high)
-                pin_obj.off()
-                time.sleep(self.pulse_generation_config['pulse_duration'])
-                pin_obj.on()
-
-                self.logger.debug(f"Generated pulse on pin {pin_obj.pin.number} after {interval:.3f}s interval")
-
-        except Exception as e:
-            self.logger.error(f"Error in pulse generation worker: {e}")
-        finally:
-            pin_obj.off()
-            self.logger.info(f"Pulse generation worker stopped for pin {pin_obj.pin.number} and pin set to low")
-
-
-    def get_pulse_generation_status(self):
-        """
-        Get the current status of pulse generation.
-        
-        Returns:
-            dict: Status information about pulse generation
-        """
-        return {
-            'active': self.pulse_generation_active,
-            'pin': self.pulse_generation_pin.pin.number if self.pulse_generation_pin else None,
-            'config': self.pulse_generation_config.copy()
-        }
 
 
     def assign_pins(self):
@@ -649,6 +689,7 @@ class TTLModule(Module):
             self.experiment_clock_pins = []
             self.pseudorandom_pins = []
             self.interval_pulse_pins = []
+            self.experiment_start_pins = []
 
             # Track pin assignments for logging
             input_pins_assigned = []
@@ -667,23 +708,36 @@ class TTLModule(Module):
                     self.pin_configs[pin_number] = pin_config
 
                     if pin_type == "input":
-                        # Create input pin (Button object) with proper error handling
+                        # Create input pin (Button object) with proper error handling.
+                        # bounce_time is gpiozero's "ignore edges within N of the
+                        # last edge" debounce, sourced from the per-pin debounce_ms
+                        # config key (schema default 50; 0 = no debounce, matching
+                        # the prior hardcoded behaviour when the key is absent).
+                        debounce_ms = pin_config.get("debounce_ms", 0)
+                        bounce_time = float(debounce_ms) / 1000.0
                         try:
-                            pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=pull_up)
+                            pin_obj = gpiozero.Button(
+                                pin_number, bounce_time=bounce_time, pull_up=pull_up)
                             self.input_pins.append(pin_obj)
                             input_pins_assigned.append(pin_number)
-                            self.logger.info(f"Assigned input pin {pin_number}")
+                            self.logger.info(
+                                f"Assigned input pin {pin_number} "
+                                f"(debounce_ms={debounce_ms})")
                         except Exception as e:
-                            self.logger.error(f"Failed to assign input pin {pin_number}: {e}")
+                            self.logger.error(
+                                f"Failed to assign input pin {pin_number}: {e}")
                             # Try to clean up and retry once
                             self._cleanup_gpio()
                             try:
-                                pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=pull_up)
+                                pin_obj = gpiozero.Button(
+                                    pin_number, bounce_time=bounce_time, pull_up=pull_up)
                                 self.input_pins.append(pin_obj)
                                 input_pins_assigned.append(pin_number)
-                                self.logger.info(f"Successfully assigned input pin {pin_number} after retry")
+                                self.logger.info(
+                                    f"Successfully assigned input pin {pin_number} after retry")
                             except Exception as e2:
-                                self.logger.error(f"Failed to assign input pin {pin_number} after retry: {e2}")
+                                self.logger.error(
+                                    f"Failed to assign input pin {pin_number} after retry: {e2}")
 
                     elif pin_type == "pseudorandom":
                         # Create output pin (LED object) with proper error handling
@@ -747,6 +801,65 @@ class TTLModule(Module):
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign output pin {pin_number} after retry: {e2}")
 
+                    elif pin_type == "experiment_start":
+                        # A single delayed pulse fired once, at recording
+                        # start -- sugar over interval_pulse(repeat_count=1)
+                        # with its own honest mode name (shows as
+                        # "experiment_start" in the CSV, not "interval_pulse"
+                        # with an inferred repeat count) and a simpler
+                        # delay_s/pulse_duration_s-only schema.
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            self._set_output_inactive(pin_obj)
+                            self.experiment_start_pins.append(pin_number)
+                            self.logger.info(
+                                f"Assigned output pin {pin_number} as "
+                                f"experiment_start (initial state: inactive)")
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to assign output pin {pin_number}: {e}")
+                            self._cleanup_gpio()
+                            try:
+                                pin_obj = gpiozero.LED(pin_number)
+                                self.output_pins.append(pin_obj)
+                                output_pins_assigned.append(pin_number)
+                                self._set_output_inactive(pin_obj)
+                                self.experiment_start_pins.append(pin_number)
+                                self.logger.info(
+                                    f"Assigned pin {pin_number} after retry")
+                            except Exception as e2:
+                                self.logger.error(
+                                    f"Pin {pin_number} retry failed: {e2}")
+
+                    elif pin_type in (None, "None", "none"):
+                        # Plain output pin, held inactive, with no automatic
+                        # generator -- for test_pin()/pulse_pin() to drive on
+                        # demand without racing a generator thread.
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            self._set_output_inactive(pin_obj)
+                            self.logger.info(
+                                f"Assigned output pin {pin_number} as manual "
+                                f"(no generator; initial state: inactive)")
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to assign output pin {pin_number}: {e}")
+                            self._cleanup_gpio()
+                            try:
+                                pin_obj = gpiozero.LED(pin_number)
+                                self.output_pins.append(pin_obj)
+                                output_pins_assigned.append(pin_number)
+                                self._set_output_inactive(pin_obj)
+                                self.logger.info(
+                                    f"Successfully assigned output pin {pin_number} after retry")
+                            except Exception as e2:
+                                self.logger.error(
+                                    f"Failed to assign output pin {pin_number} after retry: {e2}")
+
                     else:
                         self.logger.warning(f"Unknown pin type '{pin_type}' for pin {pin_number}")
 
@@ -800,6 +913,7 @@ class TTLModule(Module):
             self.logger.info(f"_start_pin_generators: experiment_clock={self.experiment_clock_pins} "
                              f"pseudorandom={self.pseudorandom_pins} "
                              f"interval_pulse={self.interval_pulse_pins} "
+                             f"experiment_start={self.experiment_start_pins} "
                              f"output_pins={[p.pin.number for p in self.output_pins]}")
 
             for pin_number in self.experiment_clock_pins:
@@ -811,10 +925,14 @@ class TTLModule(Module):
             for pin_number in self.interval_pulse_pins:
                 self._start_interval_pulse(pin_number)
 
+            for pin_number in self.experiment_start_pins:
+                self._start_experiment_start(pin_number)
+
             self.logger.info(
                 f"Started {len(self.experiment_clock_pins)} experiment clock, "
                 f"{len(self.pseudorandom_pins)} pseudorandom, "
-                f"{len(self.interval_pulse_pins)} interval_pulse generators"
+                f"{len(self.interval_pulse_pins)} interval_pulse, "
+                f"{len(self.experiment_start_pins)} experiment_start generators"
             )
 
         except Exception as e:
@@ -1044,6 +1162,48 @@ class TTLModule(Module):
 
         except Exception as e:
             self.logger.error(f"Error starting interval_pulse on pin {pin_number}: {e}")
+            return False
+
+
+    def _start_experiment_start(self, pin_number):
+        """Start the experiment_start generator for a specific pin.
+
+        A single pulse, fired once, delay_s after recording begins -- for
+        marking "recording started" on an external system (e.g. an ephys
+        rig or a second acquisition PC) without needing that system on the
+        same PTP domain. Reuses _interval_pulse_worker directly (it's
+        already generic over interval/duration/repeat_count, not tied to
+        the "interval_pulse" mode string) with repeat_count hardcoded to 1
+        -- delay_s plays the role interval_s does there.
+        """
+        try:
+            pin_config = self.pin_configs.get(pin_number, {})
+            delay_s = float(pin_config.get("delay_s", 0.001))
+            pulse_duration_s = float(pin_config.get("pulse_duration_s", 0.02))
+
+            pin_obj = next(
+                (p for p in self.output_pins if p.pin.number == pin_number), None)
+            if not pin_obj:
+                self.logger.error(
+                    f"Could not find pin object for experiment_start pin {pin_number}")
+                return False
+
+            self.logger.info(
+                f"Started experiment_start on pin {pin_number}: "
+                f"delay={delay_s}s pulse={pulse_duration_s}s")
+
+            thread = threading.Thread(
+                target=self._interval_pulse_worker,
+                args=(pin_obj, pin_number, delay_s, pulse_duration_s, 1),
+                daemon=True,
+            )
+            thread.start()
+            self.generator_threads[pin_number] = thread
+            return True
+
+        except Exception as e:
+            self.logger.error(
+                f"Error starting experiment_start on pin {pin_number}: {e}")
             return False
 
 

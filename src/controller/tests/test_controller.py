@@ -168,5 +168,6 @@ class TestRecordingStartedClosesGaps:
 
     def test_already_recording_counts_as_started(self):
         ctx = _Ctx()
-        self._send(ctx, {"type": "recording_start_failed", "error": "Already recording"})
+        self._send(ctx, {"type": "recording_start_failed",
+                         "error": "Already recording"})
         ctx.facade.module_recording_started.assert_called_once_with("cam1")

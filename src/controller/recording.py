@@ -2111,6 +2111,24 @@ class Recording:
                 )
                 return
 
+            # Same PTP gate as a session start. A module back from a power-loss
+            # reboot has no RTC and runs on a stale clock until PTP converges
+            # (desk soak 2026-09-30: it booted at "31 Aug"); re-arming it then
+            # would stamp frames with the wrong time. Deferred, not dropped:
+            # the liveness check retries every cycle until the gate passes.
+            ptp = self._check_ptp_sync([module_id])
+            if not ptp.get("ok"):
+                failures = ptp.get("failures") or [{}]
+                self.logger.info(
+                    f"{module_id} back in '{session_name}' but PTP not ready "
+                    f"({failures[0].get('reason', ptp.get('error'))}) — re-arm deferred"
+                )
+                # Keep it marked as meant-to-be-recording so the liveness check
+                # retries (a disk-resume path arrives here with "stopped").
+                with self._lock:
+                    session.module_stop_states[module_id] = "recording"
+                return
+
             # Mark as RECORDING immediately so the session monitor doesn't see a
             # discrepancy between stop_state and module.status in the window between
             # sending start_recording and receiving the ack (or "Already recording").
@@ -3120,7 +3138,14 @@ class Recording:
                 self._not_recording_strikes.pop(key, None)
                 self._last_seen_recording_ns[key] = time.time_ns()
 
+        open_for = {
+            m for g in session.gaps if g["end_ns"] is None
+            and g["cause"] in self._GAP_CAUSES_CLOSED_BY_RECORDING
+            for m in g["modules"]
+        }
         for m in not_recording:
+            if m in open_for:
+                continue  # already inside an offline/restart/self-stop gap
             # Starts when the module was last seen recording, not when the
             # strikes threshold tripped (desk soak: 21 s late).
             self._open_gap(
@@ -3261,7 +3286,9 @@ class Recording:
                     self._log_session_event(name, "FAULT",
                         "Controller restarted during active session — awaiting module reconnect")
                 self.sessions[name] = session
-                if session.state in (SessionState.ACTIVE, SessionState.ERROR) and d.get("state") == SessionState.ACTIVE:
+                was_active = d.get("state") == SessionState.ACTIVE
+                if was_active and session.state in (SessionState.ACTIVE,
+                                                    SessionState.ERROR):
                     # The controller was down from (about) its last save until
                     # now; each module's gap closes on its confirmed restart.
                     affected = [m for m, st in session.module_stop_states.items()

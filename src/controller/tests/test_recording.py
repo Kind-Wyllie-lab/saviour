@@ -1755,12 +1755,16 @@ class TestModuleSelfStopped:
         facade.is_module_recording.return_value = False
         s = rec.sessions["exp1"]
 
-        facade.get_module_health.return_value = {"disk_space": 90}  # 10% free
+        healthy = {"status": "online", "last_heartbeat": time.time(),
+                   "ptp4l_offset_ns": 1000, "phc2sys_offset_ns": 1000}
+        # 10% free
+        facade.get_module_health.return_value = {**healthy, "disk_space": 90}
         rec._resume_self_stopped_modules("exp1", s)
         facade.send_command.assert_not_called()
         assert "cam1" in s.self_stopped_modules
 
-        facade.get_module_health.return_value = {"disk_space": 80}  # 20% free
+        # 20% free
+        facade.get_module_health.return_value = {**healthy, "disk_space": 80}
         rec._resume_self_stopped_modules("exp1", s)
 
         assert s.self_stopped_modules == {}
@@ -1923,7 +1927,8 @@ class TestSessionGapRecord:
             for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD):
                 rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
 
-            gaps = [g for g in rec.sessions["exp1"].gaps if g["cause"] == "not_recording"]
+            gaps = [g for g in rec.sessions["exp1"].gaps
+                    if g["cause"] == "not_recording"]
             assert len(gaps) == 1
             assert gaps[0]["start_ns"] == last_seen
 
@@ -1950,7 +1955,8 @@ class TestSessionGapRecord:
             rec, facade = self._rec(tmpdir)
             facade.get_module_health.return_value = {}
             rec.module_offline("cam1")
-            rec.sessions["exp1"].module_stop_states = {"cam1": "stopped", "cam2": "stopped"}
+            rec.sessions["exp1"].module_stop_states = {
+                "cam1": "stopped", "cam2": "stopped"}
             rec._full_stopping.add("exp1")
             rec._check_all_stopped("exp1")
             gap = rec.sessions["exp1"].gaps[0]
@@ -1960,8 +1966,9 @@ class TestSessionGapRecord:
     def test_self_stop_opens_an_error_gap(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             rec, _facade = self._rec(tmpdir)
-            rec.module_self_stopped("cam1", {"reason": "disk_critical",
-                                             "detail": "8% free", "resume_free_pct": 15})
+            rec.module_self_stopped("cam1", {
+                "reason": "disk_critical", "detail": "8% free",
+                "resume_free_pct": 15})
             gap = rec.sessions["exp1"].gaps[0]
             assert (gap["cause"], gap["severity"]) == ("self_stopped", "error")
 
@@ -2011,3 +2018,34 @@ class TestSessionGapRecord:
             assert gap["modules"] == ["*"]
             assert (gap["cause"], gap["severity"]) == ("pause_disk", "error")
             assert gap["end_ns"] is not None and gap["recovered"] is True
+
+
+class TestRearmPtpGate:
+    """Desk soak: a module back from a power-loss reboot runs on a stale clock
+    until PTP converges; re-arming it then would mis-stamp frames."""
+
+    def _rec(self, health):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ERROR, modules=["cam1"],
+            module_stop_states={"cam1": "stopped"}, error_message="cam1 is offline")
+        facade.is_module_recording.return_value = False
+        facade.get_module_health.return_value = health
+        return rec, facade
+
+    def test_rearm_deferred_until_ptp_reported(self):
+        rec, facade = self._rec({"status": "online", "last_heartbeat": time.time(),
+                                 "ptp4l_offset_ns": None})
+        rec.module_back_online("cam1")
+        starts = [c for c in facade.send_command.call_args_list
+                  if c[0][1] == "start_recording"]
+        assert starts == []
+        # Left as meant-to-be-recording so the liveness check retries.
+        assert rec.sessions["exp1"].module_stop_states["cam1"] == "recording"
+
+    def test_rearm_proceeds_once_ptp_is_in_gate(self):
+        rec, facade = self._rec({"status": "online", "last_heartbeat": time.time(),
+                                 "ptp4l_offset_ns": 900, "phc2sys_offset_ns": 400})
+        rec.module_back_online("cam1")
+        facade.send_command.assert_any_call(
+            "cam1", "start_recording", {"duration": 0, "session_name": "exp1"})

@@ -1,6 +1,6 @@
 # Supervised long-lived threads
 
-- **Status:** proposed
+- **Status:** shipped 2026-09-30 (branch `feat/supervised-threads`) - steps 1-5 + health surfacing; step 6 not done
 - **Created:** 2026-09-07
 - **Owner:** Andrew SG
 - **CLAUDE.md ref:** Architectural concerns → "Unsupervised threading + broad exception policy"
@@ -37,7 +37,7 @@ This is the root-cause *class* behind several separately-filed bugs:
 
 ## Proposal
 
-A ~40-line helper, `src/common/supervised.py` (new shared module; both
+A ~40-line helper, `src/shared/supervised.py` (the existing shared package; both
 `src/controller` and `src/modules` import it):
 
 ```python

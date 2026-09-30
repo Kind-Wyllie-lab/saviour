@@ -1,24 +1,117 @@
 #!/bin/bash
+# SAVIOUR Multi-Clone Script
+#
+# Usage: sudo scripts/multiclone.sh                                (interactive TUI)
+#        sudo scripts/multiclone.sh <image.img> <device1> [device2] ...   (scriptable)
+# Example: sudo scripts/multiclone.sh /mnt/export/saviour-image.img sda sdb sdc sdd
+
 set -euo pipefail
 
-IMAGE="$1"
-shift
-DEVICES=("$@")
+ROOT_DEV=$(findmnt -n -o SOURCE / | sed -E 's/p?[0-9]+$//')
+ROOT_DISK=$(basename "$(readlink -f "$ROOT_DEV")")
 
-if [ -z "$IMAGE" ] || [ ${#DEVICES[@]} -eq 0 ]; then
-  echo "Usage: $0 <image.img> <device1> [device2] [device3] ..."
-  echo "Example: $0 /mnt/export/saviour-image.img sda sdb sdc sdd"
-  exit 1
-fi
+if [ "$#" -gt 0 ]; then
+  # ── Scriptable path ────────────────────────────────────────────────────────
+  IMAGE="$1"
+  shift
+  DEVICES=("$@")
 
-echo "=== Target devices: ${DEVICES[*]} ==="
-echo "=== Source image: $IMAGE ==="
-lsblk
-echo
-read -p "Confirm these are correct, blank, intended target devices? (yes/no): " confirm
-if [ "$confirm" != "yes" ]; then
-  echo "Aborted."
-  exit 1
+  if [ -z "$IMAGE" ] || [ ${#DEVICES[@]} -eq 0 ]; then
+    echo "Usage: $0 [<image.img> <device1> [device2] [device3] ...]"
+    echo "Example: $0 /mnt/export/saviour-image.img sda sdb sdc sdd"
+    echo "(or run with no arguments for an interactive device picker)"
+    exit 1
+  fi
+
+  echo "=== Target devices: ${DEVICES[*]} ==="
+  echo "=== Source image: $IMAGE ==="
+  lsblk
+  echo
+  read -p "Confirm these are correct, blank, intended target devices? (yes/no): " confirm
+  if [ "$confirm" != "yes" ]; then
+    echo "Aborted."
+    exit 1
+  fi
+
+else
+  # ── Interactive path: whiptail image + target picker ───────────────────────
+  if [ ! -t 0 ]; then
+    echo "ERROR: no arguments given and this isn't an interactive terminal."
+    echo "Usage: $0 <image.img> <device1> [device2] [device3] ..."
+    exit 1
+  fi
+
+  if ! command -v whiptail &>/dev/null; then
+    echo "whiptail not found -- installing..."
+    sudo apt-get install -y whiptail
+  fi
+
+  source "$(dirname "$(readlink -f "$0")")/lib/identify_disk.sh"
+
+  W=78
+  H=20
+  wt() { whiptail "$@" 3>&1 1>&2 2>&3; }
+
+  # Offer a pick-list of *.img files found in common spots, but always let
+  # the user type/edit a path -- inputbox pre-filled with the newest match.
+  found_img=$(find /mnt /home /root -maxdepth 3 -name '*.img' -newer /etc/hostname 2>/dev/null | head -1 || true)
+  [ -z "$found_img" ] && found_img=$(find /mnt /home /root -maxdepth 3 -name '*.img' 2>/dev/null | sort | tail -1 || true)
+
+  IMAGE=$(wt --title "Source Image" --inputbox \
+    "\nPath to the master image to flash (from capture_master_image.sh):\n" \
+    10 $W "${found_img:-/mnt/export/saviour-image.img}") || { echo "Aborted."; exit 1; }
+
+  if [ -z "$IMAGE" ] || [ ! -f "$IMAGE" ]; then
+    whiptail --title "Image Not Found" --msgbox "\n$IMAGE does not exist." 8 $W
+    exit 1
+  fi
+
+  echo "Identifying connected cards (mounting each briefly, read-only)..."
+  candidates=()
+  while IFS= read -r line; do
+    NAME="" SIZE="" MODEL="" TRAN="" TYPE=""
+    eval "$line"
+    [ "$TYPE" = "disk" ] || continue
+    [ "$NAME" = "$ROOT_DISK" ] && continue
+    [[ "$NAME" == mmcblk0* ]] && continue
+    id=$(identify_disk "$NAME")
+    echo "  /dev/$NAME: $id"
+    candidates+=("$NAME" "${SIZE:-?} -- ${id}" "OFF")
+  done < <(sudo lsblk -dn -P -o NAME,SIZE,MODEL,TRAN,TYPE)
+
+  if [ ${#candidates[@]} -eq 0 ]; then
+    whiptail --title "No Devices Found" \
+      --msgbox "\nNo candidate block devices found (other than the running system disk).\n\nCheck the SD card readers are plugged in, then re-run." 12 $W
+    exit 1
+  fi
+
+  tgt_raw=$(wt --title "Select Target Cards" --checklist \
+    "\nWhich devices should be OVERWRITTEN with $IMAGE?\nUse space to select, enter to confirm.\n" \
+    $H $W $((${#candidates[@]} / 3)) \
+    "${candidates[@]}") || { echo "Aborted."; exit 1; }
+
+  if [ -z "$tgt_raw" ]; then
+    whiptail --title "No Selection" --msgbox "\nNo target devices selected." 8 $W
+    exit 1
+  fi
+  DEVICES=()
+  eval "DEVICES=($tgt_raw)"
+
+  summary="Image: $IMAGE\n\nTargets (WILL BE OVERWRITTEN):\n"
+  for d in "${DEVICES[@]}"; do
+    summary+="  /dev/$d\n"
+  done
+  summary+="\nThis cannot be undone. Proceed?"
+
+  if ! whiptail --title "Confirm Flash" --yesno "\n$summary" $((10 + ${#DEVICES[@]})) $W \
+    --yes-button "Flash" --no-button "Cancel"; then
+    echo "Aborted."
+    exit 1
+  fi
+
+  clear
+  echo "=== Target devices: ${DEVICES[*]} ==="
+  echo "=== Source image: $IMAGE ==="
 fi
 
 # Safety: refuse to touch the running root device
@@ -68,6 +161,7 @@ if [ "$BOOT_FSTYPE" != "vfat" ] || [ "$ROOT_FSTYPE" != "ext4" ]; then
 fi
 echo "OK -- partition 1 = vfat (boot), partition 2 = ext4 (root)"
 
+IMAGE_BYTES=$(stat -c%s "$IMAGE" 2>/dev/null || echo 0)
 LOGDIR=$(mktemp -d /tmp/multiclone.XXXXXX)
 echo "=== Writing image to all targets in parallel (logs: $LOGDIR) ==="
 # dcfldd's multi-of= writes to each device sequentially per block (one
@@ -83,6 +177,13 @@ for d in "${DEVICES[@]}"; do
   pids+=("$!")
 done
 
+# Each dd's progress goes to its own log file (see above), so without this
+# nothing shows on screen for the whole write. Poll and redraw a status
+# line per device until every job finishes.
+source "$(dirname "$(readlink -f "$0")")/lib/dd_progress.sh"
+live_progress_dashboard "$LOGDIR" "$IMAGE_BYTES" "${DEVICES[@]}" &
+MONITOR_PID=$!
+
 fail=0
 for i in "${!pids[@]}"; do
   if ! wait "${pids[$i]}"; then
@@ -90,6 +191,9 @@ for i in "${!pids[@]}"; do
     fail=1
   fi
 done
+kill "$MONITOR_PID" 2>/dev/null || true
+wait "$MONITOR_PID" 2>/dev/null || true
+echo
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
@@ -149,6 +253,16 @@ fix_identity() {
   if [ "$ec" -ge 4 ]; then
     echo "ERROR: e2fsck found unrecoverable errors on /dev/${dev}2 (exit $ec)"
     return 1
+  fi
+  if [ "$ec" -ne 0 ]; then
+    # exit 1/2 means e2fsck found AND fixed errors -- below the >=4 threshold
+    # that aborts the run, so without this the device sails through with no
+    # distinct signal. A clean write of a filesystem that was itself already
+    # checked (capture_master_image.sh's own shrink step runs e2fsck -f -y
+    # too) shouldn't need repairing -- if it did, suspect this specific card,
+    # reader, cable or USB port, not the source image.
+    echo "WARNING: e2fsck found and auto-repaired filesystem errors on /dev/${dev}2 (exit $ec) -- see the Pass 1-5 output above for what was recovered into lost+found."
+    touch "${LOGDIR}/${dev}.fsck_dirty"
   fi
   sudo resize2fs "/dev/${dev}2"
 
@@ -236,9 +350,27 @@ for dev in "${DEVICES[@]}"; do
     echo "  WARNING: no SSH host keys on /dev/$dev -- sshd will refuse to start on boot!" >&2
     verify_fail=1
   fi
+  if [ -f "${LOGDIR}/${dev}.fsck_dirty" ]; then
+    echo "  WARNING: filesystem corruption was found and auto-repaired on this device" >&2
+    verify_fail=1
+  fi
 done
 
 if [ "$verify_fail" -ne 0 ]; then
-  echo "=== WARNING: one or more devices are missing SSH host keys -- fix before deploying ==="
+  echo "=== WARNING: one or more devices need attention -- see above -- before deploying ==="
+fi
+dirty_devices=()
+for dev in "${DEVICES[@]}"; do
+  [ -f "${LOGDIR}/${dev}.fsck_dirty" ] && dirty_devices+=("$dev")
+done
+if [ ${#dirty_devices[@]} -gt 0 ]; then
+  echo ""
+  echo "=================================================================="
+  echo " e2fsck found and auto-repaired filesystem corruption on: ${dirty_devices[*]}"
+  echo " Other targets written from the same source image in this same run were"
+  echo " clean, so the image itself is presumably fine -- this points at that"
+  echo " specific card, reader, cable, or USB port. Do not deploy ${dirty_devices[*]}"
+  echo " without re-flashing (ideally on a different port) and re-checking."
+  echo "=================================================================="
 fi
 echo "=== Done. Boot-test at least one card before deploying the rest. ==="

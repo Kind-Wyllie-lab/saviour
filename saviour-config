@@ -937,6 +937,14 @@ EOF
     run_logged netfilter-persistent save
 }
 
+# PTP logging (2026-09-30): `-m` prints every servo sample to stdout, and
+# without `-q` the same line also went to syslog -- journald captured both,
+# so phc2sys at -R 8 wrote 16 lines/s (~90% of a module's journal) and a
+# capped persistent journal held only ~2 days. `-q` drops the syslog copy;
+# phc2sys's per-sample stdout goes to /run/linuxptp/phc2sys.log (tmpfs),
+# which ptp.py tails for telemetry and truncates, instead of the journal.
+# ptp4l stays in the journal (1 Hz; its state changes are the useful
+# diagnostics).
 configure_ptp_timetransmitter() {
     progress "Configuring PTP grandmaster (timeTransmitter)…"
     log "Configuring PTP: timeTransmitter"
@@ -954,7 +962,7 @@ Wants=network-online.target
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -l 6
+ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -q -l 6
 Restart=always
 RestartSec=5
 
@@ -972,7 +980,10 @@ Wants=ptp4l.service
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 3
-ExecStart=/usr/sbin/phc2sys -a -r -r -m
+ExecStartPre=/bin/mkdir -p /run/linuxptp
+ExecStart=/usr/sbin/phc2sys -a -r -r -m -q
+StandardOutput=append:/run/linuxptp/phc2sys.log
+StandardError=journal
 Restart=always
 RestartSec=5
 
@@ -1004,7 +1015,7 @@ Wants=network-online.target
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -s -2
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -q -s -2
 Restart=always
 RestartSec=5
 
@@ -1021,7 +1032,10 @@ Wants=ptp4l.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -R 8
+ExecStartPre=/bin/mkdir -p /run/linuxptp
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -q -R 8
+StandardOutput=append:/run/linuxptp/phc2sys.log
+StandardError=journal
 Restart=always
 RestartSec=5
 
@@ -1902,6 +1916,18 @@ fi
 # this is the hook mend.sh uses to reach an already-provisioned fleet with the
 # hardening -- apply_from_config() is a no-op unless ROLE/TYPE/GATEWAY/IP
 # actually changed, so a plain reboot won't pick this up on its own.
+if [ "${1:-}" = "--apply-ptp-units" ]; then
+    get_current_config
+    case "$CURRENT_ROLE" in
+        controller) configure_ptp_timetransmitter ;;
+        module)     configure_ptp_timereceiver ;;
+        *) echo "No role configured yet -- nothing to do." >&2; exit 1 ;;
+    esac
+    systemctl restart ptp4l phc2sys
+    echo "PTP units rewritten for role $CURRENT_ROLE and restarted."
+    exit 0
+fi
+
 if [ "${1:-}" = "--apply-firewall" ]; then
     get_current_config          # sources /etc/saviour/config -> WAN_INTERFACE etc.
     if [ "$CURRENT_ROLE" = "controller" ]; then

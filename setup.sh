@@ -141,13 +141,22 @@ create_python_environment() {
 configure_logging() {
     # Make logging persistent, with a disk-use cap so a chatty run can't fill
     # the filesystem (disk-full is itself a data-loss trigger).
-    echo "Setting journald.conf to have persistent logging (capped at 500M)"
-    sudo tee /etc/systemd/journald.conf > /dev/null <<EOF
+    # Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/
+    # 40-rpi-volatile-storage.conf (Storage=volatile), and drop-ins override
+    # /etc/systemd/journald.conf -- so writing Storage=persistent there never
+    # took effect on any Pi in the fleet (found 2026-09-30: every module's
+    # journal was RAM-only, which is why reboots left nothing to diagnose).
+    # A drop-in that sorts after 40-rpi-* wins.
+    echo "Enabling persistent journald logging (capped at 500M)"
+    sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+    sudo tee /etc/systemd/journald.conf.d/99-saviour.conf > /dev/null <<EOF
 [Journal]
 Storage=persistent
 SystemMaxUse=500M
 SystemKeepFree=1G
 EOF
+    sudo systemctl restart systemd-journald
+    sudo journalctl --flush || true
 }
 
 

@@ -17,6 +17,7 @@ import threading
 import time
 from enum import Enum
 
+from src.shared.ptp_log import PHC2SYS_LOG, tail_lines
 from src.shared.supervised import supervise
 
 
@@ -174,7 +175,15 @@ class PTP:
             return 'unknown'
 
     def _get_service_logs(self, service_name, lines=10):
-        """Get recent logs from a systemd service."""
+        """Get recent logs from a systemd service.
+
+        phc2sys's per-sample output goes to its own tmpfs file, not the
+        journal (src/shared/ptp_log.py); fall back to journalctl on devices
+        whose PTP units predate that."""
+        if service_name == self.phc2sys_service:
+            tail = tail_lines(PHC2SYS_LOG, lines)
+            if tail is not None:
+                return tail
         try:
             result = subprocess.run(['journalctl', '-u', service_name, '-n', str(lines), '--no-pager'],
                                    capture_output=True, text=True)

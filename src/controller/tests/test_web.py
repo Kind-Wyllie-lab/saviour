@@ -1404,7 +1404,13 @@ class TestEnsureExportShareMounted:
         cmd = mount_calls[0]
         assert cmd[4] == "//192.168.1.2/habitat_recording"
         assert cmd[5] == "/home/pi/controller_share"
-        assert "username=saviour_module,password=hunter2" in cmd[7]
+        # The password must never be on the command line (sudo logs it to the
+        # journal) -- it goes in a 0600 credentials file instead.
+        assert "hunter2" not in " ".join(cmd)
+        creds = [o for o in cmd[7].split(",") if o.startswith("credentials=")]
+        assert len(creds) == 1
+        with open(creds[0].split("=", 1)[1]) as f:
+            assert f.read() == "username=saviour_module\npassword=hunter2\n"
 
     def test_mount_failure_returns_false_without_raising(self):
         web, _facade = _make_web_with_facade(**{"export.share_ip": "192.168.1.2"})

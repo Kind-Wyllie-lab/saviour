@@ -17,12 +17,14 @@ import datetime
 import logging
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import threading
 import time
 
 from src.modules.config import Config
+from src.shared.cifs import cifs_auth_option
 
 
 class Export:
@@ -123,6 +125,15 @@ class Export:
             pass
         self.logger.info(f"Using recovered export path: {path}")
         return path
+
+    @staticmethod
+    def _extract_date_from_filename(filename: str) -> str | None:
+        """UTC recording date (YYYYMMDD) from the segment marker every
+        recording filename carries -- "(<segment>_YYYYMMDD-HHMMSS)" -- or None
+        for a file without one (config/journal exports), which then falls
+        back to the current date."""
+        m = re.search(r"\(\d+_(\d{8})-\d{6}\)", filename)
+        return m.group(1) if m else None
 
     def _extract_session_from_filename(self, filename: str):
         """Extract the session name prefix from a recorded filename.
@@ -239,19 +250,28 @@ class Export:
         self.logger.info(f"Attempting to export {all_files}")
 
         try:
-            # Group files by the session they belong to
-            session_file_map: dict[str, list[str]] = {}
+            # Group files by (session, recording date). The date comes from the
+            # segment start embedded in each filename, not the clock at export
+            # time -- that is wrong right after a power-loss reboot (no RTC, PTP
+            # not yet converged: desk soak 2026-09-30 filed a salvaged segment
+            # under 20260831/), and put a multi-day session's segments under the
+            # day they happened to be exported.
+            session_file_map: dict[tuple[str, str | None], list[str]] = {}
             for filename in all_files:
                 session = self._extract_session_from_filename(filename) or export_path
-                session_file_map.setdefault(session, []).append(filename)
+                date_str = self._extract_date_from_filename(filename)
+                session_file_map.setdefault((session, date_str), []).append(filename)
 
             source_folder = self.to_export_folder
             exported_count = 0
             exported: list[str] = []
             session_results: dict[str, bool] = {}
 
-            for session, files in session_file_map.items():
-                session_export_path = self._setup_export(session)
+            for (session, date_str), files in session_file_map.items():
+                target = session
+                if date_str and session and "/" not in session:
+                    target = f"{session}/{date_str}/{self.facade.get_module_name()}"
+                session_export_path = self._setup_export(target)
                 if not session_export_path:
                     # Primary path failed — try routing to _recovered/ on the share
                     # so files from interrupted sessions aren't silently dropped
@@ -312,7 +332,9 @@ class Export:
                             pass
                         session_ok = False
 
-                session_results[session] = session_ok
+                # One session can span several date groups; any failure wins.
+                session_results[session] = (
+                    session_results.get(session, True) and session_ok)
 
                 # Create export manifest per session if enabled
                 if self.config.get("export.manifest_enabled", False):
@@ -324,7 +346,10 @@ class Export:
             if self.config.get("export.delete_on_export", True):
                 self._delete_local_files(exported)
 
-            self.logger.info(f"Successfully exported {exported_count} file(s) across {len(session_file_map)} session(s)")
+            sessions = {sess for sess, _date in session_file_map}
+            self.logger.info(
+                f"Successfully exported {exported_count} file(s) "
+                f"across {len(sessions)} session(s)")
 
             # The caller (`_run_export`) checks session_results[triggered_session].
             # The loop keys results by _extract_session_from_filename(), which
@@ -724,11 +749,10 @@ class Export:
                     except subprocess.TimeoutExpired:
                         self.logger.warning(f"{' '.join(umount_cmd)} timed out")
 
-            auth_opts = (
-                f'username={self.samba_share_username},password={self.samba_share_password}'
-                if self.samba_share_username
-                else 'guest'
-            )
+            # credentials=<0600 file>, not password= on the command line,
+            # which sudo logs to the journal (src/shared/cifs.py).
+            auth_opts = cifs_auth_option(
+                self.samba_share_username, self.samba_share_password, "export")
             mount_cmd = [
                 'sudo', 'mount', '-t', 'cifs',
                 f'//{self.samba_share_ip}/{self.samba_share_path}',

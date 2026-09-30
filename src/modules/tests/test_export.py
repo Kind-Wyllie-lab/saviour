@@ -523,3 +523,62 @@ class TestTrafficControl:
                 assert exp._apply_traffic_control_filter() is False
                 run.assert_not_called()
             assert exp.tc_last_error is not None
+
+
+# ---------------------------------------------------------------------------
+# Date folder from the filename, not the clock (desk soak 2026-09-30)
+# ---------------------------------------------------------------------------
+
+class TestExportDateFromFilename:
+    def test_extracts_the_segment_date(self):
+        assert Export._extract_date_from_filename(
+            "desk_soak-140122_camera_test_(0_20260930-130442)_PARTIAL.ts") == "20260930"
+        assert Export._extract_date_from_filename("config.json") is None
+
+    def test_routes_by_recording_date_not_the_current_clock(self):
+        """After a power-loss reboot the module clock read 31 Aug until PTP
+        converged, so a salvaged segment was filed under 20260831/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            exp.facade = MagicMock()
+            exp.facade.get_module_name.return_value = "camera_test"
+            exp.facade.get_utc_date.return_value = "20260831"  # wrong clock
+            nas_dir = os.path.join(tmpdir, "nas")
+            os.makedirs(nas_dir)
+            for name in ("soak_camera_test_(0_20260929-235900).ts",
+                         "soak_camera_test_(1_20260930-000100).ts"):
+                _write_test_file(exp.to_export_folder, name)
+            targets = []
+
+            def setup(path):
+                targets.append(path)
+                return nas_dir
+
+            with patch.object(exp, "_setup_export", side_effect=setup), \
+                 patch.object(exp, "_update_samba_settings"):
+                result = exp.export_staged("soak/20260831/camera_test")
+
+            assert sorted(targets) == [
+                "soak/20260929/camera_test", "soak/20260930/camera_test"]
+            assert result["soak"] is True
+
+    def test_any_failed_date_group_fails_the_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            exp.facade = MagicMock()
+            exp.facade.get_module_name.return_value = "camera_test"
+            nas_dir = os.path.join(tmpdir, "nas")
+            os.makedirs(nas_dir)
+            for name in ("soak_camera_test_(0_20260929-235900).ts",
+                         "soak_camera_test_(1_20260930-000100).ts"):
+                _write_test_file(exp.to_export_folder, name)
+
+            def setup(path):
+                return False if path.endswith("20260929/camera_test") else nas_dir
+
+            with patch.object(exp, "_setup_export", side_effect=setup), \
+                 patch.object(exp, "_setup_recovered_export", return_value=False), \
+                 patch.object(exp, "_update_samba_settings"):
+                result = exp.export_staged("soak/20260930/camera_test")
+
+            assert result["soak"] is False

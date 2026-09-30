@@ -128,3 +128,28 @@ class TestHandleStatusUpdateRecordingStopped:
         module_id, data = ctx.facade.module_self_stopped.call_args.args
         assert module_id == "cam1"
         assert data["reason"] == "disk_critical"
+
+
+class TestStatusChangeUpdatesTrackerFirst:
+    """Desk soak 2026-09-30: the tracker must flip before the recording side
+    reacts, or the session monitor sees an offline module still RECORDING."""
+
+    def _order(self, status):
+        ctx = _Ctx()
+        calls = []
+        ctx.modules.notify_module_online_update.side_effect = (
+            lambda *a: calls.append("tracker"))
+        ctx.facade.module_offline.side_effect = lambda *a: calls.append("recording")
+        ctx.facade.module_back_online.side_effect = lambda *a: calls.append("recording")
+        Controller.on_module_status_change(ctx, "cam1", status)
+        return calls, ctx
+
+    def test_offline_updates_tracker_before_recording(self):
+        calls, ctx = self._order("offline")
+        assert calls == ["tracker", "recording"]
+        ctx.modules.notify_module_online_update.assert_called_once_with("cam1", False)
+
+    def test_online_updates_tracker_before_recording(self):
+        calls, ctx = self._order("online")
+        assert calls == ["tracker", "recording"]
+        ctx.modules.notify_module_online_update.assert_called_once_with("cam1", True)

@@ -28,6 +28,8 @@ INSTALL_DIR = "/usr/local/src/saviour"
 # mend.sh exit code meaning "mend ran fine, but a bootloader/kernel setting
 # (NVMe APST / PSU_MAX_CURRENT) needs a reboot to take effect".
 MEND_REBOOT_REQUIRED_EXIT = 10
+# Transient unit name for a detached run_mend (see Module.run_mend).
+MEND_UNIT = "saviour-mend"
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -438,40 +440,34 @@ class Module(ABC):
                 mend_script = os.path.join(INSTALL_DIR, "mend.sh")
                 if not os.path.isfile(mend_script):
                     raise FileNotFoundError(f"mend.sh not found at {mend_script}")
-                argv = ["sudo", "bash", mend_script]
+                # Run mend in its OWN transient systemd unit. As a plain child
+                # of this process it lived in saviour.service's cgroup, and
+                # mend's "regenerate + restart saviour.service" step made
+                # systemd kill the whole cgroup -- mend included -- mid-run:
+                # the service stayed stopped and the final --reboot never ran
+                # (found on the desk fleet 2026-09-30: all four modules left
+                # down after a fleet-wide run_mend). Detached, mend outlives
+                # the restart; its outcome is in /var/log/saviour-mend.log.
+                argv = ["sudo", "systemd-run", f"--unit={MEND_UNIT}", "--collect",
+                        "--quiet", "bash", mend_script]
                 if reboot:
                     argv.append("--reboot")
-                self.logger.info(f"Running {' '.join(argv[2:])}")
-                # mend.sh's own last step restarts saviour.service, which
-                # tears down this very process -- same race as
-                # update_saviour's restart above, accepted there for the
-                # same reason: the "started" ack already returned at
-                # dispatch time is the reliable signal, this one is best-effort.
-                result = subprocess.run(
-                    argv,
-                    capture_output=True, text=True, timeout=1200, check=False,
-                )
-                tail = ((result.stdout or "") + (result.stderr or ""))[-2000:]
-                # 10 = mend ran fine but a bootloader/kernel setting needs a
-                # reboot to take effect (and --reboot was not given).
-                if result.returncode == MEND_REBOOT_REQUIRED_EXIT:
-                    self.logger.warning("mend.sh completed — reboot required")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "run_mend",
-                        "result": "reboot_required",
-                        "output": "mend.sh completed; reboot required to activate "
-                                  "NVMe APST / PSU_MAX_CURRENT",
-                    })
-                    return
+                self.logger.info(f"Starting mend.sh as systemd unit {MEND_UNIT}")
+                result = subprocess.run(argv, capture_output=True, text=True,
+                                        timeout=30, check=False)
                 if result.returncode != 0:
-                    raise RuntimeError(f"mend.sh exited {result.returncode}: {tail}")
-                self.logger.info("mend.sh completed successfully")
+                    err = (result.stderr or result.stdout or "").strip()
+                    if "already" in err.lower():
+                        raise RuntimeError("mend.sh is already running on this module")
+                    raise RuntimeError(f"could not start mend.sh: {err[-500:]}")
                 self.communication.send_status({
                     "type": "cmd_ack",
                     "command": "run_mend",
                     "result": "success",
-                    "output": "mend.sh completed",
+                    "output": (f"mend.sh started as detached unit {MEND_UNIT}"
+                               f"{' (reboots if needed)' if reboot else ''}; the "
+                               "service restarts when it finishes -- see "
+                               "/var/log/saviour-mend.log"),
                 })
             except Exception as e:
                 self.logger.error(f"run_mend failed: {e}")

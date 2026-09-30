@@ -1297,11 +1297,14 @@ EOF
         run_logged apt-get install -y iptables-persistent \
             -o Dpkg::Options::="--force-confdef"
     fi
-    # Drop the old unrestricted rule (pre-addrtype-fix installs) — `-D` needs an
-    # exact flag match, so the new restricted rule below can't remove it on its own.
+    # Drop the older rules (pre-addrtype-fix, then pre-eth0-scoping installs) —
+    # `-D` needs an exact flag match, so the new rule below can't remove them.
+    # Scoped to eth0: the web UI only listens on the eth0 address now
+    # (interface.listen_on = "lan"), and the redirect must not answer on wlan0.
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
-    iptables -t nat -A PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000
+    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000
     run_logged netfilter-persistent save
 }
 
@@ -1312,19 +1315,20 @@ disable_mdns() {
     systemctl stop avahi-daemon 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
     if is_installed "iptables-persistent"; then
         run_logged netfilter-persistent save
     fi
 }
 
 # ── wlan0 / WAN firewall ─────────────────────────────────────────────────────
-# The controller's own services all bind 0.0.0.0: the Flask/SocketIO UI +
-# /api/v1 on :5000, the :80->:5000 redirect (configure_mdns), the
-# unauthenticated ZeroMQ command bus on :5555/:5556, and Samba on
-# :445/:139/:137/:138. That is fine on eth0 -- the PoE LAN is the trust
-# boundary per the threat model -- but a controller that also has wlan0 on
-# campus wifi (eduroam / UoE-Device) is then exposing all of it to every
-# other client on that network if AP/client isolation isn't perfect.
+# SAVIOUR's own services now listen on the eth0 address only (the web UI +
+# /api/v1 on :5000 and the ZeroMQ bus on :5555/:5556 via
+# interface.listen_on = "lan"; the :80 redirect is -i eth0; Samba is pinned
+# to lo/eth0). But anything else on the box that listens on every interface
+# -- sshd first of all -- would still be reachable from wlan0 on campus wifi
+# (eduroam / UoE-Device) if AP/client isolation isn't perfect, and so would
+# SAVIOUR's services if interface.listen_on were set back to "all".
 #
 # Scope a default-deny INPUT filter to the untrusted interface(s) only. lo,
 # eth0 and tailscale0 are never touched, so:

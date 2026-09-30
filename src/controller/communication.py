@@ -24,8 +24,14 @@ import zmq
 class Communication:
     def __init__(self,
                  status_callback: Callable[[str, str], None] = None,
-                 data_callback: Callable[[str, str], None] = None):
-        """Initialize the communication manager"""
+                 data_callback: Callable[[str, str], None] = None,
+                 bind_host: str = "*"):
+        """Initialize the communication manager.
+
+        bind_host: address the ZMQ sockets listen on. The controller passes
+        its eth0 address (interface.listen_on = "lan") so the unauthenticated
+        command bus is never reachable from wlan0; "*" = every interface.
+        """
         self.logger = logging.getLogger(__name__)
         self.is_running = True
         self.status_callback = None
@@ -52,13 +58,13 @@ class Communication:
         # immediately take over without the old connection blocking it.
         self.command_socket = self.context.socket(zmq.ROUTER)
         self.command_socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
-        self.command_socket.bind("tcp://*:5555")
+        self.command_socket.bind(f"tcp://{bind_host}:5555")
 
         # SUB for receiving status updates from modules
         self.status_socket = self.context.socket(zmq.SUB)
         self.status_socket.subscribe("status/")
         self.status_socket.subscribe("data/")
-        self.status_socket.bind("tcp://*:5556")
+        self.status_socket.bind(f"tcp://{bind_host}:5556")
 
         # Poller watches both sockets so we never block on one while the other has data
         self.poller = zmq.Poller()

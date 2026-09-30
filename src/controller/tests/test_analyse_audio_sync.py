@@ -15,6 +15,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+# The tool needs scipy, an analysis-only dep (dev extras) that module installs
+# omit -- skip rather than break collection where it isn't installed.
+pytest.importorskip("scipy")
+
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _MOD_PATH = os.path.join(_REPO, "tools", "analyse_audio_sync.py")
 _spec = importlib.util.spec_from_file_location("analyse_audio_sync", _MOD_PATH)

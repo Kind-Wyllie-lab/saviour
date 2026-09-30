@@ -63,6 +63,8 @@ dev = [
     "pytest-mock>=3.14.0",
     "ruff>=0.6.0",
     "pytest-cov>=7.0",
+    # tools/analyse_audio_sync.py (analysis tool, not a module runtime dep)
+    "scipy>=1.11",
 ]
 
 [tool.setuptools_scm]

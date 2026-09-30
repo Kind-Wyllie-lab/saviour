@@ -252,7 +252,7 @@ Larger structural issues requiring significant refactoring — recorded so they 
 
 ### Tests
 
-- **No integration test for multi-module recording** — add a test simulating controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
+- **✅ Integration test for a multi-module session** — `src/controller/tests/test_integration_session.py` (2026-09-30, roadmap C3): real Recording/Modules/facade/status routing vs simulated modules; start/stop, timed stop, dropout (+gap), crash re-arm (+gap), export guard.
 - **✅ Config schema regression test** — `src/tests/test_config_schema.py` (2026-09-30, roadmap C4): every deployable variant's shipped config through the real loaders + a code-vs-schema check on default-less `self.config.get("a.b")` reads. If it fails after you add a config read, add the key to the right `*_config.json` or pass an explicit default.
 - **✅ `saviour-config --apply` provisioning smoke test** — `src/tests/test_saviour_config.py` (on `fix/saviour-config-missing-optional-key`, roadmap C5).
 

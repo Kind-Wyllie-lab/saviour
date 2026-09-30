@@ -6,6 +6,7 @@ docs_dir: docs/readthedocs
 nav:
   - Home: index.md
   - Getting Started: getting_started.md
+  - Setting Up Many Devices: imaging.md
   - FAQs: faqs.md
   - Using SAVIOUR with ephys: open_ephys.md
   - Synchronisation: synchronisation.md

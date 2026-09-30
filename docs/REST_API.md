@@ -392,7 +392,11 @@ delete even with unresolved/failed exports.
 `200` `{"deleted": true, "session_name": "..."}`. `404` for an unknown
 name. `409` for an active/scheduled session (stop it first) or unresolved
 exports without `force` — the latter carries `export_warning`,
-`pending_exports`, `total_exports_failed` in the error body.
+`pending_exports`, `total_exports_failed` and `export_failed_modules` in the
+error body. Only `pending_exports > 0` or a non-empty `export_failed_modules`
+(modules whose export failed permanently and hasn't since succeeded, e.g. via
+"retry failed exports") blocks; `total_exports_failed` is a lifetime count,
+informational only.
 
 ---
 

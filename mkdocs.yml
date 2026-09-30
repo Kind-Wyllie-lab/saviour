@@ -8,6 +8,7 @@ nav:
   - Getting Started: getting_started.md
   - Setting Up Many Devices: imaging.md
   - FAQs: faqs.md
+  - Security Model & Limitations: security.md
   - Using SAVIOUR with ephys: open_ephys.md
   - Synchronisation: synchronisation.md
   - Post-Processing & Aligning: aligning.md

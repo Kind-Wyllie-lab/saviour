@@ -505,12 +505,55 @@ class TestDeleteSession:
 
     def test_refuses_when_exports_permanently_failed(self):
         rec, _facade = _make_recording()
-        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, total_exports_failed=1)
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED, total_exports_failed=1,
+            export_failed_modules=["cam1"],
+        )
 
         result = rec.delete_session("exp1", delete_files=False)
 
         assert result["export_warning"] is True
+        assert result["export_failed_modules"] == ["cam1"]
         assert "exp1" in rec.sessions
+
+    def test_deletable_once_a_failed_export_is_retried_successfully(self):
+        """roadmap A5: total_exports_failed is a lifetime counter (it also
+        counts non-final failures that were later retried), so on its own it
+        must not block a delete forever once every export has landed."""
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=True)
+        assert rec.delete_session("exp1", delete_files=False)["export_warning"] is True
+
+        # Operator hits "retry failed exports"; the re-export lands.
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+
+        assert rec.sessions["exp1"].total_exports_failed == 1
+        assert rec.delete_session("exp1", delete_files=False) == {"success": True}
+
+    def test_transient_failure_that_retried_ok_does_not_block(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=False)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+
+        assert rec.delete_session("exp1", delete_files=False) == {"success": True}
+
+    def test_other_modules_success_does_not_clear_a_failed_module(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=True)
+        rec.module_export_update("cam2", "exp1/20260803/cam2", "pending")
+        rec.module_export_update("cam2", "exp1/20260803/cam2", "complete")
+
+        result = rec.delete_session("exp1", delete_files=False)
+
+        assert result["export_warning"] is True
+        assert result["export_failed_modules"] == ["cam1"]
 
     def test_force_deletes_despite_unresolved_exports(self):
         rec, _facade = _make_recording()
@@ -1350,6 +1393,34 @@ class TestSessionPersistence:
             s = rec.sessions["exp1"]
             assert s.framesync_verdict is None
             assert s.day_verdicts == {}
+
+    def test_pre_a5_sessions_json_keeps_delete_guard_for_failed_modules(self):
+        """A session saved before export_failed_modules existed must not
+        become silently deletable on upgrade: seed it from any module whose
+        last export state was a failure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({
+                    "exp1": {
+                        "session_name": "exp1", "target": "camera",
+                        "state": "stopped", "modules": ["cam1", "cam2"],
+                        "total_exports_failed": 3,
+                        "module_export_states": {"cam1": "failed", "cam2": "complete"},
+                    },
+                    "exp2": {
+                        "session_name": "exp2", "target": "camera",
+                        "state": "stopped", "modules": ["cam1"],
+                        "total_exports_failed": 1,
+                        "module_export_states": {"cam1": "complete"},
+                    },
+                }, f)
+            with patch("src.controller.recording.threading.Thread"):
+                rec = Recording()
+            recording_module.SESSIONS_FILE = sessions_file
+            rec._load_sessions()
+            assert rec.sessions["exp1"].export_failed_modules == ["cam1"]
+            assert rec.sessions["exp2"].export_failed_modules == []
 
 
 class TestApplyFramesyncVerdict:

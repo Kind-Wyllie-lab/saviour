@@ -235,6 +235,7 @@ class Controller(ABC):
                 case 'recording_started':
                     self.logger.info(f"{module_id} has started recording")
                     self.modules.notify_recording_started(module_id, status_data)
+                    self.facade.module_recording_started(module_id)
 
                 case 'recording_stopped':
                     reason = status_data.get('reason', 'operator')
@@ -307,6 +308,7 @@ class Controller(ABC):
                             f"{module_id} was already recording — treating as recording_started"
                         )
                         self.modules.notify_recording_started(module_id, {"recording": True})
+                        self.facade.module_recording_started(module_id)
                     else:
                         self.logger.warning(f"{module_id} failed to start recording: {error}")
                         self.modules.notify_recording_stopped(module_id, status_data)

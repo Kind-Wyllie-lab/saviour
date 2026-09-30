@@ -1755,12 +1755,16 @@ class TestModuleSelfStopped:
         facade.is_module_recording.return_value = False
         s = rec.sessions["exp1"]
 
-        facade.get_module_health.return_value = {"disk_space": 90}  # 10% free
+        healthy = {"status": "online", "last_heartbeat": time.time(),
+                   "ptp4l_offset_ns": 1000, "phc2sys_offset_ns": 1000}
+        # 10% free
+        facade.get_module_health.return_value = {**healthy, "disk_space": 90}
         rec._resume_self_stopped_modules("exp1", s)
         facade.send_command.assert_not_called()
         assert "cam1" in s.self_stopped_modules
 
-        facade.get_module_health.return_value = {"disk_space": 80}  # 20% free
+        # 20% free
+        facade.get_module_health.return_value = {**healthy, "disk_space": 80}
         rec._resume_self_stopped_modules("exp1", s)
 
         assert s.self_stopped_modules == {}
@@ -1872,3 +1876,228 @@ class TestTimedStopSentOnce:
         rec._monitor_sessions(_Tick(3))
 
         assert rec.stop_session.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Session gap record (roadmap A1, plans/metadata-gap-record.md)
+# ---------------------------------------------------------------------------
+
+class TestSessionGapRecord:
+    def _rec(self, tmpdir, **session_kw):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = tmpdir
+        defaults = dict(state=SessionState.ACTIVE, modules=["cam1", "cam2"],
+                        module_stop_states={"cam1": "recording", "cam2": "recording"})
+        defaults.update(session_kw)
+        rec.sessions["exp1"] = _session(**defaults)
+        return rec, facade
+
+    def _file(self, tmpdir):
+        with open(os.path.join(tmpdir, "exp1", "session_gaps.json")) as f:
+            return json.load(f)
+
+    def test_offline_gap_starts_at_last_heartbeat_and_closes_on_restart(self):
+        """Desk soak: the fault was stamped ~1.5 min after the data stopped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {"last_heartbeat": 1_790_000_000.5}
+
+            rec.module_offline("cam1")
+            gap = rec.sessions["exp1"].gaps[0]
+            assert gap["cause"] == "module_offline"
+            assert gap["modules"] == ["cam1"]
+            assert gap["start_ns"] == 1_790_000_000_500_000_000
+            assert gap["end_ns"] is None
+
+            rec.module_recording_started("cam1")
+            doc = self._file(tmpdir)
+            assert doc["schema"] == 1 and doc["session_name"] == "exp1"
+            assert doc["gaps"][0]["end_ns"] is not None
+            assert doc["gaps"][0]["recovered"] is True
+
+    def test_not_recording_gap_starts_when_last_seen_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.is_module_online.return_value = True
+            facade.is_module_recording.side_effect = lambda m: True
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+            last_seen = rec._last_seen_recording_ns[("exp1", "cam1")]
+
+            facade.is_module_recording.side_effect = lambda m: m != "cam1"
+            for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD):
+                rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+            gaps = [g for g in rec.sessions["exp1"].gaps
+                    if g["cause"] == "not_recording"]
+            assert len(gaps) == 1
+            assert gaps[0]["start_ns"] == last_seen
+
+    def test_flapping_liveness_warning_is_one_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            for _ in range(3):
+                rec.handle_recording_health_status("cam1", "unhealthy", "silent")
+                rec.handle_recording_health_status("cam1", "recovered", None)
+            gaps = rec.sessions["exp1"].gaps
+            assert len(gaps) == 1
+            assert gaps[0]["cause"] == "liveness"
+            assert gaps[0]["severity"] == "warning"
+            assert gaps[0]["end_ns"] is not None
+
+    def test_low_disk_warning_is_not_a_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            rec.handle_recording_health_status("cam1", "unhealthy", "disk low", "disk")
+            assert rec.sessions["exp1"].gaps == []
+
+    def test_open_gaps_close_unrecovered_at_session_stop(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {}
+            rec.module_offline("cam1")
+            rec.sessions["exp1"].module_stop_states = {
+                "cam1": "stopped", "cam2": "stopped"}
+            rec._full_stopping.add("exp1")
+            rec._check_all_stopped("exp1")
+            gap = rec.sessions["exp1"].gaps[0]
+            assert gap["end_ns"] is not None
+            assert gap["recovered"] is False
+
+    def test_self_stop_opens_an_error_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            rec.module_self_stopped("cam1", {
+                "reason": "disk_critical", "detail": "8% free",
+                "resume_free_pct": 15})
+            gap = rec.sessions["exp1"].gaps[0]
+            assert (gap["cause"], gap["severity"]) == ("self_stopped", "error")
+
+    def test_unwritable_share_never_raises(self):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = "/nonexistent/\0bad"
+        rec.sessions["exp1"] = _session(modules=["cam1"],
+                                        module_stop_states={"cam1": "recording"})
+        facade.get_module_health.return_value = {}
+        rec.module_offline("cam1")  # must not raise
+        assert rec.sessions["exp1"].gaps[0]["cause"] == "module_offline"
+
+    def test_gaps_survive_a_sessions_json_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.get_module_health.return_value = {}
+            rec.module_offline("cam1")
+            rec._save_sessions()
+            rec2, _ = _make_recording(sessions_file=recording_module.SESSIONS_FILE)
+            rec2._load_sessions()
+            assert rec2.sessions["exp1"].gaps[0]["cause"] == "module_offline"
+
+    def test_controller_restart_opens_a_gap_for_unknown_modules(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({"exp1": {
+                    "session_name": "exp1", "target": "camera", "state": "active",
+                    "modules": ["cam1", "cam2"],
+                    "module_stop_states": {"cam1": "recording", "cam2": "recording"},
+                }}, f)
+            rec, facade = _make_recording(sessions_file=sessions_file)
+            facade.get_share_path.return_value = tmpdir
+            rec._load_sessions()
+            gaps = rec.sessions["exp1"].gaps
+            assert len(gaps) == 1
+            assert gaps[0]["cause"] == "controller_restart"
+            assert gaps[0]["modules"] == ["cam1", "cam2"]
+
+    def test_pause_and_resume_is_one_whole_session_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir)
+            s = rec.sessions["exp1"]
+            rec._pause(s, "disk", "FAULT", "Auto-paused — share low")
+            rec._resume(s, "RECOVERY", "Auto-resumed")
+            gap = s.gaps[0]
+            assert gap["modules"] == ["*"]
+            assert (gap["cause"], gap["severity"]) == ("pause_disk", "error")
+            assert gap["end_ns"] is not None and gap["recovered"] is True
+
+
+class TestRearmPtpGate:
+    """Desk soak: a module back from a power-loss reboot runs on a stale clock
+    until PTP converges; re-arming it then would mis-stamp frames."""
+
+    def _rec(self, health):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ERROR, modules=["cam1"],
+            module_stop_states={"cam1": "stopped"}, error_message="cam1 is offline")
+        facade.is_module_recording.return_value = False
+        facade.get_module_health.return_value = health
+        return rec, facade
+
+    def test_rearm_deferred_until_ptp_reported(self):
+        rec, facade = self._rec({"status": "online", "last_heartbeat": time.time(),
+                                 "ptp4l_offset_ns": None})
+        rec.module_back_online("cam1")
+        starts = [c for c in facade.send_command.call_args_list
+                  if c[0][1] == "start_recording"]
+        assert starts == []
+        # Left as meant-to-be-recording so the liveness check retries.
+        assert rec.sessions["exp1"].module_stop_states["cam1"] == "recording"
+
+    def test_rearm_proceeds_once_ptp_is_in_gate(self):
+        rec, facade = self._rec({"status": "online", "last_heartbeat": time.time(),
+                                 "ptp4l_offset_ns": 900, "phc2sys_offset_ns": 400})
+        rec.module_back_online("cam1")
+        facade.send_command.assert_any_call(
+            "cam1", "start_recording", {"duration": 0, "session_name": "exp1"})
+
+
+class TestGapEscalation:
+    """roadmap A1: a gap still open 10 min / 1 h in escalates, so sustained
+    silence doesn't alert the same as a 30 s blip."""
+
+    def _rec(self, tmpdir):
+        rec, facade = _make_recording()
+        facade.get_share_path.return_value = tmpdir
+        rec._notify_enabled = lambda *a, **k: True
+        rec.sessions["exp1"] = _session(modules=["cam1"],
+                                        module_stop_states={"cam1": "recording"})
+        return rec, facade
+
+    def _open(self, rec, cause, age_s):
+        return rec._open_gap("exp1", ["cam1"], cause, "error", "x",
+                             start_ns=time.time_ns() - int(age_s * 1e9))
+
+    def test_escalates_once_per_step(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "module_offline", 11 * 60)
+            s = rec.sessions["exp1"]
+            rec._escalate_open_gaps("exp1", s)
+            rec._escalate_open_gaps("exp1", s)
+            assert facade.send_alert.call_count == 1
+            assert s.gaps[0]["escalations"] == [600]
+
+            s.gaps[0]["start_ns"] -= int(55 * 60 * 1e9)   # now ~66 min open
+            rec._escalate_open_gaps("exp1", s)
+            assert facade.send_alert.call_count == 2
+            assert s.gaps[0]["escalations"] == [600, 3600]
+
+    def test_several_due_at_once_alerts_only_the_highest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "not_recording", 2 * 3600)
+            rec._escalate_open_gaps("exp1", rec.sessions["exp1"])
+            assert facade.send_alert.call_count == 1
+            assert facade.send_alert.call_args.kwargs["key"].endswith("_3600")
+
+    def test_closed_young_and_operator_pause_gaps_do_not_escalate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            self._open(rec, "liveness", 60)                  # too young
+            rec._open_gap("exp1", ["*"], "pause", "warning", "operator",
+                          start_ns=time.time_ns() - int(7200 * 1e9))
+            closed = self._open(rec, "module_offline", 7200)
+            rec._close_gaps("exp1", causes=("module_offline",))
+            assert closed["end_ns"] is not None
+            rec._escalate_open_gaps("exp1", rec.sessions["exp1"])
+            facade.send_alert.assert_not_called()

@@ -498,6 +498,22 @@ class RFIDModule(Module):
             self._bring_up_bus()
 
     @check()
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Recording liveness (roadmap A1). RFID reads are sparse by nature
+        -- nothing arrives unless an animal passes an antenna -- so a quiet
+        bus is normal and liveness is structural: the bus is open, its reader
+        thread is running, and the output CSV is open while recording. Fed
+        through Recording._monitor_recording_health (2 strikes) into the
+        controller's recording_health_warning and a liveness gap."""
+        if not self.bus.is_connected:
+            return False, "RFID bus disconnected"
+        if not self.bus.reader_alive:
+            return False, "RFID bus reader thread stopped"
+        if self.is_recording and self._want_raw_output() and (
+                self._csv_handle is None or self._csv_handle.closed):
+            return False, "RFID output CSV is not open"
+        return True, None
+
     def _check_rfid(self):
         if self.bus.is_connected:
             self.hardware_fault = None

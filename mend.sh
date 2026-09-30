@@ -270,17 +270,40 @@ section "6/8  Logging + NTP"
 
 # Persistent journald logging, with a disk-use cap so a chatty run can't
 # fill the filesystem (disk-full is itself a data-loss trigger).
-if grep -q "^SystemMaxUse=" /etc/systemd/journald.conf 2>/dev/null; then
+# Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/
+# 40-rpi-volatile-storage.conf (Storage=volatile), and drop-ins override
+# /etc/systemd/journald.conf -- so writing Storage=persistent there never
+# took effect on any Pi in the fleet (found 2026-09-30: every module's
+# journal was RAM-only, which is why reboots left nothing to diagnose).
+# A drop-in that sorts after 40-rpi-* wins.
+# PTP units: phc2sys's per-sample output out of the journal (see
+# saviour-config's note above configure_ptp_timetransmitter).
+if [ -f /etc/systemd/system/phc2sys.service ] \
+        && ! grep -q "/run/linuxptp/phc2sys.log" /etc/systemd/system/phc2sys.service; then
+    fix "Rewriting PTP units (phc2sys output out of the journal; brief PTP resync)"
+    saviour-config --apply-ptp-units >> "$LOG" 2>&1 \
+        || warn "Could not rewrite PTP units — run 'sudo saviour-config --apply-ptp-units'"
+else
+    ok "PTP units up to date"
+fi
+
+JOURNALD_DROPIN=/etc/systemd/journald.conf.d/99-saviour.conf
+effective_storage=$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
+    | grep -E '^Storage=' | tail -1 | cut -d= -f2)
+if [ -f "$JOURNALD_DROPIN" ] && [ "$effective_storage" = "persistent" ] \
+        && [ -n "$(ls -A /var/log/journal 2>/dev/null)" ]; then
     ok "Persistent logging already configured"
 else
-    fix "Enabling persistent journald logging (capped at 500M)"
-    tee /etc/systemd/journald.conf > /dev/null <<EOF
+    fix "Enabling persistent journald logging (capped at 500M; was: ${effective_storage:-unknown})"
+    mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+    tee "$JOURNALD_DROPIN" > /dev/null <<EOF
 [Journal]
 Storage=persistent
 SystemMaxUse=500M
 SystemKeepFree=1G
 EOF
     systemctl restart systemd-journald
+    journalctl --flush || true
 fi
 
 # NTP poll interval (reduce interference with PTP)

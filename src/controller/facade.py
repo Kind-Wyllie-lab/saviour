@@ -465,6 +465,12 @@ class ControllerFacade:
             module_id, status, message, source)
 
 
+    def module_recording_started(self, module_id: str) -> None:
+        # A module confirmed it is recording: close its open data gaps
+        # (session_gaps.json). See Recording.module_recording_started.
+        self.controller.recording.module_recording_started(module_id)
+
+
     def module_self_stopped(self, module_id: str, data: dict) -> None:
         # A module stopped recording on its own to protect itself (e.g. local
         # disk critically low) rather than because an operator asked --

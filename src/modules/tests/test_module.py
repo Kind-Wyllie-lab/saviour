@@ -181,7 +181,9 @@ def test_run_mend_already_running_is_a_clear_error():
     inst = _mend_instance()
     proc = MagicMock(returncode=1, stdout="",
                      stderr="Unit saviour-mend.service was already loaded")
-    with patch("threading.Thread", _RunSyncThread),          patch("src.modules.module.subprocess.run", return_value=proc),          patch("src.modules.module.os.path.isfile", return_value=True):
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", return_value=proc), \
+         patch("src.modules.module.os.path.isfile", return_value=True):
         inst.run_mend()
     ack = inst.communication.send_status.call_args[0][0]
     assert ack["result"] == "error"

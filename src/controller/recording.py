@@ -21,6 +21,7 @@ from enum import StrEnum
 
 from src.controller import framesync_check, recording_plans
 from src.shared.data_rate import estimate_recording_bytes_per_s
+from src.shared.supervised import supervise
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
 _SHARE_ROOT_DEFAULT = "/home/pi/controller_share"
@@ -119,7 +120,25 @@ class RecordingSession:
     module_export_states:      dict = field(default_factory=dict)
     # Cumulative count of completed exports across all segments
     total_exports_complete:    int  = 0
+    # Lifetime count of failed export attempts, *including* ones that were
+    # later retried successfully -- display/digest only, never a delete gate.
     total_exports_failed:      int  = 0
+    # Modules whose most recent export for this session ended in a *final*
+    # failure (retries exhausted) with no later "complete" from that module.
+    # A later complete clears the entry: export_staged() sweeps the module's
+    # whole to_export/ folder, so it carries the previously-failed files too.
+    # This (plus pending_exports) is what blocks a plain delete_session().
+    # Deliberately separate from module_export_states, which is reset to
+    # "idle" whenever a (scheduled/habitat) run restarts.
+    export_failed_modules:     list = field(default_factory=list)
+    # Modules that stopped *themselves* mid-session to protect their own
+    # filesystem (roadmap A4) -- module_id -> {"reason", "detail", "at",
+    # "resume_free_pct"}. Their module_stop_states entry is "self_stopped",
+    # so the liveness check neither strikes nor re-arms them; the monitor
+    # resumes them once their heartbeat shows disk back above
+    # resume_free_pct. Entries are removed on resume; the fault stays in
+    # session_events.log.
+    self_stopped_modules:      dict = field(default_factory=dict)
     # Outstanding export_ready signals not yet resolved (complete, or a final
     # give-up after retries) — the "certainty" signal for whether every file
     # this session produced has actually landed on the controller's share.
@@ -208,7 +227,8 @@ class Recording:
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
-        self._recording_health_degraded: dict[str, set] = {}  # session_name → set of module IDs currently self-reporting unhealthy
+        # session_name → set of (module_id, source) currently self-reporting unhealthy
+        self._recording_health_degraded: dict[str, set] = {}
         self._last_export_success: dict[str, float] = {}   # module_id → epoch of last successful export
         self._export_failure_streak: dict[str, int] = {}   # module_id → consecutive export failures
         self._daily_run_export_start: dict[str, tuple] = {} # session_name → (complete, failed) at day-start
@@ -234,12 +254,13 @@ class Recording:
 
         self._load_sessions()
 
-        self._monitor_thread = threading.Thread(
-            target=self._monitor_sessions,
-            daemon=True,
-            name="session-monitor",
-        )
-        self._monitor_thread.start()
+        # Supervised (src/shared/supervised.py): this is every session's
+        # liveness/PTP/export watchdog, so an unexpected exception (e.g. from
+        # one of the unguarded periodic checks) must restart it, not end it.
+        self._monitor_stop = threading.Event()
+        self._monitor_thread = supervise(
+            "session-monitor", self._monitor_sessions,
+            stop_event=self._monitor_stop, logger=self.logger)
 
 
     # -----------------------------------------------------------------------
@@ -777,16 +798,19 @@ class Recording:
         if session.state in (SessionState.ACTIVE, SessionState.SCHEDULED):
             return {"error": f"Cannot delete a session in state '{session.state}' — stop it first"}
 
-        if not force and (session.pending_exports > 0 or session.total_exports_failed > 0):
+        failed_modules = list(session.export_failed_modules)
+        if not force and (session.pending_exports > 0 or failed_modules):
             return {
                 "error": (
                     f"Session '{session_name}' has {session.pending_exports} unresolved "
-                    f"and {session.total_exports_failed} failed export(s) — delete anyway?"
+                    f"export(s) and {len(failed_modules)} module(s) whose export "
+                    f"failed permanently — delete anyway?"
                 ),
                 "export_warning": True,
                 "session_name": session_name,
                 "pending_exports": session.pending_exports,
                 "total_exports_failed": session.total_exports_failed,
+                "export_failed_modules": failed_modules,
             }
 
         if delete_files:
@@ -1137,6 +1161,8 @@ class Recording:
         posture). Throttled per module via _health_probe_times."""
         now_ts = time.time()
         for m in plan.modules:
+            if m in session.self_stopped_modules:
+                continue  # resumed by _resume_self_stopped_modules, not here
             if self.facade.is_module_recording(m):
                 self._not_recording_strikes.pop((session.session_name, m), None)
                 continue
@@ -1167,6 +1193,8 @@ class Recording:
         if plan.segment_minutes:
             params["segment_minutes"] = plan.segment_minutes
         for m in plan.modules:
+            if m in session.self_stopped_modules:
+                continue  # parked for low disk; resumed once space recovers
             session.module_stop_states[m] = "recording"
             session.module_export_states.setdefault(m, "idle")
             # A module that kept recording through a controller restart is
@@ -1320,6 +1348,8 @@ class Recording:
                 session.total_exports_complete += 1
                 self._last_export_success[module_id] = time.time()
                 self._export_failure_streak[module_id] = 0
+                if module_id in session.export_failed_modules:
+                    session.export_failed_modules.remove(module_id)
             elif state == "failed":
                 session.total_exports_failed += 1
                 streak = self._export_failure_streak.get(module_id, 0) + 1
@@ -1330,6 +1360,8 @@ class Recording:
                     + ("" if final else " — will retry"))
                 if final:
                     session.pending_exports = max(0, session.pending_exports - 1)
+                    if module_id not in session.export_failed_modules:
+                        session.export_failed_modules.append(module_id)
 
             if (session.state == SessionState.STOPPED and session.pending_exports == 0
                     and session.export_stall_alerted):
@@ -1866,7 +1898,77 @@ class Recording:
                 )
 
 
-    def handle_recording_health_status(self, module_id: str, status: str, message: str | None) -> None:
+    def module_self_stopped(self, module_id: str, data: dict) -> None:
+        """A module stopped recording on its own, for a reason other than an
+        operator stop (recording_stopped with reason != "operator") -- today
+        only "disk_critical", the local-disk auto-stop (roadmap A4).
+
+        That's a FAULT, not a clean stop: surfaced like report_module_fault
+        (badge, session_events.log, alert or unattended digest) with the
+        distinct reason. The module is parked as "self_stopped" so
+        _check_session_recording_liveness doesn't immediately re-arm it onto
+        a still-full disk; _resume_self_stopped_modules restarts it once its
+        heartbeat shows space has recovered.
+        """
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            return
+        session = self.sessions[session_name]
+        # An operator stop that raced the auto-stop already moved it on.
+        if session.module_stop_states.get(module_id) != "recording":
+            return
+
+        reason = data.get("reason", "unknown")
+        detail = data.get("detail") or reason
+        with self._lock:
+            session.module_stop_states[module_id] = "self_stopped"
+            session.self_stopped_modules[module_id] = {
+                "reason": reason,
+                "detail": detail,
+                "at": datetime.now().strftime("%Y%m%d-%H%M%S"),
+                "resume_free_pct": data.get("resume_free_pct"),
+            }
+        self._not_recording_strikes.pop((session_name, module_id), None)
+        self.report_module_fault(module_id, f"stopped itself ({reason}): {detail}")
+        # report_module_fault saves + pushes only when it changes state; make
+        # sure the self_stopped bookkeeping is persisted either way.
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+    def _resume_self_stopped_modules(self, session_name: str,
+                                     session: "RecordingSession") -> None:
+        """Restart disk-self-stopped modules once their heartbeat shows free
+        space back above the resume threshold the module reported. The module
+        applies the same hysteresis itself, so this only avoids re-arming it
+        (and faulting on its refusal) every monitor cycle meanwhile."""
+        resumed = False
+        for module_id, info in list(session.self_stopped_modules.items()):
+            if info.get("reason") != "disk_critical":
+                continue
+            used = (self.facade.get_module_health(module_id) or {}).get("disk_space")
+            if used is None:
+                continue
+            free = 100 - used
+            resume_at = info.get("resume_free_pct")
+            if resume_at is None or free < resume_at:
+                continue
+            with self._lock:
+                session.self_stopped_modules.pop(module_id, None)
+                session.module_stop_states[module_id] = "stopped"
+            self._log_session_event(
+                session_name, "RECOVERY",
+                f"{module_id} disk back to {free:.0f}% free (resume at "
+                f"{resume_at}%) — resuming recording",
+            )
+            self.module_back_online(module_id)
+            resumed = True
+        if resumed:
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+    def handle_recording_health_status(self, module_id: str, status: str,
+                                       message: str | None,
+                                       source: str = "liveness") -> None:
         """Module self-reported recording-capture liveness (see
         Module._check_recording_alive / Recording._monitor_recording_health
         on the module side) -- a soft warning, same severity tier as
@@ -1886,12 +1988,16 @@ class Recording:
         if session.state == SessionState.STOPPED:
             return
 
+        # Keyed per (module, source): a module can raise a capture-liveness
+        # warning and a low-disk warning ("disk", roadmap A4) independently,
+        # and one recovering must not clear the other.
         degraded = self._recording_health_degraded.setdefault(session_name, set())
+        key = (module_id, source)
 
         if status == "unhealthy":
-            if module_id in degraded:
+            if key in degraded:
                 return  # already warned for this module — avoid duplicate alerts
-            degraded.add(module_id)
+            degraded.add(key)
             detail = f"{module_id}: {message}" if message else module_id
             warning = f"Recording health warning — {detail}"
             self.logger.warning(f"Session '{session_name}': {warning}")
@@ -1902,13 +2008,13 @@ class Recording:
             self._save_sessions()
             if self._notify_enabled("notify_recording_health"):
                 self.facade.send_alert(
-                    key=f"recording_health_{module_id}",
+                    key=f"recording_health_{module_id}_{source}",
                     title=f"Recording health warning — {session_name}",
                     message=warning,
                     severity="warning",
                 )
         elif status == "recovered":
-            degraded.discard(module_id)
+            degraded.discard(key)
             if degraded:
                 return  # still warned for other module(s) in this session
             self.logger.info(f"Session '{session_name}': recording health recovered ({module_id})")
@@ -1928,6 +2034,17 @@ class Recording:
         session = self.sessions[session_name]
 
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            # A module that stopped itself for low disk is resumed only by
+            # _resume_self_stopped_modules, once its heartbeat shows space has
+            # recovered -- not by a reconnect/liveness re-arm onto a full disk.
+            if module_id in session.self_stopped_modules:
+                self.logger.info(
+                    f"{module_id} online in '{session_name}' but self-stopped "
+                    f"({session.self_stopped_modules[module_id].get('reason')}) — "
+                    f"waiting for recovery before restarting"
+                )
+                return
+
             # Habitat Session: only re-arm a reconnecting module if its plan's
             # window is actually open right now. Otherwise a controller
             # restart (which faults every session module) would start e.g. a
@@ -1975,7 +2092,8 @@ class Recording:
             )
             with self._lock:
                 session.module_stop_states[module_id] = "recording"
-                if session.state == SessionState.ERROR:
+                if (session.state == SessionState.ERROR
+                        and not session.self_stopped_modules):
                     session.error_message = ""
                     session.error_time = None
                     session.state = SessionState.ACTIVE
@@ -2816,10 +2934,10 @@ class Recording:
 
         return None
 
-    def _monitor_sessions(self) -> None:
+    def _monitor_sessions(self, stop_event: threading.Event | None = None) -> None:
         """Background thread: drive scheduled timers and health-check active sessions."""
-        while True:
-            time.sleep(_MONITOR_INTERVAL_SECS)
+        stop_event = stop_event or self._monitor_stop
+        while not stop_event.wait(_MONITOR_INTERVAL_SECS):
             self._monitor_cycle += 1
             current_time = datetime.now().strftime("%H:%M")
             today = date.today().isoformat()
@@ -2917,6 +3035,8 @@ class Recording:
                                     self.logger.warning(f"Could not probe {m}: {e}")
 
                         self._check_session_recording_liveness(session_name, session)
+                        if session.self_stopped_modules:
+                            self._resume_self_stopped_modules(session_name, session)
 
                         if session.state == SessionState.ACTIVE:
                             self._check_ptp_mid_recording(session_name, session)
@@ -2992,7 +3112,7 @@ class Recording:
             # if already recording) and retries harmlessly next cycle.
             for m in not_recording:
                 self.module_back_online(m)
-        elif should_be_recording and (
+        elif should_be_recording and not session.self_stopped_modules and (
             session.state == SessionState.ERROR
             or (session.unattended and session.error_message)
         ):
@@ -3046,6 +3166,14 @@ class Recording:
                 data = json.load(f)
             for name, d in data.items():
                 session = RecordingSession(**d)
+                if "export_failed_modules" not in d and session.total_exports_failed:
+                    # Saved before export_failed_modules existed: keep the
+                    # delete guard for any module still showing a failed export
+                    # rather than silently dropping it on upgrade.
+                    session.export_failed_modules = [
+                        m for m, s in session.module_export_states.items()
+                        if s == "failed"
+                    ]
                 if session.state == SessionState.ACTIVE:
                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"

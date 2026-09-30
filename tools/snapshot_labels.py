@@ -10,7 +10,10 @@ Outputs three tables:
 Also writes a timestamped JSON archive to the same directory.
 
 Usage (run on the controller):
-    python3 tools/snapshot_labels.py [--url http://localhost:5000]
+    python3 tools/snapshot_labels.py [--url http://10.0.0.1:5000]
+
+(The web UI listens on the controller's eth0 address, not localhost -- see
+interface.listen_on.)
 """
 
 import argparse
@@ -46,8 +49,8 @@ def print_table(headers: list[str], rows: list[list[str]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default="http://localhost:5000",
-                        help="Controller base URL (default: http://localhost:5000)")
+    parser.add_argument("--url", default="http://10.0.0.1:5000",
+                        help="Controller base URL (default: http://10.0.0.1:5000)")
     parser.add_argument("--out", default=None,
                         help="Directory to write JSON archive (default: same dir as this script)")
     args = parser.parse_args()

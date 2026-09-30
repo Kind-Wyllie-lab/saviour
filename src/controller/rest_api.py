@@ -885,6 +885,7 @@ def create_api_blueprint(web) -> Blueprint:
                     "export_warning": True,
                     "pending_exports": result.get("pending_exports"),
                     "total_exports_failed": result.get("total_exports_failed"),
+                    "export_failed_modules": result.get("export_failed_modules", []),
                 }
             return _error("delete_rejected", msg, status, **extra)
         return jsonify({"deleted": True, "session_name": session_name})

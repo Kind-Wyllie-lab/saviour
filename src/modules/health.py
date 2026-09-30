@@ -16,6 +16,7 @@ import time
 import psutil
 
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
+from src.shared.supervised import REGISTRY, supervise
 
 
 class Health:
@@ -33,6 +34,7 @@ class Health:
         # Heartbeat parameters
         self.heartbeat_interval = self.config.get("module.heartbeat_interval", 30)
         self.heartbeats_active = False
+        self._heartbeat_stop = threading.Event()
 
     def start_heartbeats(self) -> bool:
         """Start sending periodic heartbeats to the controller
@@ -53,43 +55,48 @@ class Health:
             return False
 
         self.heartbeats_active = True
-        self.heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            daemon=True
-        )
-        self.heartbeat_thread.start()
+        # Supervised (src/shared/supervised.py), fresh Event per start.
+        self._heartbeat_stop = threading.Event()
+        self.heartbeat_thread = supervise(
+            "health.heartbeat", self._heartbeat_loop,
+            stop_event=self._heartbeat_stop, logger=self.logger)
         return True
 
-    def _heartbeat_loop(self):
-        """Internal method: Loop sending heartbeats until stopped"""
+    def _heartbeat_loop(self, stop_event: threading.Event | None = None):
+        """Loop sending heartbeats until stopped.
+
+        An exception while building/sending one (a psutil or PTP read glitch
+        in get_health(), say) used to set heartbeats_active = False and end
+        heartbeats for good -- ~90 s later the controller marked a healthy,
+        still-recording module offline. Now it propagates to the supervisor,
+        which logs it and restarts the loop, so the next beat is only ~1 s
+        late.
+        """
+        stop_event = stop_event or self._heartbeat_stop
         self.logger.info("Heartbeat thread started")
         last_heartbeat_time = 0
-        check_interval = 0.1  # Check for stop flag every 10ms
+        check_interval = 0.1  # Check for stop flag every 100 ms
 
-        while self.heartbeats_active:
+        while self.heartbeats_active and not stop_event.is_set():
             current_time = time.time()
             # Check if it's time to send a heartbeat
             if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):
-                try:
-                    # Check if communication manager is still valid
-                    if not self.facade.get_controller_ip():
-                        self.logger.warning("Controller IP not available, stopping heartbeats")
-                        self.heartbeats_active = False
-                        break
-
-                    status = self.get_health()
-                    status['type'] = 'heartbeat' # Add type field to identify heartbeat status
-                    self.facade.send_status(status)
-                    self.facade.notify_heartbeat_sent()
-                    last_heartbeat_time = current_time
-                except Exception as e:
-                    self.logger.error(f"Error sending heartbeat: {e}")
-                    # If we get an error sending the heartbeat, stop the heartbeats
+                # Check if communication manager is still valid
+                if not self.facade.get_controller_ip():
+                    self.logger.warning(
+                        "Controller IP not available, stopping heartbeats")
                     self.heartbeats_active = False
+                    stop_event.set()  # deliberate stop, not a crash
                     break
 
-            # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
-            time.sleep(check_interval)
+                status = self.get_health()
+                status['type'] = 'heartbeat'  # identifies a heartbeat status
+                self.facade.send_status(status)
+                self.facade.notify_heartbeat_sent()
+                last_heartbeat_time = current_time
+
+            # Short waits rather than the full interval, for a quick stop.
+            stop_event.wait(check_interval)
 
     def get_health(self) -> dict:
         """Get health metrics for the module"""
@@ -125,6 +132,7 @@ class Health:
             frame_clip_pct=self.facade.get_frame_clip_pct(),
             hardware_fault=self.facade.get_hardware_fault(),
             version=self.facade.get_saviour_version(),
+            supervised_threads=REGISTRY.snapshot(),
         )
         return snapshot.to_dict()
 
@@ -172,6 +180,7 @@ class Health:
     def stop_heartbeats(self):
         """Stop sending heartbeats"""
         self.heartbeats_active = False
+        self._heartbeat_stop.set()
         self.logger.info("Heartbeat flag set to false")
 
         # Ensure the thread has stopped

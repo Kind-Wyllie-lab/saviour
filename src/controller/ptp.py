@@ -17,6 +17,8 @@ import threading
 import time
 from enum import Enum
 
+from src.shared.supervised import supervise
+
 
 class PTPRole(Enum):
     MASTER = "master"
@@ -69,6 +71,7 @@ class PTP:
         self.last_offset = None
         self.last_freq = None
         self.monitor_thread = None
+        self._monitor_stop = threading.Event()
 
         # Unified offset buffer for storing all PTP values by timestamp
         self.ptp_buffer = []
@@ -208,10 +211,15 @@ class PTP:
 
         self.running = True
         self.status = 'starting'
-        self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
-        self.monitor_thread.start()
+        # Supervised (src/shared/supervised.py): an unexpected exception is
+        # logged once and the monitor restarted, and shows in health. A
+        # fresh Event so a restart() can't revive the previous monitor.
+        self._monitor_stop = threading.Event()
+        self.monitor_thread = supervise(
+            "ptp.monitor", self._monitor, stop_event=self._monitor_stop,
+            logger=self.logger)
 
-    def _monitor(self):
+    def _monitor(self, stop_event: threading.Event | None = None):
         """Monitor controller PTP services and parse their output.
 
         Like the module-side monitor, a momentarily non-``active`` ptp4l /
@@ -224,8 +232,10 @@ class PTP:
         path back short of a saviour.service restart).
         """
         interval = self.config.get("ptp.ptp_monitor_interval") or 1
+        stop_event = stop_event or self._monitor_stop
         services_ok = True
-        while self.running:
+        call_ok = True
+        while self.running and not stop_event.is_set():
             try:
                 # Check CONTROLLER service status
                 ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -240,7 +250,7 @@ class PTP:
                             f"(systemd Restart=always should recover them)"
                         )
                         services_ok = False
-                    time.sleep(interval)
+                    stop_event.wait(interval)
                     continue
 
                 if not services_ok:
@@ -257,10 +267,18 @@ class PTP:
 
                 self._check_ptp_offsets()
 
-            except Exception as e:
-                self.logger.exception(f"Error in PTP monitoring thread: {e}")
+                if not call_ok:
+                    self.logger.info("PTP status/log reads working again")
+                    call_ok = True
 
-            time.sleep(interval)  # Check every second
+            # Expected, transient: systemctl/journalctl timing out or missing.
+            # Anything else propagates to the supervisor (see module ptp.py).
+            except (subprocess.SubprocessError, OSError) as e:
+                if call_ok:
+                    self.logger.warning(f"PTP status/log read failed: {e} — retrying")
+                    call_ok = False
+
+            stop_event.wait(interval)  # Check every second
 
     def _check_ptp_offsets(self):
         if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset_ns is None:
@@ -335,6 +353,7 @@ class PTP:
     def stop(self):
         """Stop PTP services using systemd."""
         self.running = False
+        self._monitor_stop.set()
 
         try:
             # Stop phc2sys first

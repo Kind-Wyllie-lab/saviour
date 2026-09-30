@@ -2,24 +2,69 @@
 
 ## Why
 
-Every controller service binds `0.0.0.0`:
+The controller has two defences against a `wlan0` that sits on campus wifi
+(eduroam / UoE-Device), where AP/client isolation can't be relied on:
 
-| Service | Port(s) | Auth |
-|---|---|---|
-| Flask/SocketIO web UI + `/api/v1` REST | 5000/tcp | shared password (plaintext HTTP) |
-| `:80` → `:5000` redirect (`configure_mdns`) | 80/tcp | — |
-| ZeroMQ ROUTER command bus | 5555/tcp | **none** |
-| ZeroMQ PUB status bus | 5556/tcp | **none** |
-| Samba `smbd` | 445/tcp, 139/tcp | share password |
-| Samba `nmbd` | 137,138/udp | — |
+1. **SAVIOUR's services listen on the eth0 address only** (roadmap B2).
+2. **A default-deny firewall on `wlan0`** (and the WAN interface) catches
+   everything else on the box that listens on every interface, sshd first
+   of all.
 
-On the PoE LAN (`eth0`) that is by design — the LAN is the trust boundary
-(see the threat model in `CLAUDE.md`). But a controller that also has
-`wlan0` on campus wifi (eduroam / UoE‑Device) would expose all of the above
-to every other client on that network if AP/client isolation is imperfect.
+`wlan0` is then only used for *outbound* traffic: package downloads and
+Tailscale's own transport. Replies to those are allowed back in.
+
+| Service | Port(s) | Listens on | Auth |
+|---|---|---|---|
+| Flask/SocketIO web UI + `/api/v1` REST | 5000/tcp | eth0 address | shared password (plaintext HTTP) |
+| `:80` → `:5000` redirect (`configure_mdns`) | 80/tcp | `-i eth0` | — |
+| ZeroMQ ROUTER command bus | 5555/tcp | eth0 address | **none** |
+| ZeroMQ PUB status bus | 5556/tcp | eth0 address | **none** |
+| Samba `smbd` / `nmbd` | 445, 139 / 137, 138 | `lo eth0` | share password |
 
 `ptp4l`, `dnsmasq` and `avahi` are already scoped to `eth0` in their own
-configs and are not affected by any of this.
+configs.
+
+### Services bound to eth0
+
+`interface.listen_on` in the controller config (default `"lan"`) sets the
+address the web UI and the ZMQ bus listen on:
+
+| Value | Listens on |
+|---|---|
+| `"lan"` (default) | the controller's validated eth0 address (normally `10.0.0.1`) |
+| `"all"` | every interface - the pre-B2 behaviour; only rely on this with the firewall below in place |
+| an IP address | that address |
+
+Consequences:
+
+- The web UI is **not** on `localhost:5000` any more. Use
+  `http://10.0.0.1:5000` (or the eth0 address) from the controller itself.
+- A client reaching the controller's `wlan0` or Tailscale address on `:5000`
+  gets nothing. For Tailscale, use `tailscale serve` (below).
+
+### Web UI over Tailscale
+
+Tailscale (`tailscale0`) is treated as trusted and is never filtered - on the
+assumption the tailnet only contains your own machines. Because the web UI
+listens on the eth0 address only, publish it to the tailnet with
+`tailscale serve`, which proxies to it and adds HTTPS:
+
+```bash
+sudo tailscale serve --bg http://10.0.0.1:5000
+tailscale serve status          # shows the https://<name>.<tailnet>.ts.net URL
+```
+
+Then browse to `https://<controller-name>.<tailnet>.ts.net`. Turn it off with
+`sudo tailscale serve --https=443 off`. (HTTPS certificates must be enabled
+for the tailnet in the Tailscale admin console.)
+
+### Is the firewall actually on?
+
+The controller checks at startup (`src/controller/firewall_status.py`) that
+every untrusted interface that exists has the `SAVIOUR-WLAN-IN` hook and the
+chain ends in `DROP`, for IPv4 and IPv6. If not, it logs an ERROR, sends an
+alert, and the System page shows **"Firewall not active on …"** under the
+controller row. Fix with `sudo saviour-config --apply-firewall`.
 
 ## What `configure_firewall()` does
 
@@ -54,9 +99,9 @@ Add `tailscale0` to that line if you want to reach the share over Tailscale.
 
 - **Tailscale SSH** — arrives on `tailscale0`, which is never filtered.
 - **`ssh -D 1080` SOCKS to the web UI** — `sshd` on the controller makes
-  the onward connection to `:5000` from `localhost`/`eth0`, not `wlan0`.
-  Point the proxied browser at `http://localhost:5000` or the controller's
-  **eth0** IP, not a name that resolves to its `wlan0` address.
+  the onward connection itself. Point the proxied browser at the
+  controller's **eth0** IP (`http://10.0.0.1:5000`); `localhost` no longer
+  works because the UI only listens on the eth0 address.
 - **Modules on the PoE LAN** — unchanged; `eth0` is not filtered.
 
 ### Break‑glass

@@ -14,6 +14,7 @@ loop.
 
 import os
 import tempfile
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -236,6 +237,13 @@ class TestScheduledStart:
             rec, facade = _make_recording(tmpdir)
 
             rec._scheduled_start("exp1", None, time.time())
+            # This really started the (supervised) monitors; stop them so they
+            # don't run on through the rest of the test session.
+            rec.monitor_recording_segments_stop_flag.set()
+            rec.recording_health_stop_flag.set()
+            rec.health_stop_event.set()  # health-metadata CSV writer
+            if rec.health_recording_thread:
+                rec.health_recording_thread.join(timeout=5)
 
             assert rec.is_recording is True
             failure_calls = [
@@ -281,6 +289,7 @@ class TestStopRecording:
             facade.signal_export_ready.assert_not_called()
             facade.send_status.assert_called_with({
                 "type": "recording_stopped", "status": "success", "recording": False,
+                "reason": "operator",
             })
 
     def test_stop_also_stages_a_session_journal_by_default(self):
@@ -490,3 +499,190 @@ class TestMeasuredRecordingRate:
             rec._sample_recording_bytes()
             assert rec._measured_rec_bytes_per_s is None
             assert rec._rec_sample_start_ts is None
+
+
+# ---------------------------------------------------------------------------
+# Local disk protection (roadmap A4)
+# ---------------------------------------------------------------------------
+
+_DISK_CFG = {"recording.local_min_free_pct": 10, "recording.local_warn_free_pct": 15}
+
+
+class TestDiskStartGate:
+    def test_start_refused_below_critical(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir, **_DISK_CFG)
+            rec._local_disk_free = MagicMock(return_value=(5.0, 400.0))
+
+            result = rec.start_recording("exp1", None)
+
+            assert result["result"] == "error"
+            assert "critically low" in result["error"]
+            status = facade.send_status.call_args[0][0]
+            assert status["type"] == "recording_start_failed"
+            assert status["reason"] == "disk_critical"
+            facade.start_new_recording.assert_not_called()
+
+    def test_after_disk_stop_waits_for_warn_threshold(self):
+        """Hysteresis: 12% is above the 10% hard floor but a module that
+        auto-stopped for disk must not restart until 15%, or a controller
+        re-arm would flap it straight back onto a nearly full disk."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir, **_DISK_CFG)
+            rec._disk_stopped = True
+            rec._local_disk_free = MagicMock(return_value=(12.0, 900.0))
+
+            result = rec.start_recording("exp1", None)
+            assert result["result"] == "error"
+            assert "waiting for 15% free" in result["error"]
+
+            rec._local_disk_free.return_value = (16.0, 1200.0)
+            with patch("src.modules.recording.threading.Thread"):
+                assert rec.start_recording("exp1", None) == {"result": "success"}
+            assert rec._disk_stopped is False
+
+    def test_normal_start_only_needs_the_hard_floor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = _make_recording(tmpdir, **_DISK_CFG)
+            rec._local_disk_free = MagicMock(return_value=(12.0, 900.0))
+            with patch("src.modules.recording.threading.Thread"):
+                assert rec.start_recording("exp1", None) == {"result": "success"}
+
+    def test_unreadable_disk_does_not_block(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = _make_recording(tmpdir, **_DISK_CFG)
+            rec._local_disk_free = MagicMock(side_effect=OSError("no such dir"))
+            with patch("src.modules.recording.threading.Thread"):
+                assert rec.start_recording("exp1", None) == {"result": "success"}
+
+
+class TestDiskCriticalStop:
+    def test_reports_a_distinct_reason_not_an_operator_stop(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"export.auto_export": False,
+                           "recording.export_session_journal": False})
+            rec.is_recording = True
+            rec.current_session_name = "exp1"
+            facade.stop_recording.return_value = True
+
+            rec._disk_critical_stop(8.2, 512.4, 10, 15)
+
+            assert rec.is_recording is False
+            assert rec._disk_stopped is True
+            status = facade.send_status.call_args[0][0]
+            assert status["type"] == "recording_stopped"
+            assert status["reason"] == "disk_critical"
+            assert "8.2% free" in status["detail"]
+            assert status["free_pct"] == 8.2
+            assert status["resume_free_pct"] == 15
+
+    def test_stop_from_the_monitor_thread_does_not_self_join(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = _make_recording(tmpdir)
+            rec.monitor_recording_segments_thread = threading.current_thread()
+            assert rec._stop_recording_segment_monitoring() is True
+
+
+class TestMonitorLoopDiskCheck:
+    def _rec(self, tmpdir, frees):
+        """Monitor loop with a long segment (never due) and a 0 s disk-check
+        interval; _local_disk_free walks `frees` then stops the loop."""
+        rec, facade = _make_recording(tmpdir, **{
+            **_DISK_CFG,
+            "recording.segment_length_mins": 60,
+            "recording._disk_check_interval_secs": 0,
+        })
+        rec.segment_start_time = time.time()
+        rec.current_session_name = None  # set by _begin_recording in real use
+        rec._create_new_recording_segment = MagicMock()
+        seq = iter(frees)
+
+        def free():
+            try:
+                return next(seq)
+            except StopIteration:
+                rec.monitor_recording_segments_stop_flag.set()
+                return (50.0, 9999.0)
+
+        rec._local_disk_free = free
+        return rec, facade
+
+    def test_critical_mid_segment_stops_without_waiting_for_rotation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = self._rec(tmpdir, [(40.0, 5000.0), (9.0, 700.0)])
+            rec._disk_critical_stop = MagicMock()
+
+            rec._monitor_recording_length()
+
+            rec._disk_critical_stop.assert_called_once_with(9.0, 700.0, 10, 15)
+            rec._create_new_recording_segment.assert_not_called()
+
+    def test_warns_once_below_warn_threshold_then_recovers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(
+                tmpdir, [(13.0, 900.0), (12.5, 880.0), (20.0, 1500.0)])
+
+            rec._monitor_recording_length()
+
+            sent = [c[0][0] for c in facade.send_status.call_args_list
+                    if c[0][0].get("type") == "recording_health_warning"]
+            assert [s["status"] for s in sent] == ["unhealthy", "recovered"]
+            assert all(s["source"] == "disk" for s in sent)
+            assert "recording stops at 10%" in sent[0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Supervised monitor loops (roadmap A6)
+# ---------------------------------------------------------------------------
+
+class TestSupervisedRecordingMonitors:
+    def test_liveness_check_exception_propagates_to_the_supervisor(self):
+        """No more swallow-and-continue every tick: the supervisor logs it
+        once, restarts the loop, and counts it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"recording._health_check_interval_secs": 0})
+            facade.check_recording_alive.side_effect = RuntimeError("probe broke")
+            try:
+                rec._monitor_recording_health(threading.Event())
+            except RuntimeError as e:
+                assert "probe broke" in str(e)
+            else:
+                raise AssertionError("expected the exception to propagate")
+
+    def test_pending_recovered_survives_a_loop_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"recording._health_check_interval_secs": 0})
+            rec._health_was_unhealthy = True  # set by the run that crashed
+            stop = threading.Event()
+
+            def alive():
+                stop.set()
+                return True, None
+
+            facade.check_recording_alive.side_effect = alive
+            rec._monitor_recording_health(stop)
+
+            facade.send_status.assert_called_once_with({
+                "type": "recording_health_warning", "status": "recovered",
+            })
+            assert rec._health_was_unhealthy is False
+
+    def test_each_recording_gets_a_fresh_stop_event(self):
+        """Clearing the previous recording's event would revive a monitor
+        whose join timed out; a new Event leaves the old one set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _facade = _make_recording(tmpdir)
+            rec.recording_start_time = time.time()
+            with patch("src.modules.recording.supervise") as sup:
+                rec._start_recording_segment_monitoring()
+                first = rec.monitor_recording_segments_stop_flag
+                first.set()
+                rec._start_recording_segment_monitoring()
+            assert rec.monitor_recording_segments_stop_flag is not first
+            assert first.is_set()
+            stop = rec.monitor_recording_segments_stop_flag
+            assert sup.call_args.kwargs["stop_event"] is stop
+            assert sup.call_args.args[0] == "recording.segment_monitor"

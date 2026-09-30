@@ -449,12 +449,23 @@ class ControllerFacade:
         self.controller.recording.report_module_fault(module_id, message)
 
 
-    def handle_recording_health_status(self, module_id: str, status: str, message: str | None) -> None:
+    def handle_recording_health_status(self, module_id: str, status: str,
+                                       message: str | None,
+                                       source: str = "liveness") -> None:
         # A module's self-monitor reported its recording capture is
         # unhealthy/recovered (see Recording._monitor_recording_health on
-        # the module side) — softer than report_module_fault above, surfaced
-        # as a warning rather than a session ERROR.
-        self.controller.recording.handle_recording_health_status(module_id, status, message)
+        # the module side), or its local disk is running low (source="disk")
+        # — softer than report_module_fault above, surfaced as a warning
+        # rather than a session ERROR.
+        self.controller.recording.handle_recording_health_status(
+            module_id, status, message, source)
+
+
+    def module_self_stopped(self, module_id: str, data: dict) -> None:
+        # A module stopped recording on its own to protect itself (e.g. local
+        # disk critically low) rather than because an operator asked --
+        # a fault, not a clean stop. See Recording.module_self_stopped.
+        self.controller.recording.module_self_stopped(module_id, data)
 
 
     def module_back_online(self, module_id: str) -> None:

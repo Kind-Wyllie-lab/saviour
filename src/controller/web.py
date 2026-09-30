@@ -50,6 +50,7 @@ from src.shared.data_rate import (
     estimate_recording_bytes_per_s,
     runway_minutes,
 )
+from src.shared.supervised import supervise
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -249,6 +250,11 @@ class Web(ABC):
 
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
+        # Address the server listens on. The controller sets this to its eth0
+        # address before start() (interface.listen_on = "lan"), so the UI /
+        # REST API aren't served on wlan0; reach it over Tailscale with
+        # `tailscale serve` (docs/NETWORK_FIREWALL.md).
+        self.host = "0.0.0.0"
 
         # Flask setup. static_folder=None here deliberately disables Flask's
         # own auto-registered '/<path:filename>' static route -- it and our
@@ -2468,6 +2474,15 @@ class Web(ABC):
             health['controller_time'] = datetime.now(UTC).isoformat()
             # Controller uptime in seconds
             health['uptime'] = round(self.facade.get_uptime())
+            # Supervised long-lived threads (src/shared/supervised.py)
+            from src.shared.supervised import REGISTRY
+            health['supervised_threads'] = REGISTRY.snapshot()
+            # wlan0/WAN firewall actually in effect? (System page warning)
+            try:
+                from src.controller.firewall_status import firewall_status
+                health['firewall'] = firewall_status()
+            except Exception:
+                health['firewall'] = None
             self.socketio.emit("controller_health_response", health)
 
 
@@ -3716,13 +3731,15 @@ class Web(ABC):
                            {"token": token, "filename": fn},
                            room=requester_sid)
 
-    def _nas_monitor_loop(self):
+    def _nas_monitor_loop(self, stop_event: threading.Event | None = None):
+        """Supervised (src/shared/supervised.py) NAS health probe loop."""
+        stop_event = stop_event or self._nas_monitor_stop
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)
         # Brief initial delay so the server is fully up before the first probe.
-        self._nas_monitor_stop.wait(30)
-        while not self._nas_monitor_stop.is_set():
+        stop_event.wait(30)
+        while not stop_event.is_set():
             self._run_nas_health_check()
-            self._nas_monitor_stop.wait(NAS_CHECK_INTERVAL_S)
+            stop_event.wait(NAS_CHECK_INTERVAL_S)
 
     def _run_nas_health_check(self):
         now = time.time()
@@ -4078,13 +4095,15 @@ class Web(ABC):
             )
             self.web_thread.start()
             self._nas_monitor_stop.clear()
-            threading.Thread(target=self._nas_monitor_loop, daemon=True).start()
+            supervise("nas-monitor", self._nas_monitor_loop,
+                      stop_event=self._nas_monitor_stop, logger=self.logger)
             return self.web_thread
 
 
     def _run_server(self):
         """Internal method to run the Flask server"""
-        self.socketio.run(self.app, host='0.0.0.0', port=self.port, debug=False, allow_unsafe_werkzeug=True)
+        self.socketio.run(self.app, host=self.host, port=self.port, debug=False,
+                          allow_unsafe_werkzeug=True)
 
 
     def stop(self):
@@ -4378,7 +4397,9 @@ class Web(ABC):
                 case "recording_health_warning":
                     health_status = status.get("status", "unhealthy")
                     message = status.get("message")
-                    self.facade.handle_recording_health_status(module_id, health_status, message)
+                    source = status.get("source", "liveness")
+                    self.facade.handle_recording_health_status(
+                        module_id, health_status, message, source)
 
                 # A TTL module input-pin edge (ttl_module.py::_send_edge_status),
                 # fired live rather than waiting for the session's CSV to export.

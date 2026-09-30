@@ -48,6 +48,7 @@ from src.controller.communication import Communication
 from src.controller.config import Config
 from src.controller.export_queue import ExportQueue
 from src.controller.facade import ControllerFacade
+from src.controller.firewall_status import firewall_status
 from src.controller.health import Health
 from src.controller.modules import Modules
 from src.controller.network import Network
@@ -55,6 +56,21 @@ from src.controller.notify import Notifier
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.web import Web
+
+
+def resolve_listen_host(listen_on: str | None, lan_ip: str) -> str:
+    """Address controller services listen on, from interface.listen_on.
+
+    "lan" (default) -> the validated eth0 address; "all" -> "*" (every
+    interface, the pre-B2 behaviour); anything else is used as a literal
+    address. Returned in ZMQ form ("*" rather than "0.0.0.0").
+    """
+    value = (listen_on or "lan").strip()
+    if value == "lan":
+        return lan_ip
+    if value in ("all", "*", "0.0.0.0"):
+        return "*"
+    return value
 
 
 # Habitat Controller Class
@@ -91,9 +107,16 @@ class Controller(ABC):
         self.network = Network(self.config)
         self.network.on_module_discovered = self.on_module_discovered
         self.network.on_module_removed = self.on_module_removed
-        self.communication = Communication(status_callback=self.handle_status_update)
+        # Listen on the eth0 (PoE LAN) address only, so the unauthenticated
+        # ZMQ bus and the web UI are never served on wlan0 (roadmap B2).
+        self.listen_host = resolve_listen_host(
+            self.config.get("interface.listen_on", "lan"), self.network.ip)
+        self.logger.info(f"Controller services listening on {self.listen_host}")
+        self.communication = Communication(
+            status_callback=self.handle_status_update, bind_host=self.listen_host)
         self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
+        self.web.host = "0.0.0.0" if self.listen_host == "*" else self.listen_host
         self.health = Health(self.config)
         self.modules = Modules()
         self.recording = Recording()
@@ -214,9 +237,13 @@ class Controller(ABC):
                     self.modules.notify_recording_started(module_id, status_data)
 
                 case 'recording_stopped':
-                    self.logger.info(f"{module_id} has stopped recording")
+                    reason = status_data.get('reason', 'operator')
+                    self.logger.info(
+                        f"{module_id} has stopped recording (reason: {reason})")
                     self.modules.notify_recording_stopped(module_id, status_data)
                     self.facade.module_stopped(module_id)
+                    if reason != 'operator':
+                        self.facade.module_self_stopped(module_id, status_data)
 
                 case 'cmd_ack':
                     command = status_data.get('command', 'unknown')
@@ -405,7 +432,31 @@ class Controller(ABC):
             return False
 
 
+    def _check_firewall(self) -> None:
+        """Log (and alert) if an untrusted interface such as wlan0 exists but
+        the saviour-config firewall isn't in effect on it. Services already
+        listen on eth0 only; this covers everything else on the box (sshd
+        etc.) that still listens on every interface."""
+        try:
+            status = firewall_status()
+        except Exception as e:
+            self.logger.warning(f"Could not check firewall status: {e}")
+            return
+        if status["ok"] is False:
+            self.logger.error(status["detail"])
+            self.facade.send_alert(
+                key="controller_firewall",
+                title="Controller firewall not in effect",
+                message=status["detail"],
+            )
+        elif status["ok"] is None:
+            self.logger.warning(f"Firewall status unknown: {status['detail']}")
+        else:
+            self.logger.info(status["detail"])
+
+
     # Main methods
+
     def start(self) -> bool:
         """
         Start the controller.
@@ -440,6 +491,8 @@ class Controller(ABC):
             # Update web interface with initial module list
             if hasattr(self, 'modules'):
                 self.web.update_modules(self.modules.get_modules())
+
+        self._check_firewall()
 
 
         # Start the modules manager

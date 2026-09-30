@@ -88,6 +88,10 @@ class ModuleHealthSnapshot:
     # (or a camera scene is unusually busy / a mic is on FLAC).
     rec_bytes_per_s: float | None = None
     version:         str | None   = None
+    # Supervised long-lived threads on the module (src/shared/supervised.py):
+    # {name: {state, restarts, restarts_last_hour, last_crash, last_error}}.
+    # The controller alerts on any that are crash-looping.
+    supervised_threads: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

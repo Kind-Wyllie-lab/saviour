@@ -505,12 +505,55 @@ class TestDeleteSession:
 
     def test_refuses_when_exports_permanently_failed(self):
         rec, _facade = _make_recording()
-        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, total_exports_failed=1)
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED, total_exports_failed=1,
+            export_failed_modules=["cam1"],
+        )
 
         result = rec.delete_session("exp1", delete_files=False)
 
         assert result["export_warning"] is True
+        assert result["export_failed_modules"] == ["cam1"]
         assert "exp1" in rec.sessions
+
+    def test_deletable_once_a_failed_export_is_retried_successfully(self):
+        """roadmap A5: total_exports_failed is a lifetime counter (it also
+        counts non-final failures that were later retried), so on its own it
+        must not block a delete forever once every export has landed."""
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=True)
+        assert rec.delete_session("exp1", delete_files=False)["export_warning"] is True
+
+        # Operator hits "retry failed exports"; the re-export lands.
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+
+        assert rec.sessions["exp1"].total_exports_failed == 1
+        assert rec.delete_session("exp1", delete_files=False) == {"success": True}
+
+    def test_transient_failure_that_retried_ok_does_not_block(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=False)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+
+        assert rec.delete_session("exp1", delete_files=False) == {"success": True}
+
+    def test_other_modules_success_does_not_clear_a_failed_module(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED)
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=True)
+        rec.module_export_update("cam2", "exp1/20260803/cam2", "pending")
+        rec.module_export_update("cam2", "exp1/20260803/cam2", "complete")
+
+        result = rec.delete_session("exp1", delete_files=False)
+
+        assert result["export_warning"] is True
+        assert result["export_failed_modules"] == ["cam1"]
 
     def test_force_deletes_despite_unresolved_exports(self):
         rec, _facade = _make_recording()
@@ -1351,6 +1394,34 @@ class TestSessionPersistence:
             assert s.framesync_verdict is None
             assert s.day_verdicts == {}
 
+    def test_pre_a5_sessions_json_keeps_delete_guard_for_failed_modules(self):
+        """A session saved before export_failed_modules existed must not
+        become silently deletable on upgrade: seed it from any module whose
+        last export state was a failure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            with open(sessions_file, "w") as f:
+                json.dump({
+                    "exp1": {
+                        "session_name": "exp1", "target": "camera",
+                        "state": "stopped", "modules": ["cam1", "cam2"],
+                        "total_exports_failed": 3,
+                        "module_export_states": {"cam1": "failed", "cam2": "complete"},
+                    },
+                    "exp2": {
+                        "session_name": "exp2", "target": "camera",
+                        "state": "stopped", "modules": ["cam1"],
+                        "total_exports_failed": 1,
+                        "module_export_states": {"cam1": "complete"},
+                    },
+                }, f)
+            with patch("src.controller.recording.threading.Thread"):
+                rec = Recording()
+            recording_module.SESSIONS_FILE = sessions_file
+            rec._load_sessions()
+            assert rec.sessions["exp1"].export_failed_modules == ["cam1"]
+            assert rec.sessions["exp2"].export_failed_modules == []
+
 
 class TestApplyFramesyncVerdict:
     def _rec(self):
@@ -1589,3 +1660,149 @@ class TestCheckFramesyncValidation:
             rec._check_framesync_validation()
             facade.submit_framesync_check.assert_not_called()
             assert rec.sessions["hab"].day_verdicts["20200101"]["status"] == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# Module self-stop for low local disk (roadmap A4)
+# ---------------------------------------------------------------------------
+
+_DISK_STOP = {
+    "type": "recording_stopped", "status": "success", "recording": False,
+    "reason": "disk_critical",
+    "detail": "Local disk critically low (8.0% free, 500 MB; minimum 10%)",
+    "free_pct": 8.0, "resume_free_pct": 15,
+}
+
+
+def _two_cam_session(**overrides):
+    return _session(
+        modules=["cam1", "cam2"],
+        module_stop_states={"cam1": "recording", "cam2": "recording"},
+        **overrides,
+    )
+
+
+class TestModuleSelfStopped:
+    def test_is_a_fault_with_the_distinct_reason(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+
+        rec.module_self_stopped("cam1", _DISK_STOP)
+
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ERROR
+        assert "disk_critical" in s.error_message
+        assert "8.0% free" in s.error_message
+        assert s.module_stop_states["cam1"] == "self_stopped"
+        assert s.self_stopped_modules["cam1"]["reason"] == "disk_critical"
+        assert s.self_stopped_modules["cam1"]["resume_free_pct"] == 15
+
+    def test_unattended_session_records_it_but_stays_active(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session(unattended=True)
+
+        rec.module_self_stopped("cam1", _DISK_STOP)
+
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ACTIVE
+        assert "disk_critical" in s.error_message
+
+    def test_ignored_when_an_operator_stop_already_moved_it_on(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        rec.sessions["exp1"].module_stop_states["cam1"] = "stopped"
+
+        rec.module_self_stopped("cam1", _DISK_STOP)
+
+        assert rec.sessions["exp1"].self_stopped_modules == {}
+        assert rec.sessions["exp1"].state == SessionState.ACTIVE
+
+    def test_liveness_neither_rearms_it_nor_clears_the_fault(self):
+        """The bug A4 exposed: after the module's disk auto-stop, the
+        liveness check saw 'should be recording, isn't' and re-issued
+        start_recording onto the still-full disk."""
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        rec.module_self_stopped("cam1", _DISK_STOP)
+        facade.send_command.reset_mock()
+        facade.is_module_recording.side_effect = lambda m: m == "cam2"
+
+        for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD + 2):
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+        starts = [c for c in facade.send_command.call_args_list
+                  if c[0][1] == "start_recording"]
+        assert starts == []
+        assert rec.sessions["exp1"].state == SessionState.ERROR
+
+    def test_reconnect_does_not_rearm_it(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        rec.module_self_stopped("cam1", _DISK_STOP)
+        facade.send_command.reset_mock()
+        facade.is_module_recording.return_value = False
+
+        rec.module_back_online("cam1")
+
+        facade.send_command.assert_not_called()
+
+    def test_resumes_once_heartbeat_disk_passes_the_threshold(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        rec.module_self_stopped("cam1", _DISK_STOP)
+        facade.send_command.reset_mock()
+        facade.is_module_recording.return_value = False
+        s = rec.sessions["exp1"]
+
+        facade.get_module_health.return_value = {"disk_space": 90}  # 10% free
+        rec._resume_self_stopped_modules("exp1", s)
+        facade.send_command.assert_not_called()
+        assert "cam1" in s.self_stopped_modules
+
+        facade.get_module_health.return_value = {"disk_space": 80}  # 20% free
+        rec._resume_self_stopped_modules("exp1", s)
+
+        assert s.self_stopped_modules == {}
+        assert s.module_stop_states["cam1"] == "recording"
+        assert s.state == SessionState.ACTIVE
+        facade.send_command.assert_any_call(
+            "cam1", "start_recording", {"duration": 0, "session_name": "exp1"})
+
+    def test_self_stopped_survives_a_sessions_json_round_trip(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        rec.module_self_stopped("cam1", _DISK_STOP)
+        rec._save_sessions()
+
+        rec2, _ = _make_recording(sessions_file=recording_module.SESSIONS_FILE)
+        rec2._load_sessions()
+        stopped = rec2.sessions["exp1"].self_stopped_modules
+        assert stopped["cam1"]["reason"] == "disk_critical"
+
+
+class TestRecordingHealthSources:
+    def test_liveness_recovery_does_not_clear_a_disk_warning(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _two_cam_session()
+        s = rec.sessions["exp1"]
+
+        rec.handle_recording_health_status(
+            "cam1", "unhealthy", "Local disk low", "disk")
+        rec.handle_recording_health_status("cam1", "unhealthy", "camera silent")
+        rec.handle_recording_health_status("cam1", "recovered", None)
+        assert s.recording_health_warning is not None
+
+        rec.handle_recording_health_status("cam1", "recovered", None, "disk")
+        assert s.recording_health_warning is None
+
+    def test_disk_and_liveness_warnings_alert_separately(self):
+        rec, facade = _make_recording(notify_recording_health=True)
+        rec._notify_enabled = lambda *a, **k: True
+        rec.sessions["exp1"] = _two_cam_session()
+
+        rec.handle_recording_health_status(
+            "cam1", "unhealthy", "Local disk low", "disk")
+        rec.handle_recording_health_status("cam1", "unhealthy", "camera silent")
+
+        keys = [c.kwargs["key"] for c in facade.send_alert.call_args_list]
+        assert keys == ["recording_health_cam1_disk", "recording_health_cam1_liveness"]

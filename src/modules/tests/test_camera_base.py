@@ -16,6 +16,7 @@ MappedArray/Picamera2 pipeline rather than distinct branching logic.
 """
 
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -709,3 +710,63 @@ class TestRecordingJson:
             str(tmp_path / "x.ts"), 1, 2, 0, 0
         )
         cam.logger.warning.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Segment rotation: no blocking probe on the rotation path (A8, 2026-10-01)
+# ---------------------------------------------------------------------------
+
+class TestRotationDoesNotBlockOnProbe:
+    """The closed segment's full-file ffprobe ran before the split and took
+    ~14 s on an SD card, losing up to 9.5 s of video per rotation."""
+
+    def _cam(self, tmp_path):
+        closing = tmp_path / "sess_cam_(0_x).ts"
+        closing.write_bytes(b"x" * 100)
+        cam = _make_camera(facade=MagicMock(), current_video_segment=str(closing),
+                           _frame_id=1800, _segment_dropped=3,
+                           _segment_encoder_start_ns=1, file_output=MagicMock(),
+                           _finalise_thread=None)
+        cam._close_timestamp_csv = MagicMock()
+        cam._open_timestamp_csv = MagicMock()
+        cam._get_video_filename = MagicMock(return_value=str(tmp_path / "next.ts"))
+        cam._check_file_exists = MagicMock(return_value=True)
+        return cam, str(closing)
+
+    def test_split_happens_before_any_probe(self, tmp_path):
+        cam, closing = self._cam(tmp_path)
+        order = []
+        cam.file_output.split_output.side_effect = lambda *_a: order.append("split")
+        cam._write_recording_json = MagicMock(
+            side_effect=lambda *_a: order.append("probe"))
+        cam.facade.stage_file_for_export.side_effect = (
+            lambda p: order.append(("stage", os.path.basename(p))))
+        with patch("src.modules.camera_base.PyavOutput"):
+            cam._start_new_video_segment()
+        cam._finalise_thread.join(timeout=10)
+        assert order[0] == "split"
+        assert order.index("probe") < order.index(("stage", os.path.basename(closing)))
+
+    def test_finalise_stages_even_if_the_probe_fails(self, tmp_path):
+        cam, closing = self._cam(tmp_path)
+        cam._write_recording_json = MagicMock(side_effect=RuntimeError("ffprobe died"))
+        cam._finalise_closed_segment(closing, 1, 2, 10, 0, settle_s=0.01)
+        cam.facade.stage_file_for_export.assert_called_once_with(closing)
+
+    def test_stop_waits_for_an_in_flight_finalise(self, tmp_path):
+        cam, _closing = self._cam(tmp_path)
+        t = MagicMock()
+        t.is_alive.return_value = True
+        cam._finalise_thread = t
+        cam._join_segment_finalise(timeout=5)
+        t.join.assert_called_once_with(timeout=5)
+
+    def test_probe_runs_at_idle_priority(self, tmp_path):
+        cam, closing = self._cam(tmp_path)
+        run = MagicMock(return_value=MagicMock(stdout="1800\n"))
+        with patch("src.modules.camera_base.subprocess.run", run), \
+             patch("src.modules.camera_base.shutil.which", return_value="/usr/bin/x"):
+            assert cam._probe_encoded_frames(closing) == 1800
+        argv = run.call_args[0][0]
+        assert argv[:5] == ["ionice", "-c3", "nice", "-n", "19"]
+        assert "ffprobe" in argv

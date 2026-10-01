@@ -154,11 +154,16 @@ def test_run_mend_returns_started_immediately():
     assert ret["result"] == "started"
 
 
-def test_run_mend_exit_10_reports_reboot_required_not_error():
-    _ret, argv, ack = _run_mend(_mend_instance(), 10)
-    assert "--reboot" not in argv
+def test_run_mend_runs_detached_in_its_own_systemd_unit():
+    """Desk soak 2026-09-30: as a child of saviour.service, mend was killed
+    by its own 'restart saviour.service' step, leaving the module down."""
+    _ret, argv, ack = _run_mend(_mend_instance(), 0)
+    assert argv[:3] == ["sudo", "systemd-run", "--unit=saviour-mend"]
+    assert "--collect" in argv
+    assert argv[-1].endswith("mend.sh")
     assert ack["command"] == "run_mend"
-    assert ack["result"] == "reboot_required"
+    assert ack["result"] == "success"
+    assert "detached" in ack["output"]
 
 
 def test_run_mend_passes_reboot_flag_when_asked():
@@ -167,6 +172,19 @@ def test_run_mend_passes_reboot_flag_when_asked():
     assert ack["result"] == "success"
 
 
-def test_run_mend_nonzero_exit_is_an_error():
+def test_run_mend_failing_to_start_is_an_error():
     _ret, _argv, ack = _run_mend(_mend_instance(), 1)
     assert ack["result"] == "error"
+
+
+def test_run_mend_already_running_is_a_clear_error():
+    inst = _mend_instance()
+    proc = MagicMock(returncode=1, stdout="",
+                     stderr="Unit saviour-mend.service was already loaded")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", return_value=proc), \
+         patch("src.modules.module.os.path.isfile", return_value=True):
+        inst.run_mend()
+    ack = inst.communication.send_status.call_args[0][0]
+    assert ack["result"] == "error"
+    assert "already running" in ack["output"]

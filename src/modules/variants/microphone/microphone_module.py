@@ -68,6 +68,10 @@ class AudiomothModule(Module):
         # Per-segment recording threads and state
         self.audiomoth_threads = []
         self.current_recording_files = {}  # serial -> current filename
+        # Each segment's threads get their own stop Event (passed in, never
+        # reused or clear()ed): a rotation sets the old segment's Event, then
+        # creates a fresh one for the new threads. _recording_stop_event stops
+        # every thread at session end.
         self._segment_stop_event = threading.Event()
         self._recording_stop_event = threading.Event()
 
@@ -256,8 +260,8 @@ class AudiomothModule(Module):
 
     def _start_new_recording(self) -> bool:
         """Start initial recording segments for all connected audiomoths."""
-        self._recording_stop_event.clear()
-        self._segment_stop_event.clear()
+        self._recording_stop_event = threading.Event()
+        self._segment_stop_event = threading.Event()
         self.audiomoth_threads = []
         self.current_recording_files = {}
         self.recording_start_time = time.time()
@@ -290,7 +294,8 @@ class AudiomothModule(Module):
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename, intended_start_at),
+                args=(serial, mic_id, filename, intended_start_at,
+                      self._segment_stop_event, self._recording_stop_event),
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -303,8 +308,18 @@ class AudiomothModule(Module):
 
     def _start_next_recording_segment(self) -> None:
         """Stage current files for export and start new recording segment for all audiomoths."""
+        # Signal the outgoing segment's threads to finish. Without this (lost
+        # in 6d3ee3b0, 2026-04) the join below just timed out and every
+        # rotation leaked a recorder thread per AudioMoth that kept writing to
+        # the old file after it was exported and deleted, so the space never
+        # came back and the disk filled at ~1x the audio rate per rotation.
+        self._segment_stop_event.set()
         for thread in self.audiomoth_threads:
             thread.join(timeout=10)
+            if thread.is_alive():
+                self.logger.error(
+                    f"{thread.name} did not finish within 10 s of segment "
+                    f"rotation; its file may still be open")
 
         # Stage completed segment files (audio + timestamp sidecars) for export
         for filename in self.current_recording_files.values():
@@ -313,8 +328,8 @@ class AudiomothModule(Module):
             if os.path.isfile(timestamps_filename):
                 self.facade.stage_file_for_export(timestamps_filename)
 
-        # Start new segment
-        self._segment_stop_event.clear()
+        # Start new segment with a fresh stop Event for its threads
+        self._segment_stop_event = threading.Event()
         self.audiomoth_threads = []
         self.current_recording_files = {}
 
@@ -324,7 +339,9 @@ class AudiomothModule(Module):
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename, None),  # start_at only meaningful for first segment
+                # start_at only meaningful for the first segment
+                args=(serial, mic_id, filename, None,
+                      self._segment_stop_event, self._recording_stop_event),
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -334,8 +351,13 @@ class AudiomothModule(Module):
         self.logger.info(f"Switched to recording segment {self.facade.get_segment_id()}")
 
 
-    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str, intended_start_at: float | None) -> None:
+    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str,
+                                   intended_start_at: float | None,
+                                   segment_stop: threading.Event | None = None,
+                                   recording_stop: threading.Event | None = None) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
+        segment_stop = segment_stop or self._segment_stop_event
+        recording_stop = recording_stop or self._recording_stop_event
         sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         # frame_num / block_size are user-settable (Recording tab). Guard a
         # nonsensical value so a bad config can't wedge the capture loop: a
@@ -394,7 +416,7 @@ class AudiomothModule(Module):
                     timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
                         first_block = True
-                        while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
+                        while not recording_stop.is_set() and not segment_stop.is_set():
                             # Timestamp BEFORE record() so it marks the start of
                             # the block, not the end (each block is frame_num /
                             # sample_rate seconds long, ~683 ms at default settings).

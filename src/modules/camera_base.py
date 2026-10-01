@@ -21,6 +21,7 @@ import csv
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -222,6 +223,9 @@ class CameraBase(Module):
 
         # Segment based recording
         self.current_video_segment = None
+        # Background finalisation of the segment closed at the last rotation
+        # (probe + _recording.json + stage); see _finalise_closed_segment.
+        self._finalise_thread: threading.Thread | None = None
         self.last_video_segment = None
 
         # Pre-created segment for scheduled starts (set by _pre_create_first_segment,
@@ -849,10 +853,14 @@ class CameraBase(Module):
         """Frames actually in the container, via ffprobe packet count.
         None if ffprobe is unavailable or the file isn't ready."""
         try:
+            # Reads the whole segment (~1 GB): at idle I/O + CPU priority so it
+            # can never starve the encoder writing the next one.
+            prio = (["ionice", "-c3"] if shutil.which("ionice") else []) + \
+                (["nice", "-n", "19"] if shutil.which("nice") else [])
             out = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-count_packets", "-show_entries", "stream=nb_read_packets",
-                 "-of", "csv=p=0", video_path],
+                prio + ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-count_packets", "-show_entries", "stream=nb_read_packets",
+                        "-of", "csv=p=0", video_path],
                 capture_output=True, text=True, check=True, timeout=30,
             )
             for line in out.stdout.splitlines():
@@ -1000,17 +1008,12 @@ class CameraBase(Module):
             closing_bytes = -1
 
         split_ns = time.time_ns()
-        if closing:
-            self._write_recording_json(
-                closing, self._segment_encoder_start_ns, split_ns,
-                closing_frames, closing_dropped,
-            )
+        closing_start_ns = self._segment_encoder_start_ns
         self._segment_encoder_start_ns = split_ns
 
         self._close_timestamp_csv()
 
         self.last_video_segment = self.current_video_segment
-        self.facade.stage_file_for_export(self.last_video_segment)
 
         filename = self._get_video_filename()
         self.current_video_segment = filename
@@ -1023,9 +1026,57 @@ class CameraBase(Module):
             f"({closing_frames} frames, ~{closing_dropped} dropped, "
             f"{closing_bytes / 1e6:.1f} MB) → opened {os.path.basename(filename)}"
         )
+        if closing:
+            # The closed segment's ffprobe used to run HERE, before the split:
+            # a ~1 GB read of the file still being written, ~14 s on an SD
+            # card, which starved capture -- the 24 h desk run (A8, 2026-10-01)
+            # lost up to 9.5 s of video at about half the hourly rotations.
+            # Now: split first, then probe/write/stage in the background.
+            self._finalise_thread = threading.Thread(
+                target=self._finalise_closed_segment,
+                args=(closing, closing_start_ns, split_ns,
+                      closing_frames, closing_dropped),
+                daemon=True, name="segment-finalise",
+            )
+            self._finalise_thread.start()
+        elif self.last_video_segment:
+            self.facade.stage_file_for_export(self.last_video_segment)
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
+
+    def _finalise_closed_segment(self, video_path: str, start_ns: int,
+                                 stop_ns: int, frames: int, dropped: int,
+                                 settle_s: float = 1.0,
+                                 max_wait_s: float = 30.0) -> None:
+        """Off the rotation path: wait for picamera2 to finish with the
+        closed file (split_output switches at the next keyframe, so it can
+        grow briefly), write its _recording.json (idle-priority probe), then
+        stage it for export -- staged last so export can't move it mid-probe."""
+        try:
+            deadline = time.monotonic() + max_wait_s
+            last = -1
+            while time.monotonic() < deadline:
+                try:
+                    size = os.path.getsize(video_path)
+                except OSError:
+                    break
+                if size == last:
+                    break
+                last = size
+                time.sleep(settle_s)
+            self._write_recording_json(video_path, start_ns, stop_ns, frames, dropped)
+        except Exception as e:
+            self.logger.error(f"Finalising {os.path.basename(video_path)} failed: {e}")
+        finally:
+            self.facade.stage_file_for_export(video_path)
+
+    def _join_segment_finalise(self, timeout: float = 120.0) -> None:
+        """Wait for a rotation's background finalisation, so the closed
+        segment is staged before a stop's export runs."""
+        t = self._finalise_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=timeout)
 
     def _fix_positioning_timestamps(self, filename: str) -> None:
         """Take an mp4/ts file produced by picamera2 SplittableOutput and reset positioning timestamps"""
@@ -1058,6 +1109,7 @@ class CameraBase(Module):
             self.logger.info("Attempting to stop camera recording")
 
             self._stop_recording_video()  # flips _encoder_active off first
+            self._join_segment_finalise()
             final_segment_rows = self._frame_id  # frozen once the encoder is idle
             final_segment_dropped = self._segment_dropped
 

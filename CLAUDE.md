@@ -149,7 +149,7 @@ Currently **v0.9** (latest tag), targeting **v1.0 = "safe to run unattended on a
 
 **Threat model (settled 2026-08-25):** the system treats **LAN access as the trust boundary** — anyone who can reach the network is treated as authorized, the same way SSH/physical console access to any of these Pis already is. The web UI's guest/admin split exists to stop an operator *accidentally* breaking a running experiment or leaking data (wrong button, mid-session config change), **not** to defend against a malicious LAN-resident actor. On that basis, `update_saviour` package-signature verification and the ZMQ identity-hijack path are **deliberately deferred** — both need nothing more than LAN access, which is already accepted as trusted. A credential committed to git history is compromised regardless of network exposure — that half is treated separately and the known hardcoded Samba passwords were fixed independently.
 
-**Still open for v1.0:** `python-app.yml` (ruff F-gate + pytest) and `frontend.yml` (`npm run build` × 5 variants; `npm run lint` non-blocking) now both run on push/PR to `main` **and** `staging` (2026-09-07). Remaining: the GitHub Settings action to mark them *required* status checks before tagging, and clear the frontend-lint baseline so its job can gate too. Full v1.0 checklist: `plans/v1.0-roadmap.md`.
+**Still open for v1.0:** `python-app.yml` (ruff F-gate + pytest) and `frontend.yml` (`npm run build` × 5 variants; `npm run lint` non-blocking) now both run on push/PR to `main` **and** `staging` (2026-09-07). `build` (python) and `frontend-build` (a gate job over the 5 variant builds; `frontend.yml` lost its path filters so it always reports) are **required status checks on `main`** since 2026-10-01 (strict/up-to-date off). Remaining: clear the frontend-lint baseline so its job can gate too. Full v1.0 checklist: `plans/v1.0-roadmap.md`.
 
 Completed work is archived with full write-ups in **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — new completed items get a full write-up here first, then move there in a future condensing pass.
 
@@ -197,7 +197,7 @@ Threat model context above — the deferred items are a deliberate decision, not
 Account/settings actions on github.com, recorded here so they aren't lost:
 
 - Confirm `staging` branch-protection "Allow deletions" is genuinely taking effect (and nothing in Settings → Rules → Rulesets overrides the classic rule).
-- Make `python-app.yml` (`build`: ruff + pytest) and `frontend.yml` (`build` matrix) **required** status checks on `main` (both now run on push/PR to `main` + `staging`). `frontend.yml`'s `lint` job is `continue-on-error: true` until its ~18-error `npm run lint` baseline is cleared — then flip it and require it too.
+- ✅ 2026-10-01: `build` (python-app.yml) and `frontend-build` (frontend.yml gate job) are **required** status checks on `main`. `frontend.yml`'s `lint` job is `continue-on-error: true` until its ~18-error `npm run lint` baseline is cleared — then flip it and require it too.
 - Require branches up to date before merging; require conversation resolution before merging; disable "Allow force pushes"; disable "Allow deletions" on `main`.
 - Enable secret scanning + push protection (a third hardcoded credential — a `share_password` for `saviour_module` in `base_config.json` on the never-merged `refactor/ai_apa` branch — is already in `origin` history; treat that string as burned).
 - Hold off on requiring approving reviews unless there's consistently a second reviewer.

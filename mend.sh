@@ -34,6 +34,10 @@ if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
 fi
 
 set -Eeuo pipefail
+# A systemd-run unit (run_mend's detached launch) has no HOME, and nvm.sh reads
+# it -- under set -u that aborted the controller's frontend-build step.
+: "${HOME:=/root}"
+export HOME
 trap 'echo "mend.sh failed at line $LINENO (exit $?)" >&2' ERR
 
 TARGET_DIR="/usr/local/src/saviour"

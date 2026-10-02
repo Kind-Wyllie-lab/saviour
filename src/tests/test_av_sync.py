@@ -107,7 +107,19 @@ def _write_led_video(path, t0_ns, n_frames, pulses, size=(160, 120)):
 def test_led_onsets_and_lit_fraction_fit(tmp_path):
     t0 = 1_790_000_000_000_000_000
     rng = np.random.default_rng(5)
-    edges = [t0 + int((0.5 + 1.1 * i + rng.uniform(0, 0.033)) * 1e9) for i in range(10)]
+    # Pulse phase within its frame: either >=30% of that frame's exposure
+    # still to run, or in the gap after exposure ends (next frame fully lit).
+    # A first frame lit only a few % sits at the detection threshold and
+    # comes out encoder-dependent (it differed between Windows and Linux
+    # OpenCV builds), so the test avoids that sliver.
+    edges = []
+    for i in range(10):
+        frame = int((0.5 + 1.1 * i) * FPS)
+        if i % 2:
+            phase = rng.uniform(0, 0.7 * EXPOSURE_NS)
+        else:
+            phase = rng.uniform(EXPOSURE_NS + 0.5e6, PERIOD_NS - 0.5e6)
+        edges.append(t0 + frame * PERIOD_NS + int(phase))
     pulses = [(e, e + 50_000_000) for e in edges]
     path = str(tmp_path / "cam.avi")
     ts = _write_led_video(path, t0, int(12.5 * FPS), pulses)

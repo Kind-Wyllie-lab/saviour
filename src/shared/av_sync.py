@@ -373,10 +373,17 @@ def fraction_fit(offsets_ms: list[float], fractions: list[float]) -> dict | None
     close to the exposure time (a check that detection works), and a is
     where the frame timestamp sits relative to the moment light arrives:
     about -exposure if timestamps mark the start of exposure, about 0 if
-    they mark its end."""
+    they mark its end.
+
+    Only partly lit frames fit the line: a pulse that lands in the gap
+    between exposures fully lights the next frame (fraction 1) at any
+    offset from 0 to the gap length, so saturated points are dropped."""
     x = np.asarray(fractions, dtype=np.float64)
     y = np.asarray(offsets_ms, dtype=np.float64)
+    partial = x < 0.95
+    x, y = x[partial], y[partial]
     if x.size < 4 or np.ptp(x) < 0.2:
         return None
     b, a = np.polyfit(x, y, 1)
-    return {"intercept_ms": round(float(a), 2), "slope_ms": round(float(b), 2)}
+    return {"intercept_ms": round(float(a), 2), "slope_ms": round(float(b), 2),
+            "n_partial": int(x.size)}

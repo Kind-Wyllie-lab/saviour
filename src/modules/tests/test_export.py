@@ -6,6 +6,7 @@ and _mount_share retry + timeout behaviour.
 """
 
 import json
+import io
 import os
 import subprocess
 import tempfile
@@ -388,6 +389,37 @@ class TestMountShare:
                  patch("time.sleep"):
                 result = exp._mount_share()
             assert result is True
+
+    def test_dead_mount_invisible_to_ismount_is_unmounted_not_stacked(self):
+        """2026-10-02: after the controller was replaced, the old CIFS mount
+        made os.path.ismount() report False (stat fails on a dead server), so
+        a fresh mount went on top and the dead one retried its login forever.
+        The kernel mount table must count: umount first, then mount."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            target = os.path.realpath(exp.mount_point)
+            mounts = (f"//10.0.0.1/controller_share {target.replace(' ', chr(92) + '040')}"
+                      " cifs rw 0 0\n")
+            ok = MagicMock(returncode=0, stderr="")
+            real_open = open
+
+            def fake_open(path, *a, **kw):
+                if path == "/proc/self/mounts":
+                    return io.StringIO(mounts)
+                if ".export_probe_" in str(path):
+                    raise OSError(112, "Host is down")  # dead server
+                return real_open(path, *a, **kw)
+
+            with patch("subprocess.run", return_value=ok) as mock_run, \
+                 patch("os.path.ismount", return_value=False), \
+                 patch("builtins.open", side_effect=fake_open), \
+                 patch.object(exp, "_update_samba_settings"), \
+                 patch("time.sleep"):
+                result = exp._mount_share()
+            assert result is True
+            cmds = [c.args[0] for c in mock_run.call_args_list]
+            assert cmds[0][:2] == ["sudo", "umount"]
+            assert cmds[-1][:3] == ["sudo", "mount", "-t"]
 
 
 # ---------------------------------------------------------------------------

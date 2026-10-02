@@ -20,10 +20,6 @@ function timeAgo(ts) {
   return `${Math.floor(secs / 3600)}h ago`;
 }
 
-function fmt(val, unit, decimals = 0) {
-  if (val == null) return <span className="cell--muted">-</span>;
-  return `${Number(val).toFixed(decimals)}${unit}`;
-}
 
 // Pi `vcgencmd get_throttled` bitmask -> short flag lists (mirror of
 // src/shared/health.py decode_throttled; kept inline to avoid a shared JS dep).
@@ -69,11 +65,6 @@ function tempCell(t, throttled) {
   return <span className={cls}>{t.toFixed(1)}°C{marker}</span>;
 }
 
-function pctCell(pct, warnAt = 70, dangerAt = 85) {
-  if (pct == null) return <span className="cell--muted">-</span>;
-  const cls = pct >= dangerAt ? "val--danger" : pct >= warnAt ? "val--warn" : "";
-  return <span className={cls}>{pct.toFixed(1)}%</span>;
-}
 
 function cpuCell(pct) {
   if (pct == null) return <span className="cell--muted">-</span>;

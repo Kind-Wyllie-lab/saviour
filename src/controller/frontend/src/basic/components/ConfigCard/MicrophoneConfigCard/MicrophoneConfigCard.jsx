@@ -20,7 +20,7 @@ const RECONNECT_MS = 2500;
 // nor onError ever firing to recover it.
 const MIN_RECONNECT_MS = 3000;
 
-function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
+function MicrophoneStream({ ip, port }) {
   const [bumpKey, setBumpKey] = useState(Date.now());
   const [fullscreen, setFullscreen]   = useState(false);
   const stallTimer     = useRef(null);

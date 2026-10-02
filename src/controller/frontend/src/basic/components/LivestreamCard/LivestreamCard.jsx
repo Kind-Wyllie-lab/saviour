@@ -21,7 +21,6 @@ function LivestreamCard({ module }) {
   const [restarting, setRestarting] = useState(false);
   const stallTimer     = useRef(null);
   const reconnectTimer = useRef(null);
-  const configTimer    = useRef(null);
   const prevStatus     = useRef(module?.config_sync_status);
   const lastBumpAt       = useRef(0);
   const pendingBumpTimer = useRef(null);

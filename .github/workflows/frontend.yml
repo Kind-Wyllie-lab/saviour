@@ -18,11 +18,9 @@ defaults:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    # Non-blocking for now: `npm run lint` has a pre-existing baseline of
-    # ~18 no-unused-vars errors on staging. Flip continue-on-error to false
-    # (and make this a required check) once that baseline is cleared —
-    # mirrors how python-app.yml treats the full ruff rule set.
-    continue-on-error: true
+    # Blocking since the no-unused-vars baseline was cleared (2026-10-02);
+    # enforced through the frontend-build gate below. Warnings (5
+    # react-hooks/exhaustive-deps) don't fail eslint.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,10 +53,13 @@ jobs:
 
   # Single stable check name for branch protection: the matrix jobs report as
   # "build (<variant>)", and python-app.yml's job is also called "build".
+  # Requires lint too, so the one required check covers both.
   frontend-build:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, lint]
     if: always()
     steps:
       - run: test "${{ needs.build.result }}" = "success"
+        working-directory: .
+      - run: test "${{ needs.lint.result }}" = "success"
         working-directory: .

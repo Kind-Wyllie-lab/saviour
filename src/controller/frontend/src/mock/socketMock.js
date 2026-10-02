@@ -48,7 +48,6 @@ class MockSocket {
         },
       };
     }
-    // eslint-disable-next-line no-console
     console.info("%c[SAVIOUR] mock socket active — no backend. window.__mockSocket to poke it.",
       "color:#c60;font-weight:bold");
   }
@@ -80,7 +79,6 @@ class MockSocket {
         catch (err) { console.error(`[mock] ROUTER["${event}"] threw`, err); }
       }, RESPONSE_DELAY_MS);
     } else {
-      // eslint-disable-next-line no-console
       console.debug("[mock] unhandled:", event, payload ?? "");
     }
     return this;

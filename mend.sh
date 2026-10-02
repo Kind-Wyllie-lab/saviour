@@ -430,6 +430,18 @@ if [ -f /etc/saviour/config ]; then
     fi
 fi
 
+# Legacy per-type units (e.g. saviour-camera-module.service) from before the
+# single saviour.service. Found 2026-10-02 crash-looping every 2 s on a desk
+# camera (restart counter 15136, CHDIR into a path that no longer exists).
+for legacy in /etc/systemd/system/saviour-*-module.service; do
+    [ -f "$legacy" ] || continue
+    unit=$(basename "$legacy")
+    fix "Removing legacy unit $unit"
+    systemctl disable --now "$unit" >> "$LOG" 2>&1 || true
+    rm -f "$legacy"
+    systemctl daemon-reload
+done
+
 if systemctl is-active --quiet saviour.service; then
     fix "Restarting saviour.service to pick up code changes"
     systemctl restart saviour.service

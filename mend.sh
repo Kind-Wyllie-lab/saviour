@@ -438,6 +438,20 @@ if [ -f /etc/saviour/config ]; then
     fi
 fi
 
+# Chromium profile locks inherited from a cloned image: SingletonLock is a
+# symlink to "<hostname>-<pid>", and one naming another machine makes the
+# browser refuse with "profile in use by another computer" (2026-10-02).
+# Only locks naming a *different* host are removed, so a Chromium actually
+# running on this device is never touched.
+for lock in /home/*/.config/chromium/SingletonLock /root/.config/chromium/SingletonLock; do
+    [ -L "$lock" ] || continue
+    owner=$(readlink "$lock")
+    if [ "${owner%-*}" != "$(hostname)" ]; then
+        fix "Removing stale Chromium profile lock from ${owner%-*} ($lock)"
+        rm -f "$lock" "$(dirname "$lock")/SingletonCookie" "$(dirname "$lock")/SingletonSocket"
+    fi
+done
+
 # Legacy per-type units (e.g. saviour-camera-module.service) from before the
 # single saviour.service. Found 2026-10-02 crash-looping every 2 s on a desk
 # camera (restart counter 15136, CHDIR into a path that no longer exists).

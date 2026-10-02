@@ -4516,6 +4516,16 @@ class Web(ABC):
                     else:
                         self.logger.debug(f"cmd_ack for '{command}' from {module_id} — no web-layer action")
 
+                # Handled in Controller.handle_status_update (export queue,
+                # sync self-test, get_status probe replies) or purely
+                # informational (MJPEG preview start/stop). Without this they
+                # fell to the variant's handle_special_module_status, which
+                # logs "No logic for ..." as a WARNING on every module
+                # (re)connect and export.
+                case ("export_ready" | "export_failed" | "sync_selftest_result"
+                      | "status" | "streaming_started" | "streaming_stopped"):
+                    pass
+
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)
                     if not was_special_status:

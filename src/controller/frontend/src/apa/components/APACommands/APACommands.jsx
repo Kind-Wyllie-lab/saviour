@@ -10,7 +10,7 @@ function APACommands( {modules} ) {
     const activeSessions = sessionList.filter(s => s.state === "active" || s.state === "error");
     const [confirmStop, setConfirmStop] = useState(null); // session_name | null
 
-    const [shockState, setShockState] = useState(null);
+    const [, setShockState] = useState(null); // display is commented out below
     const [arduinoState, setArduinoState] = useState(null);
     const [spacePressed, setSpacePressed] = useState(false);
     // Persist arm state across page reloads within the same browser session

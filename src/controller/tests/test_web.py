@@ -2472,3 +2472,23 @@ class TestDashboardViewHandlers:
             client.emit("set_default_dashboard_view", {"id": "ghost"})
             rec = client.get_received()
         assert rec[0]["name"] == "dashboard_view_error"
+
+
+class TestKnownStatusTypesDontReachVariantFallback:
+    """Types the controller handles itself (or that are informational) must not
+    fall to the variant's handle_special_module_status, which logged
+    'No logic for ...' as a WARNING on every reconnect/export."""
+
+    def test_known_types_skip_the_fallback(self):
+        web, _ = _make_web_with_facade()
+        web.handle_special_module_status = MagicMock(return_value=False)
+        for t in ("export_ready", "export_failed", "sync_selftest_result",
+                  "status", "streaming_started", "streaming_stopped"):
+            web.handle_module_status("camera_d074", {"type": t})
+        web.handle_special_module_status.assert_not_called()
+
+    def test_unknown_type_still_reaches_the_fallback(self):
+        web, _ = _make_web_with_facade()
+        web.handle_special_module_status = MagicMock(return_value=False)
+        web.handle_module_status("camera_d074", {"type": "variant_specific"})
+        web.handle_special_module_status.assert_called_once()

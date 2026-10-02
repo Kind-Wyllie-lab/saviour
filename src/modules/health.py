@@ -78,6 +78,8 @@ class Health:
         check_interval = 0.1  # Check for stop flag every 100 ms
 
         while self.heartbeats_active and not stop_event.is_set():
+            # Read by Module._watchdog_alive (systemd watchdog).
+            self.heartbeat_progress_monotonic = time.monotonic()
             current_time = time.time()
             # Check if it's time to send a heartbeat
             if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):

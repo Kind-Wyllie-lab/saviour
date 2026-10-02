@@ -156,3 +156,12 @@ def test_grandmaster_steps_phc_and_keeps_ntp_on():
 def test_mend_rewrites_units_missing_the_step_threshold():
     mend = (REPO / "mend.sh").read_text(encoding="utf-8")
     assert 'grep -q -- " -S 1.0" /etc/systemd/system/phc2sys.service' in mend
+
+
+def test_service_unit_has_systemd_watchdog():
+    """2026-10-02: a camera module froze with the GIL held and systemd, seeing
+    a live process, never restarted it."""
+    body = _ptp_function("configure_service")
+    assert re.search(r"^WatchdogSec=\d+$", body, re.M)
+    assert re.search(r"^NotifyAccess=main$", body, re.M)
+    assert re.search(r"^Restart=always$", body, re.M)

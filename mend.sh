@@ -208,6 +208,14 @@ if [ "$DETECTED_ROLE" = "controller" ]; then
     # shellcheck source=/dev/null
     [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 
+    # Same installer saviour-config uses (official LTS build into /usr/local):
+    # before 2026-10-02 nothing installed Node, so a fresh controller had no
+    # web UI and this step only ever said "npm not found".
+    if ! command -v npm &>/dev/null && [ -x /usr/local/bin/saviour-config ]; then
+        fix "Node.js not found -- installing the official LTS build"
+        /usr/local/bin/saviour-config --ensure-node >> "$LOG" 2>&1 && hash -r \
+            || warn "Node.js install failed (no internet?)"
+    fi
     if command -v npm &>/dev/null; then
         fix "Rebuilding frontend for ${TYPE:-unknown} controller"
         cd "$TARGET_DIR/src/controller/frontend"

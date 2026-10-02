@@ -215,7 +215,29 @@ get_python_path() {
 }
 
 detect_interface_name() {
-    INTERFACE=$(nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-)
+    # NetworkManager connection profile for eth0. The device's *active*
+    # connection is empty when eth0 isn't connected -- e.g. a fresh
+    # controller on an isolated network, whose default DHCP profile gave up
+    # with no DHCP server -- which made set_own_ip modify "" and fail. Fall
+    # back to a saved ethernet profile bound to eth0, then any ethernet
+    # profile, then create one.
+    INTERFACE=$(nmcli -t -f GENERAL.CONNECTION device show eth0 2>/dev/null | cut -d: -f2-)
+    [ "$INTERFACE" = "--" ] && INTERFACE=""
+    if [ -z "$INTERFACE" ]; then
+        local name type iface
+        while IFS=: read -r name type; do
+            [ "$type" = "802-3-ethernet" ] || continue
+            iface=$(nmcli -g connection.interface-name connection show "$name" 2>/dev/null)
+            if [ "$iface" = "eth0" ]; then INTERFACE="$name"; break; fi
+            [ -z "$INTERFACE" ] && [ -z "$iface" ] && INTERFACE="$name"
+        done < <(nmcli -t -f NAME,TYPE connection show 2>/dev/null)
+    fi
+    if [ -z "$INTERFACE" ]; then
+        INTERFACE="saviour-eth0"
+        log "No ethernet connection profile found -- creating $INTERFACE"
+        run_logged nmcli connection add type ethernet ifname eth0 con-name "$INTERFACE"
+    fi
+    log "eth0 connection profile: $INTERFACE"
 }
 
 # ── Menus ──────────────────────────────────────────────────────────────────────
@@ -912,6 +934,20 @@ set_own_ip() {
             ipv4.dns "" \
             ipv4.method manual
     fi
+    # `modify` only edits the saved profile. On the boot-time --apply path (no
+    # terminal) bring it up so the address is live now; an interactive run
+    # reboots at the end instead, and re-activating here would cut off an SSH
+    # session running over eth0 before the config is written. Non-fatal: with
+    # no cable the address applies when eth0 links.
+    if [ ! -t 0 ]; then
+        run_logged nmcli connection up "$INTERFACE" \
+            || log "nmcli connection up $INTERFACE failed (no carrier?) -- address applies when eth0 links"
+    fi
+}
+
+warn_frontend_build_failed() {
+    log "WARNING: controller configured, but the web UI was not built -- run 'sudo /usr/local/src/saviour/mend.sh' once it has internet"
+    progress "WARNING: web UI not built (no internet / npm failed) -- run mend.sh later"
 }
 
 configure_ip_forwarding() {
@@ -1619,6 +1655,59 @@ configure_module_dependencies() {
     fi
 }
 
+# Node.js for the frontend build. Nothing used to install it: setup.sh never
+# did, and build_frontend only sourced an nvm that fresh images don't have. So
+# a fresh controller's first configuration died at `npm install` under
+# run_configuration's set -e -- before set_own_ip, so it never got its eth0
+# address, DHCP or .provisioned marker, and saviour-provision re-ran (and
+# failed) on every boot (found 2026-10-02 on two new controllers). Installs
+# the official LTS build (checksum-verified) into /usr/local, where root,
+# mend.sh and saviour-config all find it. Debian's nodejs is too old on
+# bookworm for Vite 7 and pulls in hundreds of packages on trixie.
+NODE_MAJOR=22
+ensure_node() {
+    local nvm_dir="/home/${SUDO_USER:-pi}/.nvm"
+    export NVM_DIR="$nvm_dir"
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+    if command -v npm > /dev/null 2>&1; then
+        return 0
+    fi
+
+    local arch
+    case "$(uname -m)" in
+        aarch64) arch=arm64 ;;
+        armv7l)  arch=armv7l ;;
+        x86_64)  arch=x64 ;;
+        *) log "ensure_node: unsupported architecture $(uname -m)"; return 1 ;;
+    esac
+    progress "Installing Node.js ${NODE_MAJOR} LTS (official build)…"
+    local ver
+    ver=$(curl -fsSL --max-time 30 https://nodejs.org/dist/index.json \
+        | python3 -c "import json, sys; print(next(r['version'] for r in json.load(sys.stdin) if r['lts'] and r['version'].startswith('v${NODE_MAJOR}.')))") \
+        || { log "ensure_node: could not look up the Node.js ${NODE_MAJOR} LTS version (no internet?)"; return 1; }
+    local tarball="node-${ver}-linux-${arch}.tar.xz"
+    local tmp
+    tmp=$(mktemp -d)
+    if ! curl -fsSL --max-time 600 -o "${tmp}/${tarball}" "https://nodejs.org/dist/${ver}/${tarball}"; then
+        log "ensure_node: download of ${tarball} failed"
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! (cd "$tmp" && curl -fsSL --max-time 60 "https://nodejs.org/dist/${ver}/SHASUMS256.txt" \
+            | grep " ${tarball}\$" | sha256sum -c -) >> "$LOG" 2>&1; then
+        log "ensure_node: checksum verification of ${tarball} failed"
+        rm -rf "$tmp"
+        return 1
+    fi
+    tar -xJf "${tmp}/${tarball}" -C /usr/local --strip-components=1 \
+        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md
+    rm -rf "$tmp"
+    hash -r
+    log "ensure_node: installed Node.js ${ver} to /usr/local"
+    command -v npm > /dev/null 2>&1
+}
+
 build_frontend() {
     # FRONTEND in the controller variant's manifest lets a variant reuse
     # another variant's frontend (e.g. a new controller class with no UI
@@ -1634,10 +1723,10 @@ build_frontend() {
     progress "Building frontend for $frontend_variant  (this may take a few minutes)…"
     log "Building frontend: $frontend_variant (controller type: $DEVICE_TYPE)"
 
-    local nvm_dir="/home/${SUDO_USER:-pi}/.nvm"
-    export NVM_DIR="$nvm_dir"
-    # shellcheck source=/dev/null
-    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+    if ! ensure_node; then
+        log "WARNING: no Node.js/npm -- frontend not built (run mend.sh once the controller has internet)"
+        return 1
+    fi
 
     # Which variant's App renders is a build-time env var, not a source edit —
     # main.jsx is a tracked, never-changing file that reads this at build time.
@@ -1649,8 +1738,11 @@ VITE_VARIANT=${frontend_variant}
 EOF
 
     cd "${DIR}/src/controller/frontend"
-    run_logged npm install
-    run_logged npm run build
+    if ! run_logged npm install || ! run_logged npm run build; then
+        cd "${DIR}"
+        log "WARNING: frontend build failed -- see the npm output above"
+        return 1
+    fi
     cd "${DIR}"
 }
 
@@ -1805,18 +1897,11 @@ run_configuration() {
     # without touching /etc/saviour/.provisioned (that marker lives outside
     # the repo and survives re-clones, so type_changed alone would wrongly
     # read as "nothing to do").
-    if [ "$DEVICE_ROLE" = "controller" ] && \
-       { $type_changed || [ ! -d "${DIR}/src/controller/frontend/dist" ]; }; then
-        build_frontend
-    fi
 
     if $role_changed; then
         if [ "$DEVICE_ROLE" = "controller" ]; then
             configure_ptp_timetransmitter
             configure_samba_share
-            detect_interface_name
-            set_own_ip
-            configure_dhcp_server
         else
             configure_ptp_timereceiver
             disable_samba_share
@@ -1830,6 +1915,12 @@ run_configuration() {
     # a fixed implementation of either reaches an already-provisioned device
     # without requiring an actual role flip.
     if [ "$DEVICE_ROLE" = "controller" ]; then
+        # eth0 address + DHCP on every run (both idempotent), not just when
+        # the role changes: a controller image re-run on a new network, or a
+        # DEVICE_IP edit, used to keep whatever address it had.
+        detect_interface_name
+        set_own_ip
+        configure_dhcp_server
         [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
         configure_mdns
         ensure_samba_human_accounts
@@ -1842,6 +1933,17 @@ run_configuration() {
     [ "$DEVICE_ROLE" = "module" ] && create_recording_folder
 
     configure_service
+
+    # Rebuild on a type change, or if dist/ is simply missing (a fresh clone
+    # or reset of this repo wipes the gitignored build output without
+    # touching /etc/saviour/.provisioned). Runs after networking and the
+    # service unit, and is never fatal: a controller with networking but no
+    # web UI is recoverable with mend.sh; one that aborted half-configured
+    # (the old order, under set -e) never got its IP or .provisioned marker.
+    if [ "$DEVICE_ROLE" = "controller" ] && \
+       { $type_changed || [ ! -d "${DIR}/src/controller/frontend/dist" ]; }; then
+        build_frontend || warn_frontend_build_failed
+    fi
 
     [ "$DEVICE_TYPE" = "microphone" ] && configure_microphone
     [ "$DEVICE_ROLE" = "module" ] && configure_module_dependencies
@@ -1922,6 +2024,12 @@ apply_from_config() {
 # ── Entry point ────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "--apply" ]; then
     apply_from_config
+    exit $?
+fi
+
+# Install Node.js for the frontend build if it's missing (mend.sh's hook).
+if [ "${1:-}" = "--ensure-node" ]; then
+    ensure_node
     exit $?
 fi
 

@@ -54,6 +54,15 @@
     "recording": {
         "_recording_filetype": "flac"
     },
+    "sync_pulse": {
+        "buzzer_pin": null,
+        "led_pin": null,
+        "drive": "dc",
+        "tone_hz": 4000,
+        "pulse_ms": 50,
+        "mic_distance_m": 0.0,
+        "_note": "A/V sync test rig on this Pi's GPIO (BCM numbering): a piezo buzzer and/or an LED fired together by the sync_selftest / sync_pulses commands. drive 'dc' = active buzzer (pin high), 'pwm' = passive piezo driven at tone_hz. mic_distance_m removes the sound's flight time. Pins null = rig not fitted. See docs/AV_SYNC_TEST.md."
+    },
     "audiomoth_labels": {},
     "_recording_folder": "rec",
     "_auto_export": true

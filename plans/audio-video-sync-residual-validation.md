@@ -167,6 +167,16 @@ recording.
 
 ## Phase A — sign & magnitude, camera out of the loop
 
+> **Tooling built 2026-10-02 (buzzer/LED hardware on order):** the buzzer
+> now hangs off the **microphone module's own GPIO** rather than a TTL
+> module, so edge and audio share one clock. `sync_selftest` (REST `POST
+> /api/v1/modules/<id>/sync_selftest`) runs this phase on the device with no
+> session and no camera; `sync_pulses` + `tools/av_sync_check.py` add an LED
+> and measure every camera too. Analysis in `src/shared/av_sync.py`, anchored
+> with `audio_align.parse_mic_sidecar` so the result is directly the
+> correction constant. How to run: `docs/AV_SYNC_TEST.md`. The TTL-module
+> rig below still works with `tools/analyse_audio_sync.py ttl`.
+
 Do **not** make hand-clap-vs-video the primary method: a clap is a multi-frame
 visual event, and you get one measurement per recording.
 

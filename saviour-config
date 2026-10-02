@@ -1347,6 +1347,44 @@ disable_dhcp_server() {
     systemctl disable dnsmasq 2>/dev/null || true
 }
 
+# Port 80 -> the web UI on :5000, so nobody has to type :5000.
+#  - PREROUTING: LAN clients, eth0 only (the UI listens on the eth0 address
+#    and must not answer on wlan0).
+#  - OUTPUT: the controller's own browser. Its traffic never passes
+#    PREROUTING, and since services bind the eth0 address (B2) localhost:5000
+#    isn't served either, so its http://<eth0 ip> and http://localhost are
+#    DNATed to <eth0 ip>:5000 (found 2026-10-02: only http://10.0.0.1:5000
+#    worked from the controller's own desktop). Tagged so a re-run replaces
+#    them even after an IP change.
+WEB_REDIRECT_TAG="saviour-web"
+_remove_tagged_nat_output() {
+    local rule
+    while rule=$(iptables -t nat -S OUTPUT 2>/dev/null | grep -- "--comment ${WEB_REDIRECT_TAG}" | head -1) \
+            && [ -n "$rule" ]; do
+        # shellcheck disable=SC2086
+        iptables -t nat ${rule/-A /-D } || break
+    done
+}
+configure_web_redirect() {
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000
+
+    _remove_tagged_nat_output
+    local ip
+    ip=$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    ip="${ip:-${DEVICE_IP%%/*}}"
+    if [ -n "$ip" ]; then
+        iptables -t nat -A OUTPUT -p tcp -d "$ip" --dport 80 \
+            -m comment --comment "$WEB_REDIRECT_TAG" -j DNAT --to-destination "${ip}:5000"
+        iptables -t nat -A OUTPUT -o lo -p tcp -d 127.0.0.1 --dport 80 \
+            -m comment --comment "$WEB_REDIRECT_TAG" -j DNAT --to-destination "${ip}:5000"
+    else
+        log "configure_web_redirect: no eth0 address -- local http://<ip> redirect skipped"
+    fi
+}
+
 configure_mdns() {
     progress "Configuring mDNS and iptables port forwarding…"
     log "Configuring mDNS"
@@ -1377,14 +1415,8 @@ EOF
         run_logged apt-get install -y iptables-persistent \
             -o Dpkg::Options::="--force-confdef"
     fi
-    # Drop the older rules (pre-addrtype-fix, then pre-eth0-scoping installs) —
-    # `-D` needs an exact flag match, so the new rule below can't remove them.
-    # Scoped to eth0: the web UI only listens on the eth0 address now
-    # (interface.listen_on = "lan"), and the redirect must not answer on wlan0.
-    iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
-    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
-    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000
+    # Drops the older rule variants too (pre-addrtype-fix, pre-eth0-scoping).
+    configure_web_redirect
     run_logged netfilter-persistent save
 }
 
@@ -1396,6 +1428,7 @@ disable_mdns() {
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
     iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    _remove_tagged_nat_output
     if is_installed "iptables-persistent"; then
         run_logged netfilter-persistent save
     fi
@@ -2078,6 +2111,8 @@ if [ "${1:-}" = "--apply-firewall" ]; then
     get_current_config          # sources /etc/saviour/config -> WAN_INTERFACE etc.
     if [ "$CURRENT_ROLE" = "controller" ]; then
         configure_firewall
+        configure_web_redirect   # mend.sh's route to existing controllers
+        netfilter-persistent save >> "$LOG" 2>&1 || true
         if ensure_smbconf_bind_interfaces; then
             systemctl restart smbd nmbd >> "$LOG" 2>&1 || true
         fi

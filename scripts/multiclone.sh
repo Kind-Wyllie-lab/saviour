@@ -287,6 +287,14 @@ fix_identity() {
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-02/PARTUUID=${newid_hex}-02/" "$mnt/etc/fstab"
   sudo truncate -s 0 "$mnt/etc/machine-id"
 
+  # Browser profile locks name the source machine (hostname-pid), so every
+  # clone's Chromium/Firefox reported "profile in use by another computer"
+  # (found 2026-10-02 on a controller cloned from a camera's image).
+  sudo rm -f "$mnt"/home/*/.config/chromium/Singleton{Lock,Cookie,Socket} \
+             "$mnt"/root/.config/chromium/Singleton{Lock,Cookie,Socket}
+  sudo find "$mnt"/home/*/.mozilla "$mnt"/root/.mozilla -maxdepth 4 \
+       \( -name lock -o -name .parentlock \) -delete 2>/dev/null || true
+
   # Regenerate unique host keys now, offline. Raspberry Pi OS only
   # auto-regenerates these via regenerate_ssh_host_keys.service, which is a
   # one-shot that disables itself after firing -- since the master image is

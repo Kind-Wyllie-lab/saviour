@@ -348,6 +348,9 @@ class Controller(ABC):
                     message = status_data.get('message', 'No message...')
                     self.logger.warning(f"Received error from {module_id}: {message}")
 
+                case 'streaming_started' | 'streaming_stopped':
+                    self.logger.debug(f"{module_id}: {status_type}")
+
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

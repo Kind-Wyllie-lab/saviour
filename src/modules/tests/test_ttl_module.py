@@ -11,8 +11,7 @@ wiring and the "None"-mode manual-output-pin path are covered end to end.
 """
 
 import threading
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -286,8 +285,13 @@ class TestTestPinExperimentStart:
 
         assert result["result"] == "success"
         assert "experiment_start" in result["message"]
-        # Let the background thread run past delay + pulse_duration.
-        time.sleep(0.15)
+        # Wait for the background thread itself rather than a fixed sleep: on
+        # a loaded CI runner 0.15 s wasn't always enough, and a thread left
+        # running leaked its time.sleep calls into the next test's patch
+        # (TestPulsePin "sleep called 5 times").
+        for t in [t for t in threading.enumerate() if t.name == "test-pin-19"]:
+            t.join(timeout=5)
+            assert not t.is_alive()
         # active_low: active = off(), inactive = on() -- one of each.
         pin_obj.off.assert_called_once()
         pin_obj.on.assert_called_once()
@@ -356,7 +360,9 @@ class TestPulsePin:
         # active_low default: active = off(), inactive = on()
         pin_obj.off.assert_called_once()
         pin_obj.on.assert_called_once()
-        sleep_mock.assert_called_once_with(0.02)
+        # time.sleep is patched process-wide, so count only this pulse's call
+        # (another test's leftover thread must not be able to fail this one).
+        assert sleep_mock.call_args_list.count(call(0.02)) == 1
 
         written = [c.args[0] for c in m._ttl_file_handle.write.call_args_list]
         assert len(written) == 2

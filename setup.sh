@@ -328,6 +328,9 @@ ConditionPathExists=/etc/saviour/config
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/saviour-config --apply
+# Bound it: a oneshot has no start timeout by default, and saviour.service
+# waits for it, so a provision that keeps failing could hold boot for ages.
+TimeoutStartSec=20min
 
 [Install]
 WantedBy=multi-user.target

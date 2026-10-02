@@ -19,7 +19,7 @@ export default function FirstRunModal() {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [ackVariant, setAckVariant] = useState(false);
-  const [prefilled, setPrefilled] = useState(false);
+  const [, setPrefilled] = useState(false); // only the updater's run-once guard is used
   const [status, setStatus] = useState(null); // null | "saving" | "error"
   const [error, setError] = useState("");
   const [snoozed, setSnoozed] = useState(

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
 
-export default function useExperimentTitle({ autoRequest = true } = {}) {
+export default function useExperimentTitle() {
     const [experimentName, setExperimentName] = useState("");
     const [experimenter, setExperimenter] = useState("");
 

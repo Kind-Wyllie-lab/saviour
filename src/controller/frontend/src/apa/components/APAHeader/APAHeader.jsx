@@ -1,6 +1,5 @@
 // React imports
-import React, { useEffect, useState } from "react";
-import socket from "../../../socket";
+import React from "react";
 import { Link } from "react-router";
 
 // Style imports

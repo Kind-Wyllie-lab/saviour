@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";

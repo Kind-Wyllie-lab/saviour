@@ -343,6 +343,16 @@ measures — the two efforts are complementary.
 
 ## Decision to make: default `camera.sync_mode` to `none` (free-run)?
 
+> **Decided 2026-10-02: keep `sync_mode` on** (owner's call). New evidence
+> recorded for the record: a sync client blocks in libcamera's
+> `RPiController::Sync::process` `recvfrom()` when its server disappears
+> (capture stops), and the stop that a role change needs then deadlocks the
+> process with the GIL held. Mitigated by the systemd watchdog
+> (`WatchdogSec=60`, `src/shared/sd_watchdog.py`): the process restarts in
+> ~1 min and the controller re-arms + gap-records. A mid-session server
+> loss therefore costs all clients ~1-2 min, not just the server.
+
+
 **Proposed 2026-09-07, not yet decided.** The whole client-camera frame-drop
 problem above is *caused by* libcamera software framesync: the sync **client**
 continuously nudges its frame interval to phase-track the server, which makes

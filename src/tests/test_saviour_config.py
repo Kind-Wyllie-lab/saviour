@@ -127,3 +127,32 @@ def test_apply_with_no_role_does_nothing(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "RECONFIGURED" not in r.stdout
     assert not (tmp_path / ".provisioned").exists()
+
+
+# --- PTP units: follow a grandmaster clock jump (2026-10-02) ---------------
+
+def _ptp_function(name: str) -> str:
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    m = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", src, re.S | re.M)
+    assert m, f"{name}() not found in saviour-config"
+    return m.group(0)
+
+
+def test_module_ptp_units_step_on_large_offsets():
+    """A fresh controller served its stale boot date, then NTP moved it a
+    month forward; ptp4l/phc2sys only step on their first update by default,
+    so every module slewed at the 6.4% limit with a month-wrong clock."""
+    body = _ptp_function("configure_ptp_timereceiver")
+    assert re.search(r"ExecStart=/usr/sbin/ptp4l .*--step_threshold=1\.0", body)
+    assert re.search(r"ExecStart=/usr/sbin/phc2sys .* -S 1\.0", body)
+
+
+def test_grandmaster_steps_phc_and_keeps_ntp_on():
+    body = _ptp_function("configure_ptp_timetransmitter")
+    assert re.search(r"ExecStart=/usr/sbin/phc2sys -a -r -r .* -S 1\.0", body)
+    assert "timedatectl set-ntp true" in body
+
+
+def test_mend_rewrites_units_missing_the_step_threshold():
+    mend = (REPO / "mend.sh").read_text(encoding="utf-8")
+    assert 'grep -q -- " -S 1.0" /etc/systemd/system/phc2sys.service' in mend

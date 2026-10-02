@@ -283,8 +283,12 @@ section "6/8  Logging + NTP"
 # PTP units: phc2sys's per-sample output out of the journal (see
 # saviour-config's note above configure_ptp_timetransmitter).
 if [ -f /etc/systemd/system/phc2sys.service ] \
-        && ! grep -q "/run/linuxptp/phc2sys.log" /etc/systemd/system/phc2sys.service; then
-    fix "Rewriting PTP units (phc2sys output out of the journal; brief PTP resync)"
+        && { ! grep -q "/run/linuxptp/phc2sys.log" /etc/systemd/system/phc2sys.service \
+             || ! grep -q -- " -S 1.0" /etc/systemd/system/phc2sys.service; }; then
+    # Also catches units without the 1 s step threshold (saviour-config's
+    # step-threshold note above _ptp_log_dir): without it a grandmaster clock jump leaves
+    # modules slewing for weeks.
+    fix "Rewriting PTP units (log path + step threshold; brief PTP resync)"
     saviour-config --apply-ptp-units >> "$LOG" 2>&1 \
         || warn "Could not rewrite PTP units — run 'sudo saviour-config --apply-ptp-units'"
 else

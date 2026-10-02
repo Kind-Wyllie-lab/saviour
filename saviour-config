@@ -947,6 +947,15 @@ EOF
 # diagnostics).
 # phc2sys's log dir must exist before systemd starts the unit (see above).
 # tmpfiles.d recreates it early on every boot; create it now as well.
+# Step thresholds (2026-10-02): ptp4l and phc2sys only step the clock on
+# their first update by default and slew every correction after that, at
+# most ~6.4%. When the grandmaster's own clock jumped (a fresh controller
+# serving its stale boot date, then corrected by NTP a month forward) every
+# module was left slewing at the frequency limit with a month-wrong clock,
+# which also made the controller see them flap offline all night. With a
+# 1 s threshold any offset that large is stepped at once; normal sub-ms
+# corrections are unaffected. (Literal "1.0" in the quoted heredocs below.)
+
 _ptp_log_dir() {
     echo "d /run/linuxptp 0755 root root -" > /etc/tmpfiles.d/saviour-linuxptp.conf
     systemd-tmpfiles --create /etc/tmpfiles.d/saviour-linuxptp.conf 2>/dev/null         || mkdir -p /run/linuxptp
@@ -955,6 +964,14 @@ _ptp_log_dir() {
 configure_ptp_timetransmitter() {
     progress "Configuring PTP grandmaster (timeTransmitter)…"
     log "Configuring PTP: timeTransmitter"
+
+    # The grandmaster's system clock is the fleet's time source (phc2sys -a -r
+    # -r copies it to the PHC), so it needs NTP whenever wlan0 has a route.
+    # configure_ptp_timereceiver disables timesyncd, and a module image
+    # re-provisioned as a controller used to keep it off (found 2026-10-01:
+    # a new controller served its 31 Aug boot clock to the whole fleet).
+    run_logged timedatectl set-ntp true || true
+    systemctl enable --now systemd-timesyncd 2>/dev/null || true
 
     systemctl stop ptp4l 2>/dev/null || true
     systemctl stop phc2sys 2>/dev/null || true
@@ -989,7 +1006,7 @@ Wants=ptp4l.service
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 3
-ExecStart=/usr/sbin/phc2sys -a -r -r -m -q
+ExecStart=/usr/sbin/phc2sys -a -r -r -m -q -S 1.0
 # /run/linuxptp comes from tmpfiles.d (_ptp_log_dir): systemd opens this
 # file before ExecStartPre or RuntimeDirectory= run, so neither can create it.
 StandardOutput=append:/run/linuxptp/phc2sys.log
@@ -1027,7 +1044,7 @@ Wants=network-online.target
 Type=simple
 User=root
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -q -s -2
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -q -s -2 --step_threshold=1.0
 Restart=always
 RestartSec=5
 
@@ -1044,7 +1061,7 @@ Wants=ptp4l.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -q -R 8
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -q -R 8 -S 1.0
 # /run/linuxptp comes from tmpfiles.d (_ptp_log_dir): systemd opens this
 # file before ExecStartPre or RuntimeDirectory= run, so neither can create it.
 StandardOutput=append:/run/linuxptp/phc2sys.log

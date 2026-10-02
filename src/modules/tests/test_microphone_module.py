@@ -300,3 +300,12 @@ def test_sync_pulses_logs_edges_and_csv_is_staged_at_stop(tmp_path):
     m._stop_recording()
     staged = [c.args[0] for c in m.facade.stage_file_for_export.call_args_list]
     assert str(path) in staged
+
+
+def test_sync_pulse_config_change_releases_gpio(tmp_path):
+    m = _sync_module(tmp_path)
+    pulser = MagicMock()
+    m._sync_pulser = pulser
+    m.configure_module_special({"sync_pulse.buzzer_pin"})
+    pulser.close.assert_called_once()
+    assert m._sync_pulser is None

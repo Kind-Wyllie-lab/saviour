@@ -1577,6 +1577,16 @@ class AudiomothModule(Module):
                 self.start_streaming()
             elif not want and self.is_streaming:
                 self.stop_streaming()
+        # Release the sync rig's GPIO lines when its config changes (rebuilt
+        # lazily on the next sync command); not mid-pulse-train.
+        if (any(k.startswith("sync_pulse.") for k in updated_keys)
+                and self._sync_pulser is not None
+                and self._sync_lock.acquire(blocking=False)):
+            try:
+                self._sync_pulser.close()
+                self._sync_pulser = None
+            finally:
+                self._sync_lock.release()
         audiomoth_keys = {k for k in updated_keys if k.startswith("audiomoth.")}
         if not audiomoth_keys:
             return

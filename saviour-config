@@ -506,6 +506,99 @@ credentials_menu() {
     esac
 }
 
+# ── Hardware scan (read-only) ─────────────────────────────────────────────────
+# What's attached, and which module types that suggests. Informational only:
+# it never blocks choosing a type (hardware can be plugged in later, and
+# ttl / external_host need nothing detectable). Every probe is bounded and
+# failure-tolerant -- a missing tool just reads as "not found".
+HW_REPORT=""
+HW_SUGGEST=""
+_hw_suggest() {
+    local s
+    for s in "$@"; do
+        case " $HW_SUGGEST " in *" $s "*) ;; *) HW_SUGGEST="${HW_SUGGEST:+$HW_SUGGEST }$s" ;; esac
+    done
+}
+_hw_line() { HW_REPORT+="$(printf '  %-14s %s' "$1" "$2")"$'\n'; }
+hardware_scan() {
+    HW_REPORT=""
+    HW_SUGGEST=""
+    local cams hailo moths basler arduino serial dev model hifi link
+
+    # CSI cameras (works while saviour holds the camera; enumerate only)
+    cams=$(timeout 10 rpicam-hello --list-cameras 2>/dev/null \
+        | sed -nE 's/^([0-9]+) : ([A-Za-z0-9_]+).*/\2/p' | paste -sd, - || true)
+    hailo=$(lspci 2>/dev/null | grep -i hailo | sed -E 's/.*Hailo Technologies Ltd\.? //' | head -1 || true)
+    if [ -n "$cams" ]; then
+        _hw_line "CSI camera" "$cams"
+        [ -n "$hailo" ] && _hw_suggest hailo_camera apa_camera lightning_camera
+        _hw_suggest camera habitat_camera loom_camera
+    else
+        _hw_line "CSI camera" "none found"
+    fi
+    _hw_line "Hailo NPU" "${hailo:-none found}${hailo:+$( [ -e /dev/hailo0 ] && echo ' (/dev/hailo0)' || echo ' (no /dev/hailo0 -- driver not loaded?)')}"
+
+    # USB devices by vendor ID: AudioMoth 16d0:06f3, Basler 2676
+    moths=$(lsusb 2>/dev/null | grep -ci "16d0:06f3" || true)
+    if [ "${moths:-0}" -gt 0 ]; then
+        _hw_line "AudioMoth" "${moths} connected"
+        _hw_suggest microphone
+    else
+        _hw_line "AudioMoth" "none found"
+    fi
+    basler=$(lsusb 2>/dev/null | grep -ci " 2676:" || true)
+    if [ "${basler:-0}" -gt 0 ]; then
+        _hw_line "Basler (USB)" "${basler} connected"
+        _hw_suggest basler_camera
+    else
+        _hw_line "Basler (USB)" "none found (GigE cameras aren't scanned)"
+    fi
+
+    # Serial: Arduino-style ACM devices, USB-serial adapters (RFID readers)
+    arduino=""
+    serial=""
+    for dev in /dev/ttyACM* /dev/ttyUSB*; do
+        [ -e "$dev" ] || continue
+        model=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_MODEL=//p' | head -1)
+        case "$dev" in
+            /dev/ttyACM*) arduino="${arduino:+$arduino, }${dev#/dev/}${model:+ ($model)}" ;;
+            *)            serial="${serial:+$serial, }${dev#/dev/}${model:+ ($model)}" ;;
+        esac
+    done
+    _hw_line "Arduino/ACM" "${arduino:-none found}"
+    [ -n "$arduino" ] && _hw_suggest apa_arduino
+    _hw_line "USB serial" "${serial:-none found}"
+    [ -n "$serial" ] && _hw_suggest rfid
+
+    if aplay -l 2>/dev/null | grep -qi hifiberry; then
+        _hw_line "HiFiBerry" "present"
+        _hw_suggest sound
+    else
+        _hw_line "HiFiBerry" "none found"
+    fi
+
+    [ -e /sys/class/nvme/nvme0 ] && _hw_line "NVMe" "present"
+    if [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = "1" ]; then
+        link="up, $(cat /sys/class/net/eth0/speed 2>/dev/null || echo '?') Mb/s"
+    else
+        link="no link"
+    fi
+    _hw_line "eth0" "$link"
+}
+
+show_hardware_scan() {
+    hardware_scan
+    local msg="\nDetected on this device:\n\n${HW_REPORT}"
+    if [ -n "$HW_SUGGEST" ]; then
+        msg+="\nSuggested module types:\n  ${HW_SUGGEST// /, }\n"
+    else
+        msg+="\nNo recording hardware found.\n"
+    fi
+    msg+="  (ttl and external_host need no detectable hardware)\n"
+    msg+="\nInformational only -- any type can still be chosen.\n"
+    wt --title "Hardware scan" --msgbox "$msg" 24 $W || true
+}
+
 main_menu() {
     if detect_clone; then
         clone_fix_menu
@@ -524,8 +617,9 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 7 \
+            $H $W 8 \
             "configure"   "Configure this device  (role / type)" \
+            "hardware"    "Hardware scan  (what's attached)" \
             "network"     "Network settings  (controller only)" \
             "credentials" "Credentials  (controller only)" \
             "refresh"     "Refresh identity  (hostname, SSH keys, machine ID)" \
@@ -535,6 +629,7 @@ main_menu() {
 
         case "$choice" in
             configure)   configure_device ;;
+            hardware)    show_hardware_scan ;;
             network)     network_settings ;;
             credentials) credentials_menu ;;
             refresh)     clone_fix_menu ;;
@@ -558,14 +653,21 @@ select_role() {
 # here required. Menu height is the actual variant count, not a hardcoded
 # number that has to be bumped by hand each time.
 select_variant_type() {
-    local role="$1" title="$2" prompt="$3"
-    local slug name desc args=() count=0
+    local role="$1" title="$2" prompt="$3" suggested="${4:-}"
+    local slug name desc args=() count=0 default=""
     while IFS=$'\t' read -r slug name desc; do
+        case " $suggested " in
+            *" $slug "*) desc="[detected] $desc"; [ -z "$default" ] && default="$slug" ;;
+        esac
         args+=("$slug" "$desc")
         count=$((count + 1))
     done < <(list_variants "$role")
 
-    wt --title "$title" --menu "$prompt" $H $W "$count" "${args[@]}"
+    if [ -n "$default" ]; then
+        wt --title "$title" --default-item "$default" --menu "$prompt" $H $W "$count" "${args[@]}"
+    else
+        wt --title "$title" --menu "$prompt" $H $W "$count" "${args[@]}"
+    fi
 }
 
 select_controller_type() {
@@ -575,7 +677,7 @@ select_controller_type() {
 
 select_module_type() {
     select_variant_type module "Module Type" \
-        "\nWhat type of module is this device?"
+        "\nWhat type of module is this device?" "$HW_SUGGEST"
 }
 
 select_gateway_mode() {
@@ -640,6 +742,7 @@ configure_device() {
     if [ "$role" = "controller" ]; then
         type=$(select_controller_type) || return
     else
+        show_hardware_scan   # informational; marks matching types below
         type=$(select_module_type) || return
     fi
 

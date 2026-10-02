@@ -109,3 +109,6 @@ src/modules/variants/rfid/rfid_server.py
 src/modules/variants/rfid/rfid_db.py
 src/modules/variants/rfid/rfid_data.db
 src/modules/variants/rfid/docs/
+
+# lgpio notification FIFOs (created in the TTL variant dir at runtime)
+.lgd-nfy*

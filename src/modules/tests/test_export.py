@@ -294,6 +294,37 @@ class TestDeleteOnExport:
                 "local exported copy was deleted despite delete_on_export=False"
 
 
+
+class TestExtractSessionFromFilename:
+    """Underscore module ids whose filenames carry the display name, not the
+    type: a stranded mic_leak2 segment was exported into the next session's
+    folder because the session couldn't be read off its filename."""
+
+    def _exp(self, tmpdir, module_id):
+        exp = _make_export(tmpdir)
+        exp.module_id = module_id
+        return exp
+
+    def test_microphone_filename(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "microphone_4703")
+            fn = ("mic_leak2-microphone_4703-110924_audiomoth_4703_"
+                  "24FCBD0864934CA8_(1_20261001-102428).flac")
+            assert exp._extract_session_from_filename(fn) ==                 "mic_leak2-microphone_4703-110924"
+
+    def test_hailo_display_name_with_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "hailo_camera_3606")
+            fn = "rot1min-101803_ai camera_3606_(0_20261002-091806).ts"
+            assert exp._extract_session_from_filename(fn) == "rot1min-101803"
+
+    def test_camera_full_id_marker_still_preferred(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "camera_d074")
+            fn = "rot1min_b-102844_camera_d074_(5_20261002-093347).ts"
+            assert exp._extract_session_from_filename(fn) == "rot1min_b-102844"
+
+
 class TestMountShare:
     def test_succeeds_on_first_attempt(self):
         with tempfile.TemporaryDirectory() as tmpdir:

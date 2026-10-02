@@ -56,6 +56,7 @@ from src.controller.notify import Notifier
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.web import Web
+from src.shared import sd_watchdog
 
 
 def resolve_listen_host(listen_on: str | None, lan_ip: str) -> str:
@@ -93,6 +94,9 @@ class Controller(ABC):
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
+        # systemd watchdog first (src/shared/sd_watchdog.py): a frozen
+        # interpreter is restarted rather than left serving nothing.
+        sd_watchdog.start(logger=self.logger)
         self.logger.info("Initializing managers")
 
         # Initialize config manager
@@ -121,6 +125,8 @@ class Controller(ABC):
         self.modules = Modules()
         self.recording = Recording()
         self.export_queue = ExportQueue(self.config)
+        # module_id -> latest sync_selftest_result (docs/AV_SYNC_TEST.md)
+        self.sync_selftest_results: dict = {}
         self.notifier = Notifier(self.config)
         self.facade = ControllerFacade(self)
 
@@ -211,6 +217,22 @@ class Controller(ABC):
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
 
+                case 'sync_selftest_result':
+                    self.sync_selftest_results[module_id] = status_data
+                    for label, r in (status_data.get('microphones') or {}).items():
+                        self.logger.info(
+                            f"{module_id} sync self-test {label}: "
+                            f"{r.get('detected', 0)}/{r.get('n', 0)} buzzes detected, "
+                            f"mean {r.get('mean_ms')} ms, sd {r.get('std_ms')} ms")
+                    if status_data.get('status') != 'ok':
+                        self.logger.warning(
+                            f"{module_id} sync self-test failed: "
+                            f"{status_data.get('message')}")
+                    publish = getattr(self.web, '_publish_api_event', None)
+                    if publish:
+                        publish('sync_selftest_result',
+                                {'module_id': module_id, **status_data})
+
                 case 'status':
                     self.logger.info(f"{module_id} sent status type message likely response to get status command")
                     self.modules.check_status(module_id, status_data)
@@ -262,6 +284,11 @@ class Controller(ABC):
                             creds = self.get_export_credentials()
                             if creds:
                                 self.communication.send_command(module_id, "set_export_config", creds)
+
+                    elif command == 'set_export_config':
+                        if result == 'success':
+                            self.modules.export_credentials_applied(
+                                module_id, self.get_export_credentials())
 
                     elif command == 'set_config':
                         if result == 'success':

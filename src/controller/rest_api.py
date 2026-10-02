@@ -603,6 +603,83 @@ def create_api_blueprint(web) -> Blueprint:
         }), 202
 
     # ------------------------------------------------------------------ #
+    # A/V sync test rig (buzzer/LED on a microphone module's GPIO,
+    # docs/AV_SYNC_TEST.md)
+    # ------------------------------------------------------------------ #
+
+    def _pulse_params(data: dict, count_key: str) -> dict | tuple:
+        out = {}
+        for key, cast in ((count_key, int), ("interval_s", float),
+                          ("pulse_ms", float)):
+            if data.get(key) is not None:
+                try:
+                    out[key] = cast(data[key])
+                except (TypeError, ValueError):
+                    return _error("invalid_request", f"'{key}' must be a number", 400)
+        return out
+
+    @bp.post("/modules/<module_id>/sync_selftest")
+    @require_auth
+    def start_sync_selftest(module_id):
+        """Run the microphone module's buzz->audio delay self-test (no
+        session needed). Body (all optional): {"pulses", "interval_s",
+        "pulse_ms"}. Returns 202; the result arrives as a
+        `sync_selftest_result` event and from GET on this path."""
+        modules = web.facade.get_modules()
+        if module_id not in modules:
+            return _error("not_found", f"Unknown module '{module_id}'", 404)
+        if modules[module_id].get("type") != "microphone":
+            return _error("wrong_module_type",
+                          f"Module '{module_id}' is not a microphone module", 400)
+        params = _pulse_params(request.get_json(silent=True) or {}, "pulses")
+        if isinstance(params, tuple):
+            return params
+        web.facade.send_command(module_id, "sync_selftest", params)
+        return jsonify({"module_id": module_id, "dispatched": True, **params}), 202
+
+    @bp.get("/modules/<module_id>/sync_selftest")
+    @require_auth
+    def get_sync_selftest(module_id):
+        """The latest sync self-test result from this module (held in
+        controller memory; gone after a controller restart)."""
+        result = web.facade.get_sync_selftest_result(module_id)
+        if result is None:
+            return _error("no_result",
+                          f"No sync self-test result from '{module_id}' yet", 404)
+        return jsonify(result)
+
+    @bp.post("/sessions/<session_name>/sync_pulses")
+    @require_auth
+    def session_sync_pulses(session_name):
+        """Fire buzzer/LED pulses during an ACTIVE session on its microphone
+        module(s); each logs its edges to a CSV that exports with the
+        session for tools/av_sync_check.py. Body (all optional): {"count",
+        "interval_s", "pulse_ms", "module_id"}."""
+        sessions = _sessions()
+        if session_name not in sessions:
+            return _error("not_found", f"Unknown session '{session_name}'", 404)
+        session = sessions[session_name]
+        if str(getattr(session, "state", "")) != "active":
+            return _error("session_not_active",
+                          f"Session '{session_name}' is not recording", 409)
+        data = request.get_json(silent=True) or {}
+        params = _pulse_params(data, "count")
+        if isinstance(params, tuple):
+            return params
+        modules = web.facade.get_modules()
+        targets = [m for m in (getattr(session, "modules", None) or [])
+                   if modules.get(m, {}).get("type") == "microphone"]
+        if data.get("module_id"):
+            targets = [m for m in targets if m == data["module_id"]]
+        if not targets:
+            return _error("no_target",
+                          "No microphone module in this session to fire pulses", 409)
+        for m in targets:
+            web.facade.send_command(m, "sync_pulses", params)
+        return jsonify({"session": session_name, "modules": targets,
+                        "dispatched": True, **params}), 202
+
+    # ------------------------------------------------------------------ #
     # system -- controller self-update (admin password only)
     # ------------------------------------------------------------------ #
 

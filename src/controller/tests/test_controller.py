@@ -171,3 +171,47 @@ class TestRecordingStartedClosesGaps:
         self._send(ctx, {"type": "recording_start_failed",
                          "error": "Already recording"})
         ctx.facade.module_recording_started.assert_called_once_with("cam1")
+
+
+# ---------------------------------------------------------------------------
+# handle_status_update -- sync_selftest_result (docs/AV_SYNC_TEST.md)
+# ---------------------------------------------------------------------------
+
+class TestSyncSelftestResult:
+    def test_result_is_stored_and_published(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        ctx.sync_selftest_results = {}
+        payload = {"type": "sync_selftest_result", "status": "ok",
+                   "microphones": {"24FC": {"n": 10, "detected": 10,
+                                            "mean_ms": 31.2, "std_ms": 0.4}}}
+        Controller.handle_status_update(ctx, "status/microphone_4703",
+                                        json.dumps(payload))
+        assert ctx.sync_selftest_results["microphone_4703"]["status"] == "ok"
+        ctx.web._publish_api_event.assert_called_once()
+        event, body = ctx.web._publish_api_event.call_args.args
+        assert event == "sync_selftest_result"
+        assert body["module_id"] == "microphone_4703"
+
+
+class TestSetExportConfigAck:
+    def test_success_ack_folds_credentials_into_cached_config(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        ctx.get_export_credentials = MagicMock(return_value={"share_password": "pw"})
+        data = json.dumps({"type": "cmd_ack", "command": "set_export_config",
+                           "result": "success"})
+        Controller.handle_status_update(ctx, "status/camera_0f5d", data)
+        ctx.modules.export_credentials_applied.assert_called_once_with(
+            "camera_0f5d", {"share_password": "pw"})
+
+    def test_failed_ack_changes_nothing(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        data = json.dumps({"type": "cmd_ack", "command": "set_export_config",
+                           "result": "error"})
+        Controller.handle_status_update(ctx, "status/camera_0f5d", data)
+        ctx.modules.export_credentials_applied.assert_not_called()

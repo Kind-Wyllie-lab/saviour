@@ -142,11 +142,16 @@ class Export:
             {session_name}_{animal_id}_{short_module_id}_{rest}
         e.g. habitat6-20260415-111025_A1_a349_(0_20260415-111025).ts
 
-        The short module ID is the last dash-separated component of self.module_id
-        (e.g. "a349" from "camera-module-a349").  Filenames use the short form
-        even though self.module_id is the full identifier.
+        The short module ID is the last dash- or underscore-separated component
+        of self.module_id (e.g. "a349" from "camera-module-a349", "4703" from
+        "microphone_4703").  Filenames use the short form with the module's
+        display name, not its type (mic files say "audiomoth_4703", hailo
+        "ai camera_3606"), so the full-id marker never matches for those.
+        Before the underscore split, leftover files from an earlier session
+        were exported into whichever session triggered the export (desk mic,
+        2026-10-02).
         """
-        short_id = self.module_id.split("-")[-1]
+        short_id = self.module_id.split("-")[-1].split("_")[-1]
         for strip_animal_id, marker in (
             (False, f"_{self.module_id}_"),
             (True,  f"_{short_id}_"),
@@ -694,11 +699,32 @@ class Export:
     _MOUNT_RETRY_DELAY_S = 2.0
     _MOUNT_TIMEOUT_S = 30
 
+    def _is_mounted(self) -> bool:
+        """True if anything is mounted at self.mount_point, including a dead
+        CIFS mount. os.path.ismount() stats the path, which fails against a
+        gone server and reports False; trusting it alone stacked a fresh mount
+        on top of the dead one, which then retried its login every 2 s for good
+        (desk fleet, 2026-10-02, after the controller was replaced). The
+        kernel's mount table still lists a dead mount."""
+        if os.path.ismount(self.mount_point):
+            return True
+        target = os.path.realpath(self.mount_point)
+        try:
+            with open("/proc/self/mounts") as f:
+                for line in f:
+                    fields = line.split()
+                    if len(fields) > 1 and (fields[1].replace("\\040", " ")
+                                            == target):
+                        return True
+        except OSError:
+            pass
+        return False
+
     def _mount_is_usable(self) -> bool:
         """True only if the mount point is mounted AND a file can be created
         and removed under it -- i.e. the share is really reachable and
         writable, not a stale handle to a gone server."""
-        if not os.path.ismount(self.mount_point):
+        if not self._is_mounted():
             return False
         probe = os.path.join(self.mount_point, f".export_probe_{os.getpid()}")
         try:
@@ -732,7 +758,7 @@ class Export:
                 f"as user {self.samba_share_username}"
             )
 
-            if os.path.ismount(self.mount_point):
+            if self._is_mounted():
                 self.logger.info(
                     f"Existing mount at {self.mount_point} is stale; replacing it")
                 for umount_cmd in (['sudo', 'umount', self.mount_point],

@@ -6,6 +6,7 @@ and _mount_share retry + timeout behaviour.
 """
 
 import json
+import io
 import os
 import subprocess
 import tempfile
@@ -293,6 +294,37 @@ class TestDeleteOnExport:
                 "local exported copy was deleted despite delete_on_export=False"
 
 
+
+class TestExtractSessionFromFilename:
+    """Underscore module ids whose filenames carry the display name, not the
+    type: a stranded mic_leak2 segment was exported into the next session's
+    folder because the session couldn't be read off its filename."""
+
+    def _exp(self, tmpdir, module_id):
+        exp = _make_export(tmpdir)
+        exp.module_id = module_id
+        return exp
+
+    def test_microphone_filename(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "microphone_4703")
+            fn = ("mic_leak2-microphone_4703-110924_audiomoth_4703_"
+                  "24FCBD0864934CA8_(1_20261001-102428).flac")
+            assert exp._extract_session_from_filename(fn) ==                 "mic_leak2-microphone_4703-110924"
+
+    def test_hailo_display_name_with_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "hailo_camera_3606")
+            fn = "rot1min-101803_ai camera_3606_(0_20261002-091806).ts"
+            assert exp._extract_session_from_filename(fn) == "rot1min-101803"
+
+    def test_camera_full_id_marker_still_preferred(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "camera_d074")
+            fn = "rot1min_b-102844_camera_d074_(5_20261002-093347).ts"
+            assert exp._extract_session_from_filename(fn) == "rot1min_b-102844"
+
+
 class TestMountShare:
     def test_succeeds_on_first_attempt(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -388,6 +420,37 @@ class TestMountShare:
                  patch("time.sleep"):
                 result = exp._mount_share()
             assert result is True
+
+    def test_dead_mount_invisible_to_ismount_is_unmounted_not_stacked(self):
+        """2026-10-02: after the controller was replaced, the old CIFS mount
+        made os.path.ismount() report False (stat fails on a dead server), so
+        a fresh mount went on top and the dead one retried its login forever.
+        The kernel mount table must count: umount first, then mount."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            target = os.path.realpath(exp.mount_point)
+            mounts = (f"//10.0.0.1/controller_share {target.replace(' ', chr(92) + '040')}"
+                      " cifs rw 0 0\n")
+            ok = MagicMock(returncode=0, stderr="")
+            real_open = open
+
+            def fake_open(path, *a, **kw):
+                if path == "/proc/self/mounts":
+                    return io.StringIO(mounts)
+                if ".export_probe_" in str(path):
+                    raise OSError(112, "Host is down")  # dead server
+                return real_open(path, *a, **kw)
+
+            with patch("subprocess.run", return_value=ok) as mock_run, \
+                 patch("os.path.ismount", return_value=False), \
+                 patch("builtins.open", side_effect=fake_open), \
+                 patch.object(exp, "_update_samba_settings"), \
+                 patch("time.sleep"):
+                result = exp._mount_share()
+            assert result is True
+            cmds = [c.args[0] for c in mock_run.call_args_list]
+            assert cmds[0][:2] == ["sudo", "umount"]
+            assert cmds[-1][:3] == ["sudo", "mount", "-t"]
 
 
 # ---------------------------------------------------------------------------

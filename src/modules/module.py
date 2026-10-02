@@ -60,6 +60,7 @@ from src.modules.health import Health
 from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.recording import Recording
+from src.shared import sd_watchdog
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -124,9 +125,18 @@ class Module(ABC):
         "_check_ptp", "_check_recording", "_check_export",
     }
 
+    # A heartbeat loop that hasn't iterated for this long, or a command that
+    # has held the listener this long, withholds the systemd watchdog
+    # keep-alive so the service restarts (src/shared/sd_watchdog.py).
+    _WATCHDOG_HEARTBEAT_STALL_S = 60
+    _WATCHDOG_COMMAND_STALL_S = 300
+
     def __init__(self, module_type: str):
         # Setup logging first
         self.logger = logging.getLogger(__name__)
+        # systemd watchdog before anything slow (network waits, camera init):
+        # a frozen interpreter then gets restarted instead of sitting silent.
+        sd_watchdog.start(self._watchdog_alive, logger=self.logger)
 
         # Module type
         self.module_type = module_type
@@ -1447,6 +1457,23 @@ class Module(ABC):
 
 
     """Helper functions"""
+    def _watchdog_alive(self) -> tuple[bool, str | None]:
+        """Keep-alive gate for the systemd watchdog. Attributes may not exist
+        yet during __init__; only loops that are running are judged."""
+        now = time.monotonic()
+        health = getattr(self, "health", None)
+        if health is not None and getattr(health, "heartbeats_active", False):
+            stalled = now - getattr(health, "heartbeat_progress_monotonic", now)
+            if stalled > self._WATCHDOG_HEARTBEAT_STALL_S:
+                return False, f"heartbeat loop stalled for {stalled:.0f}s"
+        comms = getattr(self, "communication", None)
+        if comms is not None and getattr(comms, "command_listener_running", False):
+            stalled = now - getattr(comms, "listener_progress_monotonic", now)
+            if stalled > self._WATCHDOG_COMMAND_STALL_S:
+                return False, (f"command listener stuck for {stalled:.0f}s "
+                               f"(last: {str(getattr(comms, 'last_command', ''))[:40]})")
+        return True, None
+
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""
         # mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix (old method, led to MAC changing)

@@ -415,16 +415,7 @@ class Modules:
 
             # Resolve pending status if we were waiting for confirmation
             if state.target_config:
-                public_true = self._filter_private_keys(config)
-                diffs = self._diff_dicts(public_true, state.target_config)
-                state.diffs = diffs
-                if diffs:
-                    self.logger.warning(
-                        f"Config mismatch for {module_id} after update: {diffs}"
-                    )
-                    state.status = ConfigSyncStatus.FAILED
-                else:
-                    state.status = ConfigSyncStatus.SYNCED
+                self._resolve_sync_status(module_id, state)
             else:
                 # No target set yet — treat initial fetch as synced baseline.
                 # Store the filtered version so future diffs (which also filter
@@ -440,6 +431,46 @@ class Modules:
 
         self.broadcast_updated_modules()
 
+
+    def _resolve_sync_status(self, module_id: str, state) -> None:
+        """Compare true vs target config and set SYNCED / FAILED. Caller
+        holds _config_lock."""
+        public_true = self._filter_private_keys(state.true_config or {})
+        diffs = self._diff_dicts(public_true, state.target_config)
+        state.diffs = diffs
+        if diffs:
+            self.logger.warning(f"Config mismatch for {module_id} after update: {diffs}")
+            state.status = ConfigSyncStatus.FAILED
+        else:
+            state.status = ConfigSyncStatus.SYNCED
+
+    def export_credentials_applied(self, module_id: str, creds: dict) -> None:
+        """A module acked set_export_config: fold the credentials it now holds
+        into the cached true_config and re-judge sync status.
+
+        That ack carries no `config`, so without this the cached export
+        section kept whatever get_config returned earlier -- on a fresh
+        install, no password -- and the module showed FAILED (diff on
+        export.share_password) although it held the right credentials and
+        exported fine (desk camera_0f5d, 2026-10-02)."""
+        if not creds:
+            return
+        with self._config_lock:
+            state = self._config_states.get(module_id)
+            if state is None or not state.true_config:
+                return
+            export = dict(state.true_config.get("export") or {})
+            # Only keys the module's config (or the target) actually carries:
+            # adding new ones would itself read as a diff against the target.
+            known = set(export) | set((state.target_config or {}).get("export") or {})
+            export.update({k: v for k, v in creds.items()
+                           if k in known and v not in (None, "")})
+            state.true_config = {**state.true_config, "export": export}
+            if module_id in self._modules:
+                self._modules[module_id].config = state.true_config
+            if state.target_config and state.status != ConfigSyncStatus.PENDING:
+                self._resolve_sync_status(module_id, state)
+        self.broadcast_updated_modules()
 
     def set_target_module_config(self, module_id: str, config: dict) -> None:
         """

@@ -51,6 +51,12 @@ class ExportQueue:
         # Tracks (export_path, attempt, dispatch_time) for each active module
         # so we can re-enqueue on failure and detect stale dispatches.
         self._active_meta: dict = {}
+        # module_id -> export_path for an export_ready that arrived while that
+        # module's export was already running. The running export_staged has
+        # already listed to_export/, so files staged since (e.g. the final
+        # segment + journal at session stop) need one more pass. Not
+        # persisted: an active entry is re-queued on restart anyway.
+        self._rerun: dict = {}
 
     # How long (seconds) a dispatched start_export may go unanswered before
     # we assume the module missed it and re-dispatch on the next export_ready.
@@ -84,9 +90,12 @@ class ExportQueue:
     def enqueue(self, module_id: str, export_path: str) -> bool:
         """Add a module to the export queue and dispatch if capacity allows.
 
-        Deduplicates: if the module is already queued or actively exporting,
-        the signal is dropped — export_staged picks up ALL files in to_export/
-        so a single dispatch handles every pending segment.
+        Deduplicates: if the module is already queued the signal is dropped —
+        the queued export_staged will pick up ALL files in to_export/. If the
+        module is actively exporting, the running pass has already listed
+        to_export/, so one follow-up run is scheduled for when it completes
+        (found 2026-10-02: a stop landing 2 s into a rotation export left the
+        final segment on the module while the session reported complete).
 
         Returns True if this signal actually queued a new attempt, False if
         it was dropped as a duplicate. Callers (facade.enqueue_export) use
@@ -114,12 +123,9 @@ class ExportQueue:
                         self._active_meta.pop(module_id, None)
                         # fall through to normal enqueue below
                     else:
-                        self.logger.debug(
-                            f"Export already active for {module_id} — ignoring duplicate signal"
-                        )
-                        return False
+                        return self._schedule_rerun(module_id, export_path)
                 else:
-                    return False
+                    return self._schedule_rerun(module_id, export_path)
             if any(mid == module_id for mid, _, _ in self._queue):
                 self.logger.debug(
                     f"Export already queued for {module_id} — ignoring duplicate signal"
@@ -134,11 +140,33 @@ class ExportQueue:
             self._save()
             return True
 
+    def _schedule_rerun(self, module_id: str, export_path: str) -> bool:
+        """Must be called while self._lock is held. True only for the signal
+        that schedules the follow-up (it gets its own complete/failed later)."""
+        if module_id in self._rerun:
+            self.logger.debug(
+                f"Follow-up export already scheduled for {module_id} — ignoring")
+            return False
+        self._rerun[module_id] = export_path
+        self.logger.info(
+            f"Export already active for {module_id} — will run again when it "
+            f"completes to pick up newly staged files ({export_path})")
+        return True
+
+    def _queue_rerun(self, module_id: str) -> None:
+        """Must be called while self._lock is held."""
+        export_path = self._rerun.pop(module_id, None)
+        if export_path is not None:
+            self._queue.append((module_id, export_path, 1))
+            self.logger.info(
+                f"Queued follow-up export for {module_id} → {export_path}")
+
     def on_export_complete(self, module_id: str) -> None:
         """Call when a module reports export_complete."""
         with self._lock:
             self._active.discard(module_id)
             meta = self._active_meta.pop(module_id, None)
+            self._queue_rerun(module_id)
             # Wall-clock the dispatch took — the concrete number needed to
             # confirm/deny export-burst contention on the shared trunk after
             # a segment rotation (see the PTP network-topology notes).
@@ -182,11 +210,15 @@ class ExportQueue:
                         f"Export failed for {module_id}{took} after {self.MAX_RETRIES} attempts "
                         f"— giving up on {export_path}"
                     )
+                    # A retry above carries the follow-up flag to its own
+                    # completion; giving up must still run the follow-up.
+                    self._queue_rerun(module_id)
             else:
                 self.logger.warning(
                     f"Export failed for {module_id} (no retry metadata). "
                     f"Queue depth: {len(self._queue)}, active: {len(self._active)}"
                 )
+                self._queue_rerun(module_id)
             self._dispatch_next()
             self._save()
             return is_final

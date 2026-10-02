@@ -2632,6 +2632,10 @@ class Web(ABC):
                         if filename.endswith('.pyc'):
                             continue
                         abs_path = os.path.join(dirpath, filename)
+                        # Regular files only: a FIFO (lgpio's .lgd-nfy*)
+                        # blocks open() forever.
+                        if not os.path.isfile(abs_path):
+                            continue
                         rel_path = os.path.relpath(abs_path, src_root)
                         try:
                             zf.write(abs_path, rel_path)

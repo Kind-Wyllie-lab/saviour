@@ -1227,3 +1227,84 @@ class TestOpenAPI:
         assert "/api/v1/sessions" in spec["paths"]
         assert "/api/v1/readiness" in spec["paths"]
         assert "/api/v1/sessions/{session_name}/marker" in spec["paths"]
+
+
+# ---------------------------------------------------------------------------
+# A/V sync test rig (docs/AV_SYNC_TEST.md)
+# ---------------------------------------------------------------------------
+
+class TestSyncRig:
+    def _web(self):
+        web, password = _web()
+        web.facade.get_modules.return_value = {
+            "microphone_4703": {"type": "microphone"},
+            "camera_d074": {"type": "camera"},
+        }
+        web.facade.get_sync_selftest_result.return_value = None
+        return web, password
+
+    def test_selftest_dispatches_to_microphone(self):
+        web, password = self._web()
+        resp = web.app.test_client().post(
+            "/api/v1/modules/microphone_4703/sync_selftest",
+            json={"pulses": 12, "interval_s": 1.5}, headers=_auth(password))
+        assert resp.status_code == 202
+        web.facade.send_command.assert_called_once_with(
+            "microphone_4703", "sync_selftest", {"pulses": 12, "interval_s": 1.5})
+
+    def test_selftest_rejects_non_microphone_and_bad_numbers(self):
+        web, password = self._web()
+        client = web.app.test_client()
+        resp = client.post("/api/v1/modules/camera_d074/sync_selftest",
+                           json={}, headers=_auth(password))
+        assert resp.status_code == 400
+        resp = client.post("/api/v1/modules/microphone_4703/sync_selftest",
+                           json={"pulses": "lots"}, headers=_auth(password))
+        assert resp.status_code == 400
+        resp = client.post("/api/v1/modules/ghost/sync_selftest",
+                           json={}, headers=_auth(password))
+        assert resp.status_code == 404
+        web.facade.send_command.assert_not_called()
+
+    def test_get_selftest_result(self):
+        web, password = self._web()
+        client = web.app.test_client()
+        url = "/api/v1/modules/microphone_4703/sync_selftest"
+        assert client.get(url, headers=_auth(password)).status_code == 404
+        web.facade.get_sync_selftest_result.return_value = {"status": "ok"}
+        resp = client.get(url, headers=_auth(password))
+        assert resp.status_code == 200
+        assert resp.get_json() == {"status": "ok"}
+
+    def test_session_sync_pulses_targets_session_microphones(self):
+        web, password = self._web()
+        web.facade.get_recording_sessions.return_value = {
+            "s1": _session("s1", state="active",
+                           modules=["microphone_4703", "camera_d074"]),
+        }
+        resp = web.app.test_client().post(
+            "/api/v1/sessions/s1/sync_pulses", json={"count": 20},
+            headers=_auth(password))
+        assert resp.status_code == 202
+        assert resp.get_json()["modules"] == ["microphone_4703"]
+        web.facade.send_command.assert_called_once_with(
+            "microphone_4703", "sync_pulses", {"count": 20})
+
+    def test_session_sync_pulses_needs_active_session_with_a_mic(self):
+        web, password = self._web()
+        web.facade.get_recording_sessions.return_value = {
+            "stopped": _session("stopped", state="stopped",
+                                modules=["microphone_4703"]),
+            "nomic": _session("nomic", state="active", modules=["camera_d074"]),
+        }
+        client = web.app.test_client()
+        r = client.post("/api/v1/sessions/stopped/sync_pulses", json={},
+                        headers=_auth(password))
+        assert r.status_code == 409
+        r = client.post("/api/v1/sessions/nomic/sync_pulses", json={},
+                        headers=_auth(password))
+        assert r.status_code == 409
+        r = client.post("/api/v1/sessions/ghost/sync_pulses", json={},
+                        headers=_auth(password))
+        assert r.status_code == 404
+        web.facade.send_command.assert_not_called()

@@ -11,8 +11,12 @@ Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicroph
 """
 
 import collections
+import json
 import math
 import os
+import random
+import shutil
+import tempfile
 import re
 import subprocess
 import sys
@@ -30,6 +34,7 @@ AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
+from modules.sync_pulser import SyncPulser
 
 # Colour palette for the monitoring spectrogram, selectable via
 # `monitoring.colormap`. Value None => plain grayscale (no colormap).
@@ -107,6 +112,12 @@ class AudiomothModule(Module):
         # accumulated across the current recording
         self._session_clipped_samples = 0
         self._session_total_samples = 0
+
+        # A/V sync test rig (buzzer/LED on this Pi's GPIO, docs/AV_SYNC_TEST.md)
+        self._sync_pulser: SyncPulser | None = None
+        self._sync_lock = threading.Lock()      # one pulse train at a time
+        self._sync_pulses_csv: str | None = None  # this recording's edge log
+        self.last_sync_selftest: dict | None = None
 
         # Update config
         self.config.load_module_config("microphone_config.json")
@@ -267,6 +278,7 @@ class AudiomothModule(Module):
         self.recording_start_time = time.time()
         self._session_clipped_samples = 0
         self._session_total_samples = 0
+        self._sync_pulses_csv = None
 
         # Re-scan PulseAudio for fresh device IDs. The AudioMoth encodes its
         # sample rate in its USB device name, so configure_audiomoth() causes a
@@ -354,7 +366,8 @@ class AudiomothModule(Module):
     def _record_microphone_segment(self, serial: str, mic_id: str, filename: str,
                                    intended_start_at: float | None,
                                    segment_stop: threading.Event | None = None,
-                                   recording_stop: threading.Event | None = None) -> None:
+                                   recording_stop: threading.Event | None = None,
+                                   register: bool = True) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         segment_stop = segment_stop or self._segment_stop_event
         recording_stop = recording_stop or self._recording_stop_event
@@ -371,7 +384,8 @@ class AudiomothModule(Module):
         clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
 
         timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
-        self.facade.add_session_file(timestamps_filename)
+        if register:  # False for sync_selftest scratch recordings
+            self.facade.add_session_file(timestamps_filename)
 
         self.logger.info(f"Recording thread started for audiomoth {serial}: {filename}")
         # Periodic "still capturing" line — one silently-dead recorder thread
@@ -522,6 +536,11 @@ class AudiomothModule(Module):
                 timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
                 if os.path.isfile(timestamps_filename):
                     self.facade.stage_file_for_export(timestamps_filename)
+            # A pulse train still running stops on _recording_stop_event;
+            # wait for it so the edge log is complete before it's staged.
+            with self._sync_lock:
+                if self._sync_pulses_csv and os.path.isfile(self._sync_pulses_csv):
+                    self.facade.stage_file_for_export(self._sync_pulses_csv)
 
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
@@ -555,6 +574,235 @@ class AudiomothModule(Module):
                 })
             return False
 
+
+    """A/V sync test rig (docs/AV_SYNC_TEST.md)"""
+
+    _SYNC_MAX_PULSES = 200
+
+    def _sync_cfg(self) -> dict:
+        get = self.config.get
+        return {
+            "buzzer_pin": get("sync_pulse.buzzer_pin", None),
+            "led_pin": get("sync_pulse.led_pin", None),
+            "drive": get("sync_pulse.drive", "dc"),
+            "tone_hz": float(get("sync_pulse.tone_hz", 4000)),
+            "pulse_ms": float(get("sync_pulse.pulse_ms", 50)),
+            "mic_distance_m": float(get("sync_pulse.mic_distance_m", 0.0)),
+        }
+
+    def _get_sync_pulser(self) -> SyncPulser:
+        """The pulser for the current config (rebuilt if the pins changed)."""
+        cfg = self._sync_cfg()
+        want = (cfg["buzzer_pin"], cfg["led_pin"], cfg["drive"], cfg["tone_hz"])
+        p = self._sync_pulser
+        if p is None or getattr(p, "config_key", None) != want:
+            if p is not None:
+                p.close()
+            p = SyncPulser(cfg["buzzer_pin"], cfg["led_pin"], cfg["drive"], cfg["tone_hz"])
+            p.config_key = want
+            self._sync_pulser = p
+        return p
+
+    @classmethod
+    def _pulse_args(cls, count, interval_s, pulse_ms, default_ms) -> tuple[int, float, float]:
+        count = max(1, min(int(count), cls._SYNC_MAX_PULSES))
+        # >= 1 s: av_sync's onset search window is ~0.7 s wide.
+        interval_s = max(1.0, float(interval_s))
+        pulse_ms = float(pulse_ms if pulse_ms is not None else default_ms)
+        return count, interval_s, min(max(pulse_ms, 1.0), 500.0)
+
+    def _fire_pulses(self, pulser: SyncPulser, count: int, interval_s: float,
+                     pulse_ms: float, stop: threading.Event | None = None,
+                     on_edge=None) -> list:
+        """Fire `count` pulses with up to 30% random extra spacing, so pulse
+        phase against the camera frame clock spreads across the frame."""
+        edges = []
+        for i in range(count):
+            if stop is not None and stop.is_set():
+                break
+            edge = pulser.pulse(pulse_ms)
+            edges.append(edge)
+            if on_edge is not None:
+                on_edge(edge)
+            if i < count - 1:
+                wait = interval_s * (1.0 + 0.3 * random.random())
+                if stop is not None:
+                    if stop.wait(wait):
+                        break
+                else:
+                    time.sleep(wait)
+        return edges
+
+    @command()
+    def sync_pulses(self, count: int = 10, interval_s: float = 2.0,
+                    pulse_ms: float | None = None) -> dict:
+        """Fire buzzer/LED pulses during a recording and log each edge to
+        `<prefix>_sync_pulses_(<seg>_<utc>).csv`, which exports with the
+        session; tools/av_sync_check.py then compares buzz-in-audio and
+        LED-in-video against the edges. Returns immediately."""
+        if not self.is_recording:
+            return {"result": "error", "message": "sync_pulses needs an active recording"}
+        try:
+            pulser = self._get_sync_pulser()
+        except ValueError as e:
+            return {"result": "error", "message": str(e)}
+        cfg = self._sync_cfg()
+        count, interval_s, pulse_ms = self._pulse_args(
+            count, interval_s, pulse_ms, cfg["pulse_ms"])
+        if not self._sync_lock.acquire(blocking=False):
+            return {"result": "error", "message": "a sync pulse train is already running"}
+
+        if self._sync_pulses_csv is None:
+            strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+            self._sync_pulses_csv = (
+                f"{self.facade.get_filename_prefix()}_sync_pulses_"
+                f"({self.facade.get_segment_id()}_{strtime}).csv")
+            self.facade.add_session_file(self._sync_pulses_csv)
+        path = self._sync_pulses_csv
+        stop = self._recording_stop_event
+
+        def _run():
+            try:
+                new = not os.path.isfile(path)
+                with open(path, "a") as f:
+                    if new:
+                        f.write("edge_on_ns,edge_spread_ns,edge_off_ns,pulse_ms,"
+                                "buzzer_pin,led_pin,drive,tone_hz,mic_distance_m\n")
+
+                    def log(e):
+                        f.write(f"{e.on_ns},{e.on_spread_ns},{e.off_ns},{pulse_ms},"
+                                f"{cfg['buzzer_pin']},{cfg['led_pin']},{cfg['drive']},"
+                                f"{cfg['tone_hz']},{cfg['mic_distance_m']}\n")
+                        f.flush()
+
+                    edges = self._fire_pulses(pulser, count, interval_s, pulse_ms,
+                                              stop=stop, on_edge=log)
+                self.logger.info(f"sync_pulses: fired {len(edges)} pulse(s) -> {path}")
+            except Exception as e:
+                self.logger.error(f"sync_pulses failed: {e}", exc_info=True)
+            finally:
+                self._sync_lock.release()
+
+        threading.Thread(target=_run, daemon=True, name="sync-pulses").start()
+        return {"result": "started", "count": count, "interval_s": interval_s,
+                "pulse_ms": pulse_ms}
+
+    @command()
+    def sync_selftest(self, pulses: int = 10, interval_s: float = 1.2,
+                      pulse_ms: float | None = None, lead_s: float = 4.0,
+                      keep_audio: bool = False) -> dict:
+        """Measure buzz edge -> audio onset on every AudioMoth, outside a
+        session: records to a scratch dir through the same recorder code as
+        a real segment, fires `pulses` buzzes, times each onset with the
+        aligner's own anchor (audio_align.parse_mic_sidecar) and sends a
+        `sync_selftest_result` status. Returns immediately."""
+        if self.is_recording:
+            return {"result": "error", "message": "not while recording -- use sync_pulses"}
+        try:
+            pulser = self._get_sync_pulser()
+        except ValueError as e:
+            return {"result": "error", "message": str(e)}
+        if pulser.buzzer_pin is None:
+            return {"result": "error", "message": "sync_pulse.buzzer_pin is not configured"}
+        pulses, interval_s, pulse_ms = self._pulse_args(
+            pulses, interval_s, pulse_ms, self._sync_cfg()["pulse_ms"])
+        if not self._sync_lock.acquire(blocking=False):
+            return {"result": "error", "message": "a sync test is already running"}
+
+        def _run():
+            try:
+                result = self._run_sync_selftest(
+                    pulser, pulses, interval_s, pulse_ms,
+                    max(2.0, float(lead_s)), bool(keep_audio))
+            except Exception as e:
+                self.logger.error(f"sync_selftest failed: {e}", exc_info=True)
+                result = {"status": "error", "message": str(e)}
+            finally:
+                self._sync_lock.release()
+            self.last_sync_selftest = result
+            self.facade.send_status({"type": "sync_selftest_result", **result})
+
+        threading.Thread(target=_run, daemon=True, name="sync-selftest").start()
+        return {"result": "started", "pulses": pulses, "interval_s": interval_s,
+                "pulse_ms": pulse_ms}
+
+    def _run_sync_selftest(self, pulser: SyncPulser, pulses: int, interval_s: float,
+                           pulse_ms: float, lead_s: float, keep_audio: bool) -> dict:
+        from src.controller.audio_align import parse_mic_sidecar
+        from src.shared import av_sync
+
+        self._find_audiomoths()
+        if not self.audiomoths:
+            return {"status": "error", "message": "No AudioMoth microphones detected"}
+        cfg = self._sync_cfg()
+        scratch = tempfile.mkdtemp(prefix="saviour-sync-selftest-")
+        seg_stop, rec_stop = threading.Event(), threading.Event()
+        threads, files = [], {}
+        for serial, mic_id in self.audiomoths.items():
+            path = os.path.join(scratch, f"selftest_{self._label_for(serial)}.flac")
+            files[serial] = path
+            t = threading.Thread(
+                target=self._record_microphone_segment,
+                args=(serial, mic_id, path, None, seg_stop, rec_stop),
+                kwargs={"register": False}, daemon=True, name=f"selftest-{serial}")
+            threads.append(t)
+            t.start()
+        try:
+            time.sleep(lead_s)  # past the first-read priming, enough blocks to fit
+            edges = self._fire_pulses(pulser, pulses, interval_s, pulse_ms)
+            time.sleep(1.5)
+        finally:
+            seg_stop.set()
+            for t in threads:
+                t.join(timeout=10)
+        edge_ns = [e.on_ns for e in edges]
+
+        per_mic = {}
+        for serial, path in files.items():
+            sidecar = f"{os.path.splitext(path)[0]}_timestamps.txt"
+            label = self._label_for(serial)
+            if not (os.path.isfile(path) and os.path.isfile(sidecar)):
+                per_mic[label] = {"serial": serial, "error": "no recording produced"}
+                continue
+            fit = parse_mic_sidecar(sidecar, path)
+            onsets = av_sync.audio_onsets(
+                path, fit.sample0_wall_ns, fit.measured_rate_hz, edge_ns,
+                mic_distance_m=cfg["mic_distance_m"])
+            per_mic[label] = {
+                "serial": serial,
+                **av_sync.summarise([o.offset_ms if o else None for o in onsets]),
+                "offsets_ms": [round(o.offset_ms, 2) if o else None for o in onsets],
+                "snr_db": [round(o.snr_db, 1) if o else None for o in onsets],
+                "fit_rate_hz": round(fit.measured_rate_hz, 1),
+                "fit_residual_p95_ms": round(fit.residual_p95_ms, 2),
+                "frame_num": fit.frame_num,
+            }
+
+        result = {
+            "status": "ok",
+            "timestamp": time.time(),
+            "pulses": len(edges),
+            "interval_s": interval_s,
+            "pulse_ms": pulse_ms,
+            "drive": cfg["drive"],
+            "mic_distance_m": cfg["mic_distance_m"],
+            "edge_spread_us_max": round(
+                max((e.on_spread_ns for e in edges), default=0) / 1e3, 1),
+            "block_size": int(self.config.get("microphone.block_size", 32768)),
+            "microphones": per_mic,
+            "sign": "positive offset = audio onset placed after the GPIO edge",
+        }
+        with open(os.path.join(scratch, "sync_selftest.json"), "w") as f:
+            json.dump(result, f, indent=2)
+        if keep_audio:
+            result["scratch_dir"] = scratch
+        else:
+            shutil.rmtree(scratch, ignore_errors=True)
+        for label, r in per_mic.items():
+            self.logger.info(
+                f"sync_selftest {label}: {r.get('detected', 0)}/{r.get('n', 0)} "
+                f"detected, mean {r.get('mean_ms')} ms, sd {r.get('std_ms')} ms")
+        return result
 
     """Monitoring stream"""
 

@@ -400,6 +400,40 @@ informational only.
 
 ---
 
+## A/V sync test rig
+
+A piezo buzzer + LED on a **microphone module's** GPIO, used to measure how
+well audio lines up with video. Wiring, config (`sync_pulse.*`) and how to
+read the results: [`docs/AV_SYNC_TEST.md`](AV_SYNC_TEST.md).
+
+### `POST /api/v1/modules/<id>/sync_selftest`
+
+Buzz-to-audio delay self-test on a microphone module (no session). Body, all
+optional: `{"pulses": 10, "interval_s": 1.2, "pulse_ms": 50}`. Returns `202`
+immediately; the module records to a scratch folder for ~`4 + pulses x
+interval_s` seconds. `400` `wrong_module_type` if not a microphone, `404`
+unknown module. The module refuses (logged) while recording or with no
+`sync_pulse.buzzer_pin` configured.
+
+### `GET /api/v1/modules/<id>/sync_selftest`
+
+The latest result (controller memory only): per AudioMoth `mean_ms` /
+`median_ms` / `std_ms` / min / max of *audio onset − GPIO edge*, each
+pulse's offset and SNR, plus the clock-fit quality. Positive = audio placed
+late. `404` `no_result` before the first run. Also published on `/events`
+as `sync_selftest_result`.
+
+### `POST /api/v1/sessions/<name>/sync_pulses`
+
+Fire buzzer/LED pulses on the session's microphone module(s) while it
+records; each edge goes to a `*_sync_pulses_*.csv` that exports with the
+session for `tools/av_sync_check.py`. Body, all optional: `{"count": 10,
+"interval_s": 2, "pulse_ms": 50, "module_id": "..."}` (`interval_s` is at
+least 1). `202` with the targeted `modules`; `409` `session_not_active` or
+`no_target` (no microphone module in the session); `404` unknown session.
+
+---
+
 ## Controller self-update
 
 ### `GET /api/v1/system/update`

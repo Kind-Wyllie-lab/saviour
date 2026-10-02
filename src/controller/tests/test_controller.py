@@ -171,3 +171,25 @@ class TestRecordingStartedClosesGaps:
         self._send(ctx, {"type": "recording_start_failed",
                          "error": "Already recording"})
         ctx.facade.module_recording_started.assert_called_once_with("cam1")
+
+
+# ---------------------------------------------------------------------------
+# handle_status_update -- sync_selftest_result (docs/AV_SYNC_TEST.md)
+# ---------------------------------------------------------------------------
+
+class TestSyncSelftestResult:
+    def test_result_is_stored_and_published(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        ctx.sync_selftest_results = {}
+        payload = {"type": "sync_selftest_result", "status": "ok",
+                   "microphones": {"24FC": {"n": 10, "detected": 10,
+                                            "mean_ms": 31.2, "std_ms": 0.4}}}
+        Controller.handle_status_update(ctx, "status/microphone_4703",
+                                        json.dumps(payload))
+        assert ctx.sync_selftest_results["microphone_4703"]["status"] == "ok"
+        ctx.web._publish_api_event.assert_called_once()
+        event, body = ctx.web._publish_api_event.call_args.args
+        assert event == "sync_selftest_result"
+        assert body["module_id"] == "microphone_4703"

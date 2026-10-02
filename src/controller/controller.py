@@ -121,6 +121,8 @@ class Controller(ABC):
         self.modules = Modules()
         self.recording = Recording()
         self.export_queue = ExportQueue(self.config)
+        # module_id -> latest sync_selftest_result (docs/AV_SYNC_TEST.md)
+        self.sync_selftest_results: dict = {}
         self.notifier = Notifier(self.config)
         self.facade = ControllerFacade(self)
 
@@ -210,6 +212,22 @@ class Controller(ABC):
 
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
+
+                case 'sync_selftest_result':
+                    self.sync_selftest_results[module_id] = status_data
+                    for label, r in (status_data.get('microphones') or {}).items():
+                        self.logger.info(
+                            f"{module_id} sync self-test {label}: "
+                            f"{r.get('detected', 0)}/{r.get('n', 0)} buzzes detected, "
+                            f"mean {r.get('mean_ms')} ms, sd {r.get('std_ms')} ms")
+                    if status_data.get('status') != 'ok':
+                        self.logger.warning(
+                            f"{module_id} sync self-test failed: "
+                            f"{status_data.get('message')}")
+                    publish = getattr(self.web, '_publish_api_event', None)
+                    if publish:
+                        publish('sync_selftest_result',
+                                {'module_id': module_id, **status_data})
 
                 case 'status':
                     self.logger.info(f"{module_id} sent status type message likely response to get status command")

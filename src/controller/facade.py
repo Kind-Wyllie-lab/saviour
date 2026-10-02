@@ -87,6 +87,9 @@ class ControllerFacade:
     def get_recording_sessions(self) -> dict:
         return self.controller.recording.get_recording_sessions()
 
+    def get_sync_selftest_result(self, module_id: str) -> dict | None:
+        return getattr(self.controller, "sync_selftest_results", {}).get(module_id)
+
 
     def get_system_state(self) -> dict:
         """A compact rollup of controller state. Consumed by the Socket.IO

@@ -64,7 +64,10 @@ def test_keepalive_sent_while_alive(notify_socket, monkeypatch):
     monkeypatch.delenv("WATCHDOG_PID", raising=False)
     thread = sd_watchdog.start(logger=MagicMock())
     assert isinstance(thread, threading.Thread)
-    got = _drain(notify_socket, 2.5)
+    try:
+        got = _drain(notify_socket, 2.5)
+    finally:
+        thread.stop_event.set()
     assert got.count("WATCHDOG=1") >= 2
 
 
@@ -73,11 +76,15 @@ def test_keepalive_withheld_while_not_alive(notify_socket, monkeypatch):
     monkeypatch.delenv("WATCHDOG_PID", raising=False)
     state = {"ok": False}
     log = MagicMock()
-    sd_watchdog.start(lambda: (state["ok"], "heartbeat loop stalled"), logger=log)
-    assert _drain(notify_socket, 2.2) == []
-    assert log.error.call_count == 1          # logged once, not every period
-    state["ok"] = True
-    assert "WATCHDOG=1" in _drain(notify_socket, 1.5)
+    thread = sd_watchdog.start(
+        lambda: (state["ok"], "heartbeat loop stalled"), logger=log)
+    try:
+        assert _drain(notify_socket, 2.2) == []
+        assert log.error.call_count == 1      # logged once, not every period
+        state["ok"] = True
+        assert "WATCHDOG=1" in _drain(notify_socket, 1.5)
+    finally:
+        thread.stop_event.set()
 
 
 # --------------------------------------------------------------------------- #

@@ -97,5 +97,7 @@ def start(alive: Callable[[], tuple[bool, str | None]] | None = None,
                           f"systemd will restart the service if it persists")
             stop_event.wait(period)
 
-    return supervise("systemd.watchdog", _loop, stop_event=threading.Event(),
-                     logger=log)
+    stop_event = threading.Event()
+    thread = supervise("systemd.watchdog", _loop, stop_event=stop_event, logger=log)
+    thread.stop_event = stop_event  # for tests; production never stops it
+    return thread

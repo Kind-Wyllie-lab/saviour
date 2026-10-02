@@ -181,3 +181,56 @@ class TestConfigSyncThreadSafety:
 
         for mid in ids:
             assert mgr._config_states[mid].status == ConfigSyncStatus.SYNCED
+
+
+class TestExportCredentialsApplied:
+    """2026-10-02: a freshly installed camera showed FAILED with the only diff
+    export.share_password -- set_export_config's ack carries no config, so the
+    cached true_config kept get_config's password-less export section."""
+
+    CREDS = {"share_ip": "10.0.0.1", "share_path": "controller_share",
+             "share_username": "saviour_module", "share_password": "pw"}
+
+    def _failed_on_password(self):
+        mgr = _make_modules()
+        _register(mgr)
+        no_pw = {"camera": {"fps": 30},
+                 "export": {"share_ip": "10.0.0.1", "share_password": None}}
+        mgr.received_module_config("camera_abc", no_pw)
+        mgr.set_target_module_config(
+            "camera_abc", {"camera": {"fps": 30},
+                           "export": {"share_ip": "10.0.0.1", "share_password": "pw"}})
+        mgr.received_module_config("camera_abc", no_pw)
+        assert mgr._config_states["camera_abc"].status == ConfigSyncStatus.FAILED
+        return mgr
+
+    def test_ack_folds_credentials_in_and_resolves_synced(self):
+        mgr = self._failed_on_password()
+        mgr.export_credentials_applied("camera_abc", self.CREDS)
+        state = mgr._config_states["camera_abc"]
+        assert state.status == ConfigSyncStatus.SYNCED
+        assert state.diffs == []
+        assert state.true_config["export"]["share_password"] == "pw"
+        assert state.true_config["camera"] == {"fps": 30}   # other sections kept
+
+    def test_real_mismatch_elsewhere_stays_failed(self):
+        mgr = _make_modules()
+        _register(mgr)
+        mgr.received_module_config("camera_abc", {"camera": {"fps": 30}})
+        mgr.set_target_module_config("camera_abc", {"camera": {"fps": 60}})
+        mgr.received_module_config("camera_abc", {"camera": {"fps": 30}})
+        mgr.export_credentials_applied("camera_abc", self.CREDS)
+        assert mgr._config_states["camera_abc"].status == ConfigSyncStatus.FAILED
+
+    def test_pending_change_is_not_judged_early(self):
+        mgr = _make_modules()
+        _register(mgr)
+        mgr.received_module_config("camera_abc", {"camera": {"fps": 30}})
+        mgr.set_target_module_config("camera_abc", {"camera": {"fps": 60}})
+        mgr.export_credentials_applied("camera_abc", self.CREDS)
+        assert mgr._config_states["camera_abc"].status == ConfigSyncStatus.PENDING
+
+    def test_unknown_module_or_no_config_is_a_noop(self):
+        mgr = _make_modules()
+        mgr.export_credentials_applied("ghost", self.CREDS)
+        assert "ghost" not in mgr._config_states

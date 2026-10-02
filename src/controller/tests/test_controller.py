@@ -193,3 +193,25 @@ class TestSyncSelftestResult:
         event, body = ctx.web._publish_api_event.call_args.args
         assert event == "sync_selftest_result"
         assert body["module_id"] == "microphone_4703"
+
+
+class TestSetExportConfigAck:
+    def test_success_ack_folds_credentials_into_cached_config(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        ctx.get_export_credentials = MagicMock(return_value={"share_password": "pw"})
+        data = json.dumps({"type": "cmd_ack", "command": "set_export_config",
+                           "result": "success"})
+        Controller.handle_status_update(ctx, "status/camera_0f5d", data)
+        ctx.modules.export_credentials_applied.assert_called_once_with(
+            "camera_0f5d", {"share_password": "pw"})
+
+    def test_failed_ack_changes_nothing(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        data = json.dumps({"type": "cmd_ack", "command": "set_export_config",
+                           "result": "error"})
+        Controller.handle_status_update(ctx, "status/camera_0f5d", data)
+        ctx.modules.export_credentials_applied.assert_not_called()

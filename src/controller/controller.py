@@ -285,6 +285,11 @@ class Controller(ABC):
                             if creds:
                                 self.communication.send_command(module_id, "set_export_config", creds)
 
+                    elif command == 'set_export_config':
+                        if result == 'success':
+                            self.modules.export_credentials_applied(
+                                module_id, self.get_export_credentials())
+
                     elif command == 'set_config':
                         if result == 'success':
                             config_data = status_data.get('config')

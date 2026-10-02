@@ -70,11 +70,13 @@ class TestEnqueueReturnValue:
         q, _ = _make_queue()
         assert q.enqueue("mod_a", "path_a") is True
 
-    def test_returns_false_when_already_active(self):
+    def test_signal_while_active_schedules_one_follow_up(self):
+        """The first signal while active schedules a follow-up (it gets its
+        own complete later, so it counts); further ones are duplicates."""
         q, _ = _make_queue(max_concurrent=1)
         assert q.enqueue("mod_a", "path_a") is True
-        # mod_a is now active; a second export_ready signal for it is a duplicate
-        assert q.enqueue("mod_a", "path_a_second_clip") is False
+        assert q.enqueue("mod_a", "path_a_second_clip") is True
+        assert q.enqueue("mod_a", "path_a_third_clip") is False
 
     def test_returns_false_when_already_queued(self):
         q, _ = _make_queue(max_concurrent=1)
@@ -274,3 +276,46 @@ class TestPersistence:
                 q, facade = _make_queue()
                 q.start()   # should not raise
             assert facade.send_command.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Follow-up export for files staged while a module's export was running
+# (2026-10-02: a session stop landed 2 s into a rotation export; the final
+# segment was staged after export_staged had listed to_export/, the second
+# export_ready was dropped as a duplicate, and the file stayed on the module
+# while the session reported every export complete.)
+# ---------------------------------------------------------------------------
+
+class TestFollowUpWhenBusy:
+    def test_signal_during_export_runs_again_after_complete(self):
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "s/20261002/cam")
+        q.enqueue("mod_a", "s/20261002/cam")       # stop staged more files
+        assert facade.send_command.call_count == 1
+        q.on_export_complete("mod_a")
+        assert facade.send_command.call_count == 2
+        assert facade.send_command.call_args[0] == (
+            "mod_a", "start_export", {"export_path": "s/20261002/cam"})
+        q.on_export_complete("mod_a")
+        assert facade.send_command.call_count == 2  # no third pass
+
+    def test_follow_up_waits_behind_its_own_retry(self):
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "p")
+        q.enqueue("mod_a", "p")
+        assert q.on_export_failed("mod_a") is False   # retry queued
+        assert facade.send_command.call_count == 2    # the retry
+        q.on_export_complete("mod_a")                 # retry done
+        assert facade.send_command.call_count == 3    # then the follow-up
+        q.on_export_complete("mod_a")
+        assert facade.send_command.call_count == 3
+
+    def test_follow_up_still_runs_after_final_failure(self):
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "p")
+        q.enqueue("mod_a", "p")
+        for _ in range(ExportQueue.MAX_RETRIES - 1):
+            q.on_export_failed("mod_a")
+        calls = facade.send_command.call_count
+        assert q.on_export_failed("mod_a") is True    # gave up on this pass
+        assert facade.send_command.call_count == calls + 1  # follow-up runs

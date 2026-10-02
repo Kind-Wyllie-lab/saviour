@@ -303,6 +303,9 @@ class Communication:
         self.command_socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
 
         while self.command_listener_running and not stop_event.is_set():
+            # Read by Module._watchdog_alive (systemd watchdog): stops
+            # advancing while one command holds this thread.
+            self.listener_progress_monotonic = time.monotonic()
             # Honour a reconnect asked for by the ack watchdog (or the
             # connection-error branch below). Rebuilding the socket has to
             # happen on this thread, never on the watchdog's — see

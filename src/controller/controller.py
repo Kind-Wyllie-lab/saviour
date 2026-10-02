@@ -56,6 +56,7 @@ from src.controller.notify import Notifier
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.web import Web
+from src.shared import sd_watchdog
 
 
 def resolve_listen_host(listen_on: str | None, lan_ip: str) -> str:
@@ -93,6 +94,9 @@ class Controller(ABC):
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
+        # systemd watchdog first (src/shared/sd_watchdog.py): a frozen
+        # interpreter is restarted rather than left serving nothing.
+        sd_watchdog.start(logger=self.logger)
         self.logger.info("Initializing managers")
 
         # Initialize config manager

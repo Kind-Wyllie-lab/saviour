@@ -1522,6 +1522,14 @@ WorkingDirectory=${DIR}/${PYTHON_PATH}
 ExecStart=${DIR}/env/bin/python ${PYTHON_FILE}
 Restart=always
 RestartSec=10
+# systemd watchdog (src/shared/sd_watchdog.py): the process sends a keep-alive
+# every 20 s; a frozen interpreter (found 2026-10-02: libcamera stop() held
+# the GIL forever) stops it and the service is killed (SIGABRT, thread stacks
+# to the journal via faulthandler) and restarted.
+WatchdogSec=60
+NotifyAccess=main
+# SIGKILL if the abort itself doesn't finish (default would wait 90 s).
+TimeoutAbortSec=15
 StandardOutput=journal
 StandardError=journal
 # Tag every line so 'journalctl -t saviour' works and the diagnostic/

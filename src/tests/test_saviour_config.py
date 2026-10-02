@@ -165,3 +165,60 @@ def test_service_unit_has_systemd_watchdog():
     assert re.search(r"^WatchdogSec=\d+$", body, re.M)
     assert re.search(r"^NotifyAccess=main$", body, re.M)
     assert re.search(r"^Restart=always$", body, re.M)
+
+
+# --- run_configuration ordering: a failed frontend build must not abort ----
+# 2026-10-02: no Node.js on fresh controllers, so `npm install` failed under
+# run_configuration's set -e -- before set_own_ip -- leaving the controller
+# with no eth0 address, no DHCP, no .provisioned marker, and
+# saviour-provision re-running (and failing) on every boot.
+
+def _run_configuration(tmp_path: Path, build_ok: bool) -> subprocess.CompletedProcess:
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    defined = set(re.findall(r"^([a-z_][a-z0-9_]*)\(\) \{", src, re.M))
+    body = _extract(src, "run_configuration").replace(
+        "/var/lib/saviour", (tmp_path / "varlib").as_posix())
+    called = {w for w in re.findall(r"\b([a-z_][a-z0-9_]*)\b", body)
+              if w in defined and w not in ("run_configuration", "log", "read_config_value")}
+    stubs = "\n".join(f'{f}() {{ echo "CALLED {f}"; }}' for f in sorted(called))
+    stubs += f"\nbuild_frontend() {{ echo 'CALLED build_frontend'; return {0 if build_ok else 1}; }}"
+    cfg, marker, log = (tmp_path / n for n in ("config", ".provisioned", "log"))
+    harness = f"""set -uo pipefail
+CONFIG_FILE='{cfg.as_posix()}'
+PROVISIONED_FILE='{marker.as_posix()}'
+LOG='{log.as_posix()}'
+DIR='{tmp_path.as_posix()}'
+DEVICE_ROLE=controller DEVICE_TYPE=basic GATEWAY_MODE=none GATEWAY="" WAN_INTERFACE="" DEVICE_IP=10.0.0.1/16
+{_extract(src, "log")}
+{_extract(src, "read_config_value")}
+{stubs}
+systemctl() {{ echo "CALLED systemctl $*"; }}
+{body}
+run_configuration && echo "RUN_OK"
+"""
+    return subprocess.run([BASH, "-c", harness], capture_output=True, text=True,
+                          timeout=60)
+
+
+def test_failed_frontend_build_does_not_abort_controller_configuration(tmp_path):
+    r = _run_configuration(tmp_path, build_ok=False)
+    out = r.stdout
+    assert "RUN_OK" in out, r.stdout + r.stderr
+    for step in ("set_own_ip", "configure_dhcp_server", "configure_service",
+                 "write_config", "write_provisioned_marker"):
+        assert f"CALLED {step}" in out, step
+    assert "CALLED warn_frontend_build_failed" in out
+    # networking and the service unit come before the (optional) web UI build
+    assert out.index("CALLED set_own_ip") < out.index("CALLED build_frontend")
+    assert out.index("CALLED configure_service") < out.index("CALLED build_frontend")
+
+
+def test_controller_ip_is_applied_even_without_a_role_change(tmp_path):
+    """A controller image re-run on a new network kept its old address."""
+    # bytes, not write_text: on Windows that writes CRLF, and ROLE would read
+    # back as "controller\r" (a spurious role change)
+    (tmp_path / ".provisioned").write_bytes(b"ROLE=controller\nTYPE=basic\n")
+    r = _run_configuration(tmp_path, build_ok=True)
+    assert "RUN_OK" in r.stdout, r.stdout + r.stderr
+    assert "CALLED set_own_ip" in r.stdout
+    assert "CALLED configure_dhcp_server" in r.stdout

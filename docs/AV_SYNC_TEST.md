@@ -21,10 +21,17 @@ GPIO pins drive 3.3 V at a few mA, so:
   buzzer" modules): usually draws 20-30 mA, more than a GPIO pin should
   supply. Use an NPN transistor (2N2222 / BC547): GPIO → 1 kΩ → base;
   emitter → GND; buzzer between 5 V and the collector. `drive: "dc"`.
-- **Passive piezo disc** (no oscillator, clicks on DC): drive it with a tone,
-  `drive: "pwm"`, `tone_hz` near its resonance (often 2-4 kHz). A bare disc
-  draws little and can go straight on the pin; it is louder through the same
-  transistor at 5 V.
+- **Passive buzzer** (no oscillator, clicks on DC): drive it with a tone,
+  `drive: "pwm"`, `tone_hz` near its resonance (often 2-4 kHz). Small
+  12 mm "5 V passive buzzers" (e.g. The Pi Hut 5V Buzzer, YMD-12095-G,
+  30 mA) are **magnetic**, a coil: use the transistor above at 5 V **and a
+  flyback diode** (1N4148 / 1N4001) across the buzzer, stripe to 5 V.
+  Only a bare piezo disc (no coil, a few mA) can go straight on the pin.
+- **LED resistor**: use one (330 Ω for red/green, about 4 mA). Without it the
+  GPIO driver is the only current limit and the pin is pushed past its
+  rating. Dimmer is better here anyway: a very bright LED blooms and blurs
+  the onset. Avoid blue/white on 3.3 V (about 3 V forward drop: dim and
+  inconsistent).
 
 Suggested pins: buzzer GPIO17 (header pin 11), LED GPIO27 (pin 13), GND
 pin 9. One pin can drive both (set `led_pin` = `buzzer_pin`, or wire the LED

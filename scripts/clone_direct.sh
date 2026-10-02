@@ -323,6 +323,14 @@ fix_identity() {
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-02/PARTUUID=${newid_hex}-02/" "$mnt/etc/fstab"
   sudo truncate -s 0 "$mnt/etc/machine-id"
 
+  # Browser profile locks name the source machine (hostname-pid), so every
+  # clone's Chromium/Firefox reported "profile in use by another computer"
+  # (found 2026-10-02 on a controller cloned from a camera's image).
+  sudo rm -f "$mnt"/home/*/.config/chromium/Singleton{Lock,Cookie,Socket} \
+             "$mnt"/root/.config/chromium/Singleton{Lock,Cookie,Socket}
+  sudo find "$mnt"/home/*/.mozilla "$mnt"/root/.mozilla -maxdepth 4 \
+       \( -name lock -o -name .parentlock \) -delete 2>/dev/null || true
+
   echo "Regenerating SSH host keys..."
   sudo rm -f "$mnt"/etc/ssh/ssh_host_*
   sudo ssh-keygen -A -f "$mnt"

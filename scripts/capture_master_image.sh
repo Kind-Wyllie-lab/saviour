@@ -24,12 +24,26 @@
 
 set -euo pipefail
 
+# Home of the user who ran sudo (not /root), and "~" expansion for paths typed
+# into a whiptail box -- the shell never expands those, so "~/x.img" became a
+# literal ./~ directory under the cwd (2026-10-02, a 64 GB capture written to
+# scripts/~/).
+USER_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" 2>/dev/null | cut -d: -f6 || true)
+USER_HOME="${USER_HOME:-$HOME}"
+expand_user_path() {
+  case "$1" in
+    "~")   printf '%s\n' "$USER_HOME" ;;
+    "~/"*) printf '%s\n' "$USER_HOME/${1#"~/"}" ;;
+    *)     printf '%s\n' "$1" ;;
+  esac
+}
+
 ROOT_DEV=$(findmnt -n -o SOURCE / | sed -E 's/p?[0-9]+$//')
 
 if [ "$#" -gt 0 ]; then
   # ── Scriptable path ────────────────────────────────────────────────────────
   SRC_DEV="$1"
-  OUT_IMG="$2"
+  OUT_IMG=$(expand_user_path "${2:-}")
 
   if [ -z "$SRC_DEV" ] || [ -z "$OUT_IMG" ]; then
     echo "Usage: $0 [<source_device> <output.img>]"
@@ -110,7 +124,7 @@ else
   SRC_BYTES=$(sudo blockdev --getsize64 "$SRC_DEV")
   SRC_GB=$((SRC_BYTES / 1024 / 1024 / 1024))
 
-  DEFAULT_OUT="$HOME/saviour-${SRC_NAME}-$(date +%Y%m%d).img"
+  DEFAULT_OUT="$USER_HOME/saviour-${SRC_NAME}-$(date +%Y%m%d).img"
   OUT_IMG=$(wt --title "Output Image Path" --inputbox \
     "\nWhere should the captured image be written?\n\nSource is ${SRC_GB} GB -- the FULL raw size is needed as free space\nhere temporarily (shrinking happens after the copy). Pick a path\nwith real spare storage (controller NVMe, external SSD), not a\nsmall SD card's own root filesystem.\n" \
     16 $W "$DEFAULT_OUT") || { echo "Aborted."; exit 1; }
@@ -119,6 +133,7 @@ else
     whiptail --title "No Path" --msgbox "\nNo output path given." 8 $W
     exit 1
   fi
+  OUT_IMG=$(expand_user_path "$OUT_IMG")
 
   # Pre-flight free-space check against the FULL raw source size -- this is
   # exactly the check that would have caught "SD ran out of space mid-write"

@@ -222,3 +222,28 @@ def test_controller_ip_is_applied_even_without_a_role_change(tmp_path):
     assert "RUN_OK" in r.stdout, r.stdout + r.stderr
     assert "CALLED set_own_ip" in r.stdout
     assert "CALLED configure_dhcp_server" in r.stdout
+
+
+# --- hardware scan: detected types are marked, never required --------------
+
+def test_type_picker_marks_detected_types_and_preselects_first():
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    harness = f"""set -uo pipefail
+H=20 W=70
+list_variants() {{ printf 'camera\tCamera\tBasic camera\nmicrophone\tMicrophone\tAudioMoth\nttl\tTTL\tTTL io\n'; }}
+wt() {{ printf '%s\n' "$@"; }}
+{_extract(src, "select_variant_type")}
+echo ---WITH---
+select_variant_type module "Module Type" "pick" "microphone"
+echo ---WITHOUT---
+select_variant_type module "Module Type" "pick" ""
+"""
+    out = subprocess.run([BASH, "-c", harness], capture_output=True, text=True,
+                         timeout=30).stdout
+    with_part, without_part = out.split("---WITHOUT---")
+    assert "[detected] AudioMoth" in with_part
+    assert "--default-item\nmicrophone" in with_part
+    assert "Basic camera" in with_part and "[detected] Basic camera" not in with_part
+    assert "ttl" in with_part                      # every type still offered
+    assert "[detected]" not in without_part
+    assert "--default-item" not in without_part

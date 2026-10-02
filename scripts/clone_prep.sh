@@ -49,6 +49,12 @@ if [ ! -e /var/lib/dbus/machine-id ]; then
     sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
 fi
 echo "  New machine ID: $(cat /etc/machine-id)"
+# Browser profile locks name this machine (hostname-pid); a clone's browser
+# would report "profile in use by another computer".
+sudo rm -f /home/*/.config/chromium/Singleton{Lock,Cookie,Socket} \
+           /root/.config/chromium/Singleton{Lock,Cookie,Socket}
+sudo find /home/*/.mozilla /root/.mozilla -maxdepth 4 \
+     \( -name lock -o -name .parentlock \) -delete 2>/dev/null || true
 
 
 # ── 3. SAVIOUR role config ────────────────────────────────────────────────────

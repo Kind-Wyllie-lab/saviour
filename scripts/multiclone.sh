@@ -7,12 +7,26 @@
 
 set -euo pipefail
 
+# Home of the user who ran sudo (not /root), and "~" expansion for paths typed
+# into a whiptail box -- the shell never expands those, so "~/x.img" became a
+# literal ./~ directory under the cwd (2026-10-02, a 64 GB capture written to
+# scripts/~/).
+USER_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" 2>/dev/null | cut -d: -f6 || true)
+USER_HOME="${USER_HOME:-$HOME}"
+expand_user_path() {
+  case "$1" in
+    "~")   printf '%s\n' "$USER_HOME" ;;
+    "~/"*) printf '%s\n' "$USER_HOME/${1#"~/"}" ;;
+    *)     printf '%s\n' "$1" ;;
+  esac
+}
+
 ROOT_DEV=$(findmnt -n -o SOURCE / | sed -E 's/p?[0-9]+$//')
 ROOT_DISK=$(basename "$(readlink -f "$ROOT_DEV")")
 
 if [ "$#" -gt 0 ]; then
   # ── Scriptable path ────────────────────────────────────────────────────────
-  IMAGE="$1"
+  IMAGE=$(expand_user_path "$1")
   shift
   DEVICES=("$@")
 
@@ -60,6 +74,7 @@ else
   IMAGE=$(wt --title "Source Image" --inputbox \
     "\nPath to the master image to flash (from capture_master_image.sh):\n" \
     10 $W "${found_img:-/mnt/export/saviour-image.img}") || { echo "Aborted."; exit 1; }
+  IMAGE=$(expand_user_path "$IMAGE")
 
   if [ -z "$IMAGE" ] || [ ! -f "$IMAGE" ]; then
     whiptail --title "Image Not Found" --msgbox "\n$IMAGE does not exist." 8 $W
@@ -271,6 +286,14 @@ fix_identity() {
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-01/PARTUUID=${newid_hex}-01/" "$mnt/etc/fstab"
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-02/PARTUUID=${newid_hex}-02/" "$mnt/etc/fstab"
   sudo truncate -s 0 "$mnt/etc/machine-id"
+
+  # Browser profile locks name the source machine (hostname-pid), so every
+  # clone's Chromium/Firefox reported "profile in use by another computer"
+  # (found 2026-10-02 on a controller cloned from a camera's image).
+  sudo rm -f "$mnt"/home/*/.config/chromium/Singleton{Lock,Cookie,Socket} \
+             "$mnt"/root/.config/chromium/Singleton{Lock,Cookie,Socket}
+  sudo find "$mnt"/home/*/.mozilla "$mnt"/root/.mozilla -maxdepth 4 \
+       \( -name lock -o -name .parentlock \) -delete 2>/dev/null || true
 
   # Regenerate unique host keys now, offline. Raspberry Pi OS only
   # auto-regenerates these via regenerate_ssh_host_keys.service, which is a

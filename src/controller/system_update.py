@@ -188,6 +188,11 @@ def stage_zip(version: str = "unknown", src_root: str = SRC_ROOT,
                 if filename.endswith(".pyc"):
                     continue
                 abs_path = os.path.join(dirpath, filename)
+                # Regular files only: opening a FIFO blocks forever (lgpio
+                # leaves .lgd-nfy* pipes in the TTL variant's directory,
+                # which hung POST /api/v1/system/update, 2026-10-02).
+                if not os.path.isfile(abs_path):
+                    continue
                 rel_path = os.path.relpath(abs_path, src_root)
                 try:
                     zf.write(abs_path, rel_path)

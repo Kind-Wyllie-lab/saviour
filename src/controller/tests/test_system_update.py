@@ -143,6 +143,29 @@ class TestStageZip:
         assert meta["version"] == "v9.9-1-gdead"
         assert json.loads(mp.read_text())["size_bytes"] == os.path.getsize(zp)
 
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX FIFOs")
+    def test_skips_fifos_instead_of_blocking_on_them(self, tmp_path):
+        """2026-10-02: lgpio's .lgd-nfy0 pipe in variants/ttl/ made
+        zf.write() block forever, hanging POST /api/v1/system/update."""
+        import threading
+
+        src = tmp_path / "src"
+        ttl = src / "src" / "modules" / "variants" / "ttl"
+        ttl.mkdir(parents=True)
+        (ttl / "ttl_module.py").write_text("x = 1\n")
+        os.mkfifo(ttl / ".lgd-nfy0")
+        zp = tmp_path / "store" / "pkg.zip"
+
+        t = threading.Thread(target=su.stage_zip, daemon=True, kwargs=dict(
+            src_root=str(src), zip_path=str(zp),
+            meta_path=str(tmp_path / "store" / "meta.json")))
+        t.start()
+        t.join(timeout=10)
+        assert not t.is_alive(), "stage_zip blocked on the FIFO"
+        names = set(zipfile.ZipFile(zp).namelist())
+        assert "src/modules/variants/ttl/ttl_module.py" in names
+        assert not any(n.endswith(".lgd-nfy0") for n in names)
+
 
 # --------------------------------------------------------------------------- #
 # notify_modules

@@ -10,8 +10,8 @@ that would bloat `CLAUDE.md` if it lived inline.
 - Something `CLAUDE.md`'s "Open work" list mentions in one line but that needs a
   page to actually execute.
 
-Small, obvious fixes stay as a one-liner in `CLAUDE.md` — don't make a file for
-everything.
+Small, obvious fixes go in `plans/backlog.md` (a few lines each) with a one-line
+pointer in `CLAUDE.md` — don't make a file for everything.
 
 ## How it relates to the other docs
 
@@ -19,6 +19,7 @@ everything.
 |----------|-------|
 | `CLAUDE.md` "Open work" | The one-line index of everything outstanding. Links here. |
 | `plans/` | The *intended* work, in detail, before it's done. |
+| `plans/backlog.md` | Open items too small for their own plan file. |
 | `docs/*_DESIGN.md` | Longer-lived design references (protocol, telemetry, NWB…). Overlaps `plans/`; prefer `plans/` for "we're about to build this", `docs/` for "this is how the built thing is shaped". |
 | `docs/CHANGELOG.md` | Completed work, archived with write-ups. |
 

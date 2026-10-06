@@ -145,10 +145,6 @@ class ModuleFacade:
         return self.module.recording.current_filename_prefix
 
 
-    def get_module_name(self) -> str:
-        return self.module.get_module_name()
-
-
     def get_short_mac(self, interface: str = "eth0") -> str:
         """Return the last 4 hex characters of the MAC address on the given interface."""
         return self.module.get_mac_address(interface)[-4:]
@@ -302,6 +298,5 @@ class ModuleFacade:
     def unsubscribe_from_topic(self, topic: str):
         """Unsubscribe from commands related to given topic. Typically used when module changes group."""
         self.module.communication.unsubscribe_from_topic(topic)
-
 
 

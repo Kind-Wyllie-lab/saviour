@@ -716,34 +716,6 @@ class Controller(ABC):
         }
 
 
-    def get_samba_info(self):
-        """Get Samba share information from configuration"""
-        try:
-            # Get controller IP address from service manager (already detected and stored)
-            controller_ip = self.network.ip
-
-            # Get Samba configuration from config
-            samba_config = {
-                'share_name': self.config.get('samba.share_name', 'controller_share'),
-                'username': self.config.get('samba.username', 'pi'),
-                'password': self.config.get('samba.password', 'saviour'),
-                'share_path': f'\\\\{controller_ip}\\{self.config.get("samba.share_name", "controller_share")}',
-                'controller_ip': controller_ip
-            }
-
-            self.logger.info(f"Returning Samba info: {samba_config}")
-            return samba_config
-        except Exception as e:
-            self.logger.error(f"Error getting Samba info: {e}")
-            return {
-                'share_name': 'controller_share',
-                'username': 'pi',
-                'password': 'saviour',
-                'share_path': '\\\\192.168.1.1\\controller_share',
-                'controller_ip': '192.168.1.1'
-            }
-
-
 if __name__ == "__main__":
     controller = Controller()
     try:

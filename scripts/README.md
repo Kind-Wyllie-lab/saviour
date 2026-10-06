@@ -24,6 +24,4 @@ Two paths, pick one:
 
 ## One-off repair tools
 
-- **`configure_network.sh`** — (re)configure network settings.
-- **`regenerate_ssh_key.sh`** — regenerate the SSH host key, typically after cloning an image.
 - **`repair_null_bytes.sh`** — detect and restore git-tracked files corrupted by an ungraceful power-off (null bytes from an interrupted SD card write).

@@ -11,6 +11,15 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-06
+
+- [x] **Pre-v1.0 behaviour-neutral cleanup** (`plans/pre-v1-codebase-cleanup.md`; branches `refactor/dead-code-sweep`, `refactor/one-copy`, `refactor/comments-why`, `refactor/lint-gate`, `fix/module-background-jobs` → `staging`).
+  - **Dead code:** `get_samba_info` (hardcoded fallback password), the never-working NAS recordings listing, inbound `module_status` socket event, `Export.unmount` / `_ensure_export_folder_exists`, a shadowed `get_module_name`, two orphaned scripts.
+  - **One copy:** CIFS mount/unmount → `src/shared/cifs.py` (`cifs_mount_cmd`, `unmount`); web.py's update handlers → `system_update.py` (gains `fetch` / `reset_to_origin`, an `emit` callback on `build_and_restart`). Side effect: the web UI's git pull now runs git as the checkout owner, fixing its latent root `publickey` failure. Boot-time crash recovery's session name now comes from `Export.session_from_filename` (module-ID anchored), so underscore session names no longer truncate.
+  - **Docs/comments:** CLAUDE.md 77 KB → 18 KB (open-item detail → `plans/backlog.md`, hardware findings → `docs/HARDWARE_NOTES.md`, done items → here). Incident-dated comments rewritten as constraints (AST-checked comment-only).
+  - **Lint gate:** CI now fails on `ruff check .` with the configured set (E,F,W,B,UP,I,N,RUF,PLE,PLW; style classes ignored with reasons in `pyproject.toml`); ruff pinned to 0.16.x; vendored `tools/ephys` excluded. Frontend hook-deps warnings annotated.
+  - **15:16 hailo stall:** the desktop panel's daily PackageKit update check (at the module's boot time of day) and apt's daily jobs preceded the capture stalls on the loaded hailo client. Modules now mask PackageKit and disable the apt-daily timers (`saviour-config`, `mend.sh` step 6). Not yet validated across a day boundary; Friday's test D covers it.
+
 ## 2026-10-06 (archived from CLAUDE.md)
 
 Completed items moved verbatim out of `CLAUDE.md`'s open-work list.

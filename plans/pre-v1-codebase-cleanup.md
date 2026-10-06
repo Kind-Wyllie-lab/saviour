@@ -1,6 +1,6 @@
 # Pre-v1.0 codebase cleanup (behaviour-neutral)
 
-- **Status:** in progress (steps 1-4 done 2026-10-06; step 2 desk checks ride the Thursday deploy)
+- **Status:** done 2026-10-06 (step 2 desk checks ride the Thursday deploy)
 - **Created:** 2026-10-06
 - **Owner:** Andrew SG
 - **CLAUDE.md ref:** "Low priority — observability / maintenance" → pre-v1.0 cleanup
@@ -112,6 +112,24 @@ Test D run 1 saw 4.4 s and 1.2 s capture stalls on `hailo_camera_3606` at
 SAVIOUR-side periodic job. If it's a system timer competing for CPU/IO,
 decide between rescheduling it (setup.sh/mend.sh) and accepting it; note the
 finding either way.
+
+**Finding (2026-10-06):** not a SAVIOUR job and not memory (no swap in use,
+2.9 GB free). `hailo_camera_3606` booted at 15:15:37 on 30 Sep; the desktop
+panel (`wf-panel-pi`, updater widget) asks PackageKit for a cache refresh and
+update check every 24 h after login, at 15:15:49, and the capture-health
+warning followed 30-60 s later on every recording day (`detect()` max 4.8 s
+on 4 Oct). Other "unstable capture" warnings line up with apt-daily
+(22:55 → 22:56), man-db (00:08 → 00:10) and apt-daily-upgrade (~06:41).
+The other modules run the same checks at their own boot times but have the
+CPU headroom; the hailo sync client at `infer_every_n=1` does not.
+
+**Decision:** modules mask `packagekit.service` and disable `apt-daily.timer`
+/ `apt-daily-upgrade.timer` (`saviour-config` for new modules, `mend.sh` step
+6 for deployed ones). `unattended-upgrades` isn't installed, so these only
+refreshed package lists; module code arrives through SAVIOUR. Applied by hand
+to the three desk modules the same day, so Friday's test D covers it.
+Residual: man-db and logrotate still run daily, and `infer_every_n=1` leaves
+the hailo client little headroom for any background load.
 
 ## Verification and schedule
 

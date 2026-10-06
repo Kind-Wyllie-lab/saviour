@@ -319,3 +319,24 @@ class TestFollowUpWhenBusy:
         calls = facade.send_command.call_count
         assert q.on_export_failed("mod_a") is True    # gave up on this pass
         assert facade.send_command.call_count == calls + 1  # follow-up runs
+
+
+class TestLostDispatchAfterReboot:
+    """Test D (2026-10-06): a start_export lost in a module's hard reboot kept
+    the module 'active' for 15 min and leaked a pending export."""
+
+    def test_back_online_redispatches_the_unanswered_export(self):
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("cam", "s/20261006/camera")          # dispatched, then reboot
+        q.enqueue("cam", "s/20261006/camera")          # salvage signal -> follow-up
+        q.module_back_online("cam")
+        assert facade.send_command.call_count == 2      # re-dispatched at once
+        q.on_export_complete("cam")                     # re-dispatched pass
+        q.on_export_complete("cam")                     # follow-up pass
+        assert facade.send_command.call_count == 3
+        assert "cam" not in q._active and not q._queue  # nothing left hanging
+
+    def test_back_online_with_nothing_active_is_a_noop(self):
+        q, facade = _make_queue()
+        q.module_back_online("cam")
+        facade.send_command.assert_not_called()

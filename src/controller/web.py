@@ -42,6 +42,7 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller import compose, framesync_check, rest_api
+from src.controller import system_update as su
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
@@ -2488,12 +2489,13 @@ class Web(ABC):
 
 
         # ── Update package store ──────────────────────────────────────────────
-        _UPDATE_STORE = "/var/lib/saviour/updates"
-        _UPDATE_ZIP   = os.path.join(_UPDATE_STORE, "saviour-latest.zip")
-        _UPDATE_META  = os.path.join(_UPDATE_STORE, "update_meta.json")
-        _SRC_ROOT     = "/usr/local/src/saviour"
-        _STAGE_SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
-                            '.pytest_cache', 'dist', '.eggs'}
+        # The git/zip/snapshot/build primitives live in system_update.py
+        # (shared with POST /api/v1/system/update); these handlers add the
+        # Socket.IO progress events around them.
+        _UPDATE_STORE = su.UPDATE_STORE
+        _UPDATE_ZIP   = su.UPDATE_ZIP
+        _UPDATE_META  = su.UPDATE_META
+        _SRC_ROOT     = su.SRC_ROOT
 
         # ── Controller self-update snapshots ──────────────────────────────────
         # Taken automatically right before any code path that overwrites the
@@ -2501,133 +2503,32 @@ class Web(ABC):
         # bad controller update can be rolled back from the UI instead of over
         # SSH. Modules are not covered here by design — they're recovered by
         # staging the (known-good) running controller code and re-pushing it.
-        _CTRL_BACKUP_DIR  = "/var/lib/saviour/controller_backups"
-        _CTRL_BACKUP_KEEP = 3
+        _CTRL_BACKUP_DIR  = su.CTRL_BACKUP_DIR
+        _CTRL_BACKUP_KEEP = su.CTRL_BACKUP_KEEP
         # Excluded from a snapshot: the venv (large; `pip install` re-runs on
         # restart anyway) and git/cache dirs. dist/ is deliberately kept —
         # restoring the built frontend alongside its source makes a revert
         # instant and self-consistent, with no npm build in the loop.
-        _CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/",
-                                 "__pycache__/", ".pytest_cache/", ".eggs/"]
+        _CTRL_BACKUP_EXCLUDES = su.CTRL_BACKUP_EXCLUDES
 
         def _snapshot_controller(reason: str) -> dict:
-            """rsync _SRC_ROOT into a fresh timestamped dir under
-            _CTRL_BACKUP_DIR before an update overwrites it. Unchanged files
-            are hardlinked against the previous snapshot (--link-dest) so
-            keeping several costs little disk. Best-effort: on failure it
-            logs, cleans up the partial dir and returns {"ok": False,...}
-            rather than aborting the update the operator asked for."""
-            import shutil as _shutil
-            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            version = _read_running_version() or "unknown"
-            name = f"{ts}_{version}"
-            dest = os.path.join(_CTRL_BACKUP_DIR, name)
-            os.makedirs(_CTRL_BACKUP_DIR, exist_ok=True)
-            existing = _list_dir_backups(_CTRL_BACKUP_DIR)
-            cmd = ["rsync", "-a", "--delete"]
-            cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
-            if existing:
-                cmd.append("--link-dest="
-                           + os.path.join(_CTRL_BACKUP_DIR, existing[0]["name"]) + "/")
-            cmd += [f"{_SRC_ROOT}/", f"{dest}/"]
-            try:
-                subprocess.run(cmd, check=True, capture_output=True,
-                               text=True, timeout=600)
-                meta = {"version": version,
-                        "created_at": datetime.now(UTC).isoformat(),
-                        "reason": reason}
-                with open(os.path.join(dest, ".backup_meta.json"), "w") as f:
-                    json.dump(meta, f, indent=2)
-                pruned = _prune_dir_backups(_CTRL_BACKUP_DIR, _CTRL_BACKUP_KEEP)
-                self.logger.info(
-                    f"Controller snapshot saved: {name} ({reason})"
-                    + (f"; pruned {pruned}" if pruned else ""))
-                return {"ok": True, "name": name, **meta}
-            except Exception as e:
-                self.logger.error(f"Controller snapshot failed ({reason}): {e}")
-                _shutil.rmtree(dest, ignore_errors=True)
-                return {"ok": False, "error": str(e)}
+            """Best-effort snapshot of _SRC_ROOT before an update overwrites
+            it (su.snapshot); {"ok": False, ...} on failure."""
+            return su.snapshot(reason, _read_running_version() or "unknown",
+                               _SRC_ROOT, _CTRL_BACKUP_DIR)
 
         def _stage_current_version_zip() -> dict:
-            """Zip up _SRC_ROOT's current working tree and write it as the
-            staged update package + metadata. Shared by "Stage Current" (the
-            ZIP tab, packages whatever is on disk right now) and "Git Pull"
-            (packages the tree immediately after a pull lands new code)."""
-            src_root = _SRC_ROOT
-            version = _read_running_version()
-            self.logger.info(f"Staging current version {version} from {src_root}")
-            os.makedirs(_UPDATE_STORE, exist_ok=True)
-            tmp = _UPDATE_ZIP + ".tmp"
-            skipped = 0
-            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
-                for dirpath, dirnames, filenames in os.walk(src_root):
-                    dirnames[:] = [
-                        d for d in dirnames
-                        if d not in _STAGE_SKIP_DIRS and not d.endswith('.egg-info')
-                    ]
-                    for filename in filenames:
-                        if filename.endswith('.pyc'):
-                            continue
-                        abs_path = os.path.join(dirpath, filename)
-                        # Regular files only: a FIFO (lgpio's .lgd-nfy*)
-                        # blocks open() forever.
-                        if not os.path.isfile(abs_path):
-                            continue
-                        rel_path = os.path.relpath(abs_path, src_root)
-                        try:
-                            zf.write(abs_path, rel_path)
-                        except Exception as _fe:
-                            self.logger.warning(f"Skipping {rel_path}: {_fe}")
-                            skipped += 1
-            size = os.path.getsize(tmp)
-            os.replace(tmp, _UPDATE_ZIP)
-            meta = {
-                "version":     version,
-                "filename":    f"saviour-{version}.zip",
-                "size_bytes":  size,
-                "uploaded_at": datetime.now().isoformat(),
-            }
-            with open(_UPDATE_META, "w") as f:
-                json.dump(meta, f, indent=2)
-            self.logger.info(
-                f"Staged current version {version} "
-                f"({size // 1024} KiB, {skipped} files skipped)"
-            )
-            return meta
+            """Zip _SRC_ROOT's working tree as the staged update package.
+            Shared by "Stage Current" and "Git Pull"."""
+            return su.stage_zip(_read_running_version(), _SRC_ROOT,
+                                _UPDATE_ZIP, _UPDATE_META)
 
         def _git_checkout_info() -> dict:
             """Whether _SRC_ROOT is a usable git checkout to pull updates
-            from, and which branch/remote it would use. Gates the "Git Pull"
-            update option -- most deployed devices only ever receive code via
-            the ZIP update path, which explicitly excludes .git from the
-            rsync (see _read_running_version's comment above), so their
-            .git, if present at all, is stale relative to the actual deployed
-            content until a pull resyncs it."""
-            git_dir = os.path.join(_SRC_ROOT, ".git")
-            if not os.path.isdir(git_dir):
-                return {"available": False, "reason": "No git checkout on this device"}
-            try:
-                branch = subprocess.run(
-                    ["git", "-C", _SRC_ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
-                    capture_output=True, text=True, timeout=10, check=False,
-                ).stdout.strip()
-                if not branch or branch == "HEAD":
-                    return {
-                        "available": False,
-                        "reason": "Detached HEAD — checkout a branch first",
-                    }
-                remote = subprocess.run(
-                    ["git", "-C", _SRC_ROOT, "remote", "get-url", "origin"],
-                    capture_output=True, text=True, timeout=10, check=False,
-                ).stdout.strip()
-                if not remote:
-                    return {
-                        "available": False,
-                        "reason": "No 'origin' remote configured",
-                    }
-                return {"available": True, "branch": branch, "remote": remote}
-            except Exception as e:
-                return {"available": False, "reason": str(e)}
+            from. Most deployed devices only ever receive code via the ZIP
+            path, which excludes .git, so their .git (if any) is stale until a
+            pull resyncs it."""
+            return su.git_checkout_info(_SRC_ROOT)
 
         @self.app.route("/update/package")
         def serve_update_package():
@@ -2636,6 +2537,13 @@ class Web(ABC):
             return send_file(_UPDATE_ZIP, as_attachment=True,
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
+
+        def _controller_build_and_restart(rebuild_frontend: bool = True):
+            """pip + optional frontend rebuild, then restart saviour.service
+            (su.build_and_restart). Run on a worker thread. rebuild_frontend=
+            False for the revert path, whose snapshot restored dist/."""
+            su.build_and_restart(_SRC_ROOT, rebuild_frontend,
+                                 emit=self.socketio.emit)
 
         def _broadcast_update_to_modules() -> int:
             """Tell every connected module to pull + apply the staged package.
@@ -2660,59 +2568,6 @@ class Web(ABC):
                 {"stage": "modules_notified", "count": len(modules)})
             return len(modules)
 
-        def _controller_build_and_restart(rebuild_frontend: bool = True):
-            """Best-effort pip + frontend rebuild, then restart the service.
-            Shared by the ZIP 'update controller' path (after its rsync) and
-            the Git-pull 'apply to controller' path (git reset already put
-            the files in place). `rebuild_frontend=False` for the revert
-            path — its snapshot restored a matching dist/, so npm is skipped.
-            Runs on its own thread; ends by restarting
-            saviour.service. The npm build also doubles as a delay that lets
-            modules finish fetching /update/package before the controller
-            drops, when this runs as part of an 'update everything'."""
-            try:
-                pip_result = subprocess.run([
-                    "/usr/local/src/saviour/env/bin/pip", "install", "-q",
-                    "--no-index", "/usr/local/src/saviour/",
-                ])
-                if pip_result.returncode != 0:
-                    self.logger.warning(
-                        "pip install --no-index failed (new dependencies may "
-                        "need a manual `pip install .` with internet access)")
-                frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
-                # nvm's npm needs its own bin dir on PATH to find node
-                # (system_update.find_npm).
-                from src.controller.system_update import find_npm
-                npm_bin, npm_env = find_npm()
-                if not rebuild_frontend:
-                    self.logger.info(
-                        "Skipping frontend rebuild (dist/ restored from snapshot)")
-                elif npm_bin and os.path.isdir(frontend_dir):
-                    self.socketio.emit("deploy_update_status",
-                                       {"stage": "building_frontend"})
-                    self.logger.info("Rebuilding frontend after update...")
-                    subprocess.run([npm_bin, "install", "--silent"],
-                                   cwd=frontend_dir, capture_output=True,
-                                   env=npm_env)
-                    build = subprocess.run([npm_bin, "run", "build"],
-                                           cwd=frontend_dir, capture_output=True,
-                                           env=npm_env)
-                    if build.returncode == 0:
-                        self.logger.info("Frontend rebuilt successfully")
-                    else:
-                        self.logger.warning(
-                            "Frontend build failed after update: "
-                            + build.stderr.decode(errors="replace"))
-                else:
-                    self.logger.warning(
-                        "npm not found — frontend not rebuilt after update")
-            except Exception as e:
-                self.logger.error(f"Controller build step failed: {e}")
-                self.socketio.emit("deploy_update_error", {"error": str(e)})
-                return
-            self.logger.info("Update applied — restarting controller service")
-            time.sleep(2)
-            subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
 
         @self.socketio.on("get_update_info")
         def handle_get_update_info(data=None):
@@ -3019,24 +2874,14 @@ class Web(ABC):
                     self.socketio.emit(
                         "git_pull_status", {"stage": "fetching", "branch": branch},
                     )
-                    subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "fetch", "--prune", "origin", branch],
-                        check=True, capture_output=True, text=True, timeout=120,
-                    )
+                    su.fetch(branch, _SRC_ROOT)
                     # git reset --hard rewrites the controller's live working
                     # tree even for "stage only", so snapshot before it.
                     _snapshot_controller("pre-git-update")
                     self.socketio.emit(
                         "git_pull_status", {"stage": "resetting", "branch": branch},
                     )
-                    subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "reset", "--hard", f"origin/{branch}"],
-                        check=True, capture_output=True, text=True, timeout=30,
-                    )
-                    commit = subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "rev-parse", "--short", "HEAD"],
-                        capture_output=True, text=True, timeout=10, check=False,
-                    ).stdout.strip()
+                    commit = su.reset_to_origin(branch, _SRC_ROOT)
                     self.logger.info(f"Git pull update: {branch} now at {commit}")
                     self.socketio.emit("git_pull_status", {
                         "stage": "staging", "branch": branch, "commit": commit,

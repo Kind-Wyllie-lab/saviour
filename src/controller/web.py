@@ -872,7 +872,6 @@ class Web(ABC):
             ).start()
 
 
-
     def register_additional_socketio_events(self, handler_func):
         """Allow extra socketio event handlers to be registered dynamically"""
         handler_func(self.socketio)
@@ -1925,67 +1924,6 @@ class Web(ABC):
                 self.socketio.emit("session_error", {"error": result.get("error")})
 
 
-        @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
-        def handle_module_status(data):
-            """Handle module status update"""
-            self.logger.info("IN WEB HANDLE_MODULE_STATUS")
-            try:
-                # self.logger.info(f"Received module status: {data}")
-                if not isinstance(data, dict):
-                    raise ValueError("Status data must be a dictionary")
-
-                module_id = data.get('module_id')
-                status = data.get('status')
-
-                if not module_id or not status:
-                    raise ValueError("Status must include 'module_id' and 'status'")
-
-                # Handle recordings list response
-                if status.get('type') == 'recordings_list':
-                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
-                    module_recordings = status.get('recordings', [])
-
-                    # Send individual module recordings response
-                    self.socketio.emit('module_recordings', {
-                        'module_id': module_id,
-                        'recordings': module_recordings
-                    })
-                    return
-
-                # Handle export complete response
-                if status.get('type') == 'export_complete':
-                    self.logger.info(f"Broadcasting export complete for module {module_id}")
-                    self.socketio.emit('export_complete', {
-                        'module_id': module_id,
-                        'success': status.get('success', False),
-                        'error': status.get('error'),
-                        'filename': status.get('filename')
-                    })
-                    return
-
-                # Handle recording started/stopped status
-                if status.get('type') in ['recording_started', 'recording_stopped']:
-                    self.logger.info(f"Broadcasting recording status for module {module_id}")
-                    self.socketio.emit('module_status', {
-                        'module_id': module_id,
-                        'status': status
-                    })
-                    return
-
-                # For heartbeat and other status types
-                if 'recording_status' not in status:
-                    self.logger.warning("Recording status not in received status update.")
-
-                # Broadcast status to all clients
-                self.socketio.emit('module_status', {
-                    'module_id': module_id,
-                    'status': status
-                })
-
-            except Exception as e:
-                self.logger.error(f"Error handling module status: {e!s}")
-                # Optionally emit error back to client
-                # self.socketio.emit('error', {'message': str(e)})
 
         """ Experiment Metadata """
         # Experiment metadata
@@ -4125,7 +4063,7 @@ class Web(ABC):
 
 
     def get_exported_recordings(self):
-        """Get list of exported recordings from controller share and NAS directories"""
+        """Get list of exported recordings from the controller share"""
         recordings = []
 
         # Get controller share recordings
@@ -4140,123 +4078,7 @@ class Web(ABC):
                         'destination': 'controller'
                     })
 
-        # Get NAS recordings (if mounted)
-        nas_recordings = self.get_nas_recordings()
-        recordings.extend(nas_recordings)
-
         return recordings
-
-
-    def get_nas_recordings(self):
-        """Get list of exported recordings from NAS"""
-        recordings = []
-        nas_mount_point = Path("/mnt/nas")
-
-        self.logger.info("Scanning NAS for recordings...")
-
-        # Try to mount NAS if not already mounted
-        if not nas_mount_point.exists() or not nas_mount_point.is_mount():
-            self.logger.info("NAS not mounted, attempting to mount...")
-            if not self.mount_nas():
-                self.logger.error("Failed to mount NAS, returning empty list")
-                return recordings  # Return empty list if mounting failed
-
-        self.logger.info(f"NAS is mounted at {nas_mount_point}")
-
-        # Check what's in the root NAS directory
-        if nas_mount_point.exists():
-            root_contents = list(nas_mount_point.iterdir())
-            self.logger.info(f"NAS root contents: {[item.name for item in root_contents]}")
-
-            # Look specifically for export directories
-            export_dirs = [item for item in root_contents if item.is_dir() and item.name.startswith('export_')]
-            self.logger.info(f"Found export directories: {[item.name for item in export_dirs]}")
-        else:
-            self.logger.error(f"NAS mount point does not exist: {nas_mount_point}")
-            return recordings
-
-        # Scan multiple directories for recordings
-        directories_to_scan = ["recordings", "videos", "ttl"]
-
-        for dir_name in directories_to_scan:
-            scan_path = nas_mount_point / dir_name
-            self.logger.info(f"Looking for recordings in: {scan_path}")
-
-            if scan_path.exists():
-                self.logger.info(f"{dir_name} directory exists, scanning for files...")
-                for file in scan_path.glob('**/*'):
-                    self.logger.info(f"Found file: {file} (suffix: {file.suffix})")
-                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"Adding file to recordings list: {file}")
-                        recordings.append({
-                            'filename': f"nas/{dir_name}/{file.relative_to(scan_path)!s}",
-                            'size': file.stat().st_size,
-                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            'is_exported': True,
-                            'destination': 'nas'
-                        })
-            else:
-                self.logger.info(f"{dir_name} directory does not exist: {scan_path}")
-
-        # Also scan for export directories (like export_20250624_220253) in the root
-        self.logger.info("Scanning for export directories in root...")
-        for item in nas_mount_point.iterdir():
-            self.logger.info(f"Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
-            if item.is_dir() and item.name.startswith('export_'):
-                self.logger.info(f"Found export directory: {item}")
-                for file in item.glob('**/*'):
-                    self.logger.info(f"Found file in export directory: {file} (suffix: {file.suffix})")
-                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"Adding export file to recordings list: {file}")
-                        recordings.append({
-                            'filename': f"nas/{item.name}/{file.relative_to(item)!s}",
-                            'size': file.stat().st_size,
-                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            'is_exported': True,
-                            'destination': 'nas'
-                        })
-
-        self.logger.info(f"Found {len(recordings)} NAS recordings")
-        return recordings
-
-
-    def mount_nas(self):
-        """Mount the NAS/export share defined in export.* controller config."""
-        try:
-            import subprocess
-
-            nas_ip = self.config.get("export.share_ip", "")
-            if not nas_ip:
-                self.logger.warning("mount_nas: export.share_ip not configured")
-                return False
-            share_path = self.config.get("export.share_path", "controller_share")
-            username = self.config.get("export.share_username", "")
-            password = self.config.get("export.share_password", "")
-            mount_point = Path("/mnt/controller_export")
-
-            mount_point.mkdir(parents=True, exist_ok=True)
-            if mount_point.is_mount():
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False)
-
-            auth_opts = cifs_auth_option(username, password, "export-mount")
-            mount_cmd = [
-                "sudo", "mount", "-t", "cifs",
-                f"//{nas_ip}/{share_path}",
-                str(mount_point),
-                "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
-            ]
-
-            result = subprocess.run(mount_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                self.logger.error(f"Failed to mount NAS: {result.stderr}")
-                return False
-
-            self.logger.info(f"Successfully mounted //{nas_ip}/{share_path} at {mount_point}")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"NAS mount failed: {e}")
-            return False
 
 
     def _get_own_ip(self) -> str:
@@ -4610,7 +4432,7 @@ class Web(ABC):
 
                 self.logger.info(f"Processing command: {command} for module: {module_id}")
 
-                result = self.facade.send_command(module_id, command, params)
+                self.facade.send_command(module_id, command, params)
                 return jsonify({
                     "status": "success",
                     "message": "Command sent successfully",

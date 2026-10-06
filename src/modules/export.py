@@ -467,12 +467,6 @@ class Export:
         self._export_config_file()
 
 
-    def _ensure_export_folder_exists(self):
-        if not self._create_export_path(): # Failed to create export path; maybe an issue mounting share?
-            return False
-        return True
-
-
     def _format_export_path(self, export_path: str):
         """Build the full export path: mount_point/session_name/date/module_name/
 
@@ -831,15 +825,3 @@ class Export:
             return False
 
 
-    def unmount(self) -> bool:
-        """Unmount current destination"""
-        try:
-            if self.current_mount:
-                # Unmount using umount
-                # Example: umount /mnt/export
-                self.current_mount = None
-                return True
-            return True
-        except Exception as e:
-            self.logger.error(f"Unmount failed: {e}")
-            return False

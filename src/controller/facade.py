@@ -49,9 +49,6 @@ class ControllerFacade:
         return self.controller.modules.get_module_configs()
 
 
-    def get_samba_info(self):
-        return self.controller.get_samba_info()
-
     def get_export_credentials(self) -> dict:
         return self.controller.get_export_credentials()
 
@@ -546,7 +543,6 @@ class ControllerFacade:
 
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
         self.controller.modules.module_ip_changed(module_id, new_module_ip)
-
 
 
     """Notifications"""

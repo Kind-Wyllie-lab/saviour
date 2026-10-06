@@ -906,10 +906,6 @@ class Module(ABC):
             self.logger.info("Cleaning up communication manager...")
             self.communication.cleanup()
 
-            # Unmount any mounted destination
-            if hasattr(self, 'export'):
-                self.export.unmount()
-
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False

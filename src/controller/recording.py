@@ -234,6 +234,10 @@ class Recording:
         # (session_name, module_id) → time.time_ns() the liveness check last
         # saw it recording; where a not_recording gap starts.
         self._last_seen_recording_ns: dict = {}
+        # (session, module) -> wall ns of the last heartbeat in which the
+        # module itself reported recording=True (evidence, unlike the above,
+        # which is when the controller last *believed* it was recording).
+        self._last_recording_heartbeat_ns: dict = {}
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
         # session_name → set of (module_id, source) currently self-reporting unhealthy
         self._recording_health_degraded: dict[str, set] = {}
@@ -2603,7 +2607,15 @@ class Recording:
 
 
     def _check_nas_space_periodic(self) -> None:
-        """Periodically alert when NAS free space crosses the warning threshold."""
+        """Periodically check export-share free space; alert, log and record
+        a session event whenever it crosses a threshold.
+
+        Test D (2026-10-03): the share sat at 2.5% free for 45 min and nothing
+        showed anywhere -- the alert only went to the Teams/SSE channels
+        (nothing without a webhook) and was never logged or written to the
+        session's event log. Now each ok/low/critical transition is logged and
+        recorded in every active session's session_events.log (WARNING / FAULT
+        / RECOVERY), alongside the alert."""
         config = self.facade.get_config()
         rec_cfg = config.get("recording", {})
         nas_warn = rec_cfg.get("nas_warn_free_pct", 15)
@@ -2612,6 +2624,27 @@ class Recording:
         if not nas.get("ok"):
             return  # mount error handled elsewhere
         free = nas["free_pct"]
+        level = "critical" if free < nas_min else "low" if free < nas_warn else "ok"
+        prev = getattr(self, "_share_space_level", "ok")
+        if level != prev:
+            self._share_space_level = level
+            detail = f"export share {free:.1f}% free ({nas['free_gb']:.0f} GiB)"
+            if level == "critical":
+                msg = (f"{detail} -- below the {nas_min}% minimum; exports will "
+                       f"fail once it fills")
+                self.logger.error(msg)
+                event = ("FAULT", msg)
+            elif level == "low":
+                msg = f"{detail} -- below the {nas_warn}% warning level"
+                self.logger.warning(msg)
+                event = ("WARNING", msg) if prev == "ok" else ("RECOVERY", f"{detail} -- above the {nas_min}% minimum again")
+            else:
+                msg = f"{detail} -- space recovered"
+                self.logger.info(msg)
+                event = ("RECOVERY", msg)
+            for name, session in list(self.sessions.items()):
+                if session.state in (SessionState.ACTIVE, SessionState.PAUSED):
+                    self._log_session_event(name, *event)
         if free < nas_min:
             if self._notify_enabled("notify_disk_space"):
                 self.facade.send_alert(
@@ -3142,6 +3175,9 @@ class Recording:
             else:
                 self._not_recording_strikes.pop(key, None)
                 self._last_seen_recording_ns[key] = time.time_ns()
+                health = self.facade.get_module_health(m) or {}
+                if health.get("recording") and health.get("last_heartbeat"):
+                    self._last_recording_heartbeat_ns[key] = int(health["last_heartbeat"] * 1e9)
 
         open_for = {
             m for g in session.gaps if g["end_ns"] is None
@@ -3151,12 +3187,21 @@ class Recording:
         for m in not_recording:
             if m in open_for:
                 continue  # already inside an offline/restart/self-stop gap
-            # Starts when the module was last seen recording, not when the
-            # strikes threshold tripped (desk soak: 21 s late).
+            # Starts at the earliest evidence the data stopped: the module's
+            # last heartbeat that reported recording, or failing that when
+            # the controller last saw it recording -- never when the strikes
+            # threshold tripped (desk soak: 21 s late). The heartbeat matters
+            # for a module that reboots faster than the offline timeout: its
+            # status still read RECORDING until it re-registered, so test D's
+            # mic gap started 27 s after the drop and undercounted ~40 s.
+            candidates = [t for t in (
+                self._last_recording_heartbeat_ns.get((session_name, m)),
+                self._last_seen_recording_ns.get((session_name, m)),
+            ) if t]
             self._open_gap(
                 session_name, [m], "not_recording", "error",
                 f"{m} online but not recording",
-                start_ns=self._last_seen_recording_ns.get((session_name, m)),
+                start_ns=min(candidates) if candidates else None,
             )
 
         if not_recording:
@@ -3210,9 +3255,13 @@ class Recording:
             # we can't confirm recovery, so leave the fault as-is. For an
             # unattended session the state is still ACTIVE here — we're just
             # clearing the fault record.
+            # error_message is a fault description ("camera_d074 is offline"),
+            # not a subject -- "Recovered — camera_d074 is offline now
+            # recording" read wrong in test D's event log.
             reason = session.error_message or "faulted modules"
             self._log_session_event(
-                session_name, "RECOVERY", f"Recovered — {reason} now recording"
+                session_name, "RECOVERY",
+                f"Recovered — all modules recording again (was: {reason})"
             )
             session.error_message = ""
             session.error_time = None

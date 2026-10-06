@@ -1932,6 +1932,32 @@ class TestSessionGapRecord:
             assert len(gaps) == 1
             assert gaps[0]["start_ns"] == last_seen
 
+    def test_fast_reboot_gap_starts_at_last_recording_heartbeat(self):
+        """Test D: the mic rebooted inside the offline timeout, so its status
+        still read RECORDING until it re-registered and the gap started 27 s
+        after the drop. The last heartbeat that reported recording is the
+        earlier, evidence-based start."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = self._rec(tmpdir)
+            facade.is_module_online.return_value = True
+            facade.is_module_recording.side_effect = lambda m: True
+            hb = time.time() - 40          # last recording heartbeat, 40 s ago
+            facade.get_module_health.return_value = {
+                "recording": True, "last_heartbeat": hb}
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+            last_seen = rec._last_seen_recording_ns[("exp1", "cam1")]
+
+            facade.get_module_health.return_value = {
+                "recording": False, "last_heartbeat": time.time()}
+            facade.is_module_recording.side_effect = lambda m: m != "cam1"
+            for _ in range(rec._NOT_RECORDING_STRIKES_THRESHOLD):
+                rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+            gap = next(g for g in rec.sessions["exp1"].gaps
+                       if g["cause"] == "not_recording")
+            assert gap["start_ns"] == int(hb * 1e9)
+            assert gap["start_ns"] < last_seen
+
     def test_flapping_liveness_warning_is_one_gap(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             rec, _facade = self._rec(tmpdir)
@@ -2101,3 +2127,31 @@ class TestGapEscalation:
             assert closed["end_ns"] is not None
             rec._escalate_open_gaps("exp1", rec.sessions["exp1"])
             facade.send_alert.assert_not_called()
+
+
+class TestShareSpaceEvents:
+    """Test D (2026-10-03): the share sat below the critical level for 45 min
+    with nothing logged or in the session's event log."""
+
+    def _run(self, rec, free_pct):
+        rec._check_nas_space = lambda: {"ok": True, "free_pct": free_pct, "free_gb": free_pct * 4.6}
+        rec._check_nas_space_periodic()
+
+    def test_transitions_logged_once_each_into_active_sessions(self):
+        rec, facade = _make_recording()
+        rec.sessions = {"live": _session(session_name="live"),
+                        "old": _session(session_name="old", state=SessionState.STOPPED)}
+        rec._log_session_event = MagicMock()
+        for pct in (40, 2.5, 2.4, 10, 30):
+            self._run(rec, pct)
+        events = [(c.args[0], c.args[1]) for c in rec._log_session_event.call_args_list]
+        assert events == [("live", "FAULT"), ("live", "RECOVERY"), ("live", "RECOVERY")]
+        assert all(c.args[0] != "old" for c in rec._log_session_event.call_args_list)
+
+    def test_low_then_critical_is_warning_then_fault(self):
+        rec, facade = _make_recording()
+        rec.sessions = {"live": _session(session_name="live")}
+        rec._log_session_event = MagicMock()
+        for pct in (12, 3):
+            self._run(rec, pct)
+        assert [c.args[1] for c in rec._log_session_event.call_args_list] == ["WARNING", "FAULT"]

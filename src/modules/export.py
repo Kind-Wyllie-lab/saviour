@@ -24,7 +24,7 @@ import threading
 import time
 
 from src.modules.config import Config
-from src.shared.cifs import cifs_auth_option
+from src.shared.cifs import cifs_mount_cmd
 
 
 class Export:
@@ -769,16 +769,9 @@ class Export:
                     except subprocess.TimeoutExpired:
                         self.logger.warning(f"{' '.join(umount_cmd)} timed out")
 
-            # credentials=<0600 file>, not password= on the command line,
-            # which sudo logs to the journal (src/shared/cifs.py).
-            auth_opts = cifs_auth_option(
+            mount_cmd = cifs_mount_cmd(
+                self.samba_share_ip, self.samba_share_path, self.mount_point,
                 self.samba_share_username, self.samba_share_password, "export")
-            mount_cmd = [
-                'sudo', 'mount', '-t', 'cifs',
-                f'//{self.samba_share_ip}/{self.samba_share_path}',
-                self.mount_point,
-                '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none',
-            ]
 
             for attempt in range(1, self._MOUNT_MAX_ATTEMPTS + 1):
                 try:

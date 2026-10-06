@@ -45,12 +45,12 @@ from src.controller import compose, framesync_check, rest_api
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
+from src.shared.cifs import cifs_mount_cmd, unmount
 from src.shared.data_rate import (
     bytes_per_s_to_mb_per_min,
     estimate_recording_bytes_per_s,
     runway_minutes,
 )
-from src.shared.cifs import cifs_auth_option
 from src.shared.supervised import supervise
 from src.shared.zip_extract import extract_preserving_permissions
 
@@ -671,6 +671,14 @@ class Web(ABC):
         return expires is not None and expires >= time.time()
 
 
+    def _export_share_settings(self) -> tuple:
+        """(share_ip, share_path, username, password) from export.* config."""
+        get = self.config.get
+        return (get("export.share_ip", ""),
+                get("export.share_path", "controller_share"),
+                get("export.share_username", ""),
+                get("export.share_password", ""))
+
     def _probe_nas(self) -> dict:
         """Mount the export share, measure free space, and test writability.
 
@@ -699,19 +707,15 @@ class Web(ABC):
             return out
         out["configured"] = True
 
-        share_path = self.config.get("export.share_path", "controller_share")
-        username   = self.config.get("export.share_username", "")
-        password   = self.config.get("export.share_password", "")
+        _, share_path, username, password = self._export_share_settings()
         mount_point = Path("/mnt/nas_probe")
         try:
             mount_point.mkdir(parents=True, exist_ok=True)
             if mount_point.is_mount():
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-            auth_opts = cifs_auth_option(username, password, "nas-probe")
+                unmount(mount_point, timeout=10)
             result = subprocess.run(
-                ["sudo", "mount", "-t", "cifs",
-                 f"//{nas_ip}/{share_path}", str(mount_point),
-                 "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                               "nas-probe"),
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode != 0:
@@ -745,7 +749,7 @@ class Web(ABC):
             out["error"] = f"NAS check failed: {e}"
             return out
         finally:
-            subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+            unmount(mount_point, timeout=10)
 
 
     def _check_nas_free_space(self, probe: "dict | None" = None) -> "str | None":
@@ -782,21 +786,16 @@ class Web(ABC):
         """Attempt one write of session_metadata.json.  Returns True on success."""
         import subprocess
 
-        nas_ip = self.config.get("export.share_ip", "")
+        nas_ip, share_path, username, password = self._export_share_settings()
         if nas_ip:
-            share_path = self.config.get("export.share_path", "controller_share")
-            username   = self.config.get("export.share_username", "")
-            password   = self.config.get("export.share_password", "")
             mount_point = Path("/mnt/controller_export")
             try:
                 mount_point.mkdir(parents=True, exist_ok=True)
                 if mount_point.is_mount():
-                    subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-                auth_opts = cifs_auth_option(username, password, "metadata")
+                    unmount(mount_point, timeout=10)
                 result = subprocess.run(
-                    ["sudo", "mount", "-t", "cifs",
-                     f"//{nas_ip}/{share_path}", str(mount_point),
-                     "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                    cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                                   "metadata"),
                     capture_output=True, text=True, timeout=15,
                 )
                 if result.returncode != 0:
@@ -815,7 +814,7 @@ class Web(ABC):
                 self.logger.warning(f"Metadata write failed for '{session_name}': {e}")
                 return False
             finally:
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+                unmount(mount_point, timeout=10)
         else:
             share_dir = self.habitat_share_dir / session_name
             try:
@@ -4120,10 +4119,7 @@ class Web(ABC):
         is_remote = bool(nas_ip) and nas_ip != self._get_own_ip()
 
         if mount_point.is_mount():
-            result = subprocess.run(
-                ["sudo", "umount", str(mount_point)],
-                capture_output=True, text=True, check=False,
-            )
+            result = unmount(mount_point)
             if result.returncode != 0:
                 self.logger.warning(
                     f"Could not unmount {mount_point} before remount: {result.stderr}"
@@ -4132,17 +4128,11 @@ class Web(ABC):
         if not is_remote:
             return True
 
-        share_path = self.config.get("export.share_path", "controller_share")
-        username   = self.config.get("export.share_username", "")
-        password   = self.config.get("export.share_password", "")
+        _, share_path, username, password = self._export_share_settings()
         mount_point.mkdir(parents=True, exist_ok=True)
-        auth_opts = cifs_auth_option(username, password, "export-browse")
-        mount_opts = (
-            f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
-        )
         result = subprocess.run(
-            ["sudo", "mount", "-t", "cifs",
-             f"//{nas_ip}/{share_path}", str(mount_point), "-o", mount_opts],
+            cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                           "export-browse"),
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:

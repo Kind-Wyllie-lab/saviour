@@ -32,15 +32,8 @@ jobs:
         pip install -e ".[dev]"
 
     - name: Lint with ruff
-      run: |
-        # Fail on syntax errors or undefined names (equivalent to the old
-        # flake8 E9,F63,F7,F82 gate)
-        ruff check . --select=F63,F7,F82 \
-          --exclude=src/controller/frontend,dev
-        # Warnings only for the full configured rule set (see [tool.ruff]
-        # in pyproject.toml for line-length/rule selection)
-        ruff check . --exit-zero \
-          --exclude=src/controller/frontend,dev
+      # Gates on the full rule set in pyproject.toml [tool.ruff].
+      run: ruff check .
 
     - name: Test with pytest
       run: |

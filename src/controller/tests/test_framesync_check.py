@@ -464,7 +464,7 @@ def test_worker_runs_day_check_and_writes_report(tmp_path):
         thresholds_provider=lambda: dict(fc.DEFAULT_THRESHOLDS),
         on_result=lambda *a: results.append(a),
     )
-    job = w.submit({"session_name": "mysess", "scope": "day", "date_dir": "20260903"})
+    w.submit({"session_name": "mysess", "scope": "day", "date_dir": "20260903"})
     assert _wait_for(lambda: results)
     name, scope, date_dir, verdict, report_rel = results[0]
     assert (name, scope, date_dir) == ("mysess", "day", "20260903")

@@ -102,7 +102,7 @@ class BaslerCameraModule(Module):
         # is a visible, explained fault state (readiness check + health
         # heartbeat) rather than a boot crash indistinguishable from the
         # process never having started at all.
-        self.camera: "pylon.InstantCamera | None" = None
+        self.camera: pylon.InstantCamera | None = None
         self._converter = None
         self.hardware_fault: str | None = None
 

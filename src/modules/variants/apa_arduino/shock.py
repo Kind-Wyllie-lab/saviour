@@ -272,7 +272,7 @@ class Shocker:
 
     def check_shock_events(self):
         """
-        In this function we want to check for when shocks are delivered. 
+        In this function we want to check for when shocks are delivered.
         We may wish to distinguish between when shocks are sent (trigger_out==0) and delivered (self_test_in==1)
         This could be useful for debugging.
         We need to do this as after we activate a shock sequence, the arduino will indepdently turn grid on for time_on and off for time_off.
@@ -395,7 +395,7 @@ class Shocker:
                 case "2":
                     self.set_strong_shock()
                 case "3":
-                    t2 = threading.Thread(target=self.run_grid_test).start()
+                    threading.Thread(target=self.run_grid_test).start()
                 case "4":
                     self.activate_shock()
                 case "5":

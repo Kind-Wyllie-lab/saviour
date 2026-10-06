@@ -144,7 +144,7 @@ class PTP:
             except subprocess.CalledProcessError as e:
                 if e.returncode == 4:  # Unit not found
                     raise PTPError(f"Systemd service {service} not found. "
-                                   f"Please run the setup script to configure PTP services.")
+                                   f"Please run the setup script to configure PTP services.") from e
                 else:
                     self.logger.warning(f"Could not check {service} service status: {e}")
 
@@ -530,10 +530,10 @@ class PTP:
 
     def get_ptp_buffer(self, max_entries=None):
         """Get the ptp_buffer data.
-        
+
         Args:
             max_entries: Maximum number of entries to return (None for all)
-            
+
         Returns:
             List of ptp_buffer dictionaries with timestamp, offset, and freq values
         """
@@ -544,7 +544,7 @@ class PTP:
 
     def get_offset_statistics(self):
         """Get statistics from the ptp buffer.
-        
+
         Returns:
             Dictionary with offset and freq statistics for both ptp4l and phc2sys
         """

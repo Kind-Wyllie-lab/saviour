@@ -24,9 +24,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.supervised import REGISTRY, crash_looping, supervise
-
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
+from src.shared.supervised import REGISTRY, crash_looping, supervise
 
 
 class _CsvEcho:

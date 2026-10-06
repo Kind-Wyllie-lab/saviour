@@ -497,10 +497,10 @@ class Controller(ABC):
     def start(self) -> bool:
         """
         Start the controller.
-        
+
         Returns:
             bool: True if the controller started successfully, False otherwise.
-            
+
         Starts the following:
         - A PTP manager, which starts a thread to run ptp4l and phc2sys
         - A interface manager, which receives input from CLI or web interface and handles it (and may also be used to send commands to modules)
@@ -557,11 +557,11 @@ class Controller(ABC):
     def get_config(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value
-        
+
         Args:
             key: Configuration key path (e.g., "controller.max_buffer_size")
             default: Default value if key doesn't exist
-            
+
         Returns:
             Configuration value
         """
@@ -571,12 +571,12 @@ class Controller(ABC):
     def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
         """
         Set a configuration value
-        
+
         Args:
             key: Configuration key path (e.g., "controller.max_buffer_size")
             value: Value to set
             persist: Whether to save to config file
-            
+
         Returns:
             True if successful
         """

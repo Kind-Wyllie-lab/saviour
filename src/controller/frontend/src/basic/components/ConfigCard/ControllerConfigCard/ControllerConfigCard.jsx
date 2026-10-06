@@ -94,6 +94,8 @@ function ControllerConfigCard() {
       socket.off("teams_test_result", handleTeamsTestResult);
       clearTimeout(saveTimerRef.current);
     };
+    // Subscribe once on mount; the handlers only call state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSave = () => {

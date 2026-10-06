@@ -22,7 +22,7 @@ class APAWeb(Web):
     # Override base method
     def handle_special_module_status(self, module_id: str, status: str) -> bool:
         """
-        APA web callbacks for events from modules    
+        APA web callbacks for events from modules
 
         Args:
             module_id

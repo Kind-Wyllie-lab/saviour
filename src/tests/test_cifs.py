@@ -58,6 +58,7 @@ def test_mount_cmd_guest_without_username():
 
 def test_unmount_never_raises_on_failure(monkeypatch):
     import subprocess
+
     from src.shared import cifs
     calls = []
     def fake_run(cmd, **kw):

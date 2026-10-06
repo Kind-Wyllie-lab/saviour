@@ -38,11 +38,11 @@ class Health:
 
     def start_heartbeats(self) -> bool:
         """Start sending periodic heartbeats to the controller
-        
+
         Args:
             heartbeat_callback: Function that returns the heartbeat data to send
             interval: Time between heartbeats in seconds
-            
+
         Returns:
             bool: True if heartbeats were started successfully
         """
@@ -143,7 +143,7 @@ class Health:
         try:
             temp = os.popen("vcgencmd measure_temp").readline()
             return float(temp.replace("temp=","").replace("'C\n",""))
-        except:
+        except:  # noqa: E722 -- no reading is just None
             return None
 
     # Last-seen "now" throttle flags, so we log the transition into a

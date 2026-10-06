@@ -52,7 +52,7 @@ class Config:
     ):
         """
         Initialize the configuration manager
-        
+
         Args:
             config_file_path: Path to the base configuration file (optional)
             active_config_path: Path to the active configuration file (optional)
@@ -118,8 +118,8 @@ class Config:
         """
         Load and merge module-specific config, then persist active_config.json
         Behaviour:
-        - If active config does not exist: full merge 
-        - If active config does exist: only fill in missing keys 
+        - If active config does not exist: full merge
+        - If active config does exist: only fill in missing keys
         """
 
         module_path = os.path.abspath(module_config_path)
@@ -353,7 +353,7 @@ class Config:
         Runs within set() and checks if a parameter which has been set belongs to the submodule
 
         args:
-            key_path: dot separated path to the parameter 
+            key_path: dot separated path to the parameter
         """
         if hasattr(self, "module_config_keys") and key_path in self.module_config_keys:
             self.logger.info(f"Module-specific param updated: {key_path}")
@@ -376,11 +376,11 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value by its key path
-        
+
         Args:
             key_path: Dot-separated path to the configuration value
             default: Default value to return if key doesn't exist
-            
+
         Returns:
             Configuration value or default if not found
         """

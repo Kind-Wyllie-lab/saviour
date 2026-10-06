@@ -2,7 +2,7 @@
 """
 Module Recording Manager
 
-This class is used to manage recording methods for the module - starting and stopping recordings, batch exporting for 24/7 recordings, updating files for export. 
+This class is used to manage recording methods for the module - starting and stopping recordings, batch exporting for 24/7 recordings, updating files for export.
 
 Sequence
 - controller sends call to start_recording()
@@ -10,7 +10,7 @@ Sequence
 - the initial recording segment is created
 - threads are started
 -- self.health_recording_thread records health metadata to a csv for the current segment
--- self._recording_duration_thread is used to automatically stop recording after preset duration 
+-- self._recording_duration_thread is used to automatically stop recording after preset duration
 -- self.monitor_recording_segments_thread is used to stop and start new recording segments when condition is met
 
 Author: Andrew SG

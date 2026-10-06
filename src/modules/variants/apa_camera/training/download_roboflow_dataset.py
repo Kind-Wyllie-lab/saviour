@@ -49,8 +49,8 @@ from pathlib import Path
 def get_roboflow_client(api_key: str | None = None):
     try:
         from roboflow import Roboflow
-    except ImportError:
-        raise RuntimeError("roboflow not installed: pip install roboflow")
+    except ImportError as e:
+        raise RuntimeError("roboflow not installed: pip install roboflow") from e
 
     api_key = api_key or os.environ.get("ROBOFLOW_API_KEY")
     if not api_key:
@@ -83,8 +83,8 @@ def list_versions(project, flag_name: str = "--version") -> None:
 def patch_data_yaml_path(data_yaml: Path, dataset_root: Path) -> None:
     try:
         import yaml
-    except ImportError:
-        raise RuntimeError("pyyaml not installed: pip install pyyaml")
+    except ImportError as e:
+        raise RuntimeError("pyyaml not installed: pip install pyyaml") from e
     with open(data_yaml) as f:
         config = yaml.safe_load(f)
     config["path"] = str(dataset_root.resolve())

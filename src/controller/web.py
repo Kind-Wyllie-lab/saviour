@@ -204,7 +204,7 @@ def _provisioned_device_type() -> str | None:
     return None
 
 
-class Web(ABC):
+class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     # Outside the JSON config files on purpose -- those are readable/mergeable
     # via the config-sync socket events, and a credential has no business
     # sitting somewhere "get_controller_config" could ever echo back.
@@ -1290,8 +1290,8 @@ class Web(ABC):
             Handle command from frontend.
             Command will be formatted as command_name param1=value1 param2=value2 etc
             For example, start_streaming client_ip=192.168.0.55 port=8080
-            Communication manager will format this as cmd/<module_id> <command_name> <param1=value1> <param2=value2> etc 
-            
+            Communication manager will format this as cmd/<module_id> <command_name> <param1=value1> <param2=value2> etc
+
             Args:
                 command (json): The command received from the frontend. Should contain type, module_id (may be "all" or a specific module), and params field
             """
@@ -3985,7 +3985,7 @@ class Web(ABC):
         return True
 
 
-    def handle_special_module_status(self, module_id, status):
+    def handle_special_module_status(self, module_id, status):  # noqa: B027
         """To be overriden by rig specific functionality"""
         pass
 

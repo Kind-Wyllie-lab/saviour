@@ -760,7 +760,7 @@ class Module(ABC):
         Start the module.
 
         This method should be overridden by the subclass to implement specific module initialization logic.
-        
+
         Returns:
             bool: True if the module started successfully, False otherwise.
         """
@@ -991,11 +991,11 @@ class Module(ABC):
     def set_config(self, config: dict, persist: bool = True) -> bool:
         """
         Set the entire configuration from a dictionary
-        
+
         Args:
             config: Dictionary containing the new configuration
             persist: Whether to persist the changes to the config file
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -1059,7 +1059,7 @@ class Module(ABC):
         """
         Get the required disk space in MB for this module.
         Reads from config with fallback to default.
-        
+
         Returns:
             float: Required disk space in MB (default: 100MB)
         """
@@ -1070,7 +1070,7 @@ class Module(ABC):
         """
         Get the maximum acceptable PTP offset in microseconds.
         Reads from config with fallback to default.
-        
+
         Returns:
             float: Maximum acceptable PTP offset in microseconds (default: 1000μs = 1ms)
         """
@@ -1082,10 +1082,10 @@ class Module(ABC):
         """
         Perform module-specific readiness checks.
         Subclasses should override this method to add their own validation.
-        
+
         Args:
             checks: Dictionary to store check results
-            
+
         Returns:
             tuple: (ready: bool, error_msg: str or None)
         """

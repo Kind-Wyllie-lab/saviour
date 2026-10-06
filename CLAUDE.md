@@ -20,13 +20,13 @@ pytest
 pytest src/controller/tests/test_facade.py   # single file
 
 # Lint — ruff is a dev dependency (pip install -e ".[dev]") and is what CI runs
-ruff check src/
+ruff check .
 
 # Type check (aspirational — strict mypy config has never passed)
 mypy src/
 ```
 
-Note: `ruff check src/` has a large pre-existing baseline (~2000+ findings, mostly `PL*`) on `main` — CI clearly isn't gating on the full set. Keep new code clean of `E,F,B,UP,W,I,N` at least.
+`ruff check .` is a CI gate (rule set and the reasons for each ignore in `pyproject.toml`); keep it at zero. Use `# noqa: <code> -- <why>` only where the pattern is intended.
 
 ### Frontend (React/Vite)
 
@@ -149,7 +149,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 
 **Threat model (settled 2026-08-25):** **LAN access is the trust boundary**: anyone who can reach the network is treated as authorized, the same as SSH/physical console access. The web UI's guest/admin split stops an operator *accidentally* breaking a running experiment or leaking data, **not** a malicious LAN-resident actor. So `update_saviour` package-signature verification and the ZMQ identity-hijack path are **deliberately deferred**. A credential committed to git history is compromised regardless; those are fixed separately. The tailnet is only the owner's machines; controller services bind eth0 only (`interface.listen_on`), wlan0 is default-deny (`docs/NETWORK_FIREWALL.md`). Reach the web UI over Tailscale with `tailscale serve --bg http://10.0.0.1:5000`.
 
-**CI:** `python-app.yml` (ruff F-subset gate + pytest) and `frontend.yml` (`npm run build` × 5 variants + `npm run lint`) run on push/PR to `main` and `staging`; `build` and `frontend-build` are required checks on `main`.
+**CI:** `python-app.yml` (ruff gate + pytest) and `frontend.yml` (`npm run build` × 5 variants + `npm run lint`) run on push/PR to `main` and `staging`; `build` and `frontend-build` are required checks on `main`.
 
 **Where things live:** completed work → **[docs/CHANGELOG.md](docs/CHANGELOG.md)** (write it up there when done). Plans for features / non-trivial fixes → one file each in **[plans/](plans/)**. Open items without a plan → **[plans/backlog.md](plans/backlog.md)**. Full hardware findings → **[docs/HARDWARE_NOTES.md](docs/HARDWARE_NOTES.md)**.
 

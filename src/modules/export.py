@@ -167,6 +167,12 @@ class Export:
                 return prefix
         return None
 
+    def session_from_filename(self, filename: str) -> str:
+        """Session name of a recorded filename; the text before the first
+        underscore when the module ID isn't in it."""
+        return (self._extract_session_from_filename(filename)
+                or filename.split("_", maxsplit=1)[0])
+
 
     def summarize_recording_state(self, session_name: str = None) -> dict:
         """Summarize local recording-pipeline state (pending/to_export/exported),

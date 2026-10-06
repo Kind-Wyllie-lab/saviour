@@ -324,6 +324,18 @@ class TestExtractSessionFromFilename:
             fn = "rot1min_b-102844_camera_d074_(5_20261002-093347).ts"
             assert exp._extract_session_from_filename(fn) == "rot1min_b-102844"
 
+    def test_session_from_filename_keeps_underscored_session(self):
+        # Boot-time crash recovery files PARTIAL segments under this name.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "camera_d074")
+            fn = "my_exp-102844_camera_d074_(5_20261002-093347)_PARTIAL"
+            assert exp.session_from_filename(fn) == "my_exp-102844"
+
+    def test_session_from_filename_falls_back_to_first_underscore(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir, "camera_d074")
+            assert exp.session_from_filename("myexp_other_abc123.ts") == "myexp"
+
 
 class TestMountShare:
     def test_succeeds_on_first_attempt(self):

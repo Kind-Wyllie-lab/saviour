@@ -864,11 +864,6 @@ class Recording:
 
 
     """File handling"""
-    def get_session_from_filename(self, filename: str) -> str:
-        session_name = filename.split("_", maxsplit=1)[0]
-        return session_name
-
-
     def get_start_time_from_filename(self, filename: str) -> str:
         import re
         # Extract "YYYYMMDD-HHMMSS" from the "(segment_YYYYMMDD-HHMMSS)" pattern.

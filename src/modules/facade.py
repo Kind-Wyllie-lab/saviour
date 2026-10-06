@@ -218,7 +218,7 @@ class ModuleFacade:
 
 
     def get_session_from_filename(self, filename: str) -> str:
-        return self.module.recording.get_session_from_filename(filename)
+        return self.module.export.session_from_filename(filename)
 
 
     def get_start_time_from_filename(self, filename: str) -> str:

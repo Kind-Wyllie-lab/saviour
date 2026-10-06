@@ -222,6 +222,8 @@ Account/settings actions on github.com, recorded here so they aren't lost:
 
 ### Low priority — observability / maintenance
 
+- **Pre-v1.0 cleanup (behaviour-neutral): dead code, duplicated update/NAS-mount logic, history-narrating comments, a CLAUDE.md that's become a changelog, a meaningless lint baseline** — see `plans/pre-v1-codebase-cleanup.md`.
+
 - **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip.
 - **Dead code sweep** — `export.py` `unmount()` (references undefined `self.current_mount`) and `_ensure_export_folder_exists()` (calls `_create_export_path()` with no args — TypeError), `web.py` inbound `module_status` socket event. (`controller/database.py` deleted 2026-08-28.)
 - **`docs/PROTOCOL_V1.md` is stale** — documents transport that was never built. Rewrite to the actual DEALER/ROUTER string protocol, or keep as the design target for correlation-ID work and label it clearly. `docs/CONFIG_STRUCTURE.md` likely also needs a pass.

@@ -10,7 +10,8 @@
 #   3. Rebuilds the frontend (controller only)
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
 #   5. Installs / refreshes the saviour-config symlink
-#   6. Applies logging and NTP configuration
+#   6. Applies logging and NTP configuration; turns off background OS
+#      update jobs on modules
 #   7. Disables NVMe APST (power-state transitions) on devices with an NVMe root
 #   8. Sets the PoE+ HAT's PSU_MAX_CURRENT bootloader budget (all Pi 4/5 devices)
 #   9. Regenerates the saviour.service systemd unit and restarts it if running
@@ -336,6 +337,28 @@ RootDistanceMaxSec=5
 EOF
     timedatectl set-ntp true
     systemctl restart systemd-timesyncd
+fi
+
+# Modules run no OS update activity in the background: their code arrives
+# through SAVIOUR (ZIP update / mend.sh), unattended-upgrades isn't installed,
+# and these jobs compete with recording for CPU and I/O. The desktop panel's
+# daily update check (PackageKit, at the boot time of day) and apt's daily
+# list refresh each preceded capture stalls on a loaded camera. Undo with
+# `systemctl unmask packagekit` and
+# `systemctl enable --now apt-daily.timer apt-daily-upgrade.timer`.
+if [ "$DETECTED_ROLE" = "module" ]; then
+    if [ "$(systemctl is-enabled packagekit.service 2>/dev/null)" = "masked" ] \
+            && ! systemctl is-enabled --quiet apt-daily.timer 2>/dev/null \
+            && ! systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+        ok "Background OS update jobs already off"
+    else
+        fix "Turning off background OS update jobs (PackageKit, apt-daily timers)"
+        systemctl stop packagekit.service 2>/dev/null || true
+        systemctl mask packagekit.service >/dev/null 2>&1 \
+            || warn "Could not mask packagekit.service"
+        systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 \
+            || warn "Could not disable the apt-daily timers"
+    fi
 fi
 
 # ── 7. NVMe power management ───────────────────────────────────────────────────

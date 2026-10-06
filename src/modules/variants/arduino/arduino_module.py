@@ -226,10 +226,10 @@ class ArduinoModule(Module):
     def set_arduino_parameters(self, params: dict) -> bool:
         """
         Set arduino parameters and update config
-        
+
         Args:
             params: Dictionary of arduino parameters to update
-            
+
         Returns:
             bool: True if successful
         """

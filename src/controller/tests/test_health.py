@@ -14,8 +14,6 @@ import time
 from collections import deque
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from src.controller.health import Health
 
 

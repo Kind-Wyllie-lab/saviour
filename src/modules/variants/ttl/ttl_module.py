@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SAVIOUR System - TTL Module 
+SAVIOUR System - TTL Module
 
 This class extends the base Module class to handle TTL-specific functionality.
 
@@ -36,7 +36,7 @@ def cleanup_gpio():
     """Clean up all GPIO resources"""
     try:
         gpiozero.Device.pin_factory.close()
-    except:
+    except:  # noqa: E722 -- atexit cleanup must never raise
         pass
 
 # Register cleanup function
@@ -1492,7 +1492,7 @@ class TTLModule(Module):
             for pin in self.output_pins:
                 try:
                     self._set_output_inactive(pin)
-                except:
+                except:  # noqa: E722 -- best-effort during cleanup
                     pass
 
             # Clear pin lists
@@ -1511,7 +1511,7 @@ class TTLModule(Module):
         """Destructor to ensure cleanup"""
         try:
             self.cleanup()
-        except:
+        except:  # noqa: E722 -- __del__ must never raise
             pass
 
 

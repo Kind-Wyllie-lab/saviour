@@ -63,7 +63,7 @@ packages = ["src"]
 dev = [
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
-    "ruff>=0.6.0",
+    "ruff>=0.16,<0.17",  # CI gates on ruff; a new minor can add rules
     "pytest-cov>=7.0",
     # tools/analyse_audio_sync.py (analysis tool, not a module runtime dep)
     "scipy>=1.11",
@@ -80,10 +80,36 @@ addopts = "-v -p no:cacheprovider"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+extend-exclude = ["src/controller/frontend", "dev", "env", "env2", "*.ipynb"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "B", "UP", "PL", "RUF"]
-ignore = []
+# CI gates on this whole set (python-app.yml). Correctness rules are on;
+# the ignores are style-only classes not worth a tree-wide churn diff.
+select = ["E", "F", "W", "B", "UP", "I", "N", "RUF", "PLE", "PLW"]
+ignore = [
+    "E501",     # line length: the formatter's job, not a gate
+    "E402",     # imports after sys.path setup in variant entry points
+    "E701", "E702",  # one-line compound statements
+    "E712", "E711",  # == True/None: deliberate for numpy/pandas operands
+    "E741",     # short names like `l`
+    "N806",     # UPPER_CASE constants scoped inside a function
+    "B905",     # zip() without strict=
+    "PLW0108",  # lambda wrappers
+    "PLW0603",  # module-level singletons via `global`
+    "PLW1510",  # subprocess.run without check=: failure handled via returncode
+    "PLW2901",  # rebinding a loop variable
+    "RUF001", "RUF002", "RUF003",  # dashes, µ, × in text
+    "RUF005",   # list concatenation vs unpacking
+    "RUF012",   # mutable class attributes without ClassVar
+    "RUF013",   # implicit Optional in annotations
+    "RUF046",   # int() around an int
+    "RUF059",   # unused names in tuple unpacking
+    "RUF100",   # noqa codes for rules not enabled document intent
+]
+
+[tool.ruff.lint.per-file-ignores]
+# _dest_reached closes over the loop variables but is called in the same iteration.
+"src/modules/variants/loom_camera/loom_stimulus.py" = ["B023"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["saviour"]

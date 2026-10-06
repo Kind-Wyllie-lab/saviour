@@ -15,11 +15,11 @@ import json
 import math
 import os
 import random
-import shutil
-import tempfile
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 

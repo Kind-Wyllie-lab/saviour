@@ -141,12 +141,12 @@ class APAModule(Module):
     def _test_port_identity(self, port_info) -> None:
         """Create a protocol object to find identity of arduino"""
         self.logger.info(f"Checking {port_info} for an Arduino")
-        test_protocol = Protocol(port=port_info.device, on_identity=self.handle_identity).start()
+        Protocol(port=port_info.device, on_identity=self.handle_identity).start()
 
 
     def handle_identity(self, protocol: Protocol, identity: str) -> None:
         """
-        Callback to be registered with a Protocol object. 
+        Callback to be registered with a Protocol object.
         Once identity has been discovered, return it here.
         """
         self.logger.info(f"{identity} found on {protocol.port}")
@@ -200,11 +200,11 @@ class APAModule(Module):
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
         self.logger.info("Performing %s specific checks", self.module_type)
-        for check in self.module_checks:
-            self.logger.info("Running %s", check.__name__)
-            result, message = check()
+        for check_fn in self.module_checks:
+            self.logger.info("Running %s", check_fn.__name__)
+            result, message = check_fn()
             if not result:
-                self.logger.info("Check failed: %s — %s", check.__name__, message)
+                self.logger.info("Check failed: %s — %s", check_fn.__name__, message)
                 return False, message
         return True, "All checks passed"
 

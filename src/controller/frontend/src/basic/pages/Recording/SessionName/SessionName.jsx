@@ -30,6 +30,8 @@ function SessionName({ stageOverride }) {
       socket.emit("update_experiment_metadata", updated);
       return updated;
     });
+    // Keyed on stageOverride only; setMetadata takes an updater function.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageOverride]);
 
   useEffect(() => {
@@ -46,6 +48,8 @@ function SessionName({ stageOverride }) {
       socket.off("experiment_metadata_response", handleResponse);
       socket.off("experiment_metadata_updated", handleResponse);
     };
+    // Subscribe once on mount; the handler only calls setMetadata.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleChange = (field, value) => {

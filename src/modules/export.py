@@ -514,13 +514,13 @@ class Export:
 
     def _create_export_manifest(self, files_to_export: list, export_folder: str, session_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
-        
+
         Args:
             files_to_export: List of filenames that will be exported
             destination: Where the files will be exported to (string or enum)
             export_folder: Path to the folder where files will be exported
             session_name: Optional session_name for the export
-            
+
         Returns:
             str: Name of the created manifest file
         """

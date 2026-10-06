@@ -27,9 +27,10 @@ from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
-from modules.module import check
+
 # Detection + the on-chip-NMS picamera2 wrapper are shared with hailo_camera.
 from modules.hailo_infer import Detection, HailoDetector
+from modules.module import check
 
 __all__ = ["Detection", "HailoDetector"]  # re-exported for existing importers
 

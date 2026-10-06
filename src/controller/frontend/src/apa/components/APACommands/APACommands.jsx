@@ -81,7 +81,11 @@ function APACommands( {modules} ) {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
         };
-    }, [spacePressed, shockerArmed]); // Put apaModule in the box when leaving dummy mode
+    // Rebinds only on spacePressed/shockerArmed. activateShock/deactivateShock
+    // close over apaModule, so a module change mid-hold uses the old id until
+    // the next rebind; see the APA shock item in plans/backlog.md.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [spacePressed, shockerArmed]);
 
     return (
         <div className="apa-commands">

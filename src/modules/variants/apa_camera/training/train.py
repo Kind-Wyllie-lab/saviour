@@ -168,7 +168,9 @@ def main():
             print(f"[ERROR] Checkpoint not found: {args.resume}")
             sys.exit(1)
         try:
-            from ultralytics import YOLO  # noqa: F401 -- import checked here, used inside train_model
+            from ultralytics import (
+                YOLO,  # noqa: F401 -- import checked here, used inside train_model
+            )
         except ImportError:
             print("[ERROR] ultralytics not installed: pip install 'ultralytics>=8.3'")
             return
@@ -198,7 +200,9 @@ def main():
         sys.exit(1)
 
     try:
-        from ultralytics import YOLO  # noqa: F401 -- import checked here, used inside train_model
+        from ultralytics import (
+            YOLO,  # noqa: F401 -- import checked here, used inside train_model
+        )
     except ImportError:
         print("[ERROR] ultralytics not installed: pip install 'ultralytics>=8.3'")
         return

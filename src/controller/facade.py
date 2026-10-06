@@ -492,6 +492,7 @@ class ControllerFacade:
 
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online
+        self.controller.export_queue.module_back_online(module_id)
         self.controller.recording.module_back_online(module_id)
 
     def notify_module_recording(self, module_id: str) -> None:

@@ -166,20 +166,11 @@ class Modules:
     def module_discovery(self, module: Module) -> None:
         """Called by Network when zeroconf reports a new or updated module."""
         if module.id in self._modules:
-            # Already-known module re-announcing over mDNS (e.g. an avahi TTL
-            # refresh, or the first real mDNS sighting of a module that was
-            # auto-registered via received_module_config() with ip="" before
-            # its mDNS broadcast was ever seen) -- update_service() in
-            # network.py calls facade.module_rediscovered() immediately
-            # before this, which deliberately preserves a RECORDING status;
-            # add_module()'s wholesale replace with this freshly-constructed,
-            # mostly-default Module (status=WAITING, config={},
-            # last_heartbeat_time=0.0, ...) would immediately undo that
-            # protection. But mDNS is the only source of network identity
-            # (ip/port/zeroconf_name) -- module_ip_changed() is never called
-            # from anywhere else -- so refresh exactly those fields rather
-            # than no-op'ing entirely; everything else (status/config/
-            # last_heartbeat_time/etc.) is left untouched.
+            # Known module re-announcing (avahi refresh, or the first mDNS
+            # sighting of one auto-registered with ip=""). Replacing it with
+            # this mostly-default Module would undo module_rediscovered()'s
+            # preserved RECORDING status, so refresh only the network
+            # identity, which mDNS is the sole source of.
             existing = self._modules[module.id]
             identity = (existing.ip, existing.port, existing.zeroconf_name)
             new_identity = (module.ip, module.port, module.zeroconf_name)
@@ -626,9 +617,8 @@ class Modules:
 
     def is_module_recording(self, module_id: str) -> bool:
         # An offline module can't be recording as far as the controller can
-        # tell, whatever stale RECORDING status it last had (desk soak
-        # 2026-09-30: the liveness check "recovered" a session from an
-        # unplugged module because its status hadn't flipped yet).
+        # tell, whatever stale RECORDING status it last had; otherwise the
+        # liveness check can "recover" a session from an unplugged module.
         module = self._modules.get(module_id)
         return (module is not None and module.online
                 and module.status == ModuleStatus.RECORDING)
@@ -782,24 +772,13 @@ class Modules:
             new_path = f"{path}.{key}" if path else key
             val_a, val_b = a.get(key), b.get(key)
             if isinstance(val_a, dict) or isinstance(val_b, dict):
-                # A key missing entirely from one side (e.g. camera.crop_rect,
-                # never included in the frontend's save payload -- it's set
-                # only via the separate crop-editor modal, not the normal
-                # form fields) must not be treated as an automatic mismatch
-                # just because .get() falls back to a bare {} vs the other
-                # side's real dict -- only an actual value difference inside
-                # should count.
+                # A dict missing on one side (e.g. camera.crop_rect, absent
+                # from the save payload) is compared as {}: only a value
+                # difference inside counts.
                 diffs.extend(Modules._diff_dicts(val_a or {}, val_b or {}, new_path))
             elif val_a != val_b:
-                # Previously this branch was skipped entirely whenever the key
-                # was absent from either side, so e.g. a[key]=None vs. key
-                # missing from b (both .get() to None) was flagged as a
-                # "mismatch" purely on key presence -- confirmed live: this
-                # made config_sync_status show FAILED after any save that
-                # didn't happen to echo every key the module's full config
-                # has, even though nothing actually differed. Now compares
-                # the resolved values themselves, so a real add/remove (where
-                # the values genuinely differ) is still caught.
+                # Compare resolved values, not key presence: None vs missing
+                # is not a mismatch (it showed config sync as FAILED).
                 diffs.append((new_path, val_a, val_b))
         return diffs
 

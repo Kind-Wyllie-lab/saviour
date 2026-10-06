@@ -133,12 +133,10 @@ class CameraBase(Module):
         # via get_health(), and as the explicit failure reason from the
         # _check_picam() readiness check (validate_readiness(), the New
         # Session drawer's readiness summary). A missing/dead camera must
-        # never crash module startup -- Picamera2() raises when no sensor is
-        # detected, which used to take the whole process down before it ever
-        # registered with the controller (silently indistinguishable from a
-        # powered-off device). The module now always starts and registers;
-        # only recording/streaming are unavailable until a sensor is
-        # connected and the module restarted.
+        # never crash module startup (Picamera2() raises when no sensor is
+        # detected; a crash looks like a powered-off device). The module
+        # always starts and registers; recording/streaming are unavailable
+        # until a sensor is connected and the module restarted.
         self.hardware_fault: str | None = None
 
         try:
@@ -514,11 +512,10 @@ class CameraBase(Module):
 
         # Never reconfigure the camera mid-recording. _configure_camera()
         # builds a fresh self.main_encoder while the recording encoder keeps
-        # running, so the later stop_encoder(self.main_encoder) raised
-        # "Encoder already stopped", the stop bailed out before staging the
-        # final segment, and the orphaned encoder wrote on for 17 h (test D,
-        # 2026-10-04: a FrameSync reconcile changed sync_mode mid-session).
-        # The new value is already saved; the restart waits for the stop.
+        # running, so the later stop_encoder(self.main_encoder) raises
+        # "Encoder already stopped", the final segment is never staged and the
+        # orphaned encoder writes on. The new value is already saved; the
+        # restart waits for the stop (on_recording_stopped).
         restart_keys = self._CAMERA_RESTART_KEYS.intersection(updated_keys or [])
         if restart_keys and self._recording_active():
             self._deferred_restart_keys |= restart_keys
@@ -1045,11 +1042,9 @@ class CameraBase(Module):
             f"{closing_bytes / 1e6:.1f} MB) → opened {os.path.basename(filename)}"
         )
         if closing:
-            # The closed segment's ffprobe used to run HERE, before the split:
-            # a ~1 GB read of the file still being written, ~14 s on an SD
-            # card, which starved capture -- the 24 h desk run (A8, 2026-10-01)
-            # lost up to 9.5 s of video at about half the hourly rotations.
-            # Now: split first, then probe/write/stage in the background.
+            # Probe/write/stage the closed segment in the background, after
+            # the split: an inline ffprobe of a ~1 GB segment takes ~14 s on an
+            # SD card and starves capture.
             self._finalise_thread = threading.Thread(
                 target=self._finalise_closed_segment,
                 args=(closing, closing_start_ns, split_ns,

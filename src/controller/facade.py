@@ -368,8 +368,7 @@ class ControllerFacade:
             if camera_cfg(mid).get("sync_mode", "none") == target_role:
                 continue
             # A role change restarts the camera, which must never happen
-            # mid-recording (test D, 2026-10-04: a dropped server got the
-            # client re-roled twice during a session, orphaning its encoder).
+            # mid-recording (it orphans the running encoder).
             # Re-run on recording_stopped (Controller.handle_status_update).
             if self.is_module_recording(mid):
                 self.logger.info(
@@ -403,11 +402,9 @@ class ControllerFacade:
             # sections nothing re-echoes after changing (e.g. export.share_password
             # stays "" forever in true_config, since set_export_config's own ack
             # carries no `config` field to refresh it -- see module.py's
-            # set_export_config). Sending the full object let the module's
-            # Config.set_all() merge overwrite those stale sections for real,
-            # persisting them to disk -- confirmed live: this silently wiped
-            # export.share_password back to "" on every module restart, since
-            # sync_mode almost always needs correcting right after a fresh boot.
+            # set_export_config). Sending the full object would let the
+            # module's set_all() persist those stale values (it wiped
+            # share_password on restart).
             self.send_command(mid, "set_config", {"camera": new_config["camera"]})
 
         return roles

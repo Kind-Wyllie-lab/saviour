@@ -453,11 +453,9 @@ class Module(ABC):
                 # Run mend in its OWN transient systemd unit. As a plain child
                 # of this process it lived in saviour.service's cgroup, and
                 # mend's "regenerate + restart saviour.service" step made
-                # systemd kill the whole cgroup -- mend included -- mid-run:
-                # the service stayed stopped and the final --reboot never ran
-                # (found on the desk fleet 2026-09-30: all four modules left
-                # down after a fleet-wide run_mend). Detached, mend outlives
-                # the restart; its outcome is in /var/log/saviour-mend.log.
+                # systemd kill the whole cgroup -- mend included -- mid-run,
+                # leaving the service stopped. Detached, mend outlives the
+                # restart; its outcome is in /var/log/saviour-mend.log.
                 argv = ["sudo", "systemd-run", f"--unit={MEND_UNIT}", "--collect",
                         "--quiet", "--setenv=HOME=/root", "bash", mend_script]
                 if reboot:
@@ -1181,10 +1179,8 @@ class Module(ABC):
         # for a guest-access share (see export.py's _mount_share() and
         # web.py's ensure_export_share_mounted(), both of which already fall
         # back to "guest" auth when username is empty). Gating on password
-        # here instead used to hard-fail readiness for a genuinely working
-        # guest share (confirmed live 2026-08-24: mount succeeded fine with
-        # `-o guest` against a real NAS with `guest ok = yes`), before ever
-        # attempting the mount below that would have shown it working.
+        # here would hard-fail readiness for a working guest share before
+        # ever attempting the mount below.
         share_ip = self.config.get("export.share_ip", "")
         if not share_ip:
             return False, (
@@ -1248,12 +1244,10 @@ class Module(ABC):
                 return False, str(e)
 
         # Surfaced whenever a failure here could plausibly be fleet-wide NAS/SMB
-        # contention rather than a genuinely broken share -- confirmed live
-        # 2026-08-24: an unstaggered fleet-wide "Check Ready" against a
-        # 20-module habitat deployment produced a mix of I/O error / device
-        # busy / no-such-file failures across most of the fleet on this exact
-        # write/delete step, even though the share itself was healthy
-        # throughout (fixed at the dispatch side too, see web.py's
+        # contention rather than a genuinely broken share: an unstaggered
+        # fleet-wide "Check Ready" fails this write/delete step across most of
+        # a 20-module fleet against a healthy share (fixed at the dispatch
+        # side too, see web.py's
         # check_ready handler -- this message is a backstop for whatever
         # contention the staggering doesn't fully absorb, e.g. a very large
         # fleet or a slow NAS).

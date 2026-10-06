@@ -285,9 +285,8 @@ class Recording:
             # Module explicitly reported it could not start (e.g. missing
             # hardware) and is responsible for its own recording_start_failed
             # status -- see e.g. CameraBase._start_new_recording. Stop here
-            # rather than falling through to the unconditional is_recording=True
-            # / "recording_started" success below, which used to happen
-            # regardless of what _start_new_recording() actually returned.
+            # rather than falling through to the is_recording=True /
+            # "recording_started" success below.
             self.logger.error(
                 "Module could not start recording -- not marking session as recording"
             )
@@ -482,9 +481,8 @@ class Recording:
         to_export_folder = f"{recording_folder}/to_export"
         min_free_pct     = self.config.get("recording.local_min_free_pct", 10)
         warn_free_pct    = self.config.get("recording.local_warn_free_pct", 15)
-        # Disk is checked on its own cadence, not only at segment rotation --
-        # with 60-min segments a disk filling mid-segment used to go unnoticed
-        # for up to an hour (roadmap A4).
+        # Disk is checked on its own cadence, not only at segment rotation:
+        # with 60-min segments a disk can fill mid-segment.
         disk_check_interval = self.config.get("recording._disk_check_interval_secs", 30)
         last_disk_check     = 0.0
         disk_warned         = False

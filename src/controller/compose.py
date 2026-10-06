@@ -234,8 +234,8 @@ def _video_frame_count(video_path: str) -> int:
 # A genuine pre-stage skip is a couple of frames (the precallback logs rows
 # for frames captured between CSV-open and start_encoder). A *larger*
 # CSV/`.ts` deficit is a sync-client discard skew that is NOT all at the
-# head (found 2026-09-07 -- see
-# plans/multicam-frame-alignment-and-sync-provenance.md): those drops are
+# head (see plans/multicam-frame-alignment-and-sync-provenance.md): those
+# drops are
 # spread through the recording, so skipping them all as leading rows just
 # moves the misalignment around. Cap the head skip here and let
 # video_compose._StreamCursor remap the residual proportionally.

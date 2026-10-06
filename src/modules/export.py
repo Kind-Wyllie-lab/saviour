@@ -147,9 +147,8 @@ class Export:
         "microphone_4703").  Filenames use the short form with the module's
         display name, not its type (mic files say "audiomoth_4703", hailo
         "ai camera_3606"), so the full-id marker never matches for those.
-        Before the underscore split, leftover files from an earlier session
-        were exported into whichever session triggered the export (desk mic,
-        2026-10-02).
+        Without the short-ID fallback, leftover files from an earlier session
+        get exported into whichever session triggered the export.
         """
         short_id = self.module_id.split("-")[-1].split("_")[-1]
         for strip_animal_id, marker in (
@@ -264,9 +263,8 @@ class Export:
             # Group files by (session, recording date). The date comes from the
             # segment start embedded in each filename, not the clock at export
             # time -- that is wrong right after a power-loss reboot (no RTC, PTP
-            # not yet converged: desk soak 2026-09-30 filed a salvaged segment
-            # under 20260831/), and put a multi-day session's segments under the
-            # day they happened to be exported.
+            # not yet converged), and would put a multi-day session's segments
+            # under the day they happened to be exported.
             session_file_map: dict[tuple[str, str | None], list[str]] = {}
             for filename in all_files:
                 session = self._extract_session_from_filename(filename) or export_path
@@ -368,9 +366,8 @@ class Export:
             # export_path when extraction fails (it always does for the
             # microphone: filenames say "audiomoth_<id>", module_id says
             # "microphone_<id>"). Fill the triggered key from the REAL outcome,
-            # never an unconditional True: that masked a total mount failure
-            # (umount: target is busy under load) as a clean export and let the
-            # controller mark the session done, 2026-09-07.
+            # never an unconditional True: that masks a total mount failure as
+            # a clean export and lets the controller mark the session done.
             if triggered_session and triggered_session not in session_results:
                 session_results[triggered_session] = (
                     exported_count == len(all_files)
@@ -740,11 +737,10 @@ class Export:
     def _mount_share(self) -> bool:
         """Ensure the Samba share is mounted and writable at self.mount_point.
 
-        A healthy existing mount is reused as-is -- unconditionally tearing it
-        down first turned a transient `umount: target is busy` into a total
-        export failure (found live 2026-09-07 under stress-ng load, with the
-        share perfectly reachable the whole time). Only a dead/stale mount is
-        replaced, and a failed umount there is non-fatal.
+        A healthy existing mount is reused as-is -- tearing it down first turns
+        a transient `umount: target is busy` (under load) into a total export
+        failure. Only a dead/stale mount is replaced, and a failed umount there
+        is non-fatal.
         """
         try:
             self._update_samba_settings()

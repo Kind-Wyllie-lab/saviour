@@ -121,8 +121,8 @@ class SpectrogramOpts:
 # The microphone recorder loop reads a fixed number of frames per block
 # (`recorder.record(numframes=frame_num)`), writing one sidecar line per
 # block, so every block is exactly this many samples. This is the module's
-# `microphone.frame_num` / `microphone.block_size` -- a settable value since
-# 2026-09-07, so it must NOT be assumed: `parse_mic_sidecar` reads it from
+# `microphone.frame_num` / `microphone.block_size` -- a settable value, so
+# it must NOT be assumed: `parse_mic_sidecar` reads it from
 # the sidecar's `FIRST_RECORD_SAMPLES` line (falling back to
 # `SEGMENT_TOTAL_SAMPLES / n_blocks`, then this constant). Getting it wrong
 # scales `measured_rate_hz` by the same factor -- e.g. assuming 131072 for
@@ -351,8 +351,8 @@ def parse_mic_sidecar(
     k = np.arange(n_blocks, dtype=np.float64)
     t = np.asarray(block_times, dtype=np.float64)
     # The very first record() call (block 0) routinely takes ~2x a normal
-    # block's duration -- confirmed live (2026-09-04, on-device instrumented
-    # probe against the real AudioMoth + PipeWire stack) to be a one-off
+    # block's duration -- measured on-device (AudioMoth + PipeWire) to be a
+    # one-off
     # software/buffering cost of the *first* large read, not missing audio:
     # a tiny first read on the same freshly-opened stream returns real
     # noise-floor signal (not silence) within ~20 ms. So block 0's own

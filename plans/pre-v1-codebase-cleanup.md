@@ -1,6 +1,6 @@
 # Pre-v1.0 codebase cleanup (behaviour-neutral)
 
-- **Status:** in progress (steps 1-2 done 2026-10-06; step 2 desk checks ride the Thursday deploy)
+- **Status:** in progress (steps 1-3 done 2026-10-06; step 2 desk checks ride the Thursday deploy)
 - **Created:** 2026-10-06
 - **Owner:** Andrew SG
 - **CLAUDE.md ref:** "Low priority — observability / maintenance" → pre-v1.0 cleanup

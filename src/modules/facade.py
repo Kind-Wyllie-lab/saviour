@@ -62,6 +62,11 @@ class ModuleFacade:
         return self.module.export.summarize_recording_state(session_name)
 
 
+    def on_recording_stopped(self) -> None:
+        hook = getattr(self.module, "on_recording_stopped", None)
+        if hook is not None:
+            hook()
+
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
 

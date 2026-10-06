@@ -206,6 +206,9 @@ class CameraBase(Module):
 
         # State flags
         self.is_recording = False
+        # Restart-class config keys received while recording, applied once it
+        # stops (see configure_module_special / on_recording_stopped).
+        self._deferred_restart_keys: set = set()
         self.is_streaming = False
 
         # Per-frame callback caches — updated by _cache_frame_config()
@@ -508,6 +511,21 @@ class CameraBase(Module):
                 f"({self._hardware_fault_reason()}) -- nothing to apply"
             )
             return
+
+        # Never reconfigure the camera mid-recording. _configure_camera()
+        # builds a fresh self.main_encoder while the recording encoder keeps
+        # running, so the later stop_encoder(self.main_encoder) raised
+        # "Encoder already stopped", the stop bailed out before staging the
+        # final segment, and the orphaned encoder wrote on for 17 h (test D,
+        # 2026-10-04: a FrameSync reconcile changed sync_mode mid-session).
+        # The new value is already saved; the restart waits for the stop.
+        restart_keys = self._CAMERA_RESTART_KEYS.intersection(updated_keys or [])
+        if restart_keys and self._recording_active():
+            self._deferred_restart_keys |= restart_keys
+            self.logger.warning(
+                f"Recording in progress -- camera restart for {sorted(restart_keys)} "
+                f"deferred until it stops (live controls still applied)")
+            updated_keys = [k for k in updated_keys if k not in restart_keys]
 
         if self.is_streaming:
             self._restarting_stream = bool(
@@ -1099,16 +1117,46 @@ class CameraBase(Module):
         # teardown (see _encoder_active).
         self._encoder_active = False
         self._encoder_stop_ns = time.time_ns()
-        self.picam2.stop_encoder(self.main_encoder)
+        self._stop_main_encoder()
         self.last_video_segment = self.current_video_segment
+
+    def _stop_main_encoder(self) -> None:
+        """stop_encoder() for the recording encoder, tolerant of a stale
+        handle (test D: self.main_encoder had been replaced by a mid-recording
+        reconfigure while the real encoder kept running). Recording only ever
+        starts one picamera2 encoder -- the MJPEG preview is encoded in Python
+        -- so stopping every running encoder is the safe fallback."""
+        try:
+            self.picam2.stop_encoder(self.main_encoder)
+        except RuntimeError as e:
+            self.logger.warning(
+                f"stop_encoder(main) failed ({e}) -- stopping every running encoder")
+            self.picam2.stop_encoder()
+
+    def _recording_active(self) -> bool:
+        rec = getattr(self, "recording", None)
+        return bool(rec is not None and getattr(rec, "is_recording", False))
+
+    def on_recording_stopped(self) -> None:
+        """Apply camera restarts deferred while recording."""
+        keys, self._deferred_restart_keys = self._deferred_restart_keys, set()
+        if keys:
+            self.logger.info(
+                f"Recording stopped -- applying deferred camera restart for {sorted(keys)}")
+            try:
+                self.configure_module_special(sorted(keys))
+            except Exception as e:
+                self.logger.error(f"Deferred camera restart failed: {e}", exc_info=True)
 
 
     def _stop_recording(self) -> bool:
         """Shared implementation of Module's abstract stop-recording hook."""
+        encoder_stopped = False
         try:
             self.logger.info("Attempting to stop camera recording")
 
             self._stop_recording_video()  # flips _encoder_active off first
+            encoder_stopped = True
             self._join_segment_finalise()
             final_segment_rows = self._frame_id  # frozen once the encoder is idle
             final_segment_dropped = self._segment_dropped
@@ -1160,7 +1208,17 @@ class CameraBase(Module):
 
         except Exception as e:
             self.logger.exception(f"Error stopping recording: {e}")
-            return False
+            if not encoder_stopped:
+                return False
+            # The encoder is stopped, so the segment is complete on disk:
+            # stage it anyway rather than leave it stranded in pending/.
+            try:
+                self._close_timestamp_csv()
+            except Exception:
+                self.logger.exception("Closing the timestamp CSV after a stop error failed")
+            if self.current_video_segment:
+                self.facade.stage_file_for_export(self.current_video_segment)
+            return True
 
 
     def _check_recording_alive(self) -> tuple[bool, str | None]:

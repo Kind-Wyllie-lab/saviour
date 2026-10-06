@@ -375,6 +375,8 @@ class Recording:
             self.is_recording = False
             self._measured_rec_bytes_per_s = None
             self.logger.info("Made it past stop_recording call")
+            # e.g. a camera applies config restarts it deferred while recording
+            self.facade.on_recording_stopped()
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:

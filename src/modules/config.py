@@ -448,14 +448,7 @@ class Config:
             self.save_active()
 
         if self._check_if_module_config_updated(key_path):
-            # NB: not self.on_module_config_change -- that attribute is never
-            # actually assigned anywhere in production (only set_all() below
-            # gets wired correctly, via self.config.configure_module =
-            # self.configure_module in Module.__init__). Calling it here
-            # unconditionally raised AttributeError on the first single-key
-            # set() of any module-config key -- previously unreachable since
-            # nothing in the codebase called set() for a module-config key
-            # until the camera crop feature's set_camera_crop() did.
+            # configure_module is wired by Module.__init__.
             self.configure_module([key_path])
 
         return True
@@ -489,18 +482,11 @@ class Config:
         # Keys/sections that must survive an update omitting them, because they're
         # never part of the normal save payload for the thing that touches them:
         # - export: system-managed (set via set_export_config), not the frontend's
-        #   editable config. ExportConfigSection.jsx hides the Samba credential
-        #   fields entirely in "controller" mode (the default), so ANY module
-        #   config save -- not just a FrameSync/export-specific one -- could
-        #   otherwise silently wipe a live share_password whenever the frontend's
-        #   cached config snapshot didn't happen to include it (e.g. right after a
-        #   reconnect, while invalidate_config()'s module.config={} reset is still
-        #   in effect).
-        # - camera.crop_rect: set only via the separate crop-editor modal's
-        #   set_camera_crop command, never included in the normal ConfigCard save
-        #   payload -- any unrelated camera config save would otherwise prune it,
-        #   then set_all()'s own re-merge-defaults step immediately resets it to
-        #   the base-config default (None), silently discarding a real crop rect.
+        #   editable config; a module config save whose cached snapshot lacks
+        #   it (e.g. right after a reconnect) would otherwise wipe the live
+        #   share_password.
+        # - camera.crop_rect: set only by set_camera_crop, never in the normal
+        #   save payload, so any camera config save would reset it to None.
         _NEVER_PRUNE_SECTIONS = {"export"} | self._sidecar_sections
         _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
 

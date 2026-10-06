@@ -2769,9 +2769,8 @@ class Recording:
         self._save_sessions()
         self.facade.update_sessions(self.sessions)
 
-        # Surface a degraded verdict as an operator alert -- the report is
-        # generated for every session/day but was previously only a session
-        # badge colour on the Post-Process page. reasons come from
+        # Surface a degraded verdict as an operator alert, not just a badge
+        # colour on the Post-Process page. reasons come from
         # framesync_check.classify(); _framesync_remediation() maps them to a
         # one-line fix hint.
         if status in ("amber", "red"):

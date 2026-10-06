@@ -1258,14 +1258,9 @@ class Web(ABC):
                     self._authenticated_sids.add(request.sid)
 
             # Send initial module list -- event name/payload shape must match
-            # what useModules.js actually listens for (modules_update, raw
-            # dict) and what the 'get_modules' handler below already sends;
-            # this previously emitted a differently-named, differently-shaped
-            # 'module_update' event that no frontend code has ever listened
-            # for, so a reconnect (e.g. after a brief network blip) never
-            # proactively refreshed a client's module/readiness state -- it
-            # silently depended on some future real change to trigger a
-            # fresh broadcast, until the operator did a full page reload.
+            # what useModules.js listens for (modules_update, raw dict), the
+            # same as the 'get_modules' handler, so a reconnect refreshes the
+            # client's module/readiness state.
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('modules_update', modules)
@@ -4036,13 +4031,11 @@ class Web(ABC):
                         'status': status
                     })
 
-                # The module itself detected it couldn't start/stop recording (e.g. a
-                # racing double-start, or a module-specific stop failure). Previously
-                # unmatched here — fell through to handle_special_module_status(),
-                # which every non-APA variant treats as a no-op — so this was silently
-                # dropped instead of reaching the operator. Route it into the same
-                # session-fault path used for offline-module detection, which already
-                # drives FaultAlertModal and the Teams alert.
+                # The module itself couldn't start/stop recording (e.g. a racing
+                # double-start, or a module-specific stop failure). Must not fall
+                # through to handle_special_module_status() (a no-op on most
+                # variants): route it into the session-fault path, which drives
+                # FaultAlertModal and the Teams alert.
                 case ('recording_start_failed' | 'recording_stop_failed'):
                     error = status.get("error", "unknown error")
                     self.logger.warning(f"{status_type} for module {module_id}: {error}")
@@ -4080,11 +4073,9 @@ class Web(ABC):
 
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
-                # Previously silently dropped the same way as above. Not escalated to
-                # a session fault here — "error" covers every command, not just
-                # recording ones, so blindly faulting the session would misfire on
-                # unrelated failures (e.g. a failed trigger_autofocus). At minimum it
-                # must stop disappearing: log it and hand it to the frontend.
+                # Not a session fault -- "error" covers every command (e.g. a failed
+                # trigger_autofocus) -- but it must not vanish: log it and hand it to
+                # the frontend.
                 case "error":
                     error = status.get("error", "unknown error")
                     self.logger.warning(f"Module {module_id} reported an error: {error}")
@@ -4104,13 +4095,8 @@ class Web(ABC):
                 case "camera_crop_updated":
                     self.socketio.emit('module_status', {**status, 'module_id': module_id})
 
-                # loom_camera_module.py's set_loom_roi() sends this directly via
-                # communication.send_status() on a successful save. Previously
-                # unmatched here -- fell to case _ -> handle_special_module_status(),
-                # which loom_controller.py doesn't override for this type (logs
-                # "No logic for loom_roi_updated" and drops), so
-                # LoomRoiLineEditorModal.jsx's "Saving..." status never resolved to
-                # "Saved" even on success.
+                # loom_camera_module.py's set_loom_roi() sends this on a successful
+                # save; LoomRoiLineEditorModal.jsx waits on it to show "Saved".
                 case "loom_roi_updated":
                     self.socketio.emit('module_status', {**status, 'module_id': module_id})
 
@@ -4158,10 +4144,8 @@ class Web(ABC):
                         # write error) come back as the command's own return value,
                         # not a communication.send_status() call, so they surface
                         # here as a cmd_ack rather than through the
-                        # loom_roi_updated case above. Previously fell to the
-                        # "no web-layer action" debug log below and was silently
-                        # dropped -- translated into the shape
-                        # LoomRoiLineEditorModal.jsx already listens for.
+                        # loom_roi_updated case above -- translated into the
+                        # shape LoomRoiLineEditorModal.jsx listens for.
                         self.socketio.emit('module_status', {
                             'type': 'loom_roi_update_failed',
                             'module_id': module_id,

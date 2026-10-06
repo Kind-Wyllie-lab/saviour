@@ -133,12 +133,10 @@ class CameraBase(Module):
         # via get_health(), and as the explicit failure reason from the
         # _check_picam() readiness check (validate_readiness(), the New
         # Session drawer's readiness summary). A missing/dead camera must
-        # never crash module startup -- Picamera2() raises when no sensor is
-        # detected, which used to take the whole process down before it ever
-        # registered with the controller (silently indistinguishable from a
-        # powered-off device). The module now always starts and registers;
-        # only recording/streaming are unavailable until a sensor is
-        # connected and the module restarted.
+        # never crash module startup (Picamera2() raises when no sensor is
+        # detected; a crash looks like a powered-off device). The module
+        # always starts and registers; recording/streaming are unavailable
+        # until a sensor is connected and the module restarted.
         self.hardware_fault: str | None = None
 
         try:

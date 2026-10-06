@@ -402,11 +402,9 @@ class ControllerFacade:
             # sections nothing re-echoes after changing (e.g. export.share_password
             # stays "" forever in true_config, since set_export_config's own ack
             # carries no `config` field to refresh it -- see module.py's
-            # set_export_config). Sending the full object let the module's
-            # Config.set_all() merge overwrite those stale sections for real,
-            # persisting them to disk -- confirmed live: this silently wiped
-            # export.share_password back to "" on every module restart, since
-            # sync_mode almost always needs correcting right after a fresh boot.
+            # set_export_config). Sending the full object would let the
+            # module's set_all() persist those stale values (it wiped
+            # share_password on restart).
             self.send_command(mid, "set_config", {"camera": new_config["camera"]})
 
         return roles

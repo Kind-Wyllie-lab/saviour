@@ -4,20 +4,17 @@ SAVIOUR System - Habitat Camera Module Class
 
 Built on CameraBase (src/modules/camera_base.py), which provides Picamera2
 lifecycle, MJPEG streaming, segmented recording, and the timestamp-CSV
-sidecar. This file adds a per-frame motion/activity score (see CLAUDE.md's
-"habitat_camera" feature idea) and gates recording on it: no clip file is
-written until the score crosses activity_threshold for activity_min_duration_s,
-using a CircularOutput pre-roll buffer (habitat_motion.pre_roll_secs) so the
-clip includes footage from just before the trigger, not just after it.
+sidecar. This file adds a per-frame motion/activity score and gates
+recording on it: no clip file is written until the score crosses
+activity_threshold for activity_min_duration_s, using a CircularOutput
+pre-roll buffer (habitat_motion.pre_roll_secs) so the clip includes footage
+from just before the trigger.
 
-"Armed" here just means "a normal recording session is active"
-(self.facade.get_recording_status(), set by the existing start_recording/
-stop_recording command path -- not the bare self.is_recording attribute,
-which is dead for camera modules) -- no new RPC needed. Arming still creates
-a normal Session on the controller exactly as for every other camera type;
-individual motion-triggered clips are just files added to that same ongoing
-session via the existing per-file export API (facade.add_session_file() /
-facade.stage_file_for_export()), not separate sessions of their own.
+"Armed" means a normal recording session is active
+(self.facade.get_recording_status(); self.is_recording is unused for camera
+modules). Each motion-triggered clip is a file added to that session via the
+per-file export API (facade.add_session_file() / stage_file_for_export()),
+not a session of its own.
 
 While armed, CameraBase's own continuous SplittableOutput recording is
 replaced with a CircularOutput the encoder always writes into (buffering
@@ -57,16 +54,11 @@ _STATE_COLOR_BGR = {
     "waiting": (0, 191, 255),
     "active":  (0, 0, 255),
 }
-# _motion_state is computed identically regardless of arm status -- the
-# livestream preview must be fully representative of the real recording
-# trigger, not a separate simplified check, so an operator can tune
-# activity_threshold/activity_min_duration_s against the exact same
-# sustained-duration logic that actually gates a clip, without needing a
-# real recording running. "idle" = below threshold; "waiting" = above
-# threshold, accumulating toward the sustained-duration trigger; "active" =
-# triggered. Only the "active" *label* depends on arm status (see
-# _process_lores_frame) -- if not actually armed, a triggered state is
-# real (the same math a real recording would use) but doesn't write a clip.
+# _motion_state runs identically whether or not armed, so the livestream
+# preview shows the real trigger logic and an operator can tune against it
+# without recording. "idle" = below threshold; "waiting" = above threshold,
+# accumulating toward activity_min_duration_s; "active" = triggered (writes a
+# clip only when armed).
 
 
 class HabitatCameraModule(CameraBase):
@@ -122,16 +114,11 @@ class HabitatCameraModule(CameraBase):
         self._recover_orphaned_clips()
 
     def _configure_module_extra(self, updated_keys) -> None:
-        # Only rebuild the detector (and reset its hysteresis timer) when a
-        # habitat_motion.* key actually changed, or on a full reconfigure
-        # (updated_keys is None, e.g. reset_config). configure_module_special()
-        # runs this hook on EVERY config push, including an unrelated bare
-        # camera.sync_mode change from FrameSync reconcile -- which fires on
-        # essentially every reconnect (see CLAUDE.md's reconcile_framesync
-        # note). Rebuilding unconditionally wiped the in-progress armed ->
-        # recording streak before it could ever reach activity_min_duration_s
-        # -- confirmed live: state stuck at ARMED even with a real, varying,
-        # above-threshold score.
+        # Only rebuild the detector (which resets its hysteresis timer) when a
+        # habitat_motion.* key changed, or on a full reconfigure (updated_keys
+        # None). This hook runs on EVERY config push, including FrameSync's
+        # sync_mode push on most reconnects; rebuilding each time would keep
+        # resetting the streak before it reaches activity_min_duration_s.
         if updated_keys is None or any(k.startswith("habitat_motion.") for k in updated_keys):
             self._configure_habitat_motion()
         if updated_keys is None or any(k.startswith("occupancy.") for k in updated_keys):
@@ -232,23 +219,14 @@ class HabitatCameraModule(CameraBase):
         continuous-AE camera produces every time it nudges exposure_time_us or
         analogue_gain in response to changing ambient light -- as a frame full
         of "foreground" pixels, indistinguishable from real motion until the
-        background model catches up.
+        background model catches up. In a real deployment AE drift caused
+        all of the daytime false triggers; gating on AE stability removes
+        them without raising activity_threshold (which would dull genuine
+        motion).
 
-        Confirmed against a real deployment (2026-08-24, Motion_Tracking_Test):
-        every false-triggered clip on two of three days showed motion_score
-        decaying smoothly in lockstep with analogue_gain/exposure_time_us
-        still changing frame-to-frame, then collapsing to ~0 the instant AE
-        stopped adjusting -- all within a recurring several-hour daytime
-        window (consistent both days, absent overnight), with no visible
-        subject in the footage at any trigger. Gating the trigger on AE
-        stability (rather than e.g. just raising activity_threshold) targets
-        that mechanism directly without dulling sensitivity to genuine motion,
-        which the AE gate doesn't touch as long as the light stays steady.
-
-        Compares against the previous frame's exact metadata values (not a
-        tolerance/epsilon) -- confirmed live that Picamera2's AE control
-        reports the identical float back, frame after frame, once it has
-        actually converged, so any change at all means AE is still moving."""
+        Compares the previous frame's exact metadata values (no epsilon):
+        Picamera2 reports the identical float once AE has converged, so any
+        change means AE is still moving."""
         exposure_time_us = timing.exposure_time_us
         analogue_gain = timing.analogue_gain
         changed = (
@@ -298,14 +276,8 @@ class HabitatCameraModule(CameraBase):
         # classifier stops seeing it.
         above = motion_above or occupied
 
-        # Runs identically regardless of arm status -- the livestream preview
-        # must be fully representative of the real recording trigger, not a
-        # separate simplified check (this used to reset to "idle" every frame
-        # while not recording, which meant the preview never actually
-        # exercised the sustained-duration logic a real trigger needs).
-        # self.facade.get_recording_status() (below) only gates whether a
-        # genuine "active" transition actually opens/closes a clip file --
-        # not whether the state machine itself runs.
+        # The state machine runs whether or not armed (see _STATE_COLOR_BGR);
+        # get_recording_status() below only gates opening a clip file.
         if self._motion_last_above is None or above != self._motion_last_above:
             self._motion_since_ns = timing.timestamp_ns
             self._motion_last_above = above
@@ -358,14 +330,9 @@ class HabitatCameraModule(CameraBase):
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
         color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
         if self._motion_state == "idle":
-            # "waiting" can only be reached via a gated-True `above` (see
-            # _process_main_frame), so AE is necessarily stable by then --
-            # this qualifier only ever applies to "idle": the raw score alone
-            # would already be over threshold, but _update_ae_stability is
-            # holding the gated trigger off, so an operator watching a
-            # visibly-high score with no state change can tell it's the AE
-            # gate rather than a threshold/duration problem, without needing
-            # to read the diagnostic CSV.
+            # A high score held off by the AE gate shows as "AE settling", so
+            # an operator can tell it from a threshold/duration problem.
+            # ("waiting" implies AE is stable, so this only applies to idle.)
             score_over = self._motion_last_score >= self._motion_activity_threshold
             if not self._motion_ae_stable and score_over:
                 label = "IDLE (AE settling)"
@@ -395,13 +362,8 @@ class HabitatCameraModule(CameraBase):
                 remaining_s = max(0.0, self._motion_inactivity_min_duration_s - elapsed_s)
                 mins, secs = divmod(int(remaining_s), 60)
                 label = f"{label} - closing in {mins:02d}:{secs:02d}"
-        # Bottom-left corner: top-center is the timestamp (up to 72% of frame
-        # width, see _apply_timestamp), top-right is the FPS overlay (see
-        # _apply_framerate's own comment on the same collision) -- with the
-        # countdown appended above, this label is long enough to run straight
-        # into the timestamp if left at the top. Smaller and thinner than
-        # before too, matching the FPS overlay's existing precedent for a
-        # secondary diagnostic overlay.
+        # Drawn bottom-left: top-center holds the timestamp and top-right the
+        # FPS overlay, and this label is long enough to collide with them.
         # Standalone occupancy verdict, shown in every state -- so an operator
         # tuning `threshold` can watch the confidence directly, and can see at
         # a glance whether the classifier thinks the enclosure is empty.
@@ -477,16 +439,9 @@ class HabitatCameraModule(CameraBase):
         self._clip_open = False
         self._clip_counter = 0
         self._open_diagnostic_csv()
-        # If motion was already sustained above threshold before this arm
-        # (e.g. an animal was mid-activity when the operator pressed Start),
-        # _process_main_frame's idle/waiting -> active transition already
-        # fired while unarmed, correctly skipping _open_clip() then -- but
-        # since that's a one-shot transition, not a per-frame check, nothing
-        # would otherwise open a clip until the animal goes fully quiet for
-        # inactivity_min_duration_s (300s default) and re-triggers from
-        # scratch. Confirmed live: the operator sees "TRIGGERED (not armed)"
-        # on the livestream despite genuinely being armed, and no footage of
-        # the ongoing activity gets captured. Catch up immediately instead.
+        # Already triggered before arming (animal mid-activity at Start): the
+        # -> active transition is one-shot and fired while unarmed, so open
+        # the clip now rather than after inactivity_min_duration_s + retrigger.
         if self._motion_state == "active":
             self._open_clip()
         return True
@@ -518,15 +473,10 @@ class HabitatCameraModule(CameraBase):
             return False
 
     def _open_diagnostic_csv(self) -> None:
-        """Continuous per-frame motion_score/motion_state/clip_open log for
-        the whole armed session, regardless of whether a clip is open --
-        separate from the per-clip _timestamps.csv (which is meant to stay
-        aligned 1:1 with an actual clip's video frames; mixing in idle-period
-        rows with no corresponding footage would break that). Not buffered
-        via a background thread like the main timestamp CSV -- plain
-        buffered file writes are cheap enough for one row per frame, and
-        losing whatever's still in the OS write buffer if the process
-        crashes mid-session is an acceptable loss for a diagnostic file."""
+        """Per-frame score/state log for the whole armed session, clip open
+        or not; kept separate from the per-clip _timestamps.csv, which must
+        stay 1:1 with the clip's video frames. Plain buffered writes (no
+        flush thread): losing the tail on a crash is acceptable here."""
         path = f"{self.facade.get_filename_prefix()}_motion_diagnostic.csv"
         self._diag_csv_file = open(path, "w", newline="", buffering=1 << 16)
         self._diag_csv_writer = csv.writer(self._diag_csv_file)
@@ -549,11 +499,9 @@ class HabitatCameraModule(CameraBase):
             self._diag_csv_path = None
 
     def _get_clip_filename(self) -> str:
-        """Unique-per-clip filename, session-scoped like every other camera
-        type's _get_video_filename() -- but that helper relies on
-        segment_id/segment_start_time, which _start_next_recording_segment()
-        being a no-op means never advance past their arm-time values. Uses
-        an incrementing per-arm counter plus the real current time instead."""
+        """Unique-per-clip filename. _get_video_filename() can't be used:
+        segment_id/start_time never advance here (segment rotation is a
+        no-op), so this uses a per-arm counter plus the current time."""
         self._clip_counter += 1
         strtime = self.facade.get_utc_time(time.time())
         ext = self.config.get('recording.recording_filetype', 'ts')
@@ -575,22 +523,13 @@ class HabitatCameraModule(CameraBase):
         self.logger.info(f"Motion clip opened: {ts_path}")
 
     def _close_clip(self) -> None:
-        """Stop writing the current clip, then hand the slow part off to a
-        background thread. Called on the active -> waiting transition
-        (from _process_main_frame, which runs on Picamera2's own
-        pre_callback thread) and from _stop_recording() (the disarm
-        command, on the ZMQ command thread) if disarmed mid-clip -- neither
-        should block on file I/O or the ffmpeg subprocess. camera_base.py's
-        own timestamp-CSV writer already offloads its flush work for
-        exactly this reason ("file I/O never stalls capture" -- see
-        _csv_flush_worker); _close_timestamp_csv()'s up-to-5s thread-join
-        and the remux below both belong on a background thread the same way.
+        """Stop writing the current clip and finish it on a background
+        thread. Callers are the capture pre_callback thread and the command
+        thread; neither may block on the CSV join (up to 5 s) or ffmpeg.
 
-        No extra locking against a fresh _open_clip() racing this cleanup:
-        the hysteresis state machine can't re-enter "active" (and therefore
-        can't call _open_clip() again) until it's spent at least
-        inactivity_min_duration_s (300s default) back in "waiting" first --
-        several orders of magnitude longer than this cleanup should ever take.
+        No lock against a new _open_clip() racing the cleanup: re-entering
+        "active" takes at least inactivity_min_duration_s, far longer than
+        the cleanup.
         """
         if not self._clip_open or self._circular_output is None:
             return
@@ -615,18 +554,10 @@ class HabitatCameraModule(CameraBase):
         self.logger.info(f"Motion clip closed and staged: {final_path}")
 
     def _remux_clip_to_ts(self, h264_path: str, ts_path: str) -> str:
-        """Remux the raw .h264 CircularOutput produces into .ts, matching
-        every other camera type's export format and the tooling that
-        expects it (analyse_framesync.py, video_compose.py). -c copy is a
-        repackage, not a re-encode -- no pixels are touched, so this is
-        I/O-bound and fast regardless of clip length. Raw .h264 is not
-        corrupted by an interruption before this step ever runs (no
-        trailing-index format to lose, same reason .ts itself survives
-        interruption where .mp4 doesn't) -- see _recover_orphaned_clips()
-        for the case where this step never got the chance to run at all.
-        Returns the path that actually got produced: ts_path on success,
-        or h264_path itself if the remux failed (stage the raw stream
-        rather than silently lose the clip)."""
+        """Remux CircularOutput's raw .h264 to .ts (the export format the
+        tooling expects) with -c copy, no re-encode. Returns ts_path, or
+        h264_path if the remux failed (stage the raw stream rather than lose
+        the clip); _recover_orphaned_clips handles a remux that never ran."""
         try:
             subprocess.run(
                 ["ffmpeg", "-y", "-i", h264_path, "-c", "copy", "-f", "mpegts", ts_path],
@@ -639,13 +570,9 @@ class HabitatCameraModule(CameraBase):
             return h264_path
 
     def _recover_orphaned_clips(self) -> None:
-        """Sweep for .h264 files left over from a clip that never reached
-        _close_clip() -- a crash or power loss mid-recording. Remuxes each
-        to .ts and stages it (plus its timestamp CSV sidecar, if present)
-        for export, so an interrupted clip's footage isn't silently
-        stranded on local disk forever. Run once at startup, before
-        anything else could create a new .h264 to collide with one found
-        here."""
+        """Remux and stage (with any timestamp CSV) every .h264 left by a
+        clip that never reached _close_clip() (crash / power loss). Runs
+        once at startup, before a new .h264 can exist."""
         folder = self.recording.recording_folder
         try:
             orphans = [f for f in os.listdir(folder) if f.endswith(".h264")]

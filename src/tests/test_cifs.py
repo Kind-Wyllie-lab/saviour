@@ -38,3 +38,31 @@ def test_rewrites_on_each_call(tmp_path):
 ])
 def test_redact_secrets(raw, expected):
     assert redact_secrets(raw) == expected
+
+
+def test_mount_cmd_uses_credentials_file_and_standard_options(tmp_path, monkeypatch):
+    from src.shared import cifs
+    monkeypatch.setattr(cifs, "DEFAULT_DIR", str(tmp_path))
+    cmd = cifs.cifs_mount_cmd("10.0.0.1", "controller_share", "/mnt/x", "u", "pw", "t")
+    assert cmd[:4] == ["sudo", "mount", "-t", "cifs"]
+    assert cmd[4:6] == ["//10.0.0.1/controller_share", "/mnt/x"]
+    opts = cmd[-1]
+    assert "pw" not in opts                       # never on the command line
+    assert opts.startswith("credentials=") and opts.endswith(cifs.MOUNT_OPTIONS)
+
+
+def test_mount_cmd_guest_without_username():
+    from src.shared import cifs
+    assert cifs.cifs_mount_cmd("h", "s", "/m", "", "")[-1] == f"guest,{cifs.MOUNT_OPTIONS}"
+
+
+def test_unmount_never_raises_on_failure(monkeypatch):
+    import subprocess
+    from src.shared import cifs
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 32, "", "target is busy")
+    monkeypatch.setattr(cifs.subprocess, "run", fake_run)
+    assert cifs.unmount("/mnt/x", lazy=True).returncode == 32
+    assert calls == [["sudo", "umount", "-l", "/mnt/x"]]

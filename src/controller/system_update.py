@@ -69,7 +69,7 @@ SRC_ROOT = "/usr/local/src/saviour"
 UPDATE_STORE = "/var/lib/saviour/updates"
 UPDATE_ZIP = os.path.join(UPDATE_STORE, "saviour-latest.zip")
 UPDATE_META = os.path.join(UPDATE_STORE, "update_meta.json")
-# Mirrors web.py's _STAGE_SKIP_DIRS — dirs never shipped in the module package.
+# Dirs never shipped in the module package.
 STAGE_SKIP_DIRS = {".git", "env", "__pycache__", ".pytest_cache", "dist",
                    ".eggs", "node_modules"}
 _ENV_PIP = "/usr/local/src/saviour/env/bin/pip"
@@ -78,8 +78,8 @@ _ENV_PIP = "/usr/local/src/saviour/env/bin/pip"
 # reads, so a snapshot taken here is revertible from the web UI unchanged.
 CTRL_BACKUP_DIR = "/var/lib/saviour/controller_backups"
 CTRL_BACKUP_KEEP = 3
-_CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/", "__pycache__/",
-                         ".pytest_cache/", ".eggs/"]
+CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/", "__pycache__/",
+                        ".pytest_cache/", ".eggs/"]
 
 
 def snapshot(reason: str, version: str = "unknown",
@@ -98,7 +98,7 @@ def snapshot(reason: str, version: str = "unknown",
         (d for d in os.listdir(backup_dir)
          if os.path.isdir(os.path.join(backup_dir, d))), reverse=True)
     cmd = ["rsync", "-a", "--delete"]
-    cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
+    cmd += [f"--exclude={e}" for e in CTRL_BACKUP_EXCLUDES]
     if existing:
         cmd.append("--link-dest=" + os.path.join(backup_dir, existing[0]) + "/")
     cmd += [f"{src_root}/", f"{dest}/"]
@@ -121,7 +121,7 @@ def snapshot(reason: str, version: str = "unknown",
 def git_checkout_info(src_root: str = SRC_ROOT) -> dict:
     """`{"available": True, "branch": ..., "remote": ...}` when `src_root` is a
     git checkout on a named branch with an `origin` remote, else
-    `{"available": False, "reason": ...}`. Mirrors web.py's `_git_checkout_info`."""
+    `{"available": False, "reason": ...}`."""
     if not os.path.isdir(os.path.join(src_root, ".git")):
         return {"available": False, "reason": "No git checkout on this device"}
     try:
@@ -145,20 +145,30 @@ def git_checkout_info(src_root: str = SRC_ROOT) -> dict:
         return {"available": False, "reason": str(e)}
 
 
-def pull_and_reset(branch: str, src_root: str = SRC_ROOT) -> dict:
-    """`git fetch --prune origin <branch>` then `git reset --hard
-    origin/<branch>`. Raises `subprocess.CalledProcessError` on git failure.
-    Returns `{"branch", "old_commit", "new_commit"}`."""
-    old = _short_head(src_root)
+def fetch(branch: str, src_root: str = SRC_ROOT) -> None:
+    """`git fetch --prune origin <branch>`; raises `CalledProcessError`."""
     subprocess.run(
         _as_owner(src_root, ["git", "-C", src_root, "fetch", "--prune",
                              "origin", branch]),
         check=True, capture_output=True, text=True, timeout=120)
+
+
+def reset_to_origin(branch: str, src_root: str = SRC_ROOT) -> str:
+    """`git reset --hard origin/<branch>`; raises `CalledProcessError`.
+    Returns the new short HEAD."""
     subprocess.run(
         _as_owner(src_root, ["git", "-C", src_root, "reset", "--hard",
                              f"origin/{branch}"]),
         check=True, capture_output=True, text=True, timeout=30)
-    new = _short_head(src_root)
+    return _short_head(src_root)
+
+
+def pull_and_reset(branch: str, src_root: str = SRC_ROOT) -> dict:
+    """`fetch` then `reset_to_origin`. Raises `subprocess.CalledProcessError`
+    on git failure. Returns `{"branch", "old_commit", "new_commit"}`."""
+    old = _short_head(src_root)
+    fetch(branch, src_root)
+    new = reset_to_origin(branch, src_root)
     _LOG.info("system_update: %s %s -> %s", branch, old, new)
     return {"branch": branch, "old_commit": old, "new_commit": new}
 
@@ -175,7 +185,7 @@ def stage_zip(version: str = "unknown", src_root: str = SRC_ROOT,
               zip_path: str = UPDATE_ZIP, meta_path: str = UPDATE_META) -> dict:
     """Zip `src_root`'s working tree to `zip_path` (atomic via `.tmp` +
     `os.replace`) and write `meta_path`. This is what `GET /update/package`
-    serves to modules. Mirrors web.py's `_stage_current_version_zip`."""
+    serves to modules."""
     os.makedirs(os.path.dirname(zip_path), exist_ok=True)
     tmp = zip_path + ".tmp"
     skipped = 0
@@ -247,11 +257,15 @@ def find_npm() -> tuple[str | None, dict]:
     return npm, env
 
 
-def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -> None:
+def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True,
+                      emit=None) -> None:
     """`pip install --no-index` + (optional) `npm install && npm run build` +
     `systemctl restart saviour.service`. Blocking except the final restart
     (spawned detached) -- run this on a worker thread; the restart kills the
-    caller. Mirrors web.py's `_controller_build_and_restart`."""
+    caller. `emit(event, payload)`, when given, receives the Socket.IO progress
+    events the web UI shows (`deploy_update_status` / `deploy_update_error`).
+    The npm build also gives modules time to fetch /update/package before the
+    controller drops, when this runs as part of an "update everything"."""
     import time
 
     try:
@@ -264,9 +278,11 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -
             frontend_dir = os.path.join(src_root, "src/controller/frontend")
             npm, npm_env = find_npm()
             if npm and os.path.isdir(frontend_dir):
+                if emit:
+                    emit("deploy_update_status", {"stage": "building_frontend"})
                 _LOG.info("build_and_restart: rebuilding frontend")
-                # NB npm runs as-is (matches web.py's _controller_build_and_restart);
-                # the root-owned-dist ownership drift is a pre-existing CLAUDE.md item.
+                # npm runs as the service user (root): the root-owned dist/
+                # drift is a known CLAUDE.md item.
                 subprocess.run([npm, "install", "--silent"],
                                cwd=frontend_dir, capture_output=True, env=npm_env)
                 b = subprocess.run([npm, "run", "build"], cwd=frontend_dir,
@@ -276,8 +292,12 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True) -
                                  b.stderr)
             else:
                 _LOG.warning("build_and_restart: npm not found -- frontend not rebuilt")
+        else:
+            _LOG.info("build_and_restart: skipping frontend rebuild")
     except Exception as e:                                  # noqa: BLE001
         _LOG.error("build_and_restart: build step failed: %s", e)
+        if emit:
+            emit("deploy_update_error", {"error": str(e)})
         return
     _LOG.info("build_and_restart: restarting saviour.service")
     time.sleep(2)

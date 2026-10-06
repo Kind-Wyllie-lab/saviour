@@ -1490,6 +1490,80 @@ class TestUpdateDeployHandlersAuthGate:
         assert client.get_received()[0]["name"] == "auth_required"
 
 
+class _InlineThread:
+    """threading.Thread stand-in that runs the target on start()."""
+
+    def __init__(self, target=None, daemon=None, name=None, **_kw):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class TestGitPullUpdate:
+    """The Socket.IO git-pull handler drives system_update's primitives and
+    reports each stage; it never runs git itself."""
+
+    def _run(self, su_mock, data=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _facade = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            with patch("src.controller.web.threading.Thread", _InlineThread):
+                client.emit("git_pull_update", data or {})
+            return [m["name"] for m in client.get_received()], client
+
+    def _su(self):
+        su_mock = MagicMock()
+        su_mock.git_checkout_info.return_value = {
+            "available": True, "branch": "staging", "remote": "git@x:y.git"}
+        su_mock.reset_to_origin.return_value = "abc1234"
+        su_mock.stage_zip.return_value = {"version": "v1"}
+        su_mock.snapshot.return_value = {"ok": True}
+        return su_mock
+
+    def test_stage_only_fetches_snapshots_resets_stages(self):
+        su_mock = self._su()
+        order = MagicMock()
+        for name in ("fetch", "snapshot", "reset_to_origin", "stage_zip"):
+            order.attach_mock(getattr(su_mock, name), name)
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+
+        assert [c[0] for c in order.mock_calls] == [
+            "fetch", "snapshot", "reset_to_origin", "stage_zip"]
+        su_mock.fetch.assert_called_once_with("staging", su_mock.SRC_ROOT)
+        su_mock.build_and_restart.assert_not_called()
+        assert names.count("git_pull_status") == 3
+        assert "upload_update_complete" in names
+
+    def test_apply_controller_builds_and_restarts(self):
+        su_mock = self._su()
+        with patch("src.controller.web.su", su_mock):
+            self._run(su_mock, {"apply_controller": True})
+        su_mock.build_and_restart.assert_called_once()
+
+    def test_git_failure_reports_error(self):
+        import subprocess as sp
+        su_mock = self._su()
+        su_mock.fetch.side_effect = sp.CalledProcessError(
+            128, "git", stderr="Permission denied (publickey)")
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+        assert "upload_update_error" in names
+        su_mock.reset_to_origin.assert_not_called()
+        su_mock.stage_zip.assert_not_called()
+
+    def test_unavailable_checkout_reports_reason(self):
+        su_mock = self._su()
+        su_mock.git_checkout_info.return_value = {
+            "available": False, "reason": "No git checkout on this device"}
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+        assert names == ["upload_update_error"]
+        su_mock.fetch.assert_not_called()
+
+
 class TestDeployUpdateToModule:
     """Forwards an 'update_saviour' command to one module -- doesn't touch
     subprocess itself, just os.path.exists() on the staged package."""

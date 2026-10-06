@@ -80,7 +80,8 @@ addopts = "-v -p no:cacheprovider"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-extend-exclude = ["src/controller/frontend", "dev", "env", "env2", "*.ipynb"]
+extend-exclude = ["src/controller/frontend", "dev", "env", "env2", "*.ipynb",
+                  "tools/ephys"]  # vendored
 
 [tool.ruff.lint]
 # CI gates on this whole set (python-app.yml). Correctness rules are on;

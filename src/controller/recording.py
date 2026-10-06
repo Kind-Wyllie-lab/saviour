@@ -1804,8 +1804,7 @@ class Recording:
         # too. Without this check, a module merely listed on a dormant
         # SCHEDULED session going offline hours before its window even opens
         # got flagged as a session fault; module_back_online() then "recovered"
-        # it by starting a real recording outside the schedule (found live
-        # 2026-08-27, habitat DailyAudio session — see CHANGELOG).
+        # it by starting a real recording outside the schedule.
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
             # Habitat Session: a module whose plan window is currently shut is
             # supposed to be idle — its dropping offline isn't a session fault.
@@ -1883,12 +1882,9 @@ class Recording:
 
         # "Already recording" is not a fault. A module that kept recording
         # through a controller restart replies this to the recovery-path
-        # start_recording — it's doing exactly what we want. Escalating the
-        # whole session to ERROR on it (16× at once, after a habitat-scale
-        # restart) is what previously wedged an unattended Habitat Session:
-        # ERROR disables _evaluate_plans' self-heal, so out-of-window plan
-        # modules the old recovery path blindly started never got stopped
-        # (found live 2026-09-03, session habitat_CRLLT3_20260903).
+        # start_recording — it's doing exactly what we want. Don't escalate
+        # the session to ERROR on it: ERROR disables _evaluate_plans'
+        # self-heal, which can wedge an unattended Habitat Session.
         if "already recording" in message.lower():
             self.logger.info(
                 f"{module_id} reported '{message}' in '{session_name}' — "
@@ -2116,8 +2112,8 @@ class Recording:
                 return
 
             # Same PTP gate as a session start. A module back from a power-loss
-            # reboot has no RTC and runs on a stale clock until PTP converges
-            # (desk soak 2026-09-30: it booted at "31 Aug"); re-arming it then
+            # reboot has no RTC and runs on a stale clock until PTP converges;
+            # re-arming it then
             # would stamp frames with the wrong time. Deferred, not dropped:
             # the liveness check retries every cycle until the gate passes.
             ptp = self._check_ptp_sync([module_id])
@@ -2607,15 +2603,10 @@ class Recording:
 
 
     def _check_nas_space_periodic(self) -> None:
-        """Periodically check export-share free space; alert, log and record
-        a session event whenever it crosses a threshold.
-
-        Test D (2026-10-03): the share sat at 2.5% free for 45 min and nothing
-        showed anywhere -- the alert only went to the Teams/SSE channels
-        (nothing without a webhook) and was never logged or written to the
-        session's event log. Now each ok/low/critical transition is logged and
-        recorded in every active session's session_events.log (WARNING / FAULT
-        / RECOVERY), alongside the alert."""
+        """Periodically check export-share free space. Each ok/low/critical
+        transition is logged, alerted, and recorded in every active session's
+        session_events.log (WARNING / FAULT / RECOVERY): the alert channels
+        alone reach nobody on a rig without a webhook."""
         config = self.facade.get_config()
         rec_cfg = config.get("recording", {})
         nas_warn = rec_cfg.get("nas_warn_free_pct", 15)
@@ -3083,9 +3074,8 @@ class Recording:
 
                         # A full stop is already in flight (waiting for module
                         # confirmations): don't re-send it every cycle -- modules
-                        # that had already stopped answered the duplicate with
-                        # "Not recording", logged as a spurious FAULT (desk soak
-                        # 2026-09-30).
+                        # that had already stopped answer the duplicate with
+                        # "Not recording", logged as a spurious FAULT.
                         if session_name in self._full_stopping:
                             continue
 

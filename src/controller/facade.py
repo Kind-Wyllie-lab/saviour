@@ -368,8 +368,7 @@ class ControllerFacade:
             if camera_cfg(mid).get("sync_mode", "none") == target_role:
                 continue
             # A role change restarts the camera, which must never happen
-            # mid-recording (test D, 2026-10-04: a dropped server got the
-            # client re-roled twice during a session, orphaning its encoder).
+            # mid-recording (it orphans the running encoder).
             # Re-run on recording_stopped (Controller.handle_status_update).
             if self.is_module_recording(mid):
                 self.logger.info(

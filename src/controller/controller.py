@@ -370,9 +370,8 @@ class Controller(ABC):
         # Update the module tracker FIRST, then the recording side: the session
         # monitor thread reads online/RECORDING state from the tracker, and
         # updating it afterwards left a window where a session was in ERROR
-        # for an offline module that still looked RECORDING -- the liveness
-        # check "recovered" it and re-armed the unplugged module (desk soak
-        # 2026-09-30).
+        # for an offline module that still looked RECORDING, and the liveness
+        # check would "recover" it by re-arming the unplugged module.
         if status in ("online", "offline"):
             self.modules.notify_module_online_update(module_id, status == "online")
         if status == "online":

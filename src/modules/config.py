@@ -495,14 +495,12 @@ class Config:
         #   otherwise silently wipe a live share_password whenever the frontend's
         #   cached config snapshot didn't happen to include it (e.g. right after a
         #   reconnect, while invalidate_config()'s module.config={} reset is still
-        #   in effect). Confirmed live 2026-08-20.
+        #   in effect).
         # - camera.crop_rect: set only via the separate crop-editor modal's
         #   set_camera_crop command, never included in the normal ConfigCard save
         #   payload -- any unrelated camera config save would otherwise prune it,
         #   then set_all()'s own re-merge-defaults step immediately resets it to
         #   the base-config default (None), silently discarding a real crop rect.
-        #   Also confirmed live 2026-08-20 (harmless that time only because this
-        #   particular module had never had a crop rect set).
         _NEVER_PRUNE_SECTIONS = {"export"} | self._sidecar_sections
         _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
 

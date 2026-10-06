@@ -199,8 +199,7 @@ def stage_zip(version: str = "unknown", src_root: str = SRC_ROOT,
                     continue
                 abs_path = os.path.join(dirpath, filename)
                 # Regular files only: opening a FIFO blocks forever (lgpio
-                # leaves .lgd-nfy* pipes in the TTL variant's directory,
-                # which hung POST /api/v1/system/update, 2026-10-02).
+                # leaves .lgd-nfy* pipes in the TTL variant's directory).
                 if not os.path.isfile(abs_path):
                     continue
                 rel_path = os.path.relpath(abs_path, src_root)
@@ -241,10 +240,9 @@ def find_npm() -> tuple[str | None, dict]:
     """(npm path, env to run it with). Falls back to the newest nvm install
     under /home/pi/.nvm, where the controller's node lives. npm's shebang is
     `#!/usr/bin/env node`, and saviour.service's PATH doesn't include nvm's
-    bin dir, so running that npm by absolute path failed with
-    "env: 'node': No such file or directory" -- every web-UI / REST update
-    silently skipped the frontend rebuild (desk soak 2026-09-30). The env
-    returned puts npm's own bin dir first on PATH."""
+    bin dir, so running that npm by absolute path fails with
+    "env: 'node': No such file or directory". The env returned puts npm's
+    own bin dir first on PATH."""
     import glob
     import shutil
     npm = shutil.which("npm")

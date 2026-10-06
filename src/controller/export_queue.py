@@ -164,14 +164,12 @@ class ExportQueue:
     def module_back_online(self, module_id: str) -> None:
         """Re-dispatch an export the module never answered before it dropped.
 
-        Test D (2026-10-06): a start_export sent moments before a module
-        hard-rebooted was lost with the old process, but stayed "active" here,
-        so the salvaged-segment export_ready after the reboot only scheduled a
-        follow-up behind it, later signals were dropped as duplicates until
-        the 15-min stale check, and pending_exports never balanced. If the
-        module is in fact still exporting (a network blip, not a reboot) it
-        answers "Already exporting" and its running pass completes the entry
-        exactly as before."""
+        A start_export sent just before a module reboots dies with the old
+        process but stays "active" here; without a re-dispatch, later
+        export_ready signals queue behind it or are dropped as duplicates and
+        pending_exports never balances. A module that is in fact still
+        exporting (a network blip, not a reboot) answers "Already exporting"
+        and its running pass completes the entry as before."""
         with self._lock:
             meta = self._active_meta.get(module_id)
             if meta is None:

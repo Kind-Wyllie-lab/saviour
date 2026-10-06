@@ -1378,11 +1378,9 @@ class Web(ABC):
             # validate_readiness makes each module mount+write+unmount against the
             # shared export share (module.py's _check_export()). Dispatching that
             # to every module within the same instant is a thundering herd against
-            # the NAS's SMB server — confirmed live 2026-08-24 on a 20-module
-            # habitat deployment, where most of the fleet failed readiness with a
-            # mix of I/O error / device busy / no-such-file even though the share
-            # was healthy throughout. Stagger dispatch to spread the resulting
-            # mount/write/unmount cycles out over time instead.
+            # the NAS's SMB server (a 20-module fleet mostly failed readiness with
+            # I/O error / device busy against a healthy share). Stagger dispatch
+            # to spread the mount/write/unmount cycles out.
             _READINESS_STAGGER_S = 0.3
             for i, mid in enumerate(modules):
                 if i > 0:
@@ -2289,8 +2287,8 @@ class Web(ABC):
             export_changed = any(
                 old_export.get(k) != new_export.get(k) for k in share_keys
             )
-            # The controller is the single authority for the export destination
-            # (the per-module "manual" override was removed 2026-08-28), so a
+            # The controller is the single authority for the export destination,
+            # so a
             # changed share config is always pushed to every connected module
             # here rather than leaving them on stale credentials until they
             # reconnect. The "Sync to All Modules" button remains as a manual
@@ -3355,9 +3353,8 @@ class Web(ABC):
                 base = f"saviour_diagnostics_{ts}/modules/{mid}"
                 if data:
                     zf.writestr(f"{base}/logs.txt", data.get('logs', '(no logs)'))
-                    # Previous-boot service + kernel journal (added 2026-08-27):
-                    # the field is absent from an older module that predates
-                    # this, so only write what's actually present.
+                    # Previous-boot service + kernel journal: absent from older
+                    # modules, so only write what's actually present.
                     for key, fname in (
                         ("logs_prevboot", "logs_prevboot.txt"),
                         ("kernel_prevboot", "kernel_prevboot.txt"),

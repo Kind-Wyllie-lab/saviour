@@ -215,3 +215,13 @@ class TestSetExportConfigAck:
                            "result": "error"})
         Controller.handle_status_update(ctx, "status/camera_0f5d", data)
         ctx.modules.export_credentials_applied.assert_not_called()
+
+
+class TestRecordingStoppedReconcilesFramesync:
+    def test_deferred_role_changes_applied_after_stop(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        Controller.handle_status_update(ctx, "status/hailo_camera_3606", json.dumps(
+            {"type": "recording_stopped", "status": "success", "reason": "operator"}))
+        ctx.facade.reconcile_framesync.assert_called_once()

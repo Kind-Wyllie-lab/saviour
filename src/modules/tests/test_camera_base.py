@@ -770,3 +770,80 @@ class TestRotationDoesNotBlockOnProbe:
         argv = run.call_args[0][0]
         assert argv[:5] == ["ionice", "-c3", "nice", "-n", "19"]
         assert "ffprobe" in argv
+
+
+# ---------------------------------------------------------------------------
+# Test D (2026-10-04): never reconfigure the camera mid-recording, and never
+# strand the final segment on a stop error.
+# ---------------------------------------------------------------------------
+
+def _recording_cam(recording=True):
+    cam = _make_camera(
+        picam2=MagicMock(), is_streaming=True, has_autofocus=False, fps=30,
+        mode={"crop_limits": _FULL_FOV}, sensor_modes=[],
+        _deferred_restart_keys=set(),
+    )
+    cam.picam2.camera_properties = {"ScalerCropMaximum": _FULL_FOV}
+    cam._configure_module_extra = MagicMock()
+    cam._cache_frame_config = MagicMock()
+    cam._ae_tuning_controls = lambda: {}
+    cam._compute_scaler_crop_rect = MagicMock(return_value=None)
+    cam.config = MagicMock()
+    cam.config.get.side_effect = lambda key, default=None: default
+    cam.recording = MagicMock(is_recording=recording)
+    cam.stop_streaming = MagicMock()
+    cam.start_streaming = MagicMock()
+    cam._configure_camera = MagicMock()
+    return cam
+
+
+class TestNoMidRecordingRestart:
+    def test_restart_key_while_recording_is_deferred(self):
+        cam = _recording_cam(recording=True)
+        cam.configure_module_special(["camera.sync_mode", "camera.fps"])
+        cam._configure_camera.assert_not_called()
+        cam.stop_streaming.assert_not_called()
+        assert cam._deferred_restart_keys == {"camera.sync_mode"}
+        cam.picam2.set_controls.assert_called()      # live controls still applied
+
+    def test_deferred_restart_runs_when_recording_stops(self):
+        cam = _recording_cam(recording=True)
+        cam.configure_module_special(["camera.sync_mode"])
+        cam.recording.is_recording = False
+        cam.on_recording_stopped()
+        cam._configure_camera.assert_called_once()
+        assert cam._deferred_restart_keys == set()
+
+    def test_restart_key_when_idle_restarts_immediately(self):
+        cam = _recording_cam(recording=False)
+        with patch("src.modules.camera_base.time.sleep"):
+            cam.configure_module_special(["camera.sync_mode"])
+        cam._configure_camera.assert_called_once()
+
+
+class TestStopMainEncoderFallback:
+    def test_stale_encoder_handle_falls_back_to_stopping_all(self):
+        cam = _make_camera(picam2=MagicMock(), main_encoder=object())
+        cam.picam2.stop_encoder.side_effect = [RuntimeError("Encoder already stopped"), None]
+        cam._stop_main_encoder()
+        assert cam.picam2.stop_encoder.call_args_list[-1].args == ()
+
+
+class TestStopRecordingNeverStrandsSegment:
+    def test_error_after_encoder_stop_still_stages_segment(self):
+        cam = _make_camera(
+            picam2=MagicMock(), main_encoder=MagicMock(), facade=MagicMock(),
+            current_video_segment="/rec/pending/s_cam_(71_x).ts",
+            _encoder_active=True,
+        )
+        cam._join_segment_finalise = MagicMock(side_effect=RuntimeError("boom"))
+        cam._close_timestamp_csv = MagicMock()
+        assert cam._stop_recording() is True
+        cam.facade.stage_file_for_export.assert_called_with("/rec/pending/s_cam_(71_x).ts")
+        cam._close_timestamp_csv.assert_called_once()
+
+    def test_encoder_stop_failure_still_reports_failure(self):
+        cam = _make_camera(picam2=MagicMock(), main_encoder=MagicMock(), facade=MagicMock())
+        cam.picam2.stop_encoder.side_effect = OSError("dead")
+        assert cam._stop_recording() is False
+        cam.facade.stage_file_for_export.assert_not_called()

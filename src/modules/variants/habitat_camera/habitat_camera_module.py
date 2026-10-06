@@ -509,7 +509,7 @@ class HabitatCameraModule(CameraBase):
             self.logger.info("Attempting to stop habitat_camera recording")
             if self._clip_open:
                 self._close_clip()
-            self.picam2.stop_encoder(self.main_encoder)
+            self._stop_main_encoder()
             self._circular_output = None
             self._close_diagnostic_csv()
             return True

@@ -370,6 +370,15 @@ class ControllerFacade:
             roles[mid] = target_role
             if camera_cfg(mid).get("sync_mode", "none") == target_role:
                 continue
+            # A role change restarts the camera, which must never happen
+            # mid-recording (test D, 2026-10-04: a dropped server got the
+            # client re-roled twice during a session, orphaning its encoder).
+            # Re-run on recording_stopped (Controller.handle_status_update).
+            if self.is_module_recording(mid):
+                self.logger.info(
+                    f"FrameSync reconcile: {mid} should be {target_role} but is "
+                    f"recording -- deferred until it stops")
+                continue
 
             new_camera = dict(camera_cfg(mid))
             new_camera["sync_mode"] = target_role

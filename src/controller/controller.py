@@ -267,6 +267,8 @@ class Controller(ABC):
                     self.facade.module_stopped(module_id)
                     if reason != 'operator':
                         self.facade.module_self_stopped(module_id, status_data)
+                    # Apply any FrameSync role change deferred while recording.
+                    self.facade.reconcile_framesync()
 
                 case 'cmd_ack':
                     command = status_data.get('command', 'unknown')

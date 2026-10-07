@@ -3,7 +3,6 @@ import "/src/basic/pages/Dashboard/Dashboard.css";
 import "./APADashboard.css";
 
 import useModules from "/src/hooks/useModules";
-import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
@@ -49,7 +48,6 @@ function APADashboard() {
 
   return (
     <div className="dashboard">
-      <RecordingStatusWidget />
 
       {mode === "narrow" ? (
         /* ── Narrow (<768px): single column, stream gets full width ── */

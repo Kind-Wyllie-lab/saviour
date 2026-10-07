@@ -1,9 +1,35 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import socket from "../../../socket";
 import useSessions from "/src/hooks/useSessions";
 
 // Styling and components
 import "./APACommands.css";
+
+// Shock arm/hold state is shared by every mounted APACommands: the fullscreen
+// overlay mounts a second copy while the dashboard's stays mounted beneath it,
+// and both listen for the spacebar. Per-instance state let a disarm in one
+// leave the other armed, and one keypress send two activates.
+const ARMED_KEY = "apa_shocker_armed";
+let sharedArmed = false;
+try {
+    // Persist arm state across page reloads within the same browser session
+    sharedArmed = sessionStorage.getItem(ARMED_KEY) === "1";
+} catch { /* storage unavailable: start disarmed */ }
+const armedSubscribers = new Set();
+const subscribeArmed = (fn) => { armedSubscribers.add(fn); return () => armedSubscribers.delete(fn); };
+const getArmed = () => sharedArmed;
+function setSharedArmed(next) {
+    sharedArmed = next;
+    try { sessionStorage.setItem(ARMED_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+    armedSubscribers.forEach((fn) => fn());
+}
+// True while a spacebar or hold-button press is holding the shock on.
+const shockHold = { holding: false };
+
+// A space typed into a form field is text, not the shock key.
+const isTextEntry = (el) =>
+    el instanceof HTMLElement &&
+    (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 
 function APACommands( {modules} ) {
     const { sessionList } = useSessions();
@@ -12,11 +38,7 @@ function APACommands( {modules} ) {
 
     const [, setShockState] = useState(null); // display is commented out below
     const [arduinoState, setArduinoState] = useState(null);
-    const [spacePressed, setSpacePressed] = useState(false);
-    // Persist arm state across page reloads within the same browser session
-    const [shockerArmed, setShockerArmed] = useState(
-        () => sessionStorage.getItem("apa_shocker_armed") === "1"
-    );
+    const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
     // Throttle rapid command emissions — 200 ms minimum between same command type
     const lastCmdTime = useRef({});
 
@@ -40,52 +62,83 @@ function APACommands( {modules} ) {
         };
     }, []);
 
-    const emitCommand = (type) => {
+    // Latest module id for the window listeners, which are bound once (see
+    // below) rather than re-bound on every render.
+    const moduleIdRef = useRef(apaModule?.id);
+    useEffect(() => { moduleIdRef.current = apaModule?.id; });
+
+    const emitCommand = (type, { throttle = true } = {}) => {
         const now = Date.now();
-        if (now - (lastCmdTime.current[type] ?? 0) < 200) return;
+        if (throttle && now - (lastCmdTime.current[type] ?? 0) < 200) return;
         lastCmdTime.current[type] = now;
-        socket.emit("send_command", { type, module_id: apaModule?.id, params: {} });
+        socket.emit("send_command", { type, module_id: moduleIdRef.current, params: {} });
     };
 
+    // deactivate_shock is never throttled: dropping it (e.g. a quick
+    // tap-tap of the spacebar) would leave the shock sequence running.
     const activateShock   = () => emitCommand("activate_shock");
-    const deactivateShock = () => emitCommand("deactivate_shock");
+    const deactivateShock = () => emitCommand("deactivate_shock", { throttle: false });
     const startMotor      = () => emitCommand("start_motor");
     const stopMotor       = () => emitCommand("stop_motor");
     const resetPulses     = () => emitCommand("reset_pulse_counter");
 
+    const pressShock = () => {
+        if (shockHold.holding || !getArmed()) return;
+        shockHold.holding = true;
+        activateShock();
+    };
+
+    // Ends a hold whatever the arm state is now, so disarming mid-hold or
+    // losing focus can't strand the shock on.
+    const releaseShock = () => {
+        if (!shockHold.holding) return;
+        shockHold.holding = false;
+        deactivateShock();
+    };
+
     const toggleShockerArmed = () => {
-        const next = !shockerArmed;
-        sessionStorage.setItem("apa_shocker_armed", next ? "1" : "0");
-        setShockerArmed(next);
+        const next = !getArmed();
+        setSharedArmed(next);
+        if (!next) releaseShock();
     };
 
     useEffect(() => {
         const handleKeyDown = (event) => {
-            if (event.code === "Space" && !spacePressed && shockerArmed) {
-                setSpacePressed(true);
-                activateShock();
-            }
+            if (event.code !== "Space" || !getArmed() || isTextEntry(event.target)) return;
+            // Stop space scrolling the page or clicking a focused button
+            // (e.g. toggling Disarm, or Start Motor) while it is the shock key.
+            event.preventDefault();
+            if (!event.repeat) pressShock();
         };
 
         const handleKeyUp = (event) => {
-            if (event.code === "Space" && shockerArmed) {
-                setSpacePressed(false);
-                deactivateShock();
-            }
+            if (event.code !== "Space") return;
+            if (shockHold.holding) event.preventDefault();
+            releaseShock();
+        };
+
+        // The keyup never arrives if the window loses focus mid-hold
+        // (alt-tab, clicking another window, a dialog), or the tab is hidden.
+        const handleVisibility = () => {
+            if (document.visibilityState === "hidden") releaseShock();
         };
 
         window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("keyup", handleKeyUp);
+        window.addEventListener("blur", releaseShock);
+        document.addEventListener("visibilitychange", handleVisibility);
 
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
+            window.removeEventListener("blur", releaseShock);
+            document.removeEventListener("visibilitychange", handleVisibility);
+            // Navigating away from the dashboard mid-hold.
+            releaseShock();
         };
-    // Rebinds only on spacePressed/shockerArmed. activateShock/deactivateShock
-    // close over apaModule, so a module change mid-hold uses the old id until
-    // the next rebind; see the APA shock item in plans/backlog.md.
+    // Bound once; everything it reads goes through refs or the shared state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [spacePressed, shockerArmed]);
+    }, []);
 
     return (
         <div className="apa-commands">
@@ -130,9 +183,9 @@ function APACommands( {modules} ) {
                 </button>
                 <button
                     className="hold-to-shock"
-                    onMouseDown={activateShock}
-                    onMouseUp={deactivateShock}
-                    onMouseLeave={deactivateShock}
+                    onMouseDown={pressShock}
+                    onMouseUp={releaseShock}
+                    onMouseLeave={releaseShock}
                     // disabled={!apaModule}
                     disabled={!shockerArmed}
                     > 

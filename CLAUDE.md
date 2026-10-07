@@ -177,7 +177,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Session list multi-select delete + the rapid-delete 404 race → `plans/session-list-multi-select-delete.md`.
 - TTL: edge timestamps on the Python callback path → `plans/ttl-kernel-timestamping.md`; hardening work → `plans/ttl-module-hardening.md`.
 - pyControl visibility → `plans/pycontrol-live-event-bridge.md`.
-- Frontend: APA shock has no blur safeguard; `FaultAlertModal` missing from apa/acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
+- Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
 - `saviour-config`/`mend.sh` build the frontend as root (root-owned `dist/`); `clone_prep.sh` clears the wrong active-config path.
 - A/V sync residual (~150-200 ms audio): `plans/audio-video-sync-residual-validation.md`; buzzer/LED rig built, hardware pending (`docs/AV_SYNC_TEST.md`).
 

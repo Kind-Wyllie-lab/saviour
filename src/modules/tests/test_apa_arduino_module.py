@@ -128,3 +128,34 @@ class TestStopRecordingWithoutMotor:
         m = _make_apa(_shock_file_handle=buf)
         m._write_shock_event(123, "SHOCK_DELIVERY")
         assert buf.getvalue() == "123,SHOCK_DELIVERY,None\n"
+
+
+class TestShockerActivateIdempotent:
+    def _shocker(self):
+        from shock import Shocker  # bare, as the module imports it
+        config = MagicMock()
+        config.get.return_value = 50
+        with patch.object(Shocker, "configure_shocker"):
+            s = Shocker(MagicMock(), config)
+        s.check_shock_set = MagicMock(return_value=True)
+        # Stand-in pulse loop: runs until deactivated, sends nothing.
+        s.start_shocking = lambda: s.stop_shock_flag.wait(5)
+        return s
+
+    def test_second_activate_does_not_start_a_second_pulse_thread(self):
+        s = self._shocker()
+        assert s.activate_shock() is True
+        first = s.shock_thread
+        assert s.activate_shock() is True  # e.g. two UI instances
+        assert s.shock_thread is first
+        s.deactivate_shock()
+        assert not first.is_alive()
+
+    def test_activate_after_deactivate_starts_a_new_thread(self):
+        s = self._shocker()
+        s.activate_shock()
+        first = s.shock_thread
+        s.deactivate_shock()
+        s.activate_shock()
+        assert s.shock_thread is not first
+        s.deactivate_shock()

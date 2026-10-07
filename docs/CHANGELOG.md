@@ -11,6 +11,15 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-07
+
+- [x] **`apa_arduino`: import crash, shutdown safety, supervised state loop** (branch `fix/apa-arduino-shutdown` → `staging`). **Not yet hardware-verified.**
+  - **Import crash (module could not start at all since 2026-07-29):** the repo-wide `ruff --fix` pass (`03713f84`) swapped `typing.Callable` for `collections.abc.Callable` in `protocol.py`. `collections.abc.Callable["Protocol", str]` raises `TypeError` at definition time, so the module died on import. Now `Callable[["Protocol", str], None]`. It was the only such annotation in `src/`/`tools/`/`scripts/`. It went unnoticed because `apa_arduino` had no tests.
+  - **Shutdown left the rig live:** `Module.stop()` never called `APAModule.cleanup()`, and the module's `__main__` did nothing on SIGTERM. A service stop, restart or update (or the `shutdown` command) therefore left the arena rotating and the shock sequence armed. `APAModule.stop()` now runs `cleanup()` (state loop, motor stop, shock off, serial close) before the base teardown. `__main__` maps SIGTERM to `SystemExit` so stop() runs in a `finally`. A watchdog SIGABRT or power loss still can't be caught here; that needs a host-silence failsafe in the Arduino firmware.
+  - **`_stop_recording` with no motor connected:** it raised, then the handler raised again on the stale `self.communication_manager`. It now skips the motor stop, still closes and exports `_shock_events.csv`, and reports errors via `self.communication`. `_write_shock_event` no longer raises without a motor (writes `None` for the rpm).
+  - **`send_state_loop` is supervised** (`apa_arduino.send_state`, stop-event driven). Before, one exception silently froze the frontend's shock/RPM display. An Arduino re-sending its identity no longer starts a second loop.
+  - Tests: new `test_apa_arduino_module.py` (9). It puts the variant dir on `sys.path` for the bare sibling imports, so it also catches import errors like the one above.
+
 ## 2026-10-06
 
 - [x] **Pre-v1.0 behaviour-neutral cleanup** (`plans/pre-v1-codebase-cleanup.md`; branches `refactor/dead-code-sweep`, `refactor/one-copy`, `refactor/comments-why`, `refactor/lint-gate`, `fix/module-background-jobs` → `staging`).

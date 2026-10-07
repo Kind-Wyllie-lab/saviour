@@ -11,6 +11,7 @@ It is used to control a Pololu G2 Motor Controller with encoder for speed contro
 """
 
 import os
+import signal
 import sys
 import threading
 import time
@@ -27,6 +28,7 @@ from protocol import Protocol
 from shock import Shocker
 
 from modules.module import Module, check, command
+from src.shared.supervised import supervise
 
 
 class APAModule(Module):
@@ -55,6 +57,7 @@ class APAModule(Module):
         # Sending state to controller
         self.send_state_period: float = 0.2
         self.send_state_thread: threading.Thread = None
+        self._send_state_stop: threading.Event | None = None
 
         # Recording-specific variables
         self._shock_file_handle = None
@@ -105,8 +108,14 @@ class APAModule(Module):
         self.logger.info("Both arduino initialized.")
         self._refresh_hardware_fault()
         self.set_arduino_callbacks()
-        self.send_state_thread = threading.Thread(target=self.send_state_loop, daemon=True)
-        self.send_state_thread.start()
+        # An Arduino that re-sends its identity (reset, serial reconnect) runs
+        # this again; keep a single state loop rather than stacking another.
+        if self.send_state_thread is None or not self.send_state_thread.is_alive():
+            # Supervised (src/shared/supervised.py), fresh Event per start.
+            self._send_state_stop = threading.Event()
+            self.send_state_thread = supervise(
+                "apa_arduino.send_state", self.send_state_loop,
+                stop_event=self._send_state_stop, logger=self.logger)
         self.configure_module([])
 
 
@@ -358,9 +367,11 @@ class APAModule(Module):
         self.communication.send_status(status)
 
 
-    def send_state_loop(self):
-        while True:
-            time.sleep(self.send_state_period)
+    def send_state_loop(self, stop_event: threading.Event):
+        """Runs under supervise(): an exception building or sending the state
+        is logged and the loop restarted, rather than silently freezing the
+        frontend's shock/RPM display."""
+        while not stop_event.wait(self.send_state_period):
             self.send_controller_arduino_state()
 
 
@@ -408,7 +419,8 @@ class APAModule(Module):
     def _write_shock_event(self, timestamp_ns: int, event: str):
         """Write a shock event to file"""
         if self._shock_file_handle:
-            self._shock_file_handle.write(f'{timestamp_ns},{event},{self.motor.speed_from_arduino}\n')
+            rpm = self.motor.speed_from_arduino if self.motor else None
+            self._shock_file_handle.write(f'{timestamp_ns},{event},{rpm}\n')
 
 
     def _create_shock_event_file(self) ->  bool:
@@ -451,8 +463,12 @@ class APAModule(Module):
     def _stop_recording(self) -> bool:
         """Stop APA recording and save data"""
         try:
-            # Stop motor
-            self.motor.stop_motor()
+            # Stop motor (the motor Arduino may have dropped out mid-session;
+            # still close and export the shock events file below)
+            if self.motor:
+                self.motor.stop_motor()
+            else:
+                self.logger.warning("stop_recording: no motor connected, skipping motor stop")
 
             # Set recording flag to false
             self.recording_shocks = False
@@ -486,7 +502,7 @@ class APAModule(Module):
 
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "recording_stopped",
                 "status": "error",
                 "error": str(e)
@@ -511,7 +527,20 @@ class APAModule(Module):
 
 
     """Cleanup"""
+    def stop(self) -> bool:
+        # Module.stop() never calls cleanup(), so without this override a
+        # service stop/restart/update left the arena rotating and the shock
+        # sequence armed. Make the hardware safe before tearing down comms.
+        try:
+            self.cleanup()
+        except Exception as e:
+            self.logger.error(f"APA: error during cleanup: {e}")
+        return super().stop()
+
+
     def cleanup(self):
+        if self._send_state_stop is not None:
+            self._send_state_stop.set()
         if self.motor:
             try:
                 self.motor.stop_motor()
@@ -532,12 +561,19 @@ class APAModule(Module):
 
 
 if __name__ == "__main__":
+    # saviour.service runs this file directly, so `systemctl stop/restart`
+    # arrives as SIGTERM, which by default kills Python without running
+    # stop(). Turn it into SystemExit so the finally below stops the motor
+    # and shock. (A watchdog SIGABRT or power loss still can't be caught;
+    # only the Arduino firmware can make those safe.)
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     apa = APAModule()
-    apa.start()
-    # Keep running until interrupted
     try:
+        apa.start()
+        # Keep running until interrupted
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down...")
+    finally:
         apa.stop()

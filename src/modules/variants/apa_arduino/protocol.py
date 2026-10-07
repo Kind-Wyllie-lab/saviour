@@ -25,7 +25,7 @@ class Protocol:
         self,
         port: str,
         baud: int = 115200,
-        on_identity: Callable["Protocol", str] | None = None
+        on_identity: Callable[["Protocol", str], None] | None = None
     ) -> None:
         """
         Initialize the serial communication protocol for an Arduino-like device.

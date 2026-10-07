@@ -14,6 +14,8 @@ import Guide from "../basic/pages/Guide/Guide";
 import FirstRunModal from "../basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "../basic/components/RecordingStatusWidget/RecordingStatusWidget";
+import FaultAlertModal from "../basic/components/FaultAlertModal/FaultAlertModal";
+import useFaultAlerts from "/src/hooks/useFaultAlerts";
 
 document.title = "APA";
 
@@ -28,6 +30,8 @@ const pages = [
 ];
 
 function App() {
+  const { pendingFaults, acknowledge } = useFaultAlerts();
+
   return (
     <div className="app">
       <Sidebar navItems={pages} />
@@ -48,6 +52,12 @@ function App() {
       </div>
       <FirstRunModal />
       <ConnectionOverlay />
+      {pendingFaults.length > 0 && (
+        <FaultAlertModal
+          faultedSessions={pendingFaults}
+          onAcknowledge={acknowledge}
+        />
+      )}
     </div>
   );
 }

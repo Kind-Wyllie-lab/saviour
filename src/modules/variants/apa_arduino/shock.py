@@ -218,6 +218,10 @@ class Shocker:
             if self.attempted_shocks >= self._max_shocks or self.attempted_shocks_from_arduino >= self._max_shocks:
                 self.logger.warning("Cannot activate shocker as have already delivered limit of %d shocks.", self._max_shocks)
                 return False
+        # A duplicate activate (two UI instances, a retried command) must not
+        # start a second pulse thread alongside the running one.
+        if self.shock_activated and self.shock_thread and self.shock_thread.is_alive():
+            return True
         self.shock_activated = True
         self.stop_shock_flag.clear()
         self.shock_thread = threading.Thread(target=self.start_shocking, daemon=True)

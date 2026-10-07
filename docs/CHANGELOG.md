@@ -13,6 +13,18 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-07
 
+- [x] **APA hold-to-shock safeguards + `FaultAlertModal`** (branch `fix/apa-shock-focus-safeguard` → `staging`). Builds and lints clean. **Not yet browser- or rig-verified.**
+  - **Stuck-on paths closed in `APACommands.jsx`:**
+    - The shock is released on window `blur`, on `visibilitychange` to hidden and on unmount. A key-up never arrives after alt-tab or a dialog.
+    - `deactivate_shock` is no longer throttled. The shared 200 ms throttle dropped the second deactivate of a quick tap-tap.
+    - Key-up and Disarm release regardless of arm state. Before, disarming mid-hold meant the key-up sent nothing.
+  - **Fullscreen double instance:** `APAFullscreenVideo` mounts a second `APACommands` over the dashboard's, and each kept its own armed state. Disarming in fullscreen left the hidden copy armed, so space still shocked, and one keypress sent two activates. Arm and hold state are now module-level and shared (`useSyncExternalStore`).
+  - **Other key handling:** space typed in a form field is ignored. While armed, space no longer scrolls the page or clicks a focused button.
+  - **Module backstop:** `Shocker.activate_shock` is idempotent while a pulse thread is running. Before, a duplicate activate started a second thread.
+  - **`FaultAlertModal`** wired into `apa/App.jsx` (same `useFaultAlerts` pattern as basic/habitat/loom).
+  - Tests: `TestShockerActivateIdempotent` (2) in `test_apa_arduino_module.py`. The frontend has no test harness.
+  - **Still open:** a socket drop mid-hold can't deliver the deactivate (backlog: module-side dead-man).
+
 - [x] **`apa_arduino`: import crash, shutdown safety, supervised state loop** (branch `fix/apa-arduino-shutdown` → `staging`). **Not yet hardware-verified.**
   - **Import crash (module could not start at all since 2026-07-29):** the repo-wide `ruff --fix` pass (`03713f84`) swapped `typing.Callable` for `collections.abc.Callable` in `protocol.py`. `collections.abc.Callable["Protocol", str]` raises `TypeError` at definition time, so the module died on import. Now `Callable[["Protocol", str], None]`. It was the only such annotation in `src/`/`tools/`/`scripts/`. It went unnoticed because `apa_arduino` had no tests.
   - **Shutdown left the rig live:** `Module.stop()` never called `APAModule.cleanup()`, and the module's `__main__` did nothing on SIGTERM. A service stop, restart or update (or the `shutdown` command) therefore left the arena rotating and the shock sequence armed. `APAModule.stop()` now runs `cleanup()` (state loop, motor stop, shock off, serial close) before the base teardown. `__main__` maps SIGTERM to `SystemExit` so stop() runs in a `finally`. A watchdog SIGABRT or power loss still can't be caught here; that needs a host-silence failsafe in the Arduino firmware.

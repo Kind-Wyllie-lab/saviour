@@ -142,6 +142,19 @@ const char MSG_STOP_MOTOR [] = "N";
 const char START_MARKER = '<';
 const char END_MARKER = '>';
 const char SYSTEM_ID [] = "MOTOR";
+
+// Host-silence failsafe. The host sends <K:> every 250 ms (KEEPALIVE_PERIOD_S
+// in protocol.py). Silence for HOST_TIMEOUT_MS means its process froze or the
+// Pi died, possibly mid-pulse, so make the rig safe here. Armed by the first
+// packet, so a board waiting for its host never trips.
+const char MSG_KEEPALIVE [] = "K";
+const unsigned long HOST_TIMEOUT_MS = 1000;
+unsigned long lastHostMs = 0;
+bool hostActive = false;
+bool failsafeTripped = false;
+void failsafeStop();
+void noteHostPacket();
+void checkHostSilence();
 bool acknowledgeMessages = false;
 
 // =============================================================================
@@ -486,6 +499,7 @@ void listen() {
     if (incoming.startsWith("<")) {
       incoming.remove(0, 1); // Drop <
       String payload = incoming; // Drop >
+      noteHostPacket();
 
       // Send acknowledgement
       if (acknowledgeMessages == true) {
@@ -549,6 +563,37 @@ void cleanup() {
   sendMessage(MSG_SUCCESS,  "Cleanup complete");
 }
 
+// =============================================================================
+// HOST-SILENCE FAILSAFE
+// =============================================================================
+
+void noteHostPacket() {
+  lastHostMs = millis();
+  hostActive = true;
+  if (failsafeTripped) {
+    // Announce again so the host treats this like a reset and resyncs its
+    // state (apa_arduino_module.py _handle_reconnect).
+    failsafeTripped = false;
+    sendMessage(MSG_IDENTITY, SYSTEM_ID);
+  }
+}
+
+void checkHostSilence() {
+  if (hostActive && millis() - lastHostMs > HOST_TIMEOUT_MS) {
+    hostActive = false;
+    failsafeTripped = true;
+    failsafeStop();
+  }
+}
+
+// Same as STOP_MOTOR; the host must start the motor again.
+void failsafeStop() {
+  pidEnabled = false;
+  motorRunning = false;
+  setSpeedSmoothly(0);
+  sendMessage(MSG_ERROR, "Host silent: motor stopped");
+}
+
 // STATE
 void sendState() {
   String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint) + ",";
@@ -607,6 +652,7 @@ void loop() {
   
   // Process incoming serial commands
   listen();
+  checkHostSilence();
 
   if(currentTime - lastSentState > sendStatePeriod) {
     sendState(); // Send RPM and position across serial

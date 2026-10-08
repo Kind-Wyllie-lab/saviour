@@ -4,6 +4,10 @@ Fleet provisioning and repair tools for SD-card imaging and network setup. Run f
 
 The core install/uninstall/update path (`setup.sh`, `install.sh`, `uninstall.sh`, `mend.sh`, `switch_role.sh`, `saviour-config`) stays at the repo root — see the top-level CLAUDE.md and README.
 
+## APA rig firmware
+
+- **`flash_apa_arduinos.sh`** - compile and upload the APA motor and shock Arduino sketches from this checkout, on the apa_arduino Pi, as the login user: `scripts/flash_apa_arduinos.sh [--fqbn arduino:avr:uno] [--only motor|shock]`. Finds each board by its identity, so port numbering doesn't matter; stops and restarts `saviour.service` around the upload. Installs arduino-cli to `~/.local/bin` if missing.
+
 ## Imaging a fleet of devices
 
 All three imaging scripts (`clone_direct.sh`, `capture_master_image.sh`, `multiclone.sh`) run as an interactive `whiptail` TUI when invoked with no arguments, or non-interactively when given the old positional args (for scripting). The TUI device pickers briefly mount each candidate card read-only and show its actual hostname/role/type/version (via `lib/identify_disk.sh`) instead of just size/model — so two identical-looking SanDisk cards in a USB hub are distinguishable by what's actually on them, not by guessing which port is which.

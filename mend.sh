@@ -289,6 +289,9 @@ section "6/8  Logging + NTP"
 # took effect on any Pi in the fleet (found 2026-09-30: every module's
 # journal was RAM-only, which is why reboots left nothing to diagnose).
 # A drop-in that sorts after 40-rpi-* wins.
+# SyncIntervalSec: journald only fsyncs non-crit messages every 5 min by
+# default, so a power cut lost the minutes before the crash -- the ones a
+# postmortem needs. 30 s costs negligible extra writes.
 # PTP units: phc2sys's per-sample output out of the journal (see
 # saviour-config's note above configure_ptp_timetransmitter).
 if [ -f /etc/systemd/system/phc2sys.service ] \
@@ -308,6 +311,7 @@ JOURNALD_DROPIN=/etc/systemd/journald.conf.d/99-saviour.conf
 effective_storage=$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
     | grep -E '^Storage=' | tail -1 | cut -d= -f2)
 if [ -f "$JOURNALD_DROPIN" ] && [ "$effective_storage" = "persistent" ] \
+        && grep -q "^SyncIntervalSec=30s" "$JOURNALD_DROPIN" \
         && [ -n "$(ls -A /var/log/journal 2>/dev/null)" ]; then
     ok "Persistent logging already configured"
 else
@@ -318,6 +322,7 @@ else
 Storage=persistent
 SystemMaxUse=500M
 SystemKeepFree=1G
+SyncIntervalSec=30s
 EOF
     systemctl restart systemd-journald
     journalctl --flush || true

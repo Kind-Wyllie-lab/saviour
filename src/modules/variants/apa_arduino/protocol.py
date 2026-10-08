@@ -129,7 +129,7 @@ class Protocol:
                 self._start_keepalive()
                 if self.on_identity:
                     self.on_identity(self, self.identity)
-            case "E":
+            case "E" | "ERROR":  # the motor sketch spells it out
                 # Firmware without keepalive support answers every one with
                 # the same error; log a repeated error once.
                 if param != self._last_error:

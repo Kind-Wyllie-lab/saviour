@@ -82,6 +82,19 @@ const char MSG_DEACTIVATE [] = "X";
 const char START_MARKER = '<';
 const char END_MARKER = '>';
 const char SYSTEM_ID [] = "SHOCK";
+
+// Host-silence failsafe. The host sends <K:> every 250 ms (KEEPALIVE_PERIOD_S
+// in protocol.py). Silence for HOST_TIMEOUT_MS means its process froze or the
+// Pi died, possibly mid-pulse, so make the rig safe here. Armed by the first
+// packet, so a board waiting for its host never trips.
+const char MSG_KEEPALIVE [] = "K";
+const unsigned long HOST_TIMEOUT_MS = 1000;
+unsigned long lastHostMs = 0;
+bool hostActive = false;
+bool failsafeTripped = false;
+void failsafeStop();
+void noteHostPacket();
+void checkHostSilence();
 bool acknowledgeMessages = false;
 
 // =============================================================================
@@ -236,6 +249,7 @@ void listen() {
     if (incoming.startsWith("<")) {
       incoming.remove(0, 1); // Drop <
       String payload = incoming; // Drop >
+      noteHostPacket();
 
       // Send acknowledgement
       if (acknowledgeMessages == true) {
@@ -290,6 +304,10 @@ void handleCommand(String command, String param) {
       pinMode(pin, OUTPUT);
       digitalWrite(pin, HIGH);
     }
+  }
+
+  if (command == MSG_KEEPALIVE) {
+    return; // noteHostPacket() has already done its work
   }
 
   if (command == MSG_IDENTITY) {
@@ -596,6 +614,7 @@ void onCompleteCycle() {
 void loop() {
   // Process incoming serial commands
   listen();
+  checkHostSilence();
 
   if(millis() - lastSentState > sendStatePeriod) {
     readState();
@@ -606,6 +625,40 @@ void loop() {
 // =============================================================================
 // SYSTEM FUNCTIONS
 // =============================================================================
+// =============================================================================
+// HOST-SILENCE FAILSAFE
+// =============================================================================
+
+void noteHostPacket() {
+  lastHostMs = millis();
+  hostActive = true;
+  if (failsafeTripped) {
+    // Announce again so the host treats this like a reset and resyncs its
+    // state (apa_arduino_module.py _handle_reconnect).
+    failsafeTripped = false;
+    sendMessage(MSG_IDENTITY, SYSTEM_ID);
+  }
+}
+
+void checkHostSilence() {
+  if (hostActive && millis() - lastHostMs > HOST_TIMEOUT_MS) {
+    hostActive = false;
+    failsafeTripped = true;
+    failsafeStop();
+  }
+}
+
+// Pulses are driven from the host (L:9 / H:9), so a host that dies mid-pulse
+// leaves TRIGGER_OUT LOW; the current setpoint is kept for when it returns.
+void failsafeStop() {
+  if (activatedState) {
+    deactivate();
+  }
+  digitalWrite(TRIGGER_OUT, HIGH);
+  digitalWrite(SELF_TEST_OUT, HIGH);
+  sendMessage(MSG_ERROR, "Host silent: trigger off");
+}
+
 /**
  * Emergency cleanup and system reset
  * 

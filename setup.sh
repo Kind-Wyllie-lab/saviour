@@ -147,6 +147,9 @@ configure_logging() {
     # took effect on any Pi in the fleet (found 2026-09-30: every module's
     # journal was RAM-only, which is why reboots left nothing to diagnose).
     # A drop-in that sorts after 40-rpi-* wins.
+    # SyncIntervalSec: journald only fsyncs non-crit messages every 5 min by
+    # default, so a power cut lost the minutes before the crash -- the ones a
+    # postmortem needs. 30 s costs negligible extra writes.
     echo "Enabling persistent journald logging (capped at 500M)"
     sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
     sudo tee /etc/systemd/journald.conf.d/99-saviour.conf > /dev/null <<EOF
@@ -154,6 +157,7 @@ configure_logging() {
 Storage=persistent
 SystemMaxUse=500M
 SystemKeepFree=1G
+SyncIntervalSec=30s
 EOF
     sudo systemctl restart systemd-journald
     sudo journalctl --flush || true

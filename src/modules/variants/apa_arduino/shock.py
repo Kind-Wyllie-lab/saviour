@@ -35,6 +35,10 @@ SELF_TEST_OUT = 12
 SELF_TEST_IN = 2
 TRIGGER_OUT = 9
 
+# A held shock must be refreshed (a repeat activate_shock) at least this often
+# or the pulse loop stops: the frontend's release can be lost with its socket.
+SHOCK_LEASE_S = 1.0
+
 class Shocker:
     def __init__(self, protocol_instance: Protocol, config: Config):
         self.logger = logging.getLogger(__name__)
@@ -78,6 +82,7 @@ class Shocker:
         # A thread for shocking
         self.shock_thread = None
         self.stop_shock_flag = threading.Event()
+        self._lease_expires = 0.0  # time.monotonic() deadline, see SHOCK_LEASE_S
         self._shock_lock = threading.Lock()  # guards attempted_shocks / delivered_shocks
 
         # Max shocks per trial — read from config so researchers can adjust
@@ -126,21 +131,34 @@ class Shocker:
 
     """Shock Thread"""
     def start_shocking(self):
-        while not self.stop_shock_flag.is_set():
-            # Activate shocks
-            self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
-            time.sleep(self.time_on)
-
-            # Deactivate shocks
+        # Don't call deactivate_shock() in here: it joins this thread.
+        try:
+            while not self.stop_shock_flag.is_set():
+                self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+                if self._wait_or_stop(self.time_on):
+                    break
+                self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
+                if self._wait_or_stop(self.time_off):
+                    break
+                with self._shock_lock:
+                    if self.attempted_shocks >= self._max_shocks:
+                        break
+        finally:
+            # Leave the trigger off however the loop ended (mid-pulse included).
+            self.shock_activated = False
             self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
-            time.sleep(self.time_off)
 
-            # Don't call deactivate_shock() here — that joins this thread, causing a deadlock.
-            # Set the flag directly; activate_shock() handles cleanup on the next external call.
-            with self._shock_lock:
-                if self.attempted_shocks >= self._max_shocks:
-                    self.shock_activated = False
-                    self.stop_shock_flag.set()
+    def _wait_or_stop(self, duration: float) -> bool:
+        """Sleep `duration`; True (stop pulsing) on deactivate or an expired lease."""
+        deadline = time.monotonic() + duration
+        while (left := deadline - time.monotonic()) > 0:
+            if self.stop_shock_flag.wait(min(left, 0.05)):
+                return True
+            if time.monotonic() > self._lease_expires:
+                self.logger.warning(
+                    "Shock not refreshed for %.1fs (frontend gone?); stopping", SHOCK_LEASE_S)
+                return True
+        return False
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
     # Set methods
@@ -218,8 +236,9 @@ class Shocker:
             if self.attempted_shocks >= self._max_shocks or self.attempted_shocks_from_arduino >= self._max_shocks:
                 self.logger.warning("Cannot activate shocker as have already delivered limit of %d shocks.", self._max_shocks)
                 return False
-        # A duplicate activate (two UI instances, a retried command) must not
-        # start a second pulse thread alongside the running one.
+        self._lease_expires = time.monotonic() + SHOCK_LEASE_S
+        # A repeat activate (the frontend's hold refresh, two UI instances)
+        # only extends the lease; it must not start a second pulse thread.
         if self.shock_activated and self.shock_thread and self.shock_thread.is_alive():
             return True
         self.shock_activated = True
@@ -235,6 +254,20 @@ class Shocker:
         if self.shock_thread and self.shock_thread.is_alive():
             self.shock_thread.join(timeout=5.0)
 
+
+
+    def on_reconnect(self, protocol_instance: Protocol) -> bool:
+        """The Arduino identified again (reset or serial reconnect). Keep this
+        object, so the shock counts and the trial cap survive the firmware's
+        own counter resetting; rebind and re-send the setpoints. Returns True
+        if a running shock sequence was stopped."""
+        self.arduino = protocol_instance
+        self.arduino.handle_command = self.handle_command
+        was_active = self.shock_activated
+        if was_active:
+            self.deactivate_shock()
+        self.configure_shocker()
+        return was_active
 
 
     def reset_pulse_counter(self):

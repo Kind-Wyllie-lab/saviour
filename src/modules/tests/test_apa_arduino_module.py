@@ -159,3 +159,133 @@ class TestShockerActivateIdempotent:
         s.activate_shock()
         assert s.shock_thread is not first
         s.deactivate_shock()
+
+
+class TestShockLease:
+    """The pulse loop stops itself unless activate_shock keeps refreshing it."""
+
+    def _shocker(self, time_on=0.02, time_off=0.02):
+        import shock
+        config = MagicMock()
+        config.get.return_value = 50
+        with patch.object(shock.Shocker, "configure_shocker"):
+            s = shock.Shocker(MagicMock(), config)
+        s.check_shock_set = MagicMock(return_value=True)
+        s.time_on, s.time_off = time_on, time_off
+        return s
+
+    def test_unrefreshed_shock_stops_with_trigger_high(self):
+        import shock
+        s = self._shocker()
+        with patch.object(shock, "SHOCK_LEASE_S", 0.1):
+            s.activate_shock()
+            s.shock_thread.join(timeout=2)
+        assert not s.shock_thread.is_alive()
+        assert s.shock_activated is False
+        assert s.arduino.send_command.call_args.args == (shock.MSG_WRITE_PIN_HIGH, shock.TRIGGER_OUT)
+
+    def test_refreshed_shock_keeps_running(self):
+        import time
+
+        import shock
+        s = self._shocker()
+        with patch.object(shock, "SHOCK_LEASE_S", 0.15):
+            s.activate_shock()
+            for _ in range(6):  # 0.3 s of refreshes, twice the lease
+                time.sleep(0.05)
+                s.activate_shock()
+            assert s.shock_thread.is_alive()
+            s.deactivate_shock()
+        assert not s.shock_thread.is_alive()
+
+    def test_deactivate_mid_pulse_ends_it_at_once(self):
+        import time
+
+        import shock
+        s = self._shocker(time_on=5.0)
+        s.activate_shock()
+        time.sleep(0.05)
+        t0 = time.monotonic()
+        s.deactivate_shock()
+        assert time.monotonic() - t0 < 1.0
+        assert s.arduino.send_command.call_args.args == (shock.MSG_WRITE_PIN_HIGH, shock.TRIGGER_OUT)
+
+
+class TestProtocolKeepalive:
+    def _protocol(self):
+        from protocol import Protocol
+        p = Protocol.__new__(Protocol)
+        p.logger = MagicMock()
+        p.port = "/dev/ttyACM0"
+        p.conn = MagicMock()
+        p.stop_flag = threading.Event()
+        p.keepalive_thread = None
+        p._write_lock = threading.Lock()
+        p._last_error = None
+        p.on_identity = None
+        p.identity = ""
+        return p
+
+    def test_keepalive_starts_on_identity_only(self):
+        import protocol
+        p = self._protocol()
+        with patch.object(protocol, "KEEPALIVE_PERIOD_S", 0.01):
+            assert p.keepalive_thread is None
+            p._handle_message("I", "SHOCK")
+            p._handle_message("I", "SHOCK")  # re-identify: still one thread
+            first = p.keepalive_thread
+            threading.Event().wait(0.1)
+            p.stop_flag.set()
+            first.join(timeout=1)
+        assert p.keepalive_thread is first
+        assert not first.is_alive()
+        assert b"<K:>" in [c.args[0] for c in p.conn.write.call_args_list]
+
+    def test_repeated_firmware_error_logged_once(self):
+        p = self._protocol()
+        for _ in range(3):
+            p._handle_message("E", "No logic for K ")
+        p._handle_message("E", "something else")
+        assert p.logger.warning.call_count == 2
+
+
+class TestArduinoReconnect:
+    def test_reidentified_shocker_keeps_counts_and_stops_sequence(self):
+        import shock
+        config = MagicMock()
+        config.get.return_value = 50
+        with patch.object(shock.Shocker, "configure_shocker"):
+            s = shock.Shocker(MagicMock(), config)
+            s.attempted_shocks = 7
+            s.shock_activated = True
+            s.deactivate_shock = MagicMock()
+            m = _make_apa(shock=s, arduino_ports={})
+            m._refresh_hardware_fault = MagicMock()
+            m._initialize_arduino = MagicMock()
+            new_protocol = MagicMock(port="/dev/ttyACM1")
+            m.handle_identity(new_protocol, "shock")
+        m._initialize_arduino.assert_not_called()
+        assert m.shock is s and s.attempted_shocks == 7
+        assert s.arduino is new_protocol
+        s.deactivate_shock.assert_called_once()
+        assert m.communication.send_status.call_args.args[0]["type"] == "error"
+
+    def test_reidentified_motor_is_stopped_if_it_was_rotating(self):
+        from motor import Motor
+        with patch.object(Motor, "configure_motor"):
+            motor = Motor(MagicMock(), MagicMock())
+            motor.rotating = True
+            m = _make_apa(motor=motor, arduino_ports={})
+            m._refresh_hardware_fault = MagicMock()
+            m.handle_identity(motor.arduino, "motor")
+        assert motor.rotating is False
+        motor.arduino.send_command.assert_any_call("N", "")
+
+    def test_startup_double_identity_is_quiet(self):
+        from motor import Motor
+        with patch.object(Motor, "configure_motor"):
+            motor = Motor(MagicMock(), MagicMock())
+            m = _make_apa(motor=motor, arduino_ports={})
+            m._refresh_hardware_fault = MagicMock()
+            m.handle_identity(motor.arduino, "motor")
+        m.communication.send_status.assert_not_called()

@@ -161,8 +161,33 @@ class APAModule(Module):
         self.logger.info(f"{identity} found on {protocol.port}")
         self.arduino_ports[identity] = protocol.port
         self.connected_arduinos[identity] = protocol
+        existing = {"motor": self.motor, "shock": self.shock}.get(identity.lower())
+        if existing is not None:
+            self._handle_reconnect(identity, existing, protocol)
+            return
         self._initialize_arduino(identity, protocol)
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
+
+
+    def _handle_reconnect(self, identity: str, device: Motor | Shocker, protocol: Protocol) -> None:
+        """An Arduino identified again: a reset (it announces itself on boot,
+        so this also runs once at startup) or a serial reconnect. Rebuilding
+        Motor/Shocker here would zero the shock counts and the trial cap."""
+        interrupted = device.on_reconnect(protocol)
+        self._refresh_hardware_fault()
+        if not interrupted:
+            self.logger.info("%s re-identified; setpoints re-sent", identity)
+            return
+        what = "rotation" if device is self.motor else "shock sequence"
+        self.logger.warning("%s Arduino reset or reconnected mid-%s; it has been stopped", identity, what)
+        if self.recording_shocks:
+            self._write_shock_event(time.time_ns(), f"{identity.upper()}_ARDUINO_RECONNECTED")
+        # Logged by the controller and re-emitted as module_error; the operator
+        # also sees rotating/shock_activated drop in arduino_state.
+        self.communication.send_status({
+            "type": "error",
+            "error": f"APA {identity} Arduino reset or reconnected: {what} stopped",
+        })
 
 
     """Commands from controller"""

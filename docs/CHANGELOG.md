@@ -11,6 +11,15 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-08
+
+- [x] **APA shock lease, host keepalive, Arduino reconnect** (branch `fix/apa-shock-lease` → `staging`). Builds, lints and tests clean. **Not yet rig-verified; the firmware half is not written (backlog `apa_arduino` loose ends (a)).**
+  - **Shock lease (`shock.py`):** each `activate_shock` extends a 1 s lease (`SHOCK_LEASE_S`); the pulse loop stops when it lapses. `APACommands.jsx` re-sends `activate_shock` every 250 ms while held, so a socket drop mid-hold now ends the shock within 1 s instead of at the 50-pulse cap. The loop waits on the stop event in 50 ms slices, so a deactivate ends a pulse at once (before, it finished the `time_on` sleep), and it always leaves `TRIGGER_OUT` HIGH on exit. Pulsing stays in Python on purpose (`6ebf06e4`: the firmware's own `Z` sequence was slow to hear a stop).
+  - **Keepalive (`protocol.py`):** after an Arduino identifies, the host sends `<K:>` every 250 ms, for the firmware failsafe to watch. Serial writes are now locked (pulse, keepalive and command threads all write). A repeated firmware error is logged once, since current motor firmware answers each `K` with "No logic for K".
+  - **Reconnect:** an Arduino that identifies again (on reset, after `reset_serial`, and once at every startup) no longer gets a fresh `Motor`/`Shocker`. `on_reconnect` rebinds the protocol and re-sends setpoints, so shock counts and the trial cap survive. If it was rotating or shocking it is stopped, a `<ID>_ARDUINO_RECONNECTED` row goes in `_shock_events.csv`, and an `error` status reaches the controller log.
+  - **Deploy note:** a browser tab with the old frontend doesn't refresh, so a held shock stops after 1 s; reload the page after updating.
+  - Tests: 8 new in `test_apa_arduino_module.py` (lease, mid-pulse deactivate, keepalive, error dedupe, reconnect).
+
 ## 2026-10-07
 
 - [x] **APA hold-to-shock safeguards + `FaultAlertModal`** (branch `fix/apa-shock-focus-safeguard` → `staging`). Builds and lints clean. **Not yet browser- or rig-verified.**

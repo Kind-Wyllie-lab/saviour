@@ -24,7 +24,11 @@ function setSharedArmed(next) {
     armedSubscribers.forEach((fn) => fn());
 }
 // True while a spacebar or hold-button press is holding the shock on.
-const shockHold = { holding: false };
+// `refresh` re-sends activate_shock while held: the module stops the shock
+// when the refreshes stop (SHOCK_LEASE_S in shock.py), so a socket drop
+// mid-hold can't leave it on even though the release never arrives.
+const shockHold = { holding: false, refresh: null };
+const SHOCK_REFRESH_MS = 250;
 
 // A space typed into a form field is text, not the shock key.
 const isTextEntry = (el) =>
@@ -86,6 +90,7 @@ function APACommands( {modules} ) {
         if (shockHold.holding || !getArmed()) return;
         shockHold.holding = true;
         activateShock();
+        shockHold.refresh = setInterval(activateShock, SHOCK_REFRESH_MS);
     };
 
     // Ends a hold whatever the arm state is now, so disarming mid-hold or
@@ -93,6 +98,8 @@ function APACommands( {modules} ) {
     const releaseShock = () => {
         if (!shockHold.holding) return;
         shockHold.holding = false;
+        clearInterval(shockHold.refresh);
+        shockHold.refresh = null;
         deactivateShock();
     };
 

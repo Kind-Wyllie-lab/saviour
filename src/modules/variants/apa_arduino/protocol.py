@@ -18,6 +18,12 @@ MSG_DATA = "D"
 MSG_SUCCESS = "S" # TODO: Get rid of this
 MSG_WRITE_PIN_HIGH = "H"
 MSG_WRITE_PIN_LOW = "L"
+MSG_KEEPALIVE = "K"
+
+# The firmware makes the rig safe (shock off, motor stopped) when it hears
+# nothing from the host for ~1 s, which covers a frozen or dead module process
+# that stop() never runs for. Keepalives hold that off while the host is up.
+KEEPALIVE_PERIOD_S = 0.25
 
 
 class Protocol:
@@ -50,6 +56,9 @@ class Protocol:
 
         # Thread management
         self.stop_flag = threading.Event()
+        self.keepalive_thread: threading.Thread | None = None
+        self._write_lock = threading.Lock()  # pulse, keepalive and command threads all write
+        self._last_error: str | None = None
 
         # Flush serial at start
         time.sleep(1)
@@ -117,10 +126,15 @@ class Protocol:
             case "I":
                 self.logger.info(f"Identity: {cmd}, {param}")
                 self.identity = param.lower()
+                self._start_keepalive()
                 if self.on_identity:
                     self.on_identity(self, self.identity)
             case "E":
-                self.logger.warning(f"ERROR on {self.port}: {param}")
+                # Firmware without keepalive support answers every one with
+                # the same error; log a repeated error once.
+                if param != self._last_error:
+                    self.logger.warning(f"ERROR on {self.port}: {param}")
+                    self._last_error = param
             case "S":
                 pass
             case _:
@@ -134,7 +148,25 @@ class Protocol:
 
 
     def send_command(self, cmd: str, param: str) -> None:
-        self.conn.write(f"<{cmd}:{param}>".encode())
+        with self._write_lock:
+            self.conn.write(f"<{cmd}:{param}>".encode())
+
+
+    def _start_keepalive(self) -> None:
+        """Started on the first identity, so a port that never identifies as
+        one of our Arduinos is never written keepalives."""
+        if self.keepalive_thread is None:
+            self.keepalive_thread = threading.Thread(
+                target=self._keepalive_loop, name=f"keepalive-{self.port}", daemon=True)
+            self.keepalive_thread.start()
+
+
+    def _keepalive_loop(self) -> None:
+        while not self.stop_flag.wait(KEEPALIVE_PERIOD_S):
+            try:
+                self.send_command(MSG_KEEPALIVE, "")
+            except Exception:
+                pass  # serial down: listen() is reconnecting; the firmware trips if it lasts
 
 
     def request_identity(self):

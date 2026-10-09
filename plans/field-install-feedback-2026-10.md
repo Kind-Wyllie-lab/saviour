@@ -1,6 +1,6 @@
 # Field install feedback (1 camera + 1 mic, Oct 2026)
 
-- **Status:** in progress (Phase A shipped 2026-10-09)
+- **Status:** in progress (Phases A, C shipped 2026-10-09)
 - **Created:** 2026-10-09
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (post-process preview,
@@ -181,6 +181,8 @@ crop → re-crop → clear.
 ---
 
 ## Phase C: timestamp position (item 6)
+
+**Shipped 2026-10-09** (see `docs/CHANGELOG.md`).
 
 Branch `feat/timestamp-position`. ~½ day.
 

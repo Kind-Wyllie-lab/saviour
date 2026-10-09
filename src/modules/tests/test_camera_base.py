@@ -847,3 +847,62 @@ class TestStopRecordingNeverStrandsSegment:
         cam.picam2.stop_encoder.side_effect = OSError("dead")
         assert cam._stop_recording() is False
         cam.facade.stage_file_for_export.assert_not_called()
+
+
+class TestTimestampPosition:
+    """camera.timestamp_position puts the overlay on the viewed top or
+    bottom edge, including when a skipped 90/270 rotation means the
+    "viewed" edge is a raw side edge (compensate_k)."""
+
+    TS = "2026-10-09 12:34:56.789"
+
+    def _cam(self, position):
+        cfg = {"camera.text_size": "medium"}
+        if position is not None:
+            cfg["camera.timestamp_position"] = position
+        config = MagicMock()
+        config.get.side_effect = lambda k, d=None: cfg.get(k, d)
+        return _make_camera(config=config)
+
+    def _ink(self, arr):
+        rows = np.where(arr.any(axis=(1, 2)))[0]
+        cols = np.where(arr.any(axis=(0, 2)))[0]
+        assert rows.size and cols.size, "nothing drawn"
+        return rows.min(), rows.max(), cols.min(), cols.max()
+
+    @pytest.mark.parametrize("position,expect_top", [
+        (None, True), ("top", True), ("bottom", False),
+    ])
+    def test_unrotated_frame(self, position, expect_top):
+        arr = np.zeros((480, 640, 3), dtype=np.uint8)
+        self._cam(position)._apply_timestamp(arr, self.TS)
+        r0, r1, _c0, _c1 = self._ink(arr)
+        if expect_top:
+            assert r1 < 240
+        else:
+            assert r0 > 240
+            assert r1 < 480            # nothing clipped off the bottom
+
+    @pytest.mark.parametrize("k,position,expect_right", [
+        (1, "top", True), (1, "bottom", False),
+        (3, "top", False), (3, "bottom", True),
+    ])
+    def test_compensated_rotation(self, k, position, expect_right):
+        arr = np.zeros((480, 640, 3), dtype=np.uint8)
+        self._cam(position)._apply_timestamp(arr, self.TS, compensate_k=k)
+        _r0, _r1, c0, c1 = self._ink(arr)
+        if expect_right:
+            assert c0 > 320
+        else:
+            assert c1 < 320
+
+    def test_layout_cache_follows_a_position_change(self):
+        cam = self._cam("top")
+        a = np.zeros((480, 640, 3), dtype=np.uint8)
+        cam._apply_timestamp(a, self.TS)
+        cam.config.get.side_effect = lambda k, d=None: {
+            "camera.text_size": "medium",
+            "camera.timestamp_position": "bottom"}.get(k, d)
+        b = np.zeros((480, 640, 3), dtype=np.uint8)
+        cam._apply_timestamp(b, self.TS)
+        assert self._ink(b)[0] > 240

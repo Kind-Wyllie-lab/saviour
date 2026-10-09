@@ -39,6 +39,7 @@ from picamera2.outputs import PyavOutput, SplittableOutput
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
+from src.modules import crop_geometry
 from src.shared.ratelimit_log import RateLimitedLogger
 
 
@@ -72,6 +73,8 @@ class CameraBase(Module):
     CSV_EXTRA_COLUMNS: list = []          # subclass override, e.g. ["cx", "cy", "zone_state", "event"]
     _BUFFER_COUNT = 16
     _DEFAULT_BITRATE_MB = 5
+    # Crop-editing full view reverts after this unless the editor refreshes it.
+    CROP_EDITING_TIMEOUT_S = 90
     _STREAM_FPS = 24  # cap for high-fps cameras; low-fps cameras pass every frame
 
     BASE_CSV_COLUMNS = [
@@ -207,6 +210,8 @@ class CameraBase(Module):
         # Restart-class config keys received while recording, applied once it
         # stops (see configure_module_special / on_recording_stopped).
         self._deferred_restart_keys: set = set()
+        self._crop_editing = False
+        self._crop_editing_timer: threading.Timer | None = None
         self.is_streaming = False
 
         # Per-frame callback caches — updated by _cache_frame_config()
@@ -351,101 +356,201 @@ class CameraBase(Module):
 
     @command()
     def set_camera_crop(self, crop_rect: dict | None) -> dict:
-        """Save a crop/digital-zoom rectangle from the web UI's crop editor
-        and apply it live via ScalerCrop. Pass None to clear an existing crop.
+        """Save (or with None, clear) the crop / digital zoom from the web
+        UI's crop editor.
 
-        Expected shape when setting:
-            {"x": int, "y": int, "width": int, "height": int,
-             "preview_width": int, "preview_height": int}
-        x/y/width/height are in the *displayed preview's* pixel space -- the
-        same space the crop editor's snapshot is shown in (i.e.
-        camera.width x camera.height at the moment the rect was drawn).
-        preview_width/preview_height record what camera.width/camera.height
-        were at that moment, so _compute_scaler_crop_rect() can convert
-        correctly even if the live camera.width/height have since changed,
-        and so the frontend can detect staleness (a crop drawn against a
-        since-changed sensor mode/output size) by comparing them to the
-        current values -- see CLAUDE.md's crop feature design note for why
-        that's a UI warning rather than something enforced here.
+        Setting: {"x", "y", "width", "height"} as fractions 0..1 of the
+        sensor mode's full field of view (what the editor shows in crop-
+        editing mode, see set_crop_editing), plus optional "aspect" (an
+        ASPECT_PRESETS key, remembered for the editor). The recorded
+        resolution follows the crop's aspect ratio (camera.width/height are
+        changed, keeping about the same pixel count) so nothing is ever
+        stretched; the uncropped resolution is kept in the crop as
+        base_width/base_height and restored on clear. The old pixel shape
+        ({..., "preview_width", "preview_height"}) is still accepted.
+
+        Refused while recording: the output size would change mid-file.
         """
-        self.config.set("camera.crop_rect", crop_rect)
+        if self._recording_active():
+            return self._crop_error(
+                "Can't change the crop while recording -- stop the recording first")
+        self._end_crop_editing(restore=True)
+        old = self.config.get("camera.crop_rect")
+        old = old if isinstance(old, dict) else {}
+
+        if crop_rect is None:
+            updates = {"camera.crop_rect": None}
+            if old.get("base_width") and old.get("base_height"):
+                updates["camera.width"] = int(old["base_width"])
+                updates["camera.height"] = int(old["base_height"])
+        else:
+            mode = self._crop_mode()
+            if not mode:
+                return self._crop_error("Sensor modes not available yet")
+            limits = tuple(int(v) for v in mode["crop_limits"])
+            try:
+                norm = (crop_geometry.legacy_to_normalised(crop_rect, limits)
+                        if "preview_width" in crop_rect else crop_rect)
+                norm = crop_geometry.validate_normalised(norm)
+            except (ValueError, TypeError, KeyError) as e:
+                return self._crop_error(f"Invalid crop: {e}")
+            aspect = crop_rect.get("aspect", "free")
+            if aspect not in crop_geometry.ASPECT_PRESETS:
+                aspect = "free"
+            base_w = int(old.get("base_width") or self.config.get("camera.width", 1280))
+            base_h = int(old.get("base_height") or self.config.get("camera.height", 720))
+            sensor = crop_geometry.normalised_to_sensor(norm, limits)
+            out_w, out_h = crop_geometry.output_size_for_crop(
+                sensor, limits, tuple(mode["size"]), (base_w, base_h))
+            updates = {
+                "camera.width": out_w,
+                "camera.height": out_h,
+                "camera.crop_rect": {
+                    "v": 2, **norm, "aspect": aspect,
+                    "base_width": base_w, "base_height": base_h,
+                },
+            }
+
+        self.config.set_many(updates)
+        # The controller adopts this config as its target (a crop changes
+        # camera.width/height on the module side), so a later config-card
+        # save doesn't push the old size back.
         self.communication.send_status({
             "type": "camera_crop_updated",
-            "crop_rect": crop_rect,
+            "crop_rect": self.config.get("camera.crop_rect"),
+            "width": self.config.get("camera.width"),
+            "height": self.config.get("camera.height"),
+            "config": self.config.get_all(),
         })
         return {"result": "success"}
 
 
-    def _compute_scaler_crop_rect(self) -> tuple[int, int, int, int] | None:
-        """Convert the stored preview-pixel-space camera.crop_rect into a
-        sensor-native ScalerCrop rectangle (x, y, w, h), anchored to the
-        active sensor mode's crop_limits. Returns None if no crop is set or
-        it can't be computed (e.g. sensor modes not yet available).
-
-        Deliberately does not try to detect/reject a stale crop_rect (drawn
-        against a since-changed sensor mode or output size) -- per the
-        design note in CLAUDE.md, a stale crop is applied as best-effort
-        rather than blocked; the operator is expected to notice the UI's
-        staleness warning and redraw. The clamp below only guards against
-        picam2.set_controls() erroring out on an out-of-range rectangle, not
-        against the crop looking wrong.
-        """
-        crop_rect = self.config.get("camera.crop_rect")
-        if not crop_rect:
-            return None
-        try:
-            mode = self.mode
-            if not mode and self.sensor_modes:
-                mode_index = self.config.get("camera.sensor_mode_index", 0)
-                mode = self.sensor_modes[max(0, min(int(mode_index), len(self.sensor_modes) - 1))]
-            if not mode:
-                return None
-
-            limit_x, limit_y, limit_w, limit_h = mode["crop_limits"]
-            preview_w = crop_rect.get("preview_width") or self.width or limit_w
-            preview_h = crop_rect.get("preview_height") or self.height or limit_h
-            if not preview_w or not preview_h:
-                return None
-
-            scale_x = limit_w / preview_w
-            scale_y = limit_h / preview_h
-            x = limit_x + round(crop_rect["x"] * scale_x)
-            y = limit_y + round(crop_rect["y"] * scale_y)
-            w = round(crop_rect["width"] * scale_x)
-            h = round(crop_rect["height"] * scale_y)
-
-            # Clamp inside the mode's crop_limits so a stale or malformed
-            # rect can't request an out-of-range ScalerCrop.
-            x = max(limit_x, min(x, limit_x + limit_w - 1))
-            y = max(limit_y, min(y, limit_y + limit_h - 1))
-            w = max(1, min(w, limit_x + limit_w - x))
-            h = max(1, min(h, limit_y + limit_h - y))
-            return (x, y, w, h)
-        except Exception as e:
-            self.logger.warning(f"Could not compute ScalerCrop from stored crop_rect: {e}")
-            return None
+    def _crop_error(self, message: str) -> dict:
+        self.logger.warning(f"Crop: {message}")
+        self.communication.send_status({"type": "camera_crop_updated", "error": message})
+        return {"result": "error", "error": message}
 
 
-    def _full_frame_scaler_crop(self) -> tuple[int, int, int, int] | None:
-        """The ScalerCrop rectangle covering the whole field of view, used to
-        undo a digital-zoom crop when camera.crop_rect is cleared. Without
-        this, clearing a crop while streaming just omits ScalerCrop from the
-        live set_controls() call, leaving the previous zoomed-in rectangle
-        applied. Prefers the driver-reported ScalerCropMaximum, falling back
-        to the active sensor mode's crop_limits."""
-        try:
-            smax = self.picam2.camera_properties.get("ScalerCropMaximum")
-            if smax and smax[2] > 0 and smax[3] > 0:
-                return tuple(int(v) for v in smax)
-        except Exception as e:
-            self.logger.warning(f"Could not read ScalerCropMaximum: {e}")
-        mode = self.mode
+    def _crop_mode(self) -> dict | None:
+        """The sensor mode a crop is relative to: the active one, else the
+        configured one."""
+        mode = getattr(self, "mode", None)
         if not mode and self.sensor_modes:
-            idx = int(self.config.get("camera.sensor_mode_index", 0))
+            idx = int(self.config.get("camera.sensor_mode_index", 0) or 0)
             mode = self.sensor_modes[max(0, min(idx, len(self.sensor_modes) - 1))]
-        if mode and mode.get("crop_limits"):
-            return tuple(int(v) for v in mode["crop_limits"])
-        return None
+        return mode or None
+
+
+    def _target_scaler_crop(self) -> tuple[int, int, int, int] | None:
+        """The ScalerCrop to apply for the current config: the saved crop,
+        or with none, the default centred view -- in both cases with the
+        output's aspect ratio, so the image is never stretched (see
+        src/modules/crop_geometry.py). None if there's no sensor mode yet."""
+        mode = self._crop_mode()
+        if not mode or not mode.get("crop_limits"):
+            return None
+        limits = tuple(int(v) for v in mode["crop_limits"])
+        out_w = self.width or self.config.get("camera.width", 1280)
+        out_h = self.height or self.config.get("camera.height", 720)
+        aspect = out_w / out_h
+        crop = self.config.get("camera.crop_rect")
+        if not crop:
+            return crop_geometry.default_crop(limits, aspect)
+        try:
+            norm = (crop_geometry.legacy_to_normalised(crop, limits)
+                    if "preview_width" in crop else crop)
+            rect = crop_geometry.normalised_to_sensor(norm, limits)
+        except (ValueError, TypeError, KeyError) as e:
+            self.logger.warning(f"Ignoring unusable camera.crop_rect ({e})")
+            return crop_geometry.default_crop(limits, aspect)
+        # A crop saved before the output size followed it, or a resolution
+        # edited by hand since: trim to the output's aspect, never stretch.
+        if abs(rect[2] / rect[3] - aspect) / aspect > 0.005:
+            rect = crop_geometry.fit_aspect(rect, aspect, limits)
+        return rect
+
+
+    @command()
+    def set_crop_editing(self, enabled: bool = True) -> dict:
+        """Show the sensor mode's whole field of view on the preview while
+        the crop editor is open, so a crop can be drawn anywhere, not just
+        inside the current one. The full view is squeezed into the output's
+        aspect ratio; the editor displays the snapshot at the field of
+        view's own aspect (`fov` in the reply) to undo that. Reverts by
+        itself after CROP_EDITING_TIMEOUT_S unless refreshed (the editor
+        re-sends every 30 s), so a closed browser can't leave it on.
+        Refused while recording."""
+        if not enabled:
+            self._end_crop_editing(restore=True)
+            self.communication.send_status({"type": "crop_editing", "enabled": False})
+            return {"result": "success"}
+        if self._recording_active():
+            return self._crop_editing_error(
+                "Can't edit the crop while recording -- stop the recording first")
+        if self.picam2 is None or not self.is_streaming:
+            return self._crop_editing_error("Camera preview isn't running")
+        mode = self._crop_mode()
+        if not mode or not mode.get("crop_limits"):
+            return self._crop_editing_error("Sensor modes not available yet")
+        limits = tuple(int(v) for v in mode["crop_limits"])
+        try:
+            self.picam2.set_controls({"ScalerCrop": limits})
+        except Exception as e:
+            return self._crop_editing_error(f"Could not show the full view: {e}")
+        self._crop_editing = True
+        if self._crop_editing_timer is not None:
+            self._crop_editing_timer.cancel()
+        self._crop_editing_timer = threading.Timer(
+            self.CROP_EDITING_TIMEOUT_S, self._end_crop_editing, kwargs={"restore": True})
+        self._crop_editing_timer.daemon = True
+        self._crop_editing_timer.start()
+
+        crop = self.config.get("camera.crop_rect")
+        crop = crop if isinstance(crop, dict) else {}
+        norm = None
+        if crop:
+            try:
+                norm = (crop_geometry.legacy_to_normalised(crop, limits)
+                        if "preview_width" in crop else
+                        {k: crop[k] for k in ("x", "y", "width", "height")})
+            except (ValueError, TypeError, KeyError):
+                norm = None
+        self.communication.send_status({
+            "type": "crop_editing",
+            "enabled": True,
+            "fov": [limits[2], limits[3]],
+            "mode_size": list(mode["size"]),
+            "output": [self.width, self.height],
+            "base": [crop.get("base_width") or self.width,
+                     crop.get("base_height") or self.height],
+            "crop_rect": norm,
+            "aspect": crop.get("aspect", "free"),
+        })
+        return {"result": "success"}
+
+
+    def _crop_editing_error(self, message: str) -> dict:
+        self.logger.warning(f"Crop editing: {message}")
+        self.communication.send_status(
+            {"type": "crop_editing", "enabled": False, "error": message})
+        return {"result": "error", "error": message}
+
+
+    def _end_crop_editing(self, restore: bool = True) -> None:
+        """Leave crop-editing mode, putting the configured view back."""
+        timer, self._crop_editing_timer = self._crop_editing_timer, None
+        if timer is not None:
+            timer.cancel()
+        if not self._crop_editing:
+            return
+        self._crop_editing = False
+        if restore and self.picam2 is not None:
+            target = self._target_scaler_crop()
+            if target is not None:
+                try:
+                    self.picam2.set_controls({"ScalerCrop": target})
+                except Exception as e:
+                    self.logger.error(f"Could not restore the crop after editing: {e}")
 
 
     @command()
@@ -593,14 +698,14 @@ class CameraBase(Module):
                 if af_mode == 0:
                     live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
-            scaler_crop = self._compute_scaler_crop_rect()
-            if scaler_crop is None and "camera.crop_rect" in (updated_keys or []):
-                # Crop was just cleared -- explicitly restore the full field of
-                # view. Merely omitting ScalerCrop here would leave the
-                # previously-applied digital-zoom rectangle in effect.
-                scaler_crop = self._full_frame_scaler_crop()
-            if scaler_crop is not None:
-                live_controls["ScalerCrop"] = scaler_crop
+            if "camera.crop_rect" in (updated_keys or []):
+                # Always explicit: a cleared crop must go back to the default
+                # centred view (not the mode's full area, which stretches
+                # when the aspects differ), and omitting ScalerCrop would
+                # leave the previous rectangle in effect.
+                scaler_crop = self._target_scaler_crop()
+                if scaler_crop is not None:
+                    live_controls["ScalerCrop"] = scaler_crop
 
             try:
                 self.picam2.set_controls(live_controls)
@@ -662,8 +767,13 @@ class CameraBase(Module):
             self.fps = self.config.get("camera.fps", 25)
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            self.lores_width = min(self.width, 640)
-            self.lores_height = min(self.height, int(640 * self.height / self.width))
+            # Fit the preview stream inside 640x640 at the output's aspect
+            # (landscape outputs are unchanged: 1920x1080 -> 640x360); a
+            # portrait crop output would otherwise get a 640-wide, very tall
+            # preview.
+            _ls = min(1.0, 640 / max(self.width, self.height))
+            self.lores_width = max(2, int(self.width * _ls) // 2 * 2)
+            self.lores_height = max(2, int(self.height * _ls) // 2 * 2)
             # Only throttle the preview stream for high-fps cameras.  When camera
             # fps is close to _STREAM_FPS the fixed interval skips nearly every other
             # frame (e.g. 25 fps camera with 41.7 ms interval → ~12.5 fps stream).
@@ -748,7 +858,10 @@ class CameraBase(Module):
             else:
                 controls["SyncMode"] = lc.rpi.SyncModeEnum.Off
 
-            scaler_crop = self._compute_scaler_crop_rect()
+            # Always set explicitly (saved crop, or the default centred view):
+            # never rely on whatever ScalerCrop the pipeline last had.
+            self._crop_editing = False
+            scaler_crop = self._target_scaler_crop()
             if scaler_crop is not None:
                 controls["ScalerCrop"] = scaler_crop
 
@@ -961,6 +1074,11 @@ class CameraBase(Module):
             self.logger.error(f"Cannot start recording: {reason}")
             self.facade.send_status({"type": "recording_start_failed", "error": reason})
             return False
+
+        # A crop editor left open (e.g. as a scheduled session starts) must
+        # not leave the full-view editing ScalerCrop on the recording.
+        if getattr(self, "_crop_editing", False):
+            self._end_crop_editing(restore=True)
 
         if self._prestaged_segment is not None:
             # Fast path: file and CSV were pre-created before the spin-wait.

@@ -1,6 +1,6 @@
 # Field install feedback (1 camera + 1 mic, Oct 2026)
 
-- **Status:** in progress (Phases A, C, D shipped 2026-10-09)
+- **Status:** in progress (Phases A, B, C, D shipped 2026-10-09; B awaits the hardware re-check; E open)
 - **Created:** 2026-10-09
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (post-process preview,
@@ -108,6 +108,40 @@ on a short fixture `.ts`. Frontend: `npm run build` + lint.
 ---
 
 ## Phase B: crop editor rework (items 3, 4, 5)
+
+**Shipped 2026-10-09, not yet hardware-checked** (see `docs/CHANGELOG.md`).
+As built:
+
+- `src/modules/crop_geometry.py` (pure, tested): default view =
+  `default_crop(limits, output aspect)`; every ScalerCrop sent has the
+  output's aspect (`fit_aspect` trims, never stretches); option (b) output
+  size `output_size_for_crop` (crop aspect, about the uncropped pixel count,
+  capped at the pixels the mode actually reads, width %32, height even).
+- `camera.crop_rect` v2: `{v: 2, x, y, width, height}` as fractions of the
+  sensor mode's `crop_limits`, plus `aspect`, `base_width/base_height` (the
+  uncropped resolution, restored on clear). Old pixel crops still load,
+  mapped through the default view with one scale factor.
+- `set_camera_crop` sets crop + width/height together via the new
+  `Config.set_many` (one reconfigure); refused while recording.
+  `set_crop_editing` shows the mode's full area for the editor (the browser
+  un-squashes it using `fov`), reverts after 90 s without a keepalive, and
+  ends if a recording starts (CameraBase and habitat_camera).
+- Controller adopts the module's config on `camera_crop_updated`
+  (`Modules.adopt_module_config`) so the new size isn't a FAILED sync or
+  pushed back by a later save; web.py strips that config (it holds the
+  share password) before forwarding to browsers.
+- Editor: full-view stage at the true field-of-view aspect, aspect presets
+  (Free, 1:1, 4:3, 16:9, 3:4, 9:16), draw / move / corner and edge resize
+  (corners only when a ratio is locked), output-size readout, pointer
+  events. Crop button disabled while recording.
+
+**Hardware re-check (on `hailo_camera_3606` after updating it):** editor
+opens on the full 4:3 view, undistorted; whole-view crop at 4:3 records
+~1632×1222 with no squash; 1:1 crop → square output, undistorted; Clear →
+identical to the pre-crop baseline snapshot; closing the editor without
+saving restores the view; a crop on a camera with `hflip`/`vflip`/180°
+rotation lands where it was drawn (ScalerCrop is in sensor coordinates;
+not handled specially yet, so check this first).
 
 Branch `fix/crop-editor`. ~1-2 days, plus a hardware check on a camera.
 
@@ -295,6 +329,14 @@ sessions → two top-level folders in the zip. Frontend build + lint.
 
 ---
 
+## Follow-up found while testing: overlay collision
+
+On `camera_0fcc` the exposure warning ("UNDEREXPOSED 100%", drawn at
+(10, 22) by `_apply_exposure_overlay`) sits on top of the camera name and
+timestamp, making both unreadable. Fix: put the warning on the edge the
+timestamp isn't using (below it when the timestamp is at the top), or under
+the timestamp line. Small; do with the next camera change.
+
 ## Phase E: live mic spectrogram blip (item 9)
 
 Branch `fix/mic-monitor-blocks`. Diagnose first, then ~½ day if it's the
@@ -351,7 +393,7 @@ late blocks).
 | A | `fix/compose-preview-speed` | ~1 day | nothing |
 | C | `feat/timestamp-position` | ~½ day | nothing |
 | D | `feat/session-list-by-date` | ~1 day | nothing |
-| B | `fix/crop-editor` | 1-2 days | item 5 log, hardware check |
+| B | `fix/crop-editor` | shipped | hardware re-check (incl. flips) |
 | E | `fix/mic-monitor-blocks` | ½ day after diagnosis | screenshot + journal |
 
 Each phase merges to `staging` on its own; frontend changes get

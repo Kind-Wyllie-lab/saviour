@@ -17,12 +17,14 @@ MappedArray/Picamera2 pipeline rather than distinct branching logic.
 
 import logging
 import os
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from src.modules.camera_base import CameraBase, _FrameShim
+from src.modules.crop_geometry import default_crop
 from src.shared.ratelimit_log import RateLimitedLogger
 
 
@@ -602,59 +604,192 @@ class TestConfigureModuleSpecialNoHardware:
 
 
 _FULL_FOV = (0, 0, 4056, 3040)
+# IMX477 mode 2 as reproduced on hardware 2026-10-09: 4:3 mode, 16:9 output.
+_MODE2 = {"crop_limits": _FULL_FOV, "size": (2028, 1520)}
+_BAND_16_9 = default_crop(_FULL_FOV, 1920 / 1080)
 
 
-class TestFullFrameScalerCrop:
-    def test_prefers_scaler_crop_maximum(self):
-        cam = _make_camera()
-        cam.picam2 = MagicMock()
-        cam.picam2.camera_properties = {"ScalerCropMaximum": _FULL_FOV}
-        assert cam._full_frame_scaler_crop() == _FULL_FOV
+class _FakeConfig:
+    """Just enough of Config for the crop paths: dotted get, set_many
+    (recording what changed), get_all."""
 
-    def test_falls_back_to_active_mode_crop_limits(self):
-        mode = {"crop_limits": (0, 0, 2028, 1520)}
-        cam = _make_camera(mode=mode, sensor_modes=[])
-        cam.picam2 = MagicMock()
-        cam.picam2.camera_properties = {"ScalerCropMaximum": (0, 0, 0, 0)}
-        assert cam._full_frame_scaler_crop() == tuple(mode["crop_limits"])
+    def __init__(self, values=None):
+        self.values = {"camera.width": 1920, "camera.height": 1080,
+                       "camera.crop_rect": None, **(values or {})}
+        self.set_many_calls = []
 
-    def test_returns_none_when_nothing_available(self):
-        cam = _make_camera(mode=None, sensor_modes=[])
-        cam.picam2 = MagicMock()
-        cam.picam2.camera_properties = {}
-        assert cam._full_frame_scaler_crop() is None
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def set_many(self, updates, persist=True):
+        self.set_many_calls.append(dict(updates))
+        changed = [k for k, v in updates.items() if self.values.get(k) != v]
+        self.values.update(updates)
+        return changed
+
+    def get_all(self):
+        return {"camera": {k.split(".", 1)[1]: v for k, v in self.values.items()}}
 
 
-class TestConfigureModuleSpecialClearsCrop:
-    def _streaming_cam(self):
-        cam = _make_camera(
-            picam2=MagicMock(),
-            is_streaming=True,
-            has_autofocus=False,
-            fps=30,
-            mode={"crop_limits": _FULL_FOV},
-            sensor_modes=[],
-        )
-        cam.picam2.camera_properties = {"ScalerCropMaximum": _FULL_FOV}
+def _crop_cam(values=None, recording=False, streaming=True):
+    cam = _make_camera(
+        picam2=MagicMock(), is_streaming=streaming, mode=_MODE2,
+        sensor_modes=[_MODE2], width=1920, height=1080,
+        _crop_editing=False, _crop_editing_timer=None,
+    )
+    cam.config = _FakeConfig(values)
+    cam.communication = MagicMock()
+    cam._recording_active = lambda: recording
+    return cam
+
+
+def _sent(cam, type_):
+    return [c.args[0] for c in cam.communication.send_status.call_args_list
+            if c.args[0].get("type") == type_]
+
+
+class TestTargetScalerCrop:
+    def test_no_crop_is_the_default_centred_band_not_the_full_area(self):
+        assert _crop_cam()._target_scaler_crop() == _BAND_16_9
+        assert _BAND_16_9 != _FULL_FOV
+
+    def test_legacy_whole_preview_crop_is_the_default_view(self):
+        cam = _crop_cam({"camera.crop_rect": {
+            "x": 0, "y": 0, "width": 640, "height": 360,
+            "preview_width": 640, "preview_height": 360}})
+        got = cam._target_scaler_crop()
+        assert all(abs(a - b) <= 2 for a, b in zip(got, _BAND_16_9, strict=True))
+
+    def test_a_crop_never_mismatches_the_output_aspect(self):
+        # A square crop while the output is still 16:9 (e.g. resolution
+        # edited by hand) is trimmed to 16:9, not stretched.
+        cam = _crop_cam({"camera.crop_rect": {
+            "v": 2, "x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5 * 4056 / 3040}})
+        x, y, w, h = cam._target_scaler_crop()
+        assert abs(w / h - 1920 / 1080) < 0.01
+
+    def test_none_without_sensor_modes(self):
+        cam = _crop_cam()
+        cam.mode, cam.sensor_modes = None, []
+        assert cam._target_scaler_crop() is None
+
+
+class TestConfigureModuleSpecialCrop:
+    def _streaming_cam(self, crop=None):
+        cam = _crop_cam({"camera.crop_rect": crop})
+        cam.has_autofocus = False
+        cam.fps = 30
         cam._configure_module_extra = MagicMock()
         cam._cache_frame_config = MagicMock()
         cam._ae_tuning_controls = lambda: {}
-        cam._compute_scaler_crop_rect = MagicMock(return_value=None)
-        cam.config = MagicMock()
-        cam.config.get.side_effect = lambda key, default=None: default
         return cam
 
-    def test_clearing_crop_restores_full_frame_scaler_crop(self):
-        cam = self._streaming_cam()
+    def test_clearing_crop_restores_the_default_view(self):
+        """Regression (field report 2026-10): clear used to apply the full
+        4:3 area, leaving a 16:9 output squashed."""
+        cam = self._streaming_cam(crop=None)
         cam.configure_module_special(["camera.crop_rect"])
         applied = cam.picam2.set_controls.call_args[0][0]
-        assert applied["ScalerCrop"] == _FULL_FOV
+        assert applied["ScalerCrop"] == _BAND_16_9
 
     def test_unrelated_key_change_does_not_touch_scaler_crop(self):
         cam = self._streaming_cam()
         cam.configure_module_special(["camera.fps"])
         applied = cam.picam2.set_controls.call_args[0][0]
         assert "ScalerCrop" not in applied
+
+
+class TestSetCameraCrop:
+    def test_square_crop_sets_a_square_output_and_keeps_the_base(self):
+        cam = _crop_cam()
+        h_n = 0.5 * 4056 / 3040          # square in sensor pixels
+        assert cam.set_camera_crop(
+            {"x": 0.25, "y": 0.1, "width": 0.5, "height": h_n, "aspect": "1:1"}
+        )["result"] == "success"
+        (updates,) = cam.config.set_many_calls
+        w, h = updates["camera.width"], updates["camera.height"]
+        assert abs(w / h - 1.0) < 0.03
+        crop = updates["camera.crop_rect"]
+        assert crop["v"] == 2 and crop["aspect"] == "1:1"
+        assert (crop["base_width"], crop["base_height"]) == (1920, 1080)
+        (status,) = _sent(cam, "camera_crop_updated")
+        assert status["width"] == w and "config" in status
+
+    def test_recropping_keeps_the_original_base(self):
+        cam = _crop_cam({"camera.width": 1088, "camera.height": 1088,
+                         "camera.crop_rect": {"v": 2, "x": 0, "y": 0, "width": 0.5,
+                                              "height": 0.5, "base_width": 1920,
+                                              "base_height": 1080}})
+        cam.set_camera_crop({"x": 0, "y": 0, "width": 1.0, "height": 1.0})
+        crop = cam.config.set_many_calls[0]["camera.crop_rect"]
+        assert (crop["base_width"], crop["base_height"]) == (1920, 1080)
+
+    def test_clear_restores_the_base_resolution(self):
+        cam = _crop_cam({"camera.width": 1088, "camera.height": 1088,
+                         "camera.crop_rect": {"v": 2, "x": 0, "y": 0, "width": 0.5,
+                                              "height": 0.5, "base_width": 1920,
+                                              "base_height": 1080}})
+        cam.set_camera_crop(None)
+        assert cam.config.set_many_calls == [{
+            "camera.crop_rect": None, "camera.width": 1920, "camera.height": 1080}]
+
+    def test_legacy_shape_is_accepted(self):
+        cam = _crop_cam()
+        cam.set_camera_crop({"x": 0, "y": 0, "width": 640, "height": 360,
+                             "preview_width": 640, "preview_height": 360})
+        updates = cam.config.set_many_calls[0]
+        assert updates["camera.crop_rect"]["v"] == 2
+        assert abs(updates["camera.width"] / updates["camera.height"] - 16 / 9) < 0.03
+
+    def test_refused_while_recording(self):
+        cam = _crop_cam(recording=True)
+        assert cam.set_camera_crop({"x": 0, "y": 0, "width": 0.5, "height": 0.5})["result"] == "error"
+        assert cam.config.set_many_calls == []
+        assert "error" in _sent(cam, "camera_crop_updated")[0]
+
+    def test_invalid_crop_is_rejected(self):
+        cam = _crop_cam()
+        assert cam.set_camera_crop({"x": 0.9, "y": 0, "width": 0.5, "height": 0.5})["result"] == "error"
+        assert cam.config.set_many_calls == []
+
+
+class TestCropEditing:
+    def test_shows_the_full_area_and_reports_the_fov(self):
+        cam = _crop_cam()
+        assert cam.set_crop_editing(True)["result"] == "success"
+        try:
+            cam.picam2.set_controls.assert_called_with({"ScalerCrop": _FULL_FOV})
+            (status,) = _sent(cam, "crop_editing")
+            assert status["enabled"] is True and status["fov"] == [4056, 3040]
+            assert status["base"] == [1920, 1080]
+        finally:
+            cam._end_crop_editing(restore=False)
+
+    def test_disabling_restores_the_configured_view(self):
+        cam = _crop_cam()
+        cam.set_crop_editing(True)
+        cam.set_crop_editing(False)
+        cam.picam2.set_controls.assert_called_with({"ScalerCrop": _BAND_16_9})
+        assert cam._crop_editing is False and cam._crop_editing_timer is None
+
+    def test_times_out_by_itself(self):
+        cam = _crop_cam()
+        cam.CROP_EDITING_TIMEOUT_S = 0.05
+        cam.set_crop_editing(True)
+        time.sleep(0.3)
+        assert cam._crop_editing is False
+        cam.picam2.set_controls.assert_called_with({"ScalerCrop": _BAND_16_9})
+
+    def test_refused_while_recording_or_without_preview(self):
+        for cam in (_crop_cam(recording=True), _crop_cam(streaming=False)):
+            assert cam.set_crop_editing(True)["result"] == "error"
+            cam.picam2.set_controls.assert_not_called()
+
+    def test_saving_a_crop_ends_editing(self):
+        cam = _crop_cam()
+        cam.set_crop_editing(True)
+        cam.set_camera_crop({"x": 0, "y": 0, "width": 0.5, "height": 0.5})
+        assert cam._crop_editing is False
 
 
 # ---------------------------------------------------------------------------

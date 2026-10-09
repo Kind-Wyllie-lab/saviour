@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import CropEditorModal from "/src/basic/components/CropEditorModal/CropEditorModal";
@@ -100,6 +100,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const [detectionOpen, setDetectionOpen] = useState(false);
   const [blobOpen, setBlobOpen]         = useState(true);
   const [showCropEditor, setShowCropEditor] = useState(false);
+  const closeCropEditor = useCallback(() => setShowCropEditor(false), []);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -203,9 +204,10 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const gbPerHour  = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
   const colorHex   = rgbToHex(shockZone.shock_zone_color);
 
-  const cropRect  = cam.crop_rect ?? null;
-  const cropStale = cropRect != null
-    && (cropRect.preview_width !== cam.width || cropRect.preview_height !== cam.height);
+  const cropRect   = cam.crop_rect ?? null;
+  // Pre-2026-10 pixel-format crop (see CameraConfigCard).
+  const cropLegacy = cropRect != null && cropRect.preview_width != null;
+  const isRecording = module.status === "RECORDING";
 
   // APA has a custom save transform: converts shock_zone color array→object
   // and preserves object_detection.labels arrays that filterPrivateKeys would otherwise strip.
@@ -251,12 +253,15 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             Refresh Sensor Modes
           </button>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", marginTop: "8px" }}>
-            <button type="button" className="copy-btn" onClick={() => setShowCropEditor(true)}>
+            <button type="button" className="copy-btn" onClick={() => setShowCropEditor(true)}
+              disabled={isRecording} title={isRecording ? "Stop recording to change the crop" : ""}>
               {cropRect ? "Edit Crop" : "Set Crop / Zoom"}
             </button>
-            {cropStale && (
+            {cropRect && (
               <div className="fov-label fov-cropped">
-                Saved crop was drawn at {cropRect.preview_width}×{cropRect.preview_height}, current output is {cam.width}×{cam.height} — redraw to match.
+                {cropLegacy
+                  ? "Crop saved in the old format: open the editor and save it again so the recording isn't trimmed to fit."
+                  : `Cropped: output follows the crop${cropRect.base_width ? ` (uncropped ${cropRect.base_width}×${cropRect.base_height})` : ""}.`}
               </div>
             )}
           </div>
@@ -683,8 +688,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
       moduleIp={module.ip}
       moduleId={module.id}
       open={showCropEditor}
-      onClose={() => setShowCropEditor(false)}
-      initialCropRect={cropStale ? null : cropRect}
+      onClose={closeCropEditor}
     />
     </>
   );

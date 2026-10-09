@@ -4163,8 +4163,15 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # (loom_controller.py etc.) either doesn't override or logs
                 # "No logic for ..." and drops -- the crop editor's "Saving..."
                 # status would never resolve to saved/failed.
-                case "camera_crop_updated":
-                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
+                # crop_editing: the crop editor's full-view mode (set_crop_editing).
+                # camera_crop_updated carries the module's whole config for the
+                # controller to adopt (controller.py) -- never forward that to
+                # browsers: it includes the export share password.
+                case "camera_crop_updated" | "crop_editing":
+                    self.socketio.emit('module_status', {
+                        **{k: v for k, v in status.items() if k != "config"},
+                        'module_id': module_id,
+                    })
 
                 # loom_camera_module.py's set_loom_roi() sends this on a successful
                 # save; LoomRoiLineEditorModal.jsx waits on it to show "Saved".

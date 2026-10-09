@@ -454,6 +454,39 @@ class Config:
         return True
 
 
+    def set_many(self, updates: dict[str, Any], persist: bool = True) -> list[str]:
+        """Set several dotted keys with one save and one configure_module()
+        call, so keys that must change together (a crop and the output size
+        it implies) reconfigure the camera once, never half-updated. Same
+        rules as set() for each key; unlike set_all() it never prunes
+        anything. Returns the keys that changed."""
+        changed = []
+        with self._lock:
+            for key_path, value in updates.items():
+                if self._sidecar_route(key_path) is not None:
+                    raise ValueError(f"set_many doesn't handle sidecar key {key_path}")
+                parts = key_path.split('.')
+                if parts[-1].startswith('_'):
+                    self.logger.warning(f"Attempt to modify read-only config key: {key_path}")
+                    continue
+                current = self.config
+                for part in parts[:-1]:
+                    if part not in current or not isinstance(current[part], dict):
+                        current[part] = {}
+                    current = current[part]
+                if current.get(parts[-1]) == value:
+                    continue
+                current[parts[-1]] = value
+                changed.append(key_path)
+        if changed and persist:
+            self.save_active()
+        module_keys = [k for k in changed if self._check_if_module_config_updated(k)]
+        if module_keys:
+            # configure_module is wired by Module.__init__.
+            self.configure_module(module_keys)
+        return changed
+
+
     def get_all(self) -> dict[str, Any]:
         """
         Get the entire configuration, with runtime-state sidecar sections

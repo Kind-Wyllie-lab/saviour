@@ -423,6 +423,20 @@ class Modules:
         self.broadcast_updated_modules()
 
 
+    def adopt_module_config(self, module_id: str, config: dict) -> None:
+        """Accept a config the module changed itself (e.g. a crop setting
+        camera.width/height) as both its true and its target config, so it
+        reads SYNCED instead of a mismatch against the stale target."""
+        with self._config_lock:
+            state = self._get_or_create_config_state(module_id)
+            state.true_config = config
+            state.target_config = self._filter_private_keys(config)
+            state.diffs = []
+            state.status = ConfigSyncStatus.SYNCED
+            if module_id in self._modules:
+                self._modules[module_id].config = config
+        self.broadcast_updated_modules()
+
     def _resolve_sync_status(self, module_id: str, state) -> None:
         """Compare true vs target config and set SYNCED / FAILED. Caller
         holds _config_lock."""

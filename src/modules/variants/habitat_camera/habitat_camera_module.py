@@ -425,6 +425,11 @@ class HabitatCameraModule(CameraBase):
             self.facade.send_status({"type": "recording_start_failed", "error": reason})
             return False
 
+        # Same guard as CameraBase._start_new_recording: never arm with the
+        # crop editor's full-view ScalerCrop still applied.
+        if getattr(self, "_crop_editing", False):
+            self._end_crop_editing(restore=True)
+
         if not self.picam2.started:
             self.picam2.start()
             time.sleep(0.1)

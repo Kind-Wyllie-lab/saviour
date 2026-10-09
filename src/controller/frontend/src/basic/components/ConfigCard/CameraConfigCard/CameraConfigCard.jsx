@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import socket from "/src/socket";
 import useModules from "/src/hooks/useModules";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
@@ -115,6 +115,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
   const [roiInfo, setRoiInfo] = useState(null);
   const [showCropEditor, setShowCropEditor] = useState(false);
+  const closeCropEditor = useCallback(() => setShowCropEditor(false), []);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -242,8 +243,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
   const cropRect         = cam.crop_rect ?? null;
-  const cropStale        = cropRect != null
-    && (cropRect.preview_width !== currentWidth || cropRect.preview_height !== currentHeight);
+  // Pre-2026-10 crops were pixel rectangles on the preview; the module still
+  // applies them (trimmed to the output's shape), but re-saving converts them.
+  const cropLegacy       = cropRect != null && cropRect.preview_width != null;
 
   const currentSyncMode  = cam.sync_mode ?? "none";
   const framesyncEnabled = cam.framesync_enabled ?? true;
@@ -291,12 +293,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           <>
             <LivestreamCard module={module} />
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", marginTop: "8px" }}>
-              <button type="button" className="copy-btn" onClick={() => setShowCropEditor(true)}>
+              <button type="button" className="copy-btn" onClick={() => setShowCropEditor(true)}
+                disabled={isRecording} title={isRecording ? "Stop recording to change the crop" : ""}>
                 {cropRect ? "Edit Crop" : "Set Crop / Zoom"}
               </button>
-              {cropStale && (
+              {cropRect && (
                 <div className="fov-label fov-cropped">
-                  Saved crop was drawn at {cropRect.preview_width}×{cropRect.preview_height}, current output is {currentWidth}×{currentHeight} - redraw to match.
+                  {cropLegacy
+                    ? "Crop saved in the old format: open the editor and save it again so the recording isn't trimmed to fit."
+                    : `Cropped: output follows the crop${cropRect.base_width ? ` (uncropped ${cropRect.base_width}×${cropRect.base_height})` : ""}.`}
                 </div>
               )}
             </div>
@@ -1179,8 +1184,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         moduleIp={module.ip}
         moduleId={module.id}
         open={showCropEditor}
-        onClose={() => setShowCropEditor(false)}
-        initialCropRect={cropStale ? null : cropRect}
+        onClose={closeCropEditor}
       />
     </>
   );

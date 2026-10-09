@@ -2638,3 +2638,31 @@ class TestMultiSessionDownload:
             got = [m for m in client.get_received()
                    if m["name"] == "sessions_size_response"]
             assert got[0]["args"][0]["sizes"] == {"s1": 8, "s2": 3, "gone": 0}
+
+
+class TestCropStatusForwarding:
+    """camera_crop_updated carries the module's full config (for the
+    controller to adopt), which includes the export share password -- it
+    must never be forwarded to browsers."""
+
+    def test_config_is_stripped_before_emitting(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("camera_ab12", {
+            "type": "camera_crop_updated", "width": 1088, "height": 1088,
+            "crop_rect": {"v": 2},
+            "config": {"export": {"share_password": "hunter2"}},
+        })
+        events = [e for e in client.get_received() if e["name"] == "module_status"]
+        assert len(events) == 1
+        payload = events[0]["args"][0]
+        assert "config" not in payload and "hunter2" not in json.dumps(payload)
+        assert payload["width"] == 1088 and payload["module_id"] == "camera_ab12"
+
+    def test_crop_editing_status_is_forwarded(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("camera_ab12", {
+            "type": "crop_editing", "enabled": True, "fov": [4056, 3040]})
+        events = [e for e in client.get_received() if e["name"] == "module_status"]
+        assert events and events[0]["args"][0]["fov"] == [4056, 3040]

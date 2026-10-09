@@ -2,7 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
-import { triggerDownload, formatBytes } from "../Recording/sessionFormat";
+import {
+  triggerDownload, formatBytes, groupSessionsByDate, dateGroupLabel,
+} from "../Recording/sessionFormat";
 import ComposeVideoPanel from "../Recording/SessionDetailPage/ComposeVideoPanel";
 import EphysAlignPanel from "./EphysAlignPanel";
 import "./PostProcess.css";
@@ -16,6 +18,12 @@ export default function PostProcess() {
   const [params, setParams] = useSearchParams();
   const names = useMemo(
     () => Object.keys(sessions || {}).sort(),
+    [sessions],
+  );
+
+  // Same day grouping as the session list rail, newest day first.
+  const groups = useMemo(
+    () => groupSessionsByDate(Object.values(sessions || {}).slice().reverse()),
     [sessions],
   );
 
@@ -64,11 +72,15 @@ export default function PostProcess() {
           onChange={(e) => setSelected(e.target.value)}
         >
           <option value="">— choose a session —</option>
-          {names.map((n) => (
-            <option key={n} value={n}>
-              {n}
-              {sessions[n]?.state ? `  (${sessions[n].state})` : ""}
-            </option>
+          {groups.map(({ key, sessions: day }) => (
+            <optgroup key={key} label={dateGroupLabel(key)}>
+              {day.map((s) => (
+                <option key={s.session_name} value={s.session_name}>
+                  {s.session_name}
+                  {s.state ? `  (${s.state})` : ""}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {fileInfo && fileInfo !== "loading" && (

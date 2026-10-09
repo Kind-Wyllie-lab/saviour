@@ -1,6 +1,6 @@
 # Field install feedback (1 camera + 1 mic, Oct 2026)
 
-- **Status:** in progress (Phases A, C shipped 2026-10-09)
+- **Status:** in progress (Phases A, C, D shipped 2026-10-09)
 - **Created:** 2026-10-09
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (post-process preview,
@@ -207,6 +207,10 @@ the frame on the expected edge.
 ---
 
 ## Phase D: session list by date + bulk download (items 7, 8)
+
+**Shipped 2026-10-09** (see `docs/CHANGELOG.md`). Checkboxes are always
+visible (no separate Select mode) so a day's sessions are two clicks away;
+only stopped sessions with no pending exports can be ticked.
 
 Branch `feat/session-list-by-date`. ~1 day. Pairs with
 `plans/session-list-multi-select-delete.md`; build both on the same grouping.

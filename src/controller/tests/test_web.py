@@ -2566,3 +2566,75 @@ class TestKnownStatusTypesDontReachVariantFallback:
         web.handle_special_module_status = MagicMock(return_value=False)
         web.handle_module_status("camera_d074", {"type": "variant_specific"})
         web.handle_special_module_status.assert_called_once()
+
+
+class TestMultiSessionDownload:
+    """GET /api/sessions/zip?names=... and the get_sessions_size event,
+    behind the session list's tick-to-download
+    (plans/field-install-feedback-2026-10.md, item 7)."""
+
+    def _share(self, tmpdir):
+        for name, files in {
+            "s1": {"a.txt": "one", "20261009/cam/v.ts": "video"},
+            "s2": {"b.txt": "two"},
+        }.items():
+            for rel, body in files.items():
+                path = os.path.join(tmpdir, name, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(body)
+        return _make_web(**{"export.mount_path": tmpdir})
+
+    def test_zips_each_session_under_its_own_folder(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=s1,s2,s1")
+            assert resp.status_code == 200
+            assert resp.mimetype == "application/zip"
+            assert "2-sessions" in resp.headers["Content-Disposition"]
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert sorted(zf.namelist()) == [
+                    "s1/20261009/cam/v.ts", "s1/a.txt", "s2/b.txt"]
+                assert zf.read("s2/b.txt") == b"two"
+
+    def test_missing_sessions_are_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=gone,s2")
+            assert resp.status_code == 200
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert zf.namelist() == ["s2/b.txt"]
+
+    def test_none_found_is_404(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=gone")
+            assert resp.status_code == 404
+
+    def test_bad_names_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            client = web.app.test_client()
+            for names in ["", "s1,bad!name", "s1,..", "s1,a/b"]:
+                resp = client.get(
+                    f"/api/sessions/zip{_download_qs(web)}&names={names}")
+                assert resp.status_code == 400, names
+
+    def test_requires_a_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get("/api/sessions/zip?names=s1")
+            assert resp.status_code == 401
+
+    def test_sizes_event_sums_each_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._share(tmpdir)
+            web, _facade = _make_web_with_facade(**{"export.mount_path": tmpdir})
+            client = _connected_client(web)
+            client.emit("get_sessions_size", {"names": ["s1", "s2", "gone", "bad!"]})
+            got = [m for m in client.get_received()
+                   if m["name"] == "sessions_size_response"]
+            assert got[0]["args"][0]["sizes"] == {"s1": 8, "s2": 3, "gone": 0}

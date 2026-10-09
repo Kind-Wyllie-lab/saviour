@@ -150,3 +150,48 @@ export function formatRecordingMode(session) {
   if (session.duration_minutes) return "Timed";
   return "Manual";
 }
+
+// ── Date grouping (session list rail, Post-Process picker) ────────────────
+// A session's day comes from its start_time ("YYYYMMDD-HHMMSS", controller
+// local time). Pending/scheduled sessions haven't run (or recur daily), so
+// they sit in an "Upcoming" group instead; anything without a start_time
+// goes in "Undated".
+export const UPCOMING_GROUP = "upcoming";
+export const UNDATED_GROUP = "undated";
+
+export function localDateKey(date = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+
+export function sessionDateKey(session) {
+  if (session.state === "pending" || session.state === "scheduled") return UPCOMING_GROUP;
+  const m = (session.start_time || "").match(/^(\d{4})(\d{2})(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : UNDATED_GROUP;
+}
+
+export function dateGroupLabel(key, today = localDateKey()) {
+  if (key === UPCOMING_GROUP) return "Upcoming";
+  if (key === UNDATED_GROUP) return "Undated";
+  const d = new Date(`${key}T12:00:00`);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (key === today) return `Today · ${key}`;
+  if (key === localDateKey(yesterday)) return `Yesterday · ${key}`;
+  return `${d.toLocaleDateString([], { weekday: "short" })} · ${key}`;
+}
+
+// [{ key, sessions }] -- Upcoming first, then days newest-first, Undated
+// last. Sessions keep the order they were passed in within each group.
+export function groupSessionsByDate(sessions) {
+  const groups = new Map();
+  for (const s of sessions) {
+    const key = sessionDateKey(s);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  const rank = (k) => (k === UPCOMING_GROUP ? 0 : k === UNDATED_GROUP ? 2 : 1);
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || (a < b ? 1 : a > b ? -1 : 0))
+    .map(([key, list]) => ({ key, sessions: list }));
+}

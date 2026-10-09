@@ -1425,6 +1425,32 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
 
+        @self.socketio.on("get_sessions_size")
+        def handle_get_sessions_size(data=None):
+            """Total bytes on the share per session, for the session list's
+            selection bar. {names: [...]} -> sessions_size_response
+            {sizes: {name: bytes}}; unknown/invalid names report 0."""
+            import re
+
+            from flask_socketio import emit as _emit
+            names = (data or {}).get("names") or []
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            sizes = {}
+            for name in names[:_MAX_SIZE_SESSIONS]:
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+                    continue
+                total = 0
+                for root, _dirs, filenames in os.walk(os.path.join(share, name)):
+                    for fn in filenames:
+                        try:
+                            total += os.path.getsize(os.path.join(root, fn))
+                        except OSError:
+                            pass
+                sizes[name] = total
+            _emit("sessions_size_response", {"sizes": sizes})
+
+        _MAX_SIZE_SESSIONS = 500
+
         @self.socketio.on("get_session_file_info")
         def handle_get_session_file_info(data=None):
             import re
@@ -1464,24 +1490,37 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 "total_bytes": total,
             })
 
-        def _stream_zip_response(dir_path: str, zip_filename: str):
+        _MAX_ZIP_SESSIONS = 500
+
+        def _stream_zip_response(dir_path, zip_filename: str):
             """Stream a ZIP of every file under dir_path (built incrementally
             in a background thread via _QueueStream, not buffered in memory
             or on disk first) as a Flask response. Shared by the whole-
-            session zip and the per-folder zip below -- same shape, only the
-            root directory and the download filename differ."""
+            session zip, the per-folder zip and the multi-session zip --
+            same shape, only the roots and the download filename differ.
+
+            dir_path is one directory (entries relative to it), or a list
+            of (directory, prefix) pairs, each directory's entries going
+            under its prefix/ in the archive."""
+            roots = ([(dir_path, "")] if isinstance(dir_path, str)
+                     else list(dir_path))
             q = _queue.SimpleQueue()
 
             def _build():
+                root_dir = None
                 try:
                     with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
-                        for root, dirs, filenames in os.walk(dir_path):
-                            dirs.sort()
-                            for fn in sorted(filenames):
-                                full = os.path.join(root, fn)
-                                zf.write(full, os.path.relpath(full, dir_path))
+                        for root_dir, prefix in roots:
+                            for root, dirs, filenames in os.walk(root_dir):
+                                dirs.sort()
+                                for fn in sorted(filenames):
+                                    full = os.path.join(root, fn)
+                                    rel = os.path.relpath(full, root_dir)
+                                    if prefix:
+                                        rel = f"{prefix}/{rel.replace(os.sep, '/')}"
+                                    zf.write(full, rel)
                 except Exception as e:
-                    self.logger.error(f"ZIP stream error for '{dir_path}': {e}")
+                    self.logger.error(f"ZIP stream error for '{root_dir}': {e}")
                 finally:
                     q.put(None)
 
@@ -1541,6 +1580,38 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/sessions/zip")
+        def download_sessions_zip():
+            """Several sessions as one streamed zip, each under its own
+            top-level folder -- the session list's tick-to-download
+            (plans/field-install-feedback-2026-10.md, item 7). ?names=a,b,c.
+            Sessions with no folder on the share are skipped; 404 if none
+            has one."""
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            import re
+            names = [n for n in (request.args.get("names") or "").split(",") if n]
+            names = list(dict.fromkeys(names))          # dedupe, keep order
+            if not names:
+                return "No sessions given", 400
+            if len(names) > _MAX_ZIP_SESSIONS:
+                return f"At most {_MAX_ZIP_SESSIONS} sessions per download", 400
+            if not all(re.fullmatch(r"[A-Za-z0-9_\-]+", n) for n in names):
+                return "Invalid session name", 400
+            share = os.path.realpath(self.config.get("export.mount_path", "/home/pi/controller_share"))
+            roots = []
+            for name in names:
+                session_dir = os.path.realpath(os.path.join(share, name))
+                if not session_dir.startswith(share + os.sep):
+                    return "Forbidden", 403
+                if os.path.isdir(session_dir):
+                    roots.append((session_dir, name))
+            if not roots:
+                return "Not found", 404
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            return _stream_zip_response(
+                roots, f"saviour-{len(roots)}-sessions-{stamp}.zip")
 
         @self.app.route("/api/ephys/upload", methods=["POST"])
         def upload_ephys_dataset():

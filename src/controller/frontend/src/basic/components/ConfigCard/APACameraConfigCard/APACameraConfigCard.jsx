@@ -429,15 +429,25 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
               onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
           </div>
           {(cam.overlay_timestamp ?? true) && (
-            <div className="form-field">
-              <label>Text size:</label>
-              <select value={cam.text_size ?? "medium"}
-                onChange={e => handleChange(["camera", "text_size"], e)}>
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-              </select>
-            </div>
+            <>
+              <div className="form-field">
+                <label>Text size:</label>
+                <select value={cam.text_size ?? "medium"}
+                  onChange={e => handleChange(["camera", "text_size"], e)}>
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+              <div className="form-field">
+                <label>Timestamp position:</label>
+                <select value={cam.timestamp_position ?? "top"}
+                  onChange={e => handleChange(["camera", "timestamp_position"], e)}>
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                </select>
+              </div>
+            </>
           )}
           <div className="form-field">
             <label>Overlay framerate (preview):</label>

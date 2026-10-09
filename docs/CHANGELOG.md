@@ -13,6 +13,13 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-09
 
+- [x] **Timestamp overlay position, top or bottom** (branch `feat/timestamp-position` → `staging`; `plans/field-install-feedback-2026-10.md` Phase C, item 6). Tests, ruff, lint and all five frontend builds clean. **Not yet checked on a camera.**
+  - New `camera.timestamp_position` (`"top"` | `"bottom"`, default `"top"`, so existing rigs are unchanged) in every libcamera camera variant's config; existing modules pick it up from the base config on update. `CameraBase._apply_timestamp` puts the baseline `padding` px above the bottom edge. With a skipped 90/270 rotation (`compensate_k`), bottom is the raw edge opposite the one that becomes "top". The position is part of the layout cache key and read per frame like `text_size`, so a change applies live, on the recording and the MJPEG preview.
+  - Basler: `basler.timestamp_position` in `_overlay_timestamp`. Basler cameras get `CameraConfigCard`, which only edits `camera.*`, so neither this nor `basler.text_size` is in the UI yet (an existing gap).
+  - UI: "Timestamp position" select under the size select in `CameraConfigCard` and `APACameraConfigCard`.
+  - Caveat: `replay_habitat_motion.py --crop-top-frac` assumes the timestamp is at the top; replaying a bottom-timestamp recording needs its own crop.
+  - Tests: 8 in `test_camera_base.py::TestTimestampPosition`, 3 in the new `test_basler_overlay.py`.
+
 - [x] **Compose preview speed + spectrogram height** (branch `fix/compose-preview-speed` → `staging`; `plans/field-install-feedback-2026-10.md` Phase A, items 1-2). Tests, ruff, lint and all five frontend builds clean. **Not yet verified on a controller** against the field session whose preview never finished.
   - **Cause:** the first preview decoded each camera frame by frame from the start to mid-session (`_StreamCursor.sync_to`), tens of thousands of frames over the share on a long `.ts`. Every settings change also re-ran `ffprobe -count_packets` over the whole `.ts`, and started another preview thread with no coalescing, so a few colour/gain tweaks piled up concurrent decodes. Replies were broadcast with no request id.
   - **Thumbnail:** `video_compose._representative_frame` now seeks (`CAP_PROP_POS_MSEC`, nearest keyframe) and falls back to the first frame. Not frame-accurate on MPEG-TS, which is fine for a layout preview; real renders still use the cursor. Still no system-ffmpeg dependency.

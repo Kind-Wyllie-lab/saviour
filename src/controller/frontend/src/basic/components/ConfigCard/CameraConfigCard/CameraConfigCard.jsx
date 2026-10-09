@@ -611,15 +611,25 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               This will be on your saved videos.
             </div>
             {overlayTimestamp && (
-              <div className="form-field">
-                <label>Timestamp size:</label>
-                <select value={cam.text_size ?? "medium"}
-                  onChange={e => handleChange(["camera", "text_size"], e)}>
-                  <option value="small">Small</option>
-                  <option value="medium">Medium</option>
-                  <option value="large">Large</option>
-                </select>
-              </div>
+              <>
+                <div className="form-field">
+                  <label>Timestamp size:</label>
+                  <select value={cam.text_size ?? "medium"}
+                    onChange={e => handleChange(["camera", "text_size"], e)}>
+                    <option value="small">Small</option>
+                    <option value="medium">Medium</option>
+                    <option value="large">Large</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Timestamp position:</label>
+                  <select value={cam.timestamp_position ?? "top"}
+                    onChange={e => handleChange(["camera", "timestamp_position"], e)}>
+                    <option value="top">Top</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                </div>
+              </>
             )}
           </>
         )}

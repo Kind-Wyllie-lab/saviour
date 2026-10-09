@@ -1630,8 +1630,12 @@ class CameraBase(Module):
         of the unrotated frame that becomes "top" once a viewer later rotates
         the recorded file for playback — so it reads correctly there, even
         though the frame content itself stays unrotated.
+
+        camera.timestamp_position ("top" | "bottom", default "top") picks
+        the viewed edge; with compensate_k that's the opposite raw edge.
         """
         size_preset = self.config.get("camera.text_size", "medium")
+        bottom = self.config.get("camera.timestamp_position", "top") == "bottom"
         cache_attr = f"_ts_layout_{stream}"
         cached = getattr(self, cache_attr, None)
 
@@ -1643,8 +1647,9 @@ class CameraBase(Module):
         view_height = actual_width if compensate_k in (1, 3) else actual_height
         text_len = len(timestamp)
 
-        cache_key = (size_preset, view_height, view_width, text_len, compensate_k)
-        if cached is None or cached[:5] != cache_key:
+        cache_key = (size_preset, view_height, view_width, text_len, compensate_k,
+                     bottom)
+        if cached is None or cached[:len(cache_key)] != cache_key:
             font = cv2.FONT_HERSHEY_SIMPLEX
             target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
             thickness = 2 if size_preset == "large" else 1
@@ -1654,7 +1659,8 @@ class CameraBase(Module):
             padding = max(4, int(view_height * 0.01))
             if compensate_k == 0:
                 x = int((view_width - text_width) / 2)
-                y = text_height + padding
+                # putText's org is the text baseline (bottom-left).
+                y = view_height - padding if bottom else text_height + padding
             else:
                 x = y = None
             cached = (
@@ -1685,11 +1691,11 @@ class CameraBase(Module):
         patch = np.rot90(canvas, (4 - compensate_k) % 4)
         ph, pw = patch.shape[:2]
 
-        if compensate_k == 1:
-            # Final top edge == this unrotated frame's right edge.
+        # k=1: viewed top == this unrotated frame's right edge (bottom == left).
+        # k=3: viewed top == its left edge (bottom == right).
+        if (compensate_k == 1) != bottom:
             px = actual_width - pw - padding
-        else:  # compensate_k == 3
-            # Final top edge == this unrotated frame's left edge.
+        else:
             px = padding
         py = (actual_height - ph) // 2
 

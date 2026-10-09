@@ -417,9 +417,13 @@ class BaslerCameraModule(Module):
         scale = _TEXT_SIZE_SCALE.get(self.config.get("basler.text_size", "medium"), 0.8)
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(grab_ns / 1e9))
         ts = f"{ts}.{int(grab_ns % 1_000_000_000) // 1_000_000:03d}Z"
-        cv2.putText(frame, ts, (10, int(30 * scale) + 10),
+        if self.config.get("basler.timestamp_position", "top") == "bottom":
+            org = (10, frame.shape[0] - 10)        # baseline, 10 px off the edge
+        else:
+            org = (10, int(30 * scale) + 10)
+        cv2.putText(frame, ts, org,
                     cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(frame, ts, (10, int(30 * scale) + 10),
+        cv2.putText(frame, ts, org,
                     cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
         return frame
 

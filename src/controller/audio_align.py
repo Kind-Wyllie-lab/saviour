@@ -590,8 +590,12 @@ def build_align_filter(fit: SidecarFit, t_start_ns: int, out_rate: int) -> str:
     return ",".join(stages)
 
 
-def _run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: list[str], timeout: float | None = None) -> None:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{cmd[0]} timed out after {timeout:g} s") from exc
     if proc.returncode != 0:
         tail = "\n".join(proc.stderr.strip().splitlines()[-8:])
         raise RuntimeError(f"{cmd[0]} failed ({proc.returncode}):\n{tail}")
@@ -687,6 +691,7 @@ def render_source_spectrogram_png(
     size: tuple[int, int] = DEFAULT_SPECTROGRAM_SIZE,
     spec: SpectrogramOpts | None = None,
     start_s: float = 0.0, dur_s: float = 20.0,
+    timeout: float | None = None,
 ) -> str:
     """A static spectrogram PNG straight from a source recording, with no
     PTP alignment -- for the compose preview, where only the look (colour
@@ -698,7 +703,7 @@ def render_source_spectrogram_png(
         "-ss", f"{max(0.0, start_s):.3f}", "-t", f"{max(0.1, dur_s):.3f}",
         "-i", audio_path,
         "-lavfi", spec.pic_filter(size[0], size[1]), out_path,
-    ])
+    ], timeout=timeout)
     return out_path
 
 

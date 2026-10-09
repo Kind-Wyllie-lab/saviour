@@ -46,6 +46,17 @@ AUDIO_MODES = ("none", "track", "strip", "panel")
 DEFAULT_CANVAS_WIDTH = 1920
 DEFAULT_FPS = 15
 MAX_QUEUE = 4
+# Spectrogram strip/panel height as a percentage of the composited video's
+# height -- defaults per mode, and the accepted range.
+AUDIO_HEIGHT_PCT_DEFAULT = {"strip": 20.0, "panel": 30.0}
+AUDIO_HEIGHT_PCT_RANGE = {"strip": (5.0, 50.0), "panel": (10.0, 100.0)}
+
+
+def audio_height_px(video_height: int, height_pct: float) -> int:
+    """Spectrogram strip/panel height in px: `height_pct` percent of the
+    video's height, even (yuv420), at least 2. Shared by the preview and
+    the real render so the preview shows what the render will produce."""
+    return max(2, round(video_height * height_pct / 100) // 2 * 2)
 
 
 class ComposeError(ValueError):
@@ -57,6 +68,12 @@ class AudioSpec:
     mode: str = "none"
     source: str | None = None                 # mic module folder; None -> first
     spectrogram: dict = field(default_factory=dict)  # -> audio_align.SpectrogramOpts
+    height_pct: float | None = None           # strip/panel; None -> mode default
+
+    @property
+    def effective_height_pct(self) -> float:
+        return (self.height_pct if self.height_pct is not None
+                else AUDIO_HEIGHT_PCT_DEFAULT.get(self.mode, 20.0))
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> AudioSpec:
@@ -81,7 +98,21 @@ class AudioSpec:
             raise ComposeError(f"unknown audio.spectrogram field: {exc}") from exc
         except ValueError as exc:
             raise ComposeError(str(exc)) from exc
-        return cls(mode=mode, source=source, spectrogram=dict(spectrogram))
+        height_pct = raw.get("height_pct")
+        if height_pct is not None and mode in AUDIO_HEIGHT_PCT_RANGE:
+            try:
+                height_pct = float(height_pct)
+            except (TypeError, ValueError) as exc:
+                raise ComposeError("audio.height_pct must be a number") from exc
+            lo, hi = AUDIO_HEIGHT_PCT_RANGE[mode]
+            if not lo <= height_pct <= hi:
+                raise ComposeError(
+                    f"audio.height_pct for {mode} must be between "
+                    f"{lo:g} and {hi:g}")
+        else:
+            height_pct = None
+        return cls(mode=mode, source=source, spectrogram=dict(spectrogram),
+                   height_pct=height_pct)
 
     def spec_opts(self) -> audio_align.SpectrogramOpts:
         return audio_align.SpectrogramOpts(**self.spectrogram)
@@ -198,8 +229,43 @@ def plan_regions(
     return regions, cell_w * cols, cell_h * rows
 
 
+# ffprobe results keyed by (path, size, mtime). A preview is requested on
+# every debounced settings change, and `_video_frame_count` reads the whole
+# .ts (-count_packets) -- uncached, every colour/gain tweak re-read every
+# camera's video over the share. A finished recording doesn't change, so
+# size+mtime is a sufficient key; bounded so a long-lived controller
+# doesn't grow it forever.
+_PROBE_CACHE: dict[tuple, object] = {}
+_PROBE_CACHE_MAX = 256
+_PROBE_CACHE_LOCK = threading.Lock()
+
+
+def _cached_probe(kind: str, path: str, fn):
+    try:
+        st = os.stat(path)
+        key = (kind, path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return fn()
+    with _PROBE_CACHE_LOCK:
+        if key in _PROBE_CACHE:
+            return _PROBE_CACHE[key]
+    value = fn()
+    if value:  # never pin a failed/empty probe (e.g. a share hiccup)
+        with _PROBE_CACHE_LOCK:
+            if len(_PROBE_CACHE) >= _PROBE_CACHE_MAX:
+                _PROBE_CACHE.pop(next(iter(_PROBE_CACHE)))
+            _PROBE_CACHE[key] = value
+    return value
+
+
 def probe_dimensions(video_path: str) -> tuple[int, int]:
-    """(width, height) of a video file's first stream, via ffprobe."""
+    """(width, height) of a video file's first stream, via ffprobe.
+    Cached per file (see `_cached_probe`)."""
+    return _cached_probe("dims", video_path,
+                         lambda: _probe_dimensions_uncached(video_path))
+
+
+def _probe_dimensions_uncached(video_path: str) -> tuple[int, int]:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "json", video_path],
@@ -212,7 +278,12 @@ def probe_dimensions(video_path: str) -> tuple[int, int]:
 def _video_frame_count(video_path: str) -> int:
     """Exact frame count of a video's first stream (decoded packet count --
     the container's nb_frames is often absent/wrong for MPEG-TS). 0 if it
-    can't be determined."""
+    can't be determined. Cached per file (see `_cached_probe`)."""
+    return _cached_probe("frames", video_path,
+                         lambda: _video_frame_count_uncached(video_path))
+
+
+def _video_frame_count_uncached(video_path: str) -> int:
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -453,8 +524,14 @@ def find_microphone(date_dir: str, source: str | None):
     )
 
 
+# Bounds the preview's ffmpeg spectrogram call: a stuck ffmpeg used to leave
+# the preview spinning forever with no error.
+PREVIEW_FFMPEG_TIMEOUT_S = 30
+
+
 def _preview_spectrogram_png(cache_dir: str, date_dir: str, audio: AudioSpec,
-                             width: int, logger=None) -> str | None:
+                             width: int, height: int,
+                             logger=None) -> str | None:
     """A representative (unaligned) spectrogram PNG for the preview, cached
     by mic file + spectrogram options so it's rendered once per settings
     combination. Returns None (preview just omits the audio panel) if
@@ -469,14 +546,14 @@ def _preview_spectrogram_png(cache_dir: str, date_dir: str, audio: AudioSpec,
         # `strip` and `panel` render the same source spectrogram (only the
         # placement differs), so the mode is deliberately not in the key.
         key = hashlib.md5(
-            f"{audio_file}|{mtime}|{width}|"
+            f"{audio_file}|{mtime}|{width}x{height}|"
             f"{json.dumps(audio.spectrogram, sort_keys=True)}".encode()
         ).hexdigest()[:12]
         out = os.path.join(cache_dir, f"spec_{key}.png")
         if not os.path.isfile(out):
-            height = max(2, round(width * 0.28) // 2 * 2)
             audio_align.render_source_spectrogram_png(
                 audio_file, out, size=(width, height), spec=audio.spec_opts(),
+                timeout=PREVIEW_FFMPEG_TIMEOUT_S,
             )
         return out
     except Exception as exc:  # noqa: BLE001 -- preview must not fail over audio
@@ -511,7 +588,9 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
     audio = AudioSpec(**spec.audio)
     audio_png = None
     if audio.mode in ("strip", "panel"):
-        audio_png = _preview_spectrogram_png(cache_dir, date_dir, audio, cw, logger)
+        audio_png = _preview_spectrogram_png(
+            cache_dir, date_dir, audio, cw,
+            audio_height_px(ch, audio.effective_height_pct), logger)
 
     tmp = os.path.join(cache_dir, f".preview_{uuid.uuid4().hex[:8]}.png")
     try:
@@ -521,11 +600,71 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
             audio_png=audio_png,
             audio_mode=audio.mode if audio_png else None,
             csv_skip={s.name: s.csv_skip for s in streams},
+            audio_height_px=audio_height_px(ch, audio.effective_height_pct),
         )
         with open(tmp, "rb") as f:
             return f.read()
     finally:
         _safe_unlink(tmp)
+
+
+class PreviewQueue:
+    """One background thread rendering previews, keeping only each client's
+    *latest* request.
+
+    The panel asks for a preview on every debounced settings change. One
+    thread per request (the old handler) let a burst of colour/gain tweaks
+    run several first-time decodes at once, all competing for the same CPU
+    and share, so none finished. Here a client's newer request replaces its
+    queued one (a running render isn't interrupted, but at most one
+    follow-up runs), and clients are served in arrival order so one busy
+    client can't starve another.
+
+    `render(spec_dict)` returns the reply payload; `deliver(client, payload)`
+    sends it. Both are injected so this has no Flask/OpenCV dependency."""
+
+    def __init__(self, render, deliver, logger=None, idle_timeout_s: float = 60):
+        self._render = render
+        self._deliver = deliver
+        self._log = logger
+        self._idle_timeout_s = idle_timeout_s
+        self._pending: dict = {}          # client -> spec_dict (insertion-ordered)
+        self._cv = threading.Condition()
+        self._thread: threading.Thread | None = None
+
+    def submit(self, client, spec_dict: dict) -> None:
+        with self._cv:
+            self._pending.pop(client, None)   # re-queue at the back
+            self._pending[client] = spec_dict
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._run, daemon=True, name="compose-preview")
+                self._thread.start()
+            self._cv.notify()
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                if not self._cv.wait_for(lambda: self._pending,
+                                         timeout=self._idle_timeout_s):
+                    self._thread = None       # idle: let the thread exit
+                    return
+                client = next(iter(self._pending))
+                spec_dict = self._pending.pop(client)
+            try:
+                payload = self._render(spec_dict)
+            except Exception as exc:  # noqa: BLE001 -- report, never kill the loop
+                if self._log:
+                    self._log.exception("compose preview failed")
+                payload = {"error": f"internal error: {exc}"}
+            request_id = (spec_dict or {}).get("request_id")
+            if request_id is not None:
+                payload = {**payload, "request_id": request_id}
+            try:
+                self._deliver(client, payload)
+            except Exception:  # noqa: BLE001
+                if self._log:
+                    self._log.exception("compose preview delivery failed")
 
 
 # --------------------------------------------------------------------------- #
@@ -708,7 +847,9 @@ class ComposeWorker:
             )
             if audio.mode != "none":
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,
-                                  spec.fps, phase)
+                                  spec.fps, phase,
+                                  audio_height_px(
+                                      canvas_h, audio.effective_height_pct))
                 _safe_unlink(base_path)
         except _CancelledError:
             _safe_unlink(base_path)
@@ -718,7 +859,8 @@ class ComposeWorker:
         return os.path.relpath(out_path, self.share_path)
 
     def _apply_audio(self, date_dir, streams, audio: AudioSpec,
-                     base_path: str, out_path: str, fps: int, phase) -> None:
+                     base_path: str, out_path: str, fps: int, phase,
+                     strip_height: int = audio_align.DEFAULT_STRIP_HEIGHT) -> None:
         audio_file, sidecar = find_microphone(date_dir, audio.source)
         t_start, t_end = camera_window(streams)
         window_s = (t_end - t_start) / 1e9
@@ -735,7 +877,7 @@ class ComposeWorker:
             else:  # strip | panel
                 audio_align.render_overlay(
                     base_path, [aligned], out_path,
-                    audio_align.DEFAULT_STRIP_HEIGHT, fps,
+                    strip_height, fps,
                     spec=audio.spec_opts(), stacked=(audio.mode == "panel"),
                     progress=phase(0.75, 1.0, "rendering audio panel"),
                     total_s=window_s,

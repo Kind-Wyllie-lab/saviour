@@ -161,15 +161,50 @@ again rounded.
 
 ### 5. Clear Crop does nothing
 
-The code path looks correct: `set_camera_crop(None)` → `config.set` →
-`configure_module(["camera.crop_rect"])` → a full-frame `ScalerCrop` in
-`live_controls` when streaming (`_full_frame_scaler_crop`). When **not**
-streaming, `_configure_camera()` just omits `ScalerCrop`, and libcamera may
-keep the previous crop across reconfigure. Best guess pending the module
-log; fix that regardless by always passing an explicit full-frame
-`ScalerCrop` from `_configure_camera` when no crop is set. Also confirm the
-modal refreshes after `camera_crop_updated` and that `initialCropRect` in
-`CameraConfigCard` / `APACameraConfigCard` isn't stale on reopen.
+**Reproduced 2026-10-09 on `hailo_camera_3606`** (IMX477 HQ camera, sensor
+mode 2 = 2028×1520 **4:3**, output 1920×1080 **16:9**, streaming, idle):
+
+1. Baseline: libcamera's *default* ScalerCrop for a 16:9 output from a 4:3
+   mode is a centred 16:9 band of the sensor, not the full sensor.
+2. `set_camera_crop` with the **whole** preview (0,0,640,360 of 640×360),
+   which should change nothing: the image changed, showing more at top and
+   bottom, squashed vertically. `_compute_scaler_crop_rect` maps preview
+   coordinates onto the mode's full 4:3 `crop_limits` with independent
+   x/y scales, but the preview is of the default 16:9 band.
+3. `set_camera_crop(None)` while streaming: the image **stayed** squashed.
+   `_full_frame_scaler_crop` restores `ScalerCropMaximum` (the full 4:3
+   area), not the default 16:9 band, so "clear" lands on a different,
+   distorted view. If the previous crop was near full-frame, it looks like
+   nothing happened. Only a camera reconfigure (restart) restores the
+   original view.
+
+So items 3 and 5 share one root cause: **the code treats the sensor mode's
+full area as "uncropped", but the uncropped view is the aspect-matched
+centred band** whenever the output aspect differs from the sensor mode's
+(every 4:3 sensor at a 16:9 output; also Camera Module 3 modes vs 4:3
+outputs). The earlier "not streaming" theory isn't needed to explain the
+report.
+
+**Fix (folds into the editor rework above).**
+
+- One helper, `_default_scaler_crop(mode, out_w, out_h)`: the largest
+  centred rect inside `crop_limits` with the output's aspect ratio (what
+  libcamera picks by default). "Clear" applies this, both live and in
+  `_configure_camera`, never `ScalerCropMaximum`.
+- Map the editor's rectangle with **one** scale factor relative to the
+  view it was drawn on. With option (b) the editor works on the full FoV
+  and the output size follows the crop's aspect, so x and y scales are
+  equal by construction and nothing is stretched.
+- Unit test against the 2028×1520 → 1920×1080 case: default crop is the
+  centred 16:9 band, full-preview crop equals the default (no change),
+  clear equals the default.
+- Hardware re-check on the same camera: full-preview crop → no visible
+  change; square crop with (b) → 1:1 output, undistorted; clear → identical
+  to the baseline snapshot.
+
+Also confirm the modal refreshes after `camera_crop_updated` and that
+`initialCropRect` in `CameraConfigCard` / `APACameraConfigCard` isn't stale
+on reopen.
 
 **Tests.** `test_camera_base.py`: normalised → ScalerCrop mapping, legacy
 pixel-space shape, (b) output-size computation per preset (even/16-aligned,

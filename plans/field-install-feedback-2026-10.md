@@ -1,6 +1,6 @@
 # Field install feedback (1 camera + 1 mic, Oct 2026)
 
-- **Status:** proposed
+- **Status:** in progress (Phase A shipped 2026-10-09)
 - **Created:** 2026-10-09
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (post-process preview,
@@ -41,6 +41,9 @@ None of these block Phase A, C or D.
 ---
 
 ## Phase A: post-process preview (items 1, 2)
+
+**Shipped 2026-10-09** (see `docs/CHANGELOG.md`). Defaults chosen: strip 20%,
+panel 30% of the video height.
 
 Branch `fix/compose-preview-speed`. ~1 day.
 

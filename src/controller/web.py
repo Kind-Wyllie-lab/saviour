@@ -323,6 +323,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # page — spun up on first request so no thread starts before the
         # app is serving.
         self._compose_worker = None
+        self._compose_preview_queue = None   # compose.PreviewQueue, lazy
         # Same, for automatic framesync/PTP sync-quality validation.
         self._framesync_worker = None
 
@@ -953,9 +954,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
         @self.socketio.on("compose_preview")
         def handle_compose_preview(data=None):
-            # One composited frame (~1-3 s of OpenCV) — off the socket
-            # thread so it doesn't stall this client's other events.
-            def _work(spec_dict):
+            # One composited frame, rendered off the socket thread by a
+            # single PreviewQueue worker that keeps only each client's
+            # latest request, and replied to that client alone (with its
+            # request_id) rather than broadcast.
+            def _render(spec_dict):
                 import base64
                 try:
                     spec = compose.ComposeSpec.from_dict(spec_dict or {})
@@ -967,22 +970,19 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                         rebuild=bool((spec_dict or {}).get("rebuild")),
                         logger=self.logger,
                     )
-                    self.socketio.emit("compose_preview_ready", {
-                        "image": "data:image/png;base64,"
-                        + base64.b64encode(png).decode(),
-                    })
                 except compose.ComposeError as exc:
-                    self.socketio.emit("compose_preview_ready", {"error": str(exc)})
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.exception("compose preview failed")
-                    self.socketio.emit(
-                        "compose_preview_ready",
-                        {"error": f"internal error: {exc}"},
-                    )
+                    return {"error": str(exc)}
+                return {"image": "data:image/png;base64,"
+                        + base64.b64encode(png).decode()}
 
-            threading.Thread(
-                target=_work, args=(data,), daemon=True, name="compose-preview"
-            ).start()
+            if self._compose_preview_queue is None:
+                self._compose_preview_queue = compose.PreviewQueue(
+                    _render,
+                    lambda sid, payload: self.socketio.emit(
+                        "compose_preview_ready", payload, room=sid),
+                    logger=self.logger,
+                )
+            self._compose_preview_queue.submit(request.sid, data or {})
 
         @self.socketio.on("run_ephys_align")
         def handle_run_ephys_align(data=None):

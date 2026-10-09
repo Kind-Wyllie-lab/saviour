@@ -11,6 +11,16 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-09
+
+- [x] **Compose preview speed + spectrogram height** (branch `fix/compose-preview-speed` → `staging`; `plans/field-install-feedback-2026-10.md` Phase A, items 1-2). Tests, ruff, lint and all five frontend builds clean. **Not yet verified on a controller** against the field session whose preview never finished.
+  - **Cause:** the first preview decoded each camera frame by frame from the start to mid-session (`_StreamCursor.sync_to`), tens of thousands of frames over the share on a long `.ts`. Every settings change also re-ran `ffprobe -count_packets` over the whole `.ts`, and started another preview thread with no coalescing, so a few colour/gain tweaks piled up concurrent decodes. Replies were broadcast with no request id.
+  - **Thumbnail:** `video_compose._representative_frame` now seeks (`CAP_PROP_POS_MSEC`, nearest keyframe) and falls back to the first frame. Not frame-accurate on MPEG-TS, which is fine for a layout preview; real renders still use the cursor. Still no system-ffmpeg dependency.
+  - **Probe cache:** `probe_dimensions` / `_video_frame_count` are cached per `(path, size, mtime)` (bounded, 256); failed probes aren't cached.
+  - **`compose.PreviewQueue`:** one worker thread; each client's newer request replaces its queued one; clients served in arrival order; replies go to the requesting sid with its `request_id`, and the panel ignores stale ones. The preview's ffmpeg spectrogram call has a 30 s timeout.
+  - **Spectrogram height:** `audio.height_pct` (strip 5-50, default 20; panel 10-100, default 30) as % of the composited video's height, used by both preview and render (`compose.audio_height_px`). The render used a fixed 240 px while the preview drew 40% / 18%, so the preview didn't match the output. New "Height (% of video)" input in the compose panel.
+  - Tests: 16 new across `test_compose.py` and `test_video_compose.py`. The 9 existing failures when run on Windows (path separators in mount/export tests, a PTP mock) also fail on unmodified `staging`.
+
 ## 2026-10-08
 
 - [x] **APA firmware host-silence failsafe + `scripts/flash_apa_arduinos.sh`** (branch `fix/apa-firmware-host-failsafe` → `staging`). Both sketches compile for `arduino:avr:uno` (arduino-cli 1.5.2, AVR core 1.8.8). **Not flashed or rig-verified.**

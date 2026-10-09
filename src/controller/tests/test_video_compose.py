@@ -137,3 +137,74 @@ def test_compose_session_video_reports_the_mismatch(tmp_path, stream, monkeypatc
     assert os.path.isfile(out)
     assert any("camB" in w and "remapped proportionally" in w for w in warnings)
     assert not any("camA" in w for w in warnings)
+
+
+# --------------------------------------------------------------------------- #
+# Layout preview: seek-based thumbnail, audio panel height                    #
+# --------------------------------------------------------------------------- #
+
+
+def _write_ramp_video(path: str, n_frames: int, size=(64, 48)) -> bool:
+    """Frame i is a flat grey of brightness 2*i, so a decoded frame says
+    roughly which index it came from."""
+    w, h = size
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
+    if not writer.isOpened():
+        return False
+    for i in range(n_frames):
+        writer.write(np.full((h, w, 3), 2 * i, dtype=np.uint8))
+    writer.release()
+    return True
+
+
+def test_representative_frame_seeks_near_the_requested_time(tmp_path):
+    from src.controller.video_compose import _representative_frame
+
+    vp = str(tmp_path / "cam.mp4")
+    cp = str(tmp_path / "cam_timestamps.csv")
+    if not _write_ramp_video(vp, 90):
+        pytest.skip("cv2.VideoWriter unavailable (no codec)")
+    t0, step = 1_700_000_000_000_000_000, 33_333_333
+    _write_csv(cp, 90, t0_ns=t0, step_ns=step)
+    s = CameraStream(name="cam", video_path=vp, csv_path=cp)
+
+    frame = _representative_frame(s, t0 + 60 * step)
+    # ~frame 60 -> brightness ~120; allow a few frames of seek slop and
+    # codec error, but far from frame 0 (what a failed seek would give).
+    assert abs(float(frame.mean()) - 120) < 16
+
+
+def test_representative_frame_falls_back_to_first_frame(tmp_path):
+    from src.controller.video_compose import _representative_frame
+
+    vp = str(tmp_path / "cam.mp4")
+    cp = str(tmp_path / "cam_timestamps.csv")
+    if not _write_ramp_video(vp, 10):
+        pytest.skip("cv2.VideoWriter unavailable (no codec)")
+    t0, step = 1_700_000_000_000_000_000, 33_333_333
+    _write_csv(cp, 10, t0_ns=t0, step_ns=step)
+    s = CameraStream(name="cam", video_path=vp, csv_path=cp)
+
+    # Far past the end of the video: the seek reads nothing.
+    frame = _representative_frame(s, t0 + 10_000 * step)
+    assert frame is not None and frame.shape[:2] == (48, 64)
+
+
+@pytest.mark.parametrize("mode,height_px,expect_h", [
+    ("panel", 60, 100 + 60),   # stacked below the video
+    ("strip", 30, 100),        # overlaid; frame height unchanged
+    ("strip", 500, 100),       # clamped to the frame
+])
+def test_attach_audio_preview_uses_the_given_height(tmp_path, mode, height_px, expect_h):
+    from src.controller.video_compose import _attach_audio_preview
+
+    png = str(tmp_path / "spec.png")
+    cv2.imwrite(png, np.full((20, 40, 3), 200, dtype=np.uint8))
+    frame = np.zeros((100, 160, 3), dtype=np.uint8)
+    out = _attach_audio_preview(frame, png, mode, height_px)
+    assert out.shape[:2] == (expect_h, 160)
+    if mode == "strip":
+        strip_h = min(height_px, 100)
+        assert out[100 - strip_h:, :].mean() > 150   # spectrogram drawn
+        if strip_h < 100:
+            assert out[: 100 - strip_h, :].mean() == 0  # video untouched

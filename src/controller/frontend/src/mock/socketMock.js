@@ -16,6 +16,8 @@ import { state, reset } from "./fixtures";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
+const APA_TICK_MS = 200;         // the module's arduino_state period
+const APA_LEASE_MS = 1000;       // shock.py SHOCK_LEASE_S
 
 function clone(v) {
   return typeof structuredClone === "function"
@@ -36,6 +38,7 @@ class MockSocket {
     setTimeout(() => this._fire("connect"), 30);
 
     this._healthTimer = setInterval(() => this._tickHealth(), HEALTH_TICK_MS);
+    this._apaTimer = setInterval(() => this._tickApa(), APA_TICK_MS);
 
     // Expose for console poking: __mockSocket.reset(), .state, .fire(...)
     if (typeof window !== "undefined") {
@@ -46,6 +49,9 @@ class MockSocket {
         setModuleStatus: (id, status) => {
           if (state.modules[id]) { state.modules[id].status = status; this._fire("modules_update", clone(state.modules)); }
         },
+        // Stop arduino_state for `ms` (default 5 s) to see the stale display.
+        silenceArduino: (ms = 5000) => { state.apa.silentUntil = Date.now() + ms; },
+        get apa() { return state.apa; },
       };
     }
     console.info("%c[SAVIOUR] mock socket active — no backend. window.__mockSocket to poke it.",
@@ -104,6 +110,45 @@ class MockSocket {
     this._fire("storage_overview", clone(state.storageOverview));
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
     this._fire("system_state", clone(state.systemState));
+  }
+
+  // Simulated APA rig: the shock pulses on/off while activate_shock keeps
+  // renewing its lease (as shock.py does), and the table eases to its RPM.
+  _tickApa() {
+    const mod = Object.values(state.modules).find((m) => m.type === "apa_arduino");
+    if (!mod || mod.status === "OFFLINE") return;
+    const r = state.apa;
+    const t = Date.now();
+    if (r.shockActivated && t > r.holdUntil) r.shockActivated = false;
+    if (r.shockActivated && t >= r.nextPulseAt && r.attempted < r.maxShocks) {
+      r.attempted += 1;
+      r.delivered += 1;
+      r.pulseOnUntil = t + r.timeOnS * 1000;
+      r.nextPulseAt = r.pulseOnUntil + r.timeOffS * 1000;
+    }
+    const pulsing = r.shockActivated && t < r.pulseOnUntil;
+    const target = r.rotating ? r.rpmSetpoint : 0;
+    r.rpm += (target - r.rpm) * 0.08;
+    if (t < r.silentUntil) return;
+    this._fire("arduino_state", {
+      type: "arduino_state",
+      module_id: mod.id,
+      state: {
+        shock_activated: r.shockActivated,
+        shock_being_delivered: pulsing,
+        grid_live: pulsing,
+        attempted_shocks: r.attempted,
+        attempted_shocks_from_arduino: 0,
+        delivered_shocks: r.delivered,
+        max_shocks: r.maxShocks,
+        current_ma: r.currentMa,
+        time_on_s: r.timeOnS,
+        time_off_s: r.timeOffS,
+        rpm: +(r.rpm + (r.rotating ? (Math.random() - 0.5) * 0.06 : 0)).toFixed(2),
+        rotating: r.rotating,
+        speed_error: null,
+      },
+    });
   }
 
   _tickHealth() {
@@ -207,6 +252,23 @@ const ROUTER = {
       m.status = m.ready ? "READY" : "NOT_READY";
     }
     this._fire("modules_update", clone(state.modules));
+  },
+  // Generic module command. Only the APA rig's commands do anything here.
+  send_command(payload) {
+    const r = state.apa;
+    const t = Date.now();
+    switch (payload?.type) {
+      case "activate_shock":
+        if (r.attempted >= r.maxShocks) break;
+        if (!r.shockActivated) { r.shockActivated = true; r.nextPulseAt = t; }
+        r.holdUntil = t + APA_LEASE_MS;
+        break;
+      case "deactivate_shock": r.shockActivated = false; r.pulseOnUntil = 0; break;
+      case "start_motor": r.rotating = true; break;
+      case "stop_motor": r.rotating = false; break;
+      case "reset_pulse_counter": if (!r.shockActivated) { r.attempted = 0; r.delivered = 0; } break;
+      default: console.debug("[mock] send_command ignored:", payload);
+    }
   },
   remove_module(payload) {
     const id = payload?.module_id || payload;

@@ -28,11 +28,8 @@ class BasicController(Controller):
 
         #self.register_callbacks() # If reinstantiating web object make sure to re-register callbacks
 
-    def handle_special_module_status(self, module_id: str, status: str):
-        match status:
-            case _:
-                self.logger.warning(f"No logic for {status} from {module_id}")
-                return False
+    def handle_special_module_status(self, module_id: str, status: dict) -> bool:
+        return False  # no variant-specific types
 
     def configure_controller(self, updated_keys: list[str] | None):
         pass

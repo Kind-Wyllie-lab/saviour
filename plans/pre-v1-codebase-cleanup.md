@@ -64,6 +64,20 @@ builds (if a socket event is removed, confirm no frontend listener).
   truncates underscore session names; `Export._extract_session_from_filename()`
   is the correct one -- route the former through the latter (CLAUDE.md
   low-priority item).
+- **Module status dispatch.** Every status message from a module goes
+  through two `match` blocks that each list types and each have a fallback:
+  `Web.handle_module_status` (browser forwarding, then the variant's
+  `handle_special_module_status`, installed by assigning over the method)
+  and then `Controller.handle_status_update` (its own ~14 types). A new type
+  needs editing in up to three places, and a miss shows up as log noise (the
+  "No logic for" WARNINGs, fixed by an ignore-list; APA's `arduino_state`
+  logged as "Unknown status type" 5/s, fixed 2026-10-12 by having
+  `handle_module_status` return whether anything handled it, and logging an
+  unhandled type once). Replace both with one table, `status_type ->
+  [handlers]`, that the controller, web and each variant register into (a
+  real override or registration call, not method assignment), dispatched in
+  one place, with "unhandled" logged once per type. Characterise first:
+  feed every type each side handles today and assert the same emits/calls.
 
 Accept: existing tests for these paths pass unchanged (add a characterisation
 test first where a path has none); desk check: Settings → NAS probe, and a

@@ -2567,6 +2567,17 @@ class TestKnownStatusTypesDontReachVariantFallback:
         web.handle_module_status("camera_d074", {"type": "variant_specific"})
         web.handle_special_module_status.assert_called_once()
 
+    def test_reports_whether_it_was_handled(self):
+        web, _ = _make_web_with_facade()
+        web.handle_special_module_status = MagicMock(return_value=False)
+        assert web.handle_module_status("m", {"type": "variant_specific"}) is False
+        web.handle_special_module_status = MagicMock(return_value=True)
+        assert web.handle_module_status("m", {"type": "arduino_state"}) is True
+        assert web.handle_module_status("m", {"type": "export_ready"}) is True
+        # The base class hook returns None: not handled.
+        web2, _ = _make_web_with_facade()
+        assert web2.handle_module_status("m", {"type": "variant_specific"}) is False
+
 
 class TestMultiSessionDownload:
     """GET /api/sessions/zip?names=... and the get_sessions_size event,

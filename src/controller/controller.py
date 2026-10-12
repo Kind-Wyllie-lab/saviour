@@ -198,7 +198,12 @@ class Controller(ABC):
             import json
             status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
-            self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it # TODO: remove this
+            # Web layer first: browser forwarding plus the variant's own types
+            # (e.g. APA's arduino_state). Its return value says whether anything
+            # there handled the message, so the fallback below doesn't call a
+            # handled type "unknown". (A single dispatch table replacing these
+            # two match blocks is in plans/pre-v1-codebase-cleanup.md.)
+            web_handled = self.web.handle_module_status(module_id, status_data)
             # Any message from a module proves it is reachable — refresh the
             # heartbeat timer so busy modules (e.g. mid-recording) are not
             # incorrectly declared offline just because they missed a periodic send.
@@ -364,9 +369,23 @@ class Controller(ABC):
                     self.logger.debug(f"{module_id}: {status_type}")
 
                 case _:
-                    self.logger.info(f"Unknown status type from {module_id}: {status_type}")
+                    if not web_handled:
+                        self._log_unhandled_status_type(module_id, status_type)
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
+
+
+    def _log_unhandled_status_type(self, module_id: str, status_type: str) -> None:
+        """Warn once per type: a module sending a type nothing handles usually
+        sends it repeatedly (APA's arduino_state is 5/s), and one line is
+        enough to point at the cause (e.g. a variant mismatch)."""
+        seen = self.__dict__.setdefault("_unhandled_status_types", set())
+        if status_type in seen:
+            return
+        seen.add(status_type)
+        self.logger.warning(
+            "No handler for status type %r (first from %s); further ones are not logged",
+            status_type, module_id)
 
 
     def on_module_status_change(self, module_id: str, status: str):

@@ -4061,8 +4061,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         pass
 
 
-    def handle_module_status(self, module_id, status):
-        """Handle status update from a module and emit to frontend"""
+    def handle_module_status(self, module_id, status) -> bool:
+        """Handle status update from a module and emit to frontend.
+
+        Returns True if this layer (or the variant's
+        handle_special_module_status) handled it, so the controller only logs
+        a type as unhandled when nothing did."""
         try:
             # Ensure status has required fields
             if not isinstance(status, dict):
@@ -4243,11 +4247,10 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     pass
 
                 case _:
-                    was_special_status = self.handle_special_module_status(module_id, status)
-                    if not was_special_status:
-                        pass
+                    return bool(self.handle_special_module_status(module_id, status))
         except Exception as e:
             self.logger.error(f"Error handling module status: {e!s}")
+        return True
 
 
     def _register_rest_facade_routes(self):

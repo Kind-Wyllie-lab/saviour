@@ -13,7 +13,45 @@
 .apa-command-buttons {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* Shocker / Table / housekeeping, each a small captioned stack. */
+.apa-command-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apa-command-group + .apa-command-group {
+  border-top: 1px solid var(--border-color);
+  padding-top: 10px;
+}
+
+.apa-command-group-label {
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+/* Start | Stop side by side, read as a pair. */
+.apa-command-row {
+  display: flex;
+  gap: 6px;
+}
+
+.apa-command-row > button {
+  flex: 1;
+}
+
+/* Housekeeping, not part of running an experiment: outline, not solid. */
+.apa-commands .apa-btn-secondary {
+  background-color: transparent;
+  color: var(--accent-color);
+  box-shadow: inset 0 0 0 1px var(--accent-color);
+  font-weight: 600;
 }
 
 .apa-commands button:disabled {
@@ -35,9 +73,20 @@
   box-sizing: border-box;
 }
 
-.apa-commands .hold-to-shock:hover:active:enabled {
-  background-color: grey;
-  transition: ease;
+/* Held down, by spacebar, mouse or touch (hold-to-shock--pressed is set
+   from the shared hold state, so it shows for the spacebar too). */
+/* The button that shocks the animal: the most prominent one when it's live. */
+.apa-commands .hold-to-shock {
+  padding: 16px 12px;
+  font-size: 1.1em;
+  line-height: 1.3;
+  transition: background-color 60ms ease, transform 60ms ease, box-shadow 60ms ease;
+}
+
+.apa-commands .hold-to-shock--pressed:enabled {
+  background-color: color-mix(in srgb, var(--accent-color) 65%, black);
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45);
+  transform: translateY(2px);
 }
 
 .apa-state--grid-live {
@@ -76,30 +125,31 @@
   background-color: #a93226;
 }
 
-.apa-end-session-confirm {
+/* Inline "are you sure?" (End Session, Reset Pulse Counter). */
+.apa-confirm {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 0.85em;
 }
 
-.apa-end-session-confirm span {
+.apa-confirm span {
   opacity: 0.85;
   overflow-wrap: break-word;
   word-break: break-word;
 }
 
-.apa-end-session-confirm-btns {
+.apa-confirm-btns {
   display: flex;
   gap: 6px;
 }
 
-.apa-commands .apa-end-session-yes {
+.apa-commands .apa-confirm-yes {
   background-color: #c0392b;
   flex: 1;
 }
 
-.apa-commands .apa-end-session-cancel {
+.apa-commands .apa-confirm-cancel {
   background-color: var(--border-color);
   color: var(--text-color);
   flex: 1;
@@ -161,6 +211,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .apa-shock-banner--delivering { animation: none; }
+  .apa-commands .hold-to-shock { transition: none; }
 }
 
 .apa-state-grid {

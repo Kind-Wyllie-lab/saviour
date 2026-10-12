@@ -26,6 +26,15 @@ function setSharedArmed(next) {
 // when the refreshes stop (SHOCK_LEASE_S in shock.py), so a socket drop
 // mid-hold can't leave it on even though the release never arrives.
 const shockHold = { holding: false, refresh: null };
+// Subscribable like the arm state, so every mounted copy shows the button
+// pressed however the hold started (spacebar, mouse, touch).
+const holdSubscribers = new Set();
+const subscribeHold = (fn) => { holdSubscribers.add(fn); return () => holdSubscribers.delete(fn); };
+const getHolding = () => shockHold.holding;
+function setHolding(next) {
+    shockHold.holding = next;
+    holdSubscribers.forEach((fn) => fn());
+}
 const SHOCK_REFRESH_MS = 250;
 
 // The module sends arduino_state every 0.2 s; after this long without one the
@@ -44,6 +53,7 @@ function APACommands( {modules} ) {
     const { sessionList } = useSessions();
     const activeSessions = sessionList.filter(s => s.state === "active" || s.state === "error");
     const [confirmStop, setConfirmStop] = useState(null); // session_name | null
+    const [confirmReset, setConfirmReset] = useState(false);
 
     const [arduinoState, setArduinoState] = useState(null);
     const [lastStateAt, setLastStateAt] = useState(null);
@@ -52,6 +62,7 @@ function APACommands( {modules} ) {
     // shock_being_delivered covers a missed event.
     const [deliveringEvent, setDeliveringEvent] = useState(false);
     const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
+    const holding = useSyncExternalStore(subscribeHold, getHolding);
     const loggedIn = useIsLoggedIn();
     // Throttle rapid command emissions — 200 ms minimum between same command type
     const lastCmdTime = useRef({});
@@ -65,11 +76,30 @@ function APACommands( {modules} ) {
     const live = arduinoState && !stale ? arduinoState : null;
     const delivering = !!live && (live.shock_being_delivered || deliveringEvent);
     const capReached = !!live && live.max_shocks != null && live.attempted_shocks >= live.max_shocks;
+    const sessionRunning = activeSessions.length > 0;
+
+    // Why each button is disabled (null = enabled), shown as its tooltip.
+    // Stop Motor is never disabled by table state: the state may be stale or
+    // wrong, and a stop must always get through.
+    const notAllowed = !loggedIn ? "Login required for this action"
+        : !moduleOnline ? "APA Arduino module offline" : null;
+    const holdReason = notAllowed
+        ?? (!shockerArmed ? "Arm the shocker first"
+            : capReached ? "Shock limit reached: reset the counter between sessions" : null);
+    const startReason = notAllowed ?? (live?.rotating ? "Table already rotating" : null);
+    const resetReason = notAllowed
+        ?? (sessionRunning ? "Can't reset the counter during a session"
+            : live?.shock_activated ? "Can't reset the counter while a shock sequence is active" : null);
 
     // Logged out or module gone: nothing to shock with, so don't stay armed.
     useEffect(() => {
         if (!canControl) setSharedArmed(false);
     }, [canControl]);
+
+    // A confirm left open must not outlive the conditions that allowed it.
+    useEffect(() => {
+        if (resetReason) setConfirmReset(false);
+    }, [resetReason]);
 
     useEffect(() => {
         const id = setInterval(() => setNow(Date.now()), 500);
@@ -99,7 +129,11 @@ function APACommands( {modules} ) {
     // Latest module id for the window listeners, which are bound once (see
     // below) rather than re-bound on every render.
     const moduleIdRef = useRef(apaModule?.id);
-    useEffect(() => { moduleIdRef.current = apaModule?.id; });
+    const capReachedRef = useRef(capReached);
+    useEffect(() => {
+        moduleIdRef.current = apaModule?.id;
+        capReachedRef.current = capReached;
+    });
 
     const emitCommand = (type, { throttle = true } = {}) => {
         const now = Date.now();
@@ -117,8 +151,9 @@ function APACommands( {modules} ) {
     const resetPulses     = () => emitCommand("reset_pulse_counter");
 
     const pressShock = () => {
-        if (shockHold.holding || !getArmed()) return;
-        shockHold.holding = true;
+        // Same rule as the button: no new hold once the cap is reached.
+        if (shockHold.holding || !getArmed() || capReachedRef.current) return;
+        setHolding(true);
         activateShock();
         shockHold.refresh = setInterval(activateShock, SHOCK_REFRESH_MS);
     };
@@ -127,7 +162,7 @@ function APACommands( {modules} ) {
     // losing focus can't strand the shock on.
     const releaseShock = () => {
         if (!shockHold.holding) return;
-        shockHold.holding = false;
+        setHolding(false);
         clearInterval(shockHold.refresh);
         shockHold.refresh = null;
         deactivateShock();
@@ -237,66 +272,107 @@ function APACommands( {modules} ) {
             {!loggedIn && apaModule && (
                 <p className="apa-state-hint">Log in to arm the shocker or drive the table.</p>
             )}
-            <div className = "apa-command-buttons">
-                <button
-                    className={`toggle-shocker${shockerArmed ? " toggle-shocker--armed" : ""}`}
-                    onClick={toggleShockerArmed}
-                    disabled={!canControl && !shockerArmed}
-                    title={!loggedIn ? "Login required for this action" : undefined}
-                >
-                    {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
-                </button>
-                {/* Pointer events cover mouse, touch and pen; touch-action
-                    (CSS) stops a held finger scrolling the page instead. */}
-                <button
-                    className="hold-to-shock"
-                    onPointerDown={(e) => {
-                        if (e.pointerType === "mouse" && e.button !== 0) return;
-                        pressShock();
-                    }}
-                    onPointerUp={releaseShock}
-                    onPointerLeave={releaseShock}
-                    onPointerCancel={releaseShock}
-                    onContextMenu={(e) => e.preventDefault()}
-                    disabled={!shockerArmed || !canControl}
-                >
-                    Spacebar<br></br>
-                    Hold to Shock
-                </button>
-                <button
-                    className="start_motor"
-                    onClick={startMotor}
-                    disabled={!canControl}>
-                    Start Motor
-                </button>
-                <button
-                    className="stop_motor"
-                    onClick={stopMotor}
-                    disabled={!canControl}>
-                    Stop Motor
-                </button>
-                <button
-                    className="reset_pulse_counter"
-                    onClick={resetPulses}
-                    disabled={!canControl}>
-                    Reset Pulse Counter
-                </button>
+            <div className="apa-command-buttons">
+                <div className="apa-command-group" role="group" aria-labelledby="apa-group-shocker">
+                    <span className="apa-command-group-label" id="apa-group-shocker">Shocker</span>
+                    <button
+                        className={`toggle-shocker${shockerArmed ? " toggle-shocker--armed" : ""}`}
+                        onClick={toggleShockerArmed}
+                        disabled={!canControl && !shockerArmed}
+                        title={!canControl && !shockerArmed ? notAllowed : undefined}
+                    >
+                        {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
+                    </button>
+                    {/* Pointer events cover mouse, touch and pen; touch-action
+                        (CSS) stops a held finger scrolling the page instead. */}
+                    <button
+                        className={`hold-to-shock${holding ? " hold-to-shock--pressed" : ""}`}
+                        aria-pressed={holding}
+                        onPointerDown={(e) => {
+                            if (e.pointerType === "mouse" && e.button !== 0) return;
+                            pressShock();
+                        }}
+                        onPointerUp={releaseShock}
+                        onPointerLeave={releaseShock}
+                        onPointerCancel={releaseShock}
+                        onContextMenu={(e) => e.preventDefault()}
+                        disabled={!!holdReason}
+                        title={holdReason ?? undefined}
+                    >
+                        Spacebar<br></br>
+                        Hold to Shock
+                    </button>
+                </div>
+
+                <div className="apa-command-group" role="group" aria-labelledby="apa-group-table">
+                    <span className="apa-command-group-label" id="apa-group-table">Table</span>
+                    <div className="apa-command-row">
+                        <button
+                            className="start_motor"
+                            onClick={startMotor}
+                            disabled={!!startReason}
+                            title={startReason ?? undefined}>
+                            Start Motor
+                        </button>
+                        <button
+                            className="stop_motor"
+                            onClick={stopMotor}
+                            disabled={!canControl}
+                            title={notAllowed ?? undefined}>
+                            Stop Motor
+                        </button>
+                    </div>
+                </div>
+
+                <div className="apa-command-group">
+                    {confirmReset ? (
+                        <div className="apa-confirm">
+                            <span>
+                                Reset the pulse counter
+                                {arduinoState?.attempted_shocks != null &&
+                                    ` (${arduinoState.attempted_shocks} attempted)`}?
+                            </span>
+                            <div className="apa-confirm-btns">
+                                <button
+                                    className="apa-confirm-yes"
+                                    onClick={() => { resetPulses(); setConfirmReset(false); }}
+                                >
+                                    Yes, reset
+                                </button>
+                                <button
+                                    className="apa-confirm-cancel"
+                                    onClick={() => setConfirmReset(false)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <button
+                            className="reset_pulse_counter apa-btn-secondary"
+                            onClick={() => setConfirmReset(true)}
+                            disabled={!!resetReason}
+                            title={resetReason ?? undefined}>
+                            Reset Pulse Counter
+                        </button>
+                    )}
+                </div>
 
                 {activeSessions.length > 0 && (
                     <div className="apa-end-session-section">
                         {activeSessions.map(s => (
                             confirmStop === s.session_name ? (
-                                <div key={s.session_name} className="apa-end-session-confirm">
+                                <div key={s.session_name} className="apa-confirm">
                                     <span>End &ldquo;{s.session_name}&rdquo;?</span>
-                                    <div className="apa-end-session-confirm-btns">
+                                    <div className="apa-confirm-btns">
                                         <button
-                                            className="apa-end-session-yes"
+                                            className="apa-confirm-yes"
                                             onClick={() => { socket.emit("stop_session", { session_name: s.session_name }); setConfirmStop(null); }}
                                         >
                                             Yes, end
                                         </button>
                                         <button
-                                            className="apa-end-session-cancel"
+                                            className="apa-confirm-cancel"
                                             onClick={() => setConfirmStop(null)}
                                         >
                                             Cancel

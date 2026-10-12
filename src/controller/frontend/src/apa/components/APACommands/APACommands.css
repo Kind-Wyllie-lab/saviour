@@ -77,6 +77,7 @@
    from the shared hold state, so it shows for the spacebar too). */
 /* The button that shocks the animal: the most prominent one when it's live. */
 .apa-commands .hold-to-shock {
+  background-color: #c0392b;
   padding: 16px 12px;
   font-size: 1.1em;
   line-height: 1.3;
@@ -84,7 +85,7 @@
 }
 
 .apa-commands .hold-to-shock--pressed:enabled {
-  background-color: color-mix(in srgb, var(--accent-color) 65%, black);
+  background-color: color-mix(in srgb, #c0392b 65%, black);
   box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45);
   transform: translateY(2px);
 }
@@ -235,8 +236,21 @@
   opacity: 0.45;
 }
 
-.apa-commands .toggle-shocker--armed {
-  background-color: #c0392b;
+/* Armed: amber (a warning about the current state), not red (red means
+   the shock itself, or an action that can't be undone). */
+.apa-commands--armed {
+  border-color: #d4820a;
+  box-shadow: 0 0 0 2px #d4820a;
+}
+
+.apa-armed-notice {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: #d4820a;
+  color: white;
+  font-weight: 700;
+  text-align: center;
 }
 
 .apa-commands .hold-to-shock {

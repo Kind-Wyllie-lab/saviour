@@ -92,10 +92,12 @@ const unsigned long PID_INTERVAL = 200; // PID update interval (5Hz, the encoder
 // known: plain PI from zero, which takes minutes to settle.
 double feedforward = 0;
 
-// Soft start: the setpoint the PID chases ramps from 0 over SOFT_START_MS, and
-// the command applied to the motor moves at most SLEW_UNITS_PER_S, in small
-// steps every SLEW_INTERVAL. A start or a PID correction never jerks the table.
-const unsigned long SOFT_START_MS = 2000;
+// Soft start: the setpoint the PID chases (and the feedforward) follow an
+// S-curve from 0 over SOFT_START_MS, so acceleration builds and fades gently
+// rather than kicking at either end; the command applied to the motor moves
+// at most SLEW_UNITS_PER_S, in small steps every SLEW_INTERVAL. A start or a
+// PID correction never jerks the table (and the animal on it).
+const unsigned long SOFT_START_MS = 10000;
 const double SLEW_UNITS_PER_S = 100;
 const unsigned long SLEW_INTERVAL = 20;
 unsigned long motorStartMs = 0;
@@ -235,8 +237,10 @@ void applyPID() {
     return;
   }
   
-  // Chase a setpoint that ramps up over the soft start
-  double ramp = min(1.0, (millis() - motorStartMs) / (double)SOFT_START_MS);
+  // Chase a setpoint that ramps up over the soft start (smoothstep: zero
+  // acceleration at both ends)
+  double t = min(1.0, (millis() - motorStartMs) / (double)SOFT_START_MS);
+  double ramp = t * t * (3.0 - 2.0 * t);
   rpmError = rpmSetpoint * ramp - rpmCurrent;
 
   // Calculate time delta for PID calculations using dedicated timing

@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-12
+
+- [x] **Save button in every config card's header** (branch `feat/header-save-button` → `staging`). Lint and all five frontend builds clean; not yet tried in a browser. A compact "Save" sits left of the actions menu on every config card (the shared `ConfigCardShell`, so camera / APA camera / microphone / generic, plus the TTL and controller cards), so a long card can be saved without scrolling to the footer. Same action and the same enable rule as the footer's "Save Config" (`saveButtonState` in `ConfigActionBar.jsx`): off with no unsaved changes, when logged out, or when the card disables saving; highlighted while there are unsaved changes.
+
 ## 2026-10-09
 
 - [x] **Crop editor rework: no stretching, clear restores the original view, aspect presets, draggable crop** (branch `fix/crop-editor` → `staging`; `plans/field-install-feedback-2026-10.md` Phase B, items 3-5). Tests, ruff, lint and all five frontend builds clean. **Hardware-verified 2026-10-12** on `hailo_camera_3606` over the REST API (editing view, close-without-save, 4:3 whole view → 1632×1222, 1:1 → 992×992 undistorted, Clear = original view, correct with `hflip`); the editor UI itself not yet tried in a browser. Results table in the plan.

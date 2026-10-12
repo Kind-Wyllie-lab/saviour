@@ -15,7 +15,6 @@ class LoomController(Controller):
     def handle_special_module_status(self, module_id: str, status: str):
         match status:
             case _:
-                self.logger.warning(f"No logic for {status} from {module_id}")
                 return False
 
     def configure_controller(self, updated_keys: list[str] | None):

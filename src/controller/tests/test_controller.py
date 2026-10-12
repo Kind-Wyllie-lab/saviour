@@ -225,3 +225,34 @@ class TestRecordingStoppedReconcilesFramesync:
         Controller.handle_status_update(ctx, "status/hailo_camera_3606", json.dumps(
             {"type": "recording_stopped", "status": "success", "reason": "operator"}))
         ctx.facade.reconcile_framesync.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# handle_status_update -- unhandled status types
+# ---------------------------------------------------------------------------
+
+class TestUnhandledStatusTypeLogging:
+    def _send(self, ctx, status_type, web_handled):
+        import json
+        ctx.modules.is_removed.return_value = False
+        ctx.web.handle_module_status.return_value = web_handled
+        Controller.handle_status_update(
+            ctx, "status/apa_arduino_1", json.dumps({"type": status_type}))
+
+    def test_type_handled_by_the_web_layer_is_not_logged(self):
+        ctx = _Ctx()
+        ctx._log_unhandled_status_type = MagicMock()
+        self._send(ctx, "arduino_state", web_handled=True)
+        ctx._log_unhandled_status_type.assert_not_called()
+
+    def test_unhandled_type_is_logged(self):
+        ctx = _Ctx()
+        ctx._log_unhandled_status_type = MagicMock()
+        self._send(ctx, "mystery", web_handled=False)
+        ctx._log_unhandled_status_type.assert_called_once_with("apa_arduino_1", "mystery")
+
+    def test_logged_once_per_type(self):
+        ctx = _Ctx()
+        for t in ("a", "a", "a", "b"):
+            Controller._log_unhandled_status_type(ctx, "m1", t)
+        assert ctx.logger.warning.call_count == 2

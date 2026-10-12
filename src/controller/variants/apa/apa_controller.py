@@ -46,7 +46,6 @@ class APAController(Controller):
                 self.web.socketio.emit("zone_exited", status)
                 return True
             case _:
-                self.logger.warning(f"APA controller has no logic for {status.get('type')} from {module_id}")
                 return False
 
 if __name__ == "__main__":

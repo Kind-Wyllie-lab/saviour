@@ -54,9 +54,6 @@ class HabitatController(Controller):
     def handle_special_module_status(self, module_id: str, status: dict):
         match status.get('type'):
             case _:
-                self.logger.warning(
-                    f"Habitat controller has no logic for {status.get('type')} from {module_id}"
-                )
                 return False
 
 

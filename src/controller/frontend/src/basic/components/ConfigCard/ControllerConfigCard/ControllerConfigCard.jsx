@@ -6,7 +6,7 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "./ExportConfigSection";
-import ConfigActionBar from "../ConfigActionBar";
+import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
 import { listThemes, themeTokens, DEFAULT_THEME_ID, BUILTIN_THEMES } from "/src/basic/utils/themes";
@@ -122,6 +122,7 @@ function ControllerConfigCard() {
         <div className="card-header-top">
           <h3>Controller Config</h3>
           <div className="card-header-actions">
+            <HeaderSaveButton onSave={handleSave} isDirty={isDirty} />
             <ControllerActionsMenu />
           </div>
         </div>

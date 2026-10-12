@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import socket from "../../../socket";
 import useSessions from "/src/hooks/useSessions";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 
 // Styling and components
 import "./APACommands.css";
@@ -9,18 +10,15 @@ import "./APACommands.css";
 // overlay mounts a second copy while the dashboard's stays mounted beneath it,
 // and both listen for the spacebar. Per-instance state let a disarm in one
 // leave the other armed, and one keypress send two activates.
-const ARMED_KEY = "apa_shocker_armed";
+// Deliberately not persisted: a reload (often a different operator) starts
+// disarmed.
 let sharedArmed = false;
-try {
-    // Persist arm state across page reloads within the same browser session
-    sharedArmed = sessionStorage.getItem(ARMED_KEY) === "1";
-} catch { /* storage unavailable: start disarmed */ }
 const armedSubscribers = new Set();
 const subscribeArmed = (fn) => { armedSubscribers.add(fn); return () => armedSubscribers.delete(fn); };
 const getArmed = () => sharedArmed;
 function setSharedArmed(next) {
+    if (sharedArmed === next) return;
     sharedArmed = next;
-    try { sessionStorage.setItem(ARMED_KEY, next ? "1" : "0"); } catch { /* ignore */ }
     armedSubscribers.forEach((fn) => fn());
 }
 // True while a spacebar or hold-button press is holding the shock on.
@@ -29,6 +27,13 @@ function setSharedArmed(next) {
 // mid-hold can't leave it on even though the release never arrives.
 const shockHold = { holding: false, refresh: null };
 const SHOCK_REFRESH_MS = 250;
+
+// The module sends arduino_state every 0.2 s; after this long without one the
+// panel stops presenting the last values as current.
+const STATE_STALE_MS = 2000;
+
+const fmt = (value, digits, unit) =>
+    typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(digits)} ${unit}` : "?";
 
 // A space typed into a form field is text, not the shock key.
 const isTextEntry = (el) =>
@@ -40,20 +45,45 @@ function APACommands( {modules} ) {
     const activeSessions = sessionList.filter(s => s.state === "active" || s.state === "error");
     const [confirmStop, setConfirmStop] = useState(null); // session_name | null
 
-    const [, setShockState] = useState(null); // display is commented out below
     const [arduinoState, setArduinoState] = useState(null);
+    const [lastStateAt, setLastStateAt] = useState(null);
+    const [now, setNow] = useState(() => Date.now());
+    // From the shock_*_being_delivered events; the state message's
+    // shock_being_delivered covers a missed event.
+    const [deliveringEvent, setDeliveringEvent] = useState(false);
     const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
+    const loggedIn = useIsLoggedIn();
     // Throttle rapid command emissions — 200 ms minimum between same command type
     const lastCmdTime = useRef({});
 
     const apaModule = modules.filter((m) => m.type === "apa_arduino")[0];
-    // apaModule ? console.log("APA Module Connected") : console.log("No APA module connected");
-    // apaModule ? console.log(apaModule.ip) : null;
+    const moduleOnline = !!apaModule && apaModule.online !== false && apaModule.status !== "OFFLINE";
+    const canControl = loggedIn && moduleOnline;
+
+    const stateAgeMs = lastStateAt == null ? null : now - lastStateAt;
+    const stale = stateAgeMs != null && stateAgeMs > STATE_STALE_MS;
+    const live = arduinoState && !stale ? arduinoState : null;
+    const delivering = !!live && (live.shock_being_delivered || deliveringEvent);
+    const capReached = !!live && live.max_shocks != null && live.attempted_shocks >= live.max_shocks;
+
+    // Logged out or module gone: nothing to shock with, so don't stay armed.
+    useEffect(() => {
+        if (!canControl) setSharedArmed(false);
+    }, [canControl]);
 
     useEffect(() => {
-        function onShockStartBeingDelivered() { setShockState("Started shocking"); }
-        function onShockStopBeingDelivered()  { setShockState("Stopped shocking"); }
-        function onArduinoState(data)          { setArduinoState(data.state); }
+        const id = setInterval(() => setNow(Date.now()), 500);
+        return () => clearInterval(id);
+    }, []);
+
+    useEffect(() => {
+        function onShockStartBeingDelivered() { setDeliveringEvent(true); }
+        function onShockStopBeingDelivered()  { setDeliveringEvent(false); }
+        function onArduinoState(data) {
+            setArduinoState(data.state);
+            setLastStateAt(Date.now());
+            if (!data.state?.shock_activated) setDeliveringEvent(false);
+        }
 
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);
         socket.on('shock_stopped_being_delivered', onShockStopBeingDelivered);
@@ -150,83 +180,104 @@ function APACommands( {modules} ) {
     return (
         <div className="apa-commands">
             <h2>APA Commands</h2>
-            {/* {shockState ? (
-                <h3>Shock state: {shockState}</h3>
-            ) : (
-                <></>
-            )} */}
             <div className="apa-state">
-                {arduinoState? (
-                    <div>
-                        {arduinoState.shock_activated? (
-                            <p className="apa-state--shock-active">Shock Sequence Active</p>
-                        ): (
-                            <p>Shock Sequence Inactive</p>
+                {!apaModule ? (
+                    <p className="apa-state-alert">No APA Arduino module connected</p>
+                ) : !moduleOnline ? (
+                    <p className="apa-state-alert">APA Arduino module offline</p>
+                ) : !arduinoState ? (
+                    <div className="apa-state-alert">
+                        <p>Arduino not reporting state</p>
+                        <p className="apa-state-hint">
+                            Check the module&apos;s hardware fault on the System page
+                            (both Arduinos must be connected), and that the controller
+                            runs the APA variant.
+                        </p>
+                    </div>
+                ) : (
+                    <>
+                        {stale && (
+                            <p className="apa-state-alert">
+                                No update for {Math.floor(stateAgeMs / 1000)} s: values below are out of date
+                            </p>
                         )}
-                        {arduinoState.grid_live? (
-                            <p className="apa-state--grid-live">Grid Live</p>
-                        ) : (
-                            <p>Grid Not Live</p>
+                        {live && (
+                            <div className={`apa-shock-banner${delivering ? " apa-shock-banner--delivering" : live.shock_activated ? " apa-shock-banner--active" : ""}`}>
+                                {delivering ? "Shock being delivered" : live.shock_activated ? "Shock sequence active" : "No shock"}
+                            </div>
                         )}
-                        <p>Attempted Shocks {arduinoState.attempted_shocks}</p>
-                        <p>Delivered Shocks {arduinoState.delivered_shocks}</p>
-                        <p>Table RPM {arduinoState.rpm}</p>
-                        {arduinoState.rotating? (
-                            <p>Rotating</p>
-                        ) : (
-                            <p>Stationary</p>
-                        )}
+                        <dl className={`apa-state-grid${stale ? " apa-state-grid--stale" : ""}`}>
+                            <dt>Current</dt>
+                            <dd>{fmt(arduinoState.current_ma, 2, "mA")}</dd>
+                            <dt>On / off</dt>
+                            <dd>{fmt(arduinoState.time_on_s, 2, "s")} / {fmt(arduinoState.time_off_s, 2, "s")}</dd>
+                            <dt>Shocks</dt>
+                            <dd className={capReached ? "apa-state-warning" : undefined}>
+                                {arduinoState.attempted_shocks}
+                                {arduinoState.max_shocks != null && ` / ${arduinoState.max_shocks}`} attempted,{" "}
+                                {arduinoState.delivered_shocks} delivered
+                                {capReached && " (limit reached)"}
+                            </dd>
+                            <dt>Grid</dt>
+                            <dd className={arduinoState.grid_live ? "apa-state--grid-live" : undefined}>
+                                {arduinoState.grid_live ? "Live" : "Not live"}
+                            </dd>
+                            <dt>Table</dt>
+                            <dd>
+                                {arduinoState.rotating ? "Rotating" : "Stationary"}, {fmt(arduinoState.rpm, 2, "rpm")}
+                            </dd>
+                        </dl>
                         {arduinoState.speed_error && (
                             <p className="apa-state-warning">⚠ Motor {arduinoState.speed_error}</p>
                         )}
-                    </div>
-                ) : (
-                    <p>Arduino not reporting state</p>
+                    </>
                 )}
             </div>
+            {!loggedIn && apaModule && (
+                <p className="apa-state-hint">Log in to arm the shocker or drive the table.</p>
+            )}
             <div className = "apa-command-buttons">
-                <button className="toggle-shocker" onClick={toggleShockerArmed} disabled={!apaModule}>
+                <button
+                    className={`toggle-shocker${shockerArmed ? " toggle-shocker--armed" : ""}`}
+                    onClick={toggleShockerArmed}
+                    disabled={!canControl && !shockerArmed}
+                    title={!loggedIn ? "Login required for this action" : undefined}
+                >
                     {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
                 </button>
+                {/* Pointer events cover mouse, touch and pen; touch-action
+                    (CSS) stops a held finger scrolling the page instead. */}
                 <button
                     className="hold-to-shock"
-                    onMouseDown={pressShock}
-                    onMouseUp={releaseShock}
-                    onMouseLeave={releaseShock}
-                    // disabled={!apaModule}
-                    disabled={!shockerArmed}
-                    > 
+                    onPointerDown={(e) => {
+                        if (e.pointerType === "mouse" && e.button !== 0) return;
+                        pressShock();
+                    }}
+                    onPointerUp={releaseShock}
+                    onPointerLeave={releaseShock}
+                    onPointerCancel={releaseShock}
+                    onContextMenu={(e) => e.preventDefault()}
+                    disabled={!shockerArmed || !canControl}
+                >
                     Spacebar<br></br>
                     Hold to Shock
                 </button>
-                {/* <button
-                    className="activate-shock"
-                    onClick={activateShock}
-                    disabled={!apaModule}>
-                    Activate Shock
-                </button>
-                <button
-                    className="deactivate-shock"
-                    onClick={deactivateShock}
-                    disabled={!apaModule}>
-                    Deactivate Shock
-                </button> */}
                 <button
                     className="start_motor"
                     onClick={startMotor}
-                    disabled={!apaModule}>
+                    disabled={!canControl}>
                     Start Motor
                 </button>
                 <button
                     className="stop_motor"
                     onClick={stopMotor}
-                    disabled={!apaModule}>
+                    disabled={!canControl}>
                     Stop Motor
                 </button>
                 <button
                     className="reset_pulse_counter"
                     onClick={resetPulses}
-                    disabled={!apaModule}>
+                    disabled={!canControl}>
                     Reset Pulse Counter
                 </button>
 

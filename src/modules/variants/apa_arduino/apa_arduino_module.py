@@ -31,6 +31,11 @@ from modules.module import Module, check, command
 from src.shared.supervised import supervise
 
 
+def _ms_to_s(ms: float | None) -> float | None:
+    """The shock Arduino reports pulse times in ms, -1 before they're set."""
+    return ms / 1000 if ms is not None and ms >= 0 else None
+
+
 class APAModule(Module):
     def __init__(self, module_type="apa_arduino"):
         super().__init__(module_type)
@@ -414,12 +419,20 @@ class APAModule(Module):
             attempted = self.shock.attempted_shocks
             attempted_arduino = self.shock.attempted_shocks_from_arduino
             delivered = self.shock.delivered_shocks
+        shock = self.shock
         state = {
-            "shock_activated": self.shock.shock_activated,
-            "grid_live": self.shock.grid_is_live,
+            "shock_activated": shock.shock_activated,
+            "shock_being_delivered": shock.shock_being_delivered,
+            "grid_live": shock.grid_is_live,
             "attempted_shocks": attempted,
             "attempted_shocks_from_arduino": attempted_arduino,
             "delivered_shocks": delivered,
+            "max_shocks": shock._max_shocks,
+            # As the shock Arduino reports them (None until its first state),
+            # so the operator sees what will be delivered, not just the config.
+            "current_ma": shock.current_from_arduino,
+            "time_on_s": _ms_to_s(shock.time_on_from_arduino),
+            "time_off_s": _ms_to_s(shock.time_off_from_arduino),
             "rpm": self.motor.speed_from_arduino,
             "rotating": self.motor.rotating,
             "speed_error": self.motor.speed_error,

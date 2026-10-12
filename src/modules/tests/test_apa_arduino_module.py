@@ -370,3 +370,38 @@ class TestDiscoveryReportsWhyArduinosAreMissing:
                            MagicMock(return_value=probe))
         m.cleanup()
         probe.stop.assert_called_once()
+
+
+class TestArduinoStateMessage:
+    def _shock(self, **kw):
+        shock = MagicMock(
+            shock_activated=False, shock_being_delivered=True, grid_is_live=True,
+            attempted_shocks=3, attempted_shocks_from_arduino=3, delivered_shocks=2,
+            _max_shocks=50, current_from_arduino=0.5,
+            time_on_from_arduino=500.0, time_off_from_arduino=1000.0,
+            _shock_lock=threading.Lock())
+        for k, v in kw.items():
+            setattr(shock, k, v)
+        return shock
+
+    def _state(self, shock):
+        m = _make_apa(shock=shock, motor=MagicMock(speed_from_arduino=2.0, rotating=True,
+                                                   speed_error=None))
+        m.send_controller_arduino_state()
+        return m.communication.send_status.call_args.args[0]["state"]
+
+    def test_reports_shock_settings_as_the_arduino_has_them(self):
+        state = self._state(self._shock())
+        assert state["current_ma"] == 0.5
+        assert state["time_on_s"] == 0.5
+        assert state["time_off_s"] == 1.0
+        assert state["max_shocks"] == 50
+        assert state["shock_being_delivered"] is True
+
+    def test_unset_times_are_none(self):
+        state = self._state(self._shock(current_from_arduino=None,
+                                        time_on_from_arduino=-1.0,
+                                        time_off_from_arduino=None))
+        assert state["current_ma"] is None
+        assert state["time_on_s"] is None
+        assert state["time_off_s"] is None

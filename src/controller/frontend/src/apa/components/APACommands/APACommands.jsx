@@ -213,8 +213,15 @@ function APACommands( {modules} ) {
     }, []);
 
     return (
-        <div className="apa-commands">
+        <div className={`apa-commands${shockerArmed ? " apa-commands--armed" : ""}`}>
             <h2>APA Commands</h2>
+            {/* The armed state lives here, not in the Disarm button's colour:
+                disarming is the safe action, so that button stays plain. */}
+            {shockerArmed && (
+                <div className="apa-armed-notice" role="status">
+                    ARMED: Spacebar delivers shock
+                </div>
+            )}
             <div className="apa-state">
                 {!apaModule ? (
                     <p className="apa-state-alert">No APA Arduino module connected</p>

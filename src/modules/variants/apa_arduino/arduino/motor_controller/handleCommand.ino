@@ -30,25 +30,31 @@ void handleCommand(String command, String param) {
       if (rpmSetpoint == 0) {
         // Disable PID and stop motor
         pidEnabled = false;
+        motorRunning = false;
         setSpeedSmoothly(0);
+        resetMotorOutput();
       }
     }
   }
 
   else if (command == MSG_START_MOTOR) {
-    if (rpmSetpoint > 0) {
+    if (motorRunning && pidEnabled) {
+      // Already running (e.g. a session start after a manual start): a
+      // restart would drop it back into the soft start.
+    } else if (rpmSetpoint > 0) {
       // Enable PID control with new setpoint
       pidEnabled = true;
       motorRunning = true;
       // Re-enable motor drivers (they may have been disabled during stop)
       md.enableDrivers();
       delay(1); // Required delay when bringing drivers out of sleep mode
-      // Only reset PID terms if this is a new setpoint (not just re-enabling)
-      if (abs(rpmSetpoint - rpmCurrent) > 0.5) {
-        integral = 0;
-        rpmErrorLast = 0;
-        lastPidTime = millis(); // Reset PID timing
-      }
+      // Fresh PID state every start: the feedforward carries what was
+      // learned, and a stale integral would only add to it.
+      integral = 0;
+      rpmErrorLast = 0;
+      lastPidTime = millis(); // Reset PID timing
+      motorStartMs = millis();
+      resetMotorOutput();
     } else {
       sendMessage(MSG_ERROR, "rpmSetpoint=0");
     }
@@ -58,6 +64,12 @@ void handleCommand(String command, String param) {
     pidEnabled = false;
     motorRunning = false;
     setSpeedSmoothly(0);
+    resetMotorOutput();
+  }
+
+  else if (command == MSG_SET_FEEDFORWARD) {
+    // Motor command that held this setpoint last time (motor.py learns it)
+    feedforward = constrain(param.toDouble(), 0, PID_SPEED_LIMIT);
   }
 
 
@@ -117,6 +129,7 @@ void handleCommand(String command, String param) {
       int manualSpeed = param.toInt();
       pidEnabled = false;
       setSpeedSmoothly(manualSpeed);
+      resetMotorOutput();
       String responseMsg = "Manual motor speed set to: " + String(manualSpeed);
       sendMessage(MSG_SUCCESS,  responseMsg.c_str());
     }

@@ -224,7 +224,8 @@ function APACommands( {modules} ) {
                             </dd>
                             <dt>Table</dt>
                             <dd>
-                                {arduinoState.rotating ? "Rotating" : "Stationary"}, {fmt(arduinoState.rpm, 2, "rpm")}
+                                {arduinoState.rotating ? "Rotating" : "Stationary"} {fmt(arduinoState.rpm, 2, "rpm")}
+                                {" "}(target: {fmt(arduinoState.target_rpm, 2, "rpm")})
                             </dd>
                         </dl>
                         {arduinoState.speed_error && (

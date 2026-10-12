@@ -434,6 +434,7 @@ class APAModule(Module):
             "time_on_s": _ms_to_s(shock.time_on_from_arduino),
             "time_off_s": _ms_to_s(shock.time_off_from_arduino),
             "rpm": self.motor.speed_from_arduino,
+            "target_rpm": self.motor.speed,
             "rotating": self.motor.rotating,
             "speed_error": self.motor.speed_error,
         }

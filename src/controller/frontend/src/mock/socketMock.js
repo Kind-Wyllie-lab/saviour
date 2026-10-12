@@ -146,6 +146,7 @@ class MockSocket {
         time_off_s: r.timeOffS,
         rpm: +(r.rpm + (r.rotating ? (Math.random() - 0.5) * 0.06 : 0)).toFixed(2),
         rotating: r.rotating,
+        target_rpm: r.rpmSetpoint,
         speed_error: null,
       },
     });

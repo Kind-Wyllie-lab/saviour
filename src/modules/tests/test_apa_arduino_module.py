@@ -386,7 +386,7 @@ class TestArduinoStateMessage:
 
     def _state(self, shock):
         m = _make_apa(shock=shock, motor=MagicMock(speed_from_arduino=2.0, rotating=True,
-                                                   speed_error=None))
+                                                   speed=3, speed_error=None))
         m.send_controller_arduino_state()
         return m.communication.send_status.call_args.args[0]["state"]
 
@@ -398,6 +398,11 @@ class TestArduinoStateMessage:
         assert state["max_shocks"] == 50
         assert state["shock_being_delivered"] is True
 
+    def test_reports_measured_and_target_rpm(self):
+        state = self._state(self._shock())
+        assert state["rpm"] == 2.0
+        assert state["target_rpm"] == 3
+
     def test_unset_times_are_none(self):
         state = self._state(self._shock(current_from_arduino=None,
                                         time_on_from_arduino=-1.0,
@@ -405,3 +410,75 @@ class TestArduinoStateMessage:
         assert state["current_ma"] is None
         assert state["time_on_s"] is None
         assert state["time_off_s"] is None
+
+
+class _DictConfig:
+    """Just enough of Config for Motor: dotted get, and set() of a whole
+    (sidecar) section."""
+
+    def __init__(self, **values):
+        self.values = dict(values)
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def set(self, key, value, persist=True):
+        self.values[key] = value
+        return True
+
+
+class TestMotorFeedforward:
+    def _motor(self, **config):
+        from motor import Motor
+        cfg = _DictConfig(**{
+            "arduino.motor.motor_speed_rpm": 2,
+            "arduino.motor._manual_motor_speed_for_2rpm": 95,
+            "arduino.motor._pid_gains": [25.0, 2.0, 0.0],
+            "arduino.motor._learn_after_stable_s": 30,
+            **config,
+        })
+        return Motor(MagicMock(), cfg), cfg
+
+    def test_configure_sends_setpoint_gains_and_default_feedforward(self):
+        motor, _ = self._motor()
+        send = motor.arduino.send_command
+        send.assert_any_call("S", 2)
+        send.assert_any_call("SET_PID", "25.0,2.0,0.0")
+        send.assert_any_call("F", 95.0)
+
+    def test_learned_value_wins_and_scales_to_other_setpoints(self):
+        motor, _ = self._motor(motor_learned_output={"2": 100.0})
+        assert motor.feedforward_for(2) == 100.0
+        assert motor.feedforward_for(3) == 150.0
+
+    def test_learns_after_holding_target_then_saves_once(self):
+        motor, cfg = self._motor()
+        motor.start_motor()
+        with patch("motor.time.time", return_value=1000.0):
+            motor.interpret_state("2.01,10.0,2.00,96.0,")
+        with patch("motor.time.time", return_value=1031.0):
+            motor.interpret_state("1.99,20.0,2.00,98.0,")
+            motor.interpret_state("2.00,30.0,2.00,99.0,")
+        assert cfg.values["motor_learned_output"] == {"2": 97.0}
+        motor.arduino.send_command.assert_called_with("F", 97.0)
+
+    def test_out_of_tolerance_restarts_the_stable_run(self):
+        motor, cfg = self._motor()
+        motor.start_motor()
+        with patch("motor.time.time", return_value=1000.0):
+            motor.interpret_state("2.00,10.0,2.00,96.0,")
+        with patch("motor.time.time", return_value=1020.0):
+            motor.interpret_state("1.50,10.0,2.00,130.0,")  # 25% under
+        with patch("motor.time.time", return_value=1031.0):
+            motor.interpret_state("2.00,10.0,2.00,96.0,")
+        assert "motor_learned_output" not in cfg.values
+
+    def test_old_firmware_state_without_output_learns_nothing(self):
+        motor, cfg = self._motor()
+        motor.start_motor()
+        with patch("motor.time.time", return_value=1000.0):
+            motor.interpret_state("2.00,10.0,2.00,")
+        with patch("motor.time.time", return_value=1031.0):
+            motor.interpret_state("2.00,10.0,2.00,")
+        assert motor.output_from_arduino is None
+        assert "motor_learned_output" not in cfg.values

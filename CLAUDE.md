@@ -135,6 +135,23 @@ The frontend variant (basic / loom / apa / habitat / acoustic_startle) is select
 
 `camera`, `microphone`, `ttl`, `rfid`, `apa_camera`, `apa_arduino`, `sound`, `lightning_camera`, `habitat_camera`, `hailo_camera`, `basler_camera` — each under `src/modules/variants/<type>/`.
 
+## Driving the live fleet (agents)
+
+The main way to test against real hardware. The desk fleet's controller is `10.0.0.1`; this dev machine reaches it directly over SSH (`pi@`, key-based).
+
+- **Find modules:** `GET /api/v1/modules` (id, type, ip, status, version), or `/var/lib/misc/dnsmasq.leases` on the controller. Module SSH is `pi@<ip>`. A re-imaged Pi on a reused IP has a new host key (hostname `saviour-unprov-*`): ask the user before replacing a `known_hosts` entry.
+- **Auth without moving the password:** the bearer token is the admin password in `/etc/saviour/admin_credentials` (root-only). Run `curl` *on the controller*, reading it there with `sudo`, so it never leaves the box. Flask binds `10.0.0.1:5000` only (eth0), **not** `127.0.0.1`. Keep a helper at `/tmp/sv.sh` (`/tmp` is wiped on reboot, so recreate it if missing):
+  ```bash
+  PW=$(sudo cat /etc/saviour/admin_credentials | tr -d "\n"); B=http://10.0.0.1:5000
+  curl -s -H "Authorization: Bearer $PW" "$B/api/v1/state"                       # GET
+  curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PW" \
+       -d '{"command":"set_camera_crop","module_id":"<id>","params":{...}}' "$B/facade/send_command"
+  ```
+- **Useful calls:** `GET /api/v1/state` (controller version, session counts), `GET /api/v1/modules`, `GET|PATCH /api/v1/modules/<id>/config`, `POST /facade/send_command` (any `@command()` on a module; `/api/v1` deliberately has no equivalent). Full reference: `docs/REST_API.md`.
+- **See what a camera sees:** `http://<module_ip>:8080/snapshot.jpg` (no auth). Save it locally and read the image: that's how crop and overlay changes get checked.
+- **Deploy `staging` to the fleet:** `POST /api/v1/system/update` with `{"apply_controller": true, "deploy_modules": true}` returns `202`. The controller hard-resets to `origin/<branch>`, rebuilds the frontend and restarts, and **every** module updates and restarts (there's no per-module option). First check `GET /api/v1/state` shows 0 active sessions and no module is `RECORDING`. Then poll `GET /api/v1/state` until `version` changes. The reported version lags one commit (pre-commit hook), so get the expected string with `git show origin/staging:src/__version__.py` rather than waiting for the merge commit's hash.
+- **Limits:** don't change config or run commands on a module that's recording. Restarting a module's service or other `sudo` actions on modules may be refused by the permission checker; ask the user to run those.
+
 ## Conventions
 
 - **Conventional commits** with `feat/`, `fix/`, `refactor/` branch prefixes. Branch flow: PRs → `staging` → `main`.

@@ -8,28 +8,18 @@ import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
 import APACommands from "../../components/APACommands/APACommands";
 
-const COMPACT_BREAKPOINT = 1440; // 3-col → 2-col
-const NARROW_BREAKPOINT  = 768;  // 2-col → stacked
+const NARROW_BREAKPOINT = 768; // side panel -> stacked
 
-function useLayoutMode() {
-  const getMode = () => {
-    if (window.innerWidth <= NARROW_BREAKPOINT)  return "narrow";
-    if (window.innerWidth <= COMPACT_BREAKPOINT) return "compact";
-    return "wide";
-  };
-  const [mode, setMode] = useState(getMode);
+function useNarrow() {
+  const query = `(max-width: ${NARROW_BREAKPOINT}px)`;
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
-    const narrowMq  = window.matchMedia(`(max-width: ${NARROW_BREAKPOINT}px)`);
-    const compactMq = window.matchMedia(`(max-width: ${COMPACT_BREAKPOINT}px)`);
-    const handler = () => setMode(getMode());
-    narrowMq.addEventListener("change", handler);
-    compactMq.addEventListener("change", handler);
-    return () => {
-      narrowMq.removeEventListener("change", handler);
-      compactMq.removeEventListener("change", handler);
-    };
-  }, []);
-  return mode;
+    const mq = window.matchMedia(query);
+    const handler = () => setNarrow(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [query]);
+  return narrow;
 }
 
 function LivestreamOrTemplate({ module, moduleList }) {
@@ -43,47 +33,34 @@ function LivestreamOrTemplate({ module, moduleList }) {
 
 function APADashboard() {
   const { moduleList } = useModules();
-  const mode = useLayoutMode();
+  const narrow = useNarrow();
   const apaCamera = moduleList.find((m) => m.type === "apa_camera") ?? null;
+
+  // Health and modules first, the rig's commands below them; one side panel
+  // at every width above narrow (a third column pushed the panel off-screen).
+  const panel = (
+    <>
+      <HealthSummaryWidget />
+      <ModuleList modules={moduleList} />
+      <APACommands modules={moduleList} />
+    </>
+  );
 
   return (
     <div className="dashboard">
-
-      {mode === "narrow" ? (
+      {narrow ? (
         /* ── Narrow (<768px): single column, stream gets full width ── */
         <div className="dashboard-compact">
           <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
-          <div className="dashboard-compact-panel">
-            <APACommands modules={moduleList} />
-            <HealthSummaryWidget />
-            <ModuleList modules={moduleList} />
-          </div>
+          <div className="dashboard-compact-panel">{panel}</div>
         </div>
-
-      ) : mode === "compact" ? (
-        /* ── Compact (768–1280px): stream left, commands+panel right ── */
-        <div className="dashboard-main">
-          <div className="apa-livestream-col">
-            <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
-          </div>
-          <div className="dashboard-panel">
-            <APACommands modules={moduleList} />
-            <HealthSummaryWidget />
-            <ModuleList modules={moduleList} />
-          </div>
-        </div>
-
       ) : (
-        /* ── Wide (≥1280px): three columns ── */
+        /* ── Stream left, panel right ── */
         <div className="dashboard-main">
           <div className="apa-livestream-col">
             <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
           </div>
-          <APACommands modules={moduleList} />
-          <div className="dashboard-panel">
-            <HealthSummaryWidget />
-            <ModuleList modules={moduleList} />
-          </div>
+          <div className="apa-dashboard-panel">{panel}</div>
         </div>
       )}
     </div>

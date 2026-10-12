@@ -1,6 +1,6 @@
 # Field install feedback (1 camera + 1 mic, Oct 2026)
 
-- **Status:** in progress (Phases A, B, C, D shipped 2026-10-09; B awaits the hardware re-check; E open)
+- **Status:** in progress (Phases A, B, C, D shipped 2026-10-09; B hardware-verified 2026-10-12; E open)
 - **Created:** 2026-10-09
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (post-process preview,
@@ -109,7 +109,7 @@ on a short fixture `.ts`. Frontend: `npm run build` + lint.
 
 ## Phase B: crop editor rework (items 3, 4, 5)
 
-**Shipped 2026-10-09, not yet hardware-checked** (see `docs/CHANGELOG.md`).
+**Shipped 2026-10-09; hardware-verified 2026-10-12** (see `docs/CHANGELOG.md`).
 As built:
 
 - `src/modules/crop_geometry.py` (pure, tested): default view =
@@ -135,13 +135,22 @@ As built:
   (corners only when a ratio is locked), output-size readout, pointer
   events. Crop button disabled while recording.
 
-**Hardware re-check (on `hailo_camera_3606` after updating it):** editor
-opens on the full 4:3 view, undistorted; whole-view crop at 4:3 records
-~1632×1222 with no squash; 1:1 crop → square output, undistorted; Clear →
-identical to the pre-crop baseline snapshot; closing the editor without
-saving restores the view; a crop on a camera with `hflip`/`vflip`/180°
-rotation lands where it was drawn (ScalerCrop is in sensor coordinates;
-not handled specially yet, so check this first).
+**Hardware check, 2026-10-12** (`hailo_camera_3606`, IMX477 mode 2,
+1920×1080, after a fleet update to `86370a1`; driven over the REST API,
+judged from `:8080/snapshot.jpg` images). All passed:
+
+| Check | Result |
+|---|---|
+| Editing mode shows the full 4:3 view | yes; un-squashed it matches the baseline's geometry with more above/below |
+| Closing the editor without saving | view back to baseline (brightness-normalised diff 0.082; editing view 0.465) |
+| Whole-view crop, 4:3 | output 1632×1222 (preview 640×478), full sensor, undistorted |
+| Centred 1:1 crop | output 992×992 (preview 640×640); vs the same region of the full view, best vertical scale 1.0 of 0.75-1.33 tried |
+| Clear | config 1920×1080 / no crop / SYNCED; view = baseline (diff 0.089) |
+| `hflip` on, crop left half of the displayed view | got the left half (diff 0.231 vs 1.012 for the mirrored half): libcamera applies ScalerCrop in the flipped orientation, so no flip handling is needed (180° uses the same flips; 90/270° is software and untested) |
+
+Camera restored afterwards (no crop, hflip off, SYNCED). Not covered: the
+editor UI in a browser (drag/resize/presets were only exercised via their
+commands), and a recorded `.ts` (only the live preview was checked).
 
 Branch `fix/crop-editor`. ~1-2 days, plus a hardware check on a camera.
 
@@ -393,7 +402,7 @@ late blocks).
 | A | `fix/compose-preview-speed` | ~1 day | nothing |
 | C | `feat/timestamp-position` | ~½ day | nothing |
 | D | `feat/session-list-by-date` | ~1 day | nothing |
-| B | `fix/crop-editor` | shipped | hardware re-check (incl. flips) |
+| B | `fix/crop-editor` | shipped, hardware-verified | browser check of the editor UI |
 | E | `fix/mic-monitor-blocks` | ½ day after diagnosis | screenshot + journal |
 
 Each phase merges to `staging` on its own; frontend changes get

@@ -157,6 +157,7 @@
 }
 .apa-commands h2 {
   margin: 0 0 8px;
+  text-align: center;  /* as .card h2 (index.css), like the cards beside it */
 }
 
 .apa-state {

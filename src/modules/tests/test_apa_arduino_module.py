@@ -1,7 +1,8 @@
 """
 Tests for src/modules/variants/apa_arduino/apa_arduino_module.py.
 
-Scope: the shutdown / hardware-safety paths and the supervised state loop.
+Scope: the shutdown / hardware-safety paths, the supervised state loop and
+Arduino discovery's hardware_fault reporting.
 Instances are built with __new__ (as in test_apa_camera_module.py) so no
 serial ports, ZMQ or Module.__init__ are involved. The module imports its
 siblings bare (`from motor import Motor`), as it does when systemd runs the
@@ -38,6 +39,11 @@ def _make_apa(**attrs) -> APAModule:
     m.motor = None
     m.shock = None
     m.connected_arduinos = {}
+    m.arduino_ports = {}
+    m.found_ports = []
+    m.unidentified_ports = {}
+    m.port_errors = {}
+    m._probes = []
     m.send_state_period = 0.01
     m.send_state_thread = None
     m._send_state_stop = None
@@ -289,3 +295,78 @@ class TestArduinoReconnect:
             m._refresh_hardware_fault = MagicMock()
             m.handle_identity(motor.arduino, "motor")
         m.communication.send_status.assert_not_called()
+
+
+def _port(device, description):
+    info = MagicMock()
+    info.device = device
+    info.description = description
+    return info
+
+
+class TestDiscoveryReportsWhyArduinosAreMissing:
+    """Unflashed boards or an unopenable port must leave the module running
+    with a hardware_fault that says why, not crash-loop it."""
+
+    _MOD = "src.modules.variants.apa_arduino.apa_arduino_module"
+
+    def _discover(self, ports, protocol=None):
+        m = _make_apa()
+        m._get_available_ports = MagicMock(return_value=ports)
+        with patch(f"{self._MOD}.Protocol", protocol or MagicMock()):
+            m._find_arduino_ports()
+        return m
+
+    def test_no_ports(self):
+        m = self._discover([])
+        assert m.hardware_fault == (
+            "motor and shock Arduino not connected - "
+            "no Arduino serial ports (/dev/ttyACM*) found")
+
+    def test_unflashed_boards_are_named(self):
+        m = self._discover([_port("/dev/ttyACM0", "Arduino Leonardo"),
+                            _port("/dev/ttyACM1", "Arduino Uno")])
+        assert "/dev/ttyACM0 (Arduino Leonardo)" in m.hardware_fault
+        assert "/dev/ttyACM1 (Arduino Uno)" in m.hardware_fault
+        assert "firmware" in m.hardware_fault
+
+    def test_port_that_wont_open_is_reported_not_raised(self):
+        protocol = MagicMock(side_effect=OSError("Device or resource busy"))
+        m = self._discover([_port("/dev/ttyACM0", "Arduino Uno")], protocol)
+        assert "could not open /dev/ttyACM0 (Device or resource busy)" in m.hardware_fault
+        assert "no Arduino serial ports" not in m.hardware_fault
+
+    def test_non_acm_ports_are_ignored(self):
+        m = self._discover([_port("/dev/ttyAMA10", "ttyAMA10")])
+        assert "no Arduino serial ports" in m.hardware_fault
+
+    def test_identified_port_drops_out_of_the_fault(self):
+        m = self._discover([_port("/dev/ttyACM0", "Arduino Leonardo"),
+                            _port("/dev/ttyACM1", "Arduino Uno")])
+        m._initialize_arduino = MagicMock(side_effect=lambda i, p: setattr(m, "motor", MagicMock()))
+        proto = MagicMock(port="/dev/ttyACM0")
+        m.handle_identity(proto, "motor")
+        m._refresh_hardware_fault()
+        assert "ttyACM0" not in m.hardware_fault
+        assert m.hardware_fault.startswith("shock Arduino not connected")
+        assert "/dev/ttyACM1 (Arduino Uno)" in m.hardware_fault
+
+    def test_unexpected_identity_is_reported_not_initialised(self):
+        m = self._discover([_port("/dev/ttyACM0", "Arduino Uno")])
+        m._initialize_arduino = MagicMock()
+        m.handle_identity(MagicMock(port="/dev/ttyACM0"), "blink")
+        m._initialize_arduino.assert_not_called()
+        assert "/dev/ttyACM0 (identifies as 'blink')" in m.hardware_fault
+
+    def test_all_connected_clears_fault(self):
+        m = self._discover([])
+        m.motor, m.shock = MagicMock(), MagicMock()
+        m._refresh_hardware_fault()
+        assert m.hardware_fault is None
+
+    def test_cleanup_stops_unidentified_probes(self):
+        probe = MagicMock()
+        m = self._discover([_port("/dev/ttyACM0", "Arduino Uno")],
+                           MagicMock(return_value=probe))
+        m.cleanup()
+        probe.stop.assert_called_once()

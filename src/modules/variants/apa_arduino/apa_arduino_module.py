@@ -52,6 +52,14 @@ class APAModule(Module):
         # (the System page's "NO HARDWARE" badge); the per-Arduino readiness
         # checks below already block recording on their own.
         self.hardware_fault: str | None = "Motor and shock Arduinos not yet connected"
+        # What discovery saw, so the fault can say why an Arduino is missing:
+        # ports that opened but haven't identified as motor/shock (unflashed,
+        # wrong sketch), keyed by device -> description, and ports that
+        # wouldn't open, device -> error.
+        self.found_ports: list[str] = []
+        self.unidentified_ports: dict[str, str] = {}
+        self.port_errors: dict[str, str] = {}
+        self._probes: list[Protocol] = []
         self._find_arduino_ports()
 
         # Sending state to controller
@@ -121,13 +129,12 @@ class APAModule(Module):
 
     def _find_arduino_ports(self):
         self.logger.info("Searching for connected Arduino.")
-        available_ports = self._get_available_ports()
+        available_ports = self._validate_available_ports(self._get_available_ports())
         if not available_ports:
             self.logger.info("No serial ports found!")
-            return
-        available_ports = self._validate_available_ports(available_ports) # Validate that ports begin with ttyACM
         for port_info in available_ports:
             self._test_port_identity(port_info)
+        self._refresh_hardware_fault()
 
 
     def _get_available_ports(self) -> list:
@@ -150,7 +157,20 @@ class APAModule(Module):
     def _test_port_identity(self, port_info) -> None:
         """Create a protocol object to find identity of arduino"""
         self.logger.info(f"Checking {port_info} for an Arduino")
-        Protocol(port=port_info.device, on_identity=self.handle_identity).start()
+        self.found_ports.append(port_info.device)
+        try:
+            protocol = Protocol(port=port_info.device, on_identity=self.handle_identity)
+        except Exception as e:
+            # Busy port, permissions, a board unplugged mid-probe: report it
+            # as a hardware fault rather than crash-looping the module.
+            self.logger.error("Could not open %s: %s", port_info.device, e)
+            self.port_errors[port_info.device] = str(e)
+            return
+        # Until it identifies (handle_identity), this port is unexplained.
+        self.unidentified_ports.setdefault(
+            port_info.device, port_info.description or port_info.device)
+        self._probes.append(protocol)
+        protocol.start()
 
 
     def handle_identity(self, protocol: Protocol, identity: str) -> None:
@@ -159,6 +179,12 @@ class APAModule(Module):
         Once identity has been discovered, return it here.
         """
         self.logger.info(f"{identity} found on {protocol.port}")
+        if identity.lower() not in ("motor", "shock"):
+            self.logger.warning("Unexpected Arduino identity %r on %s", identity, protocol.port)
+            self.unidentified_ports[protocol.port] = f"identifies as {identity!r}"
+            self._refresh_hardware_fault()
+            return
+        self.unidentified_ports.pop(protocol.port, None)
         self.arduino_ports[identity] = protocol.port
         self.connected_arduinos[identity] = protocol
         existing = {"motor": self.motor, "shock": self.shock}.get(identity.lower())
@@ -251,10 +277,23 @@ class APAModule(Module):
             name for name, obj in (("motor", self.motor), ("shock", self.shock))
             if not obj
         ]
-        self.hardware_fault = (
-            None if not missing
-            else f"{' and '.join(missing)} Arduino not connected"
-        )
+        if not missing:
+            self.hardware_fault = None
+            return
+        fault = f"{' and '.join(missing)} Arduino not connected"
+        # Say why, so an unflashed board or a busy port isn't a mystery.
+        details = []
+        unidentified = getattr(self, "unidentified_ports", {})
+        port_errors = getattr(self, "port_errors", {})
+        if unidentified:
+            found = ", ".join(f"{d} ({desc})" for d, desc in sorted(unidentified.items()))
+            details.append(f"not identified as motor/shock: {found}; check the APA firmware is flashed")
+        if port_errors:
+            details.append("could not open " + ", ".join(
+                f"{d} ({err})" for d, err in sorted(port_errors.items())))
+        if not getattr(self, "found_ports", None) and not port_errors:
+            details.append("no Arduino serial ports (/dev/ttyACM*) found")
+        self.hardware_fault = fault + (" - " + "; ".join(details) if details else "")
 
 
     @check()
@@ -582,6 +621,16 @@ class APAModule(Module):
                 self.logger.info("Closed serial connection to %s", identity)
             except Exception as e:
                 self.logger.warning("Error closing serial connection to %s: %s", identity, e)
+        # Ports that never identified still have a (non-daemon) listen thread
+        # that would otherwise hold up process exit.
+        connected = {id(p) for p in self.connected_arduinos.values()}
+        for protocol in getattr(self, "_probes", []):
+            if id(protocol) in connected:
+                continue
+            try:
+                protocol.stop()
+            except Exception as e:
+                self.logger.warning("Error closing serial port %s: %s", protocol.port, e)
         self.logger.info("APA system shutdown complete")
 
 

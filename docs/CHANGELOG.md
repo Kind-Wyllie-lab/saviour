@@ -13,6 +13,12 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-12
 
+- [x] **APA commands panel: safer buttons, clearer hierarchy** (branch `fix/apa-command-buttons` → `staging`). Frontend only.
+  - **Reset Pulse Counter** was enabled mid-session with no confirm, and resetting also clears the attempted count that enforces the 50-shock cap. Now disabled during an active session or shock sequence, asks "Reset the pulse counter (N attempted)?", and is styled as a secondary (outline) button.
+  - **Start Motor** is disabled while the table is rotating; **Stop Motor** is never disabled by table state (it may be stale), only by login/module offline. Start | Stop sit side by side.
+  - **Hold to Shock** is disabled (and the spacebar ignored) once the shock limit is reached; it is the largest button, and shows a pressed state (deeper accent blue, inset) while held by spacebar, mouse or touch, from a shared hold store so the fullscreen copy matches.
+  - Every disabled button's tooltip says why (login, offline, arm first, already rotating, limit reached, session running). Buttons grouped under Shocker / Table / housekeeping captions; End Session and Reset share one inline-confirm style (`.apa-confirm*`).
+
 - [x] **APA table reaches its target RPM in ~10 s, smoothly; dashboard shows the target** (branch `feat/apa-motor-feedforward` → `staging`). **Firmware change: needs `scripts/flash_apa_arduinos.sh --only motor`; not compiled (no arduino-cli on the controller) or rig-verified.**
   - **Cause of the ~2 min spin-up:** every start zeroed the PID integral, and Kp × error (25 × 2 = 50) gives about half the ~95 motor units that hold 2 rpm, so the integral (Ki = 2) built up the rest on a ~35 s time constant (hence `_validation_ramp_time_s: 120`). Jerkiness: the PID ran at 2 Hz and wrote each output straight to the motor, amplifying encoder quantisation noise (0.35° resolution on ~2.4° per sample) by Kp.
   - **Feedforward, learned per setpoint:** new `F:<units>` command; output = feedforward + PID. The firmware reports its output as a 4th `D:` field; `motor.py` saves the mean output once the table has held the target within 10% (`_learn_tolerance_pct`) for 30 s (`_learn_after_stable_s`), again on stop if it drifted ≥ 1 unit, and sends it on configure. Stored in the Config runtime-state sidecar section `motor_learned_output` (`{"2": 96.4}`), so it survives reboots and config resets. With nothing learned, `_manual_motor_speed_for_2rpm` (95) scaled to the setpoint; a different setpoint scales the nearest learned one.

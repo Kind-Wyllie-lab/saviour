@@ -10,6 +10,10 @@
 # saviour service is stopped; the service is restarted on exit (also on
 # failure) if it was running. arduino-cli is installed to ~/.local/bin if
 # missing.
+#
+# For desk testing without the rig, arduino/dummy_motor and dummy_shock are
+# simulated stand-ins (see their headers); they identify as MOTOR/SHOCK, so
+# this script finds them when it's time to put the real firmware back.
 set -euo pipefail
 
 FQBN="arduino:avr:uno"

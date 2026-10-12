@@ -24,7 +24,7 @@ import threading
 import time
 
 from src.modules.config import Config
-from src.shared.cifs import cifs_auth_option
+from src.shared.cifs import cifs_mount_cmd
 
 
 class Export:
@@ -147,9 +147,8 @@ class Export:
         "microphone_4703").  Filenames use the short form with the module's
         display name, not its type (mic files say "audiomoth_4703", hailo
         "ai camera_3606"), so the full-id marker never matches for those.
-        Before the underscore split, leftover files from an earlier session
-        were exported into whichever session triggered the export (desk mic,
-        2026-10-02).
+        Without the short-ID fallback, leftover files from an earlier session
+        get exported into whichever session triggered the export.
         """
         short_id = self.module_id.split("-")[-1].split("_")[-1]
         for strip_animal_id, marker in (
@@ -166,6 +165,12 @@ class Export:
                         return prefix[:last_sep]
                 return prefix
         return None
+
+    def session_from_filename(self, filename: str) -> str:
+        """Session name of a recorded filename; the text before the first
+        underscore when the module ID isn't in it."""
+        return (self._extract_session_from_filename(filename)
+                or filename.split("_", maxsplit=1)[0])
 
 
     def summarize_recording_state(self, session_name: str = None) -> dict:
@@ -258,9 +263,8 @@ class Export:
             # Group files by (session, recording date). The date comes from the
             # segment start embedded in each filename, not the clock at export
             # time -- that is wrong right after a power-loss reboot (no RTC, PTP
-            # not yet converged: desk soak 2026-09-30 filed a salvaged segment
-            # under 20260831/), and put a multi-day session's segments under the
-            # day they happened to be exported.
+            # not yet converged), and would put a multi-day session's segments
+            # under the day they happened to be exported.
             session_file_map: dict[tuple[str, str | None], list[str]] = {}
             for filename in all_files:
                 session = self._extract_session_from_filename(filename) or export_path
@@ -362,9 +366,8 @@ class Export:
             # export_path when extraction fails (it always does for the
             # microphone: filenames say "audiomoth_<id>", module_id says
             # "microphone_<id>"). Fill the triggered key from the REAL outcome,
-            # never an unconditional True: that masked a total mount failure
-            # (umount: target is busy under load) as a clean export and let the
-            # controller mark the session done, 2026-09-07.
+            # never an unconditional True: that masks a total mount failure as
+            # a clean export and lets the controller mark the session done.
             if triggered_session and triggered_session not in session_results:
                 session_results[triggered_session] = (
                     exported_count == len(all_files)
@@ -467,12 +470,6 @@ class Export:
         self._export_config_file()
 
 
-    def _ensure_export_folder_exists(self):
-        if not self._create_export_path(): # Failed to create export path; maybe an issue mounting share?
-            return False
-        return True
-
-
     def _format_export_path(self, export_path: str):
         """Build the full export path: mount_point/session_name/date/module_name/
 
@@ -517,13 +514,13 @@ class Export:
 
     def _create_export_manifest(self, files_to_export: list, export_folder: str, session_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
-        
+
         Args:
             files_to_export: List of filenames that will be exported
             destination: Where the files will be exported to (string or enum)
             export_folder: Path to the folder where files will be exported
             session_name: Optional session_name for the export
-            
+
         Returns:
             str: Name of the created manifest file
         """
@@ -740,11 +737,10 @@ class Export:
     def _mount_share(self) -> bool:
         """Ensure the Samba share is mounted and writable at self.mount_point.
 
-        A healthy existing mount is reused as-is -- unconditionally tearing it
-        down first turned a transient `umount: target is busy` into a total
-        export failure (found live 2026-09-07 under stress-ng load, with the
-        share perfectly reachable the whole time). Only a dead/stale mount is
-        replaced, and a failed umount there is non-fatal.
+        A healthy existing mount is reused as-is -- tearing it down first turns
+        a transient `umount: target is busy` (under load) into a total export
+        failure. Only a dead/stale mount is replaced, and a failed umount there
+        is non-fatal.
         """
         try:
             self._update_samba_settings()
@@ -775,16 +771,9 @@ class Export:
                     except subprocess.TimeoutExpired:
                         self.logger.warning(f"{' '.join(umount_cmd)} timed out")
 
-            # credentials=<0600 file>, not password= on the command line,
-            # which sudo logs to the journal (src/shared/cifs.py).
-            auth_opts = cifs_auth_option(
+            mount_cmd = cifs_mount_cmd(
+                self.samba_share_ip, self.samba_share_path, self.mount_point,
                 self.samba_share_username, self.samba_share_password, "export")
-            mount_cmd = [
-                'sudo', 'mount', '-t', 'cifs',
-                f'//{self.samba_share_ip}/{self.samba_share_path}',
-                self.mount_point,
-                '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none',
-            ]
 
             for attempt in range(1, self._MOUNT_MAX_ATTEMPTS + 1):
                 try:
@@ -831,15 +820,3 @@ class Export:
             return False
 
 
-    def unmount(self) -> bool:
-        """Unmount current destination"""
-        try:
-            if self.current_mount:
-                # Unmount using umount
-                # Example: umount /mnt/export
-                self.current_mount = None
-                return True
-            return True
-        except Exception as e:
-            self.logger.error(f"Unmount failed: {e}")
-            return False

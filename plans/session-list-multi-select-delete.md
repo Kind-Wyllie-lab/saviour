@@ -54,6 +54,13 @@ is the right shape for the UI anyway.
 
 ## Frontend (`SessionList.jsx`)
 
+> **Update 2026-10-09:** tick selection now exists for download
+> (`plans/field-install-feedback-2026-10.md` Phase D): per-row checkboxes,
+> a per-day tick-all and a selection bar. Bulk delete should add a Delete
+> button to that bar and reuse the same `selected` set (its eligibility
+> rule differs: export-blocked sessions are deletable with force), rather
+> than the separate Select mode sketched below.
+
 - A **selection mode**: a "Select" toggle in the list header. While on, each
   **ended** session row gets a checkbox (active / pending / scheduled rows
   never get one — they can't be deleted). A header "select all ended"

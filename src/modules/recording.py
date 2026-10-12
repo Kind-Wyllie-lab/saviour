@@ -2,7 +2,7 @@
 """
 Module Recording Manager
 
-This class is used to manage recording methods for the module - starting and stopping recordings, batch exporting for 24/7 recordings, updating files for export. 
+This class is used to manage recording methods for the module - starting and stopping recordings, batch exporting for 24/7 recordings, updating files for export.
 
 Sequence
 - controller sends call to start_recording()
@@ -10,7 +10,7 @@ Sequence
 - the initial recording segment is created
 - threads are started
 -- self.health_recording_thread records health metadata to a csv for the current segment
--- self._recording_duration_thread is used to automatically stop recording after preset duration 
+-- self._recording_duration_thread is used to automatically stop recording after preset duration
 -- self.monitor_recording_segments_thread is used to stop and start new recording segments when condition is met
 
 Author: Andrew SG
@@ -285,9 +285,8 @@ class Recording:
             # Module explicitly reported it could not start (e.g. missing
             # hardware) and is responsible for its own recording_start_failed
             # status -- see e.g. CameraBase._start_new_recording. Stop here
-            # rather than falling through to the unconditional is_recording=True
-            # / "recording_started" success below, which used to happen
-            # regardless of what _start_new_recording() actually returned.
+            # rather than falling through to the is_recording=True /
+            # "recording_started" success below.
             self.logger.error(
                 "Module could not start recording -- not marking session as recording"
             )
@@ -375,6 +374,8 @@ class Recording:
             self.is_recording = False
             self._measured_rec_bytes_per_s = None
             self.logger.info("Made it past stop_recording call")
+            # e.g. a camera applies config restarts it deferred while recording
+            self.facade.on_recording_stopped()
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:
@@ -480,9 +481,8 @@ class Recording:
         to_export_folder = f"{recording_folder}/to_export"
         min_free_pct     = self.config.get("recording.local_min_free_pct", 10)
         warn_free_pct    = self.config.get("recording.local_warn_free_pct", 15)
-        # Disk is checked on its own cadence, not only at segment rotation --
-        # with 60-min segments a disk filling mid-segment used to go unnoticed
-        # for up to an hour (roadmap A4).
+        # Disk is checked on its own cadence, not only at segment rotation:
+        # with 60-min segments a disk can fill mid-segment.
         disk_check_interval = self.config.get("recording._disk_check_interval_secs", 30)
         last_disk_check     = 0.0
         disk_warned         = False
@@ -862,11 +862,6 @@ class Recording:
 
 
     """File handling"""
-    def get_session_from_filename(self, filename: str) -> str:
-        session_name = filename.split("_", maxsplit=1)[0]
-        return session_name
-
-
     def get_start_time_from_filename(self, filename: str) -> str:
         import re
         # Extract "YYYYMMDD-HHMMSS" from the "(segment_YYYYMMDD-HHMMSS)" pattern.

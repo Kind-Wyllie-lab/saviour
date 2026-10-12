@@ -110,7 +110,9 @@ def test_manual_registration_wins_over_auto_discovered_same_name():
     instance = _bare_instance(_DummyModule)
     instance.command = Command()
 
-    manual_handler = lambda **kwargs: {"result": "manual", "kwargs": kwargs}
+    def manual_handler(**kwargs):
+        return {"result": "manual", "kwargs": kwargs}
+
     instance.command.set_commands({"do_thing": manual_handler})
 
     instance._finalize_command_registration()

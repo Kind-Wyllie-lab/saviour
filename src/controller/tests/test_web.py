@@ -1490,6 +1490,80 @@ class TestUpdateDeployHandlersAuthGate:
         assert client.get_received()[0]["name"] == "auth_required"
 
 
+class _InlineThread:
+    """threading.Thread stand-in that runs the target on start()."""
+
+    def __init__(self, target=None, daemon=None, name=None, **_kw):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class TestGitPullUpdate:
+    """The Socket.IO git-pull handler drives system_update's primitives and
+    reports each stage; it never runs git itself."""
+
+    def _run(self, su_mock, data=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _facade = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            with patch("src.controller.web.threading.Thread", _InlineThread):
+                client.emit("git_pull_update", data or {})
+            return [m["name"] for m in client.get_received()], client
+
+    def _su(self):
+        su_mock = MagicMock()
+        su_mock.git_checkout_info.return_value = {
+            "available": True, "branch": "staging", "remote": "git@x:y.git"}
+        su_mock.reset_to_origin.return_value = "abc1234"
+        su_mock.stage_zip.return_value = {"version": "v1"}
+        su_mock.snapshot.return_value = {"ok": True}
+        return su_mock
+
+    def test_stage_only_fetches_snapshots_resets_stages(self):
+        su_mock = self._su()
+        order = MagicMock()
+        for name in ("fetch", "snapshot", "reset_to_origin", "stage_zip"):
+            order.attach_mock(getattr(su_mock, name), name)
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+
+        assert [c[0] for c in order.mock_calls] == [
+            "fetch", "snapshot", "reset_to_origin", "stage_zip"]
+        su_mock.fetch.assert_called_once_with("staging", su_mock.SRC_ROOT)
+        su_mock.build_and_restart.assert_not_called()
+        assert names.count("git_pull_status") == 3
+        assert "upload_update_complete" in names
+
+    def test_apply_controller_builds_and_restarts(self):
+        su_mock = self._su()
+        with patch("src.controller.web.su", su_mock):
+            self._run(su_mock, {"apply_controller": True})
+        su_mock.build_and_restart.assert_called_once()
+
+    def test_git_failure_reports_error(self):
+        import subprocess as sp
+        su_mock = self._su()
+        su_mock.fetch.side_effect = sp.CalledProcessError(
+            128, "git", stderr="Permission denied (publickey)")
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+        assert "upload_update_error" in names
+        su_mock.reset_to_origin.assert_not_called()
+        su_mock.stage_zip.assert_not_called()
+
+    def test_unavailable_checkout_reports_reason(self):
+        su_mock = self._su()
+        su_mock.git_checkout_info.return_value = {
+            "available": False, "reason": "No git checkout on this device"}
+        with patch("src.controller.web.su", su_mock):
+            names, _ = self._run(su_mock)
+        assert names == ["upload_update_error"]
+        su_mock.fetch.assert_not_called()
+
+
 class TestDeployUpdateToModule:
     """Forwards an 'update_saviour' command to one module -- doesn't touch
     subprocess itself, just os.path.exists() on the staged package."""
@@ -2492,3 +2566,114 @@ class TestKnownStatusTypesDontReachVariantFallback:
         web.handle_special_module_status = MagicMock(return_value=False)
         web.handle_module_status("camera_d074", {"type": "variant_specific"})
         web.handle_special_module_status.assert_called_once()
+
+    def test_reports_whether_it_was_handled(self):
+        web, _ = _make_web_with_facade()
+        web.handle_special_module_status = MagicMock(return_value=False)
+        assert web.handle_module_status("m", {"type": "variant_specific"}) is False
+        web.handle_special_module_status = MagicMock(return_value=True)
+        assert web.handle_module_status("m", {"type": "arduino_state"}) is True
+        assert web.handle_module_status("m", {"type": "export_ready"}) is True
+        # The base class hook returns None: not handled.
+        web2, _ = _make_web_with_facade()
+        assert web2.handle_module_status("m", {"type": "variant_specific"}) is False
+
+
+class TestMultiSessionDownload:
+    """GET /api/sessions/zip?names=... and the get_sessions_size event,
+    behind the session list's tick-to-download
+    (plans/field-install-feedback-2026-10.md, item 7)."""
+
+    def _share(self, tmpdir):
+        for name, files in {
+            "s1": {"a.txt": "one", "20261009/cam/v.ts": "video"},
+            "s2": {"b.txt": "two"},
+        }.items():
+            for rel, body in files.items():
+                path = os.path.join(tmpdir, name, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(body)
+        return _make_web(**{"export.mount_path": tmpdir})
+
+    def test_zips_each_session_under_its_own_folder(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=s1,s2,s1")
+            assert resp.status_code == 200
+            assert resp.mimetype == "application/zip"
+            assert "2-sessions" in resp.headers["Content-Disposition"]
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert sorted(zf.namelist()) == [
+                    "s1/20261009/cam/v.ts", "s1/a.txt", "s2/b.txt"]
+                assert zf.read("s2/b.txt") == b"two"
+
+    def test_missing_sessions_are_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=gone,s2")
+            assert resp.status_code == 200
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert zf.namelist() == ["s2/b.txt"]
+
+    def test_none_found_is_404(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/zip{_download_qs(web)}&names=gone")
+            assert resp.status_code == 404
+
+    def test_bad_names_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            client = web.app.test_client()
+            for names in ["", "s1,bad!name", "s1,..", "s1,a/b"]:
+                resp = client.get(
+                    f"/api/sessions/zip{_download_qs(web)}&names={names}")
+                assert resp.status_code == 400, names
+
+    def test_requires_a_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._share(tmpdir)
+            resp = web.app.test_client().get("/api/sessions/zip?names=s1")
+            assert resp.status_code == 401
+
+    def test_sizes_event_sums_each_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._share(tmpdir)
+            web, _facade = _make_web_with_facade(**{"export.mount_path": tmpdir})
+            client = _connected_client(web)
+            client.emit("get_sessions_size", {"names": ["s1", "s2", "gone", "bad!"]})
+            got = [m for m in client.get_received()
+                   if m["name"] == "sessions_size_response"]
+            assert got[0]["args"][0]["sizes"] == {"s1": 8, "s2": 3, "gone": 0}
+
+
+class TestCropStatusForwarding:
+    """camera_crop_updated carries the module's full config (for the
+    controller to adopt), which includes the export share password -- it
+    must never be forwarded to browsers."""
+
+    def test_config_is_stripped_before_emitting(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("camera_ab12", {
+            "type": "camera_crop_updated", "width": 1088, "height": 1088,
+            "crop_rect": {"v": 2},
+            "config": {"export": {"share_password": "hunter2"}},
+        })
+        events = [e for e in client.get_received() if e["name"] == "module_status"]
+        assert len(events) == 1
+        payload = events[0]["args"][0]
+        assert "config" not in payload and "hunter2" not in json.dumps(payload)
+        assert payload["width"] == 1088 and payload["module_id"] == "camera_ab12"
+
+    def test_crop_editing_status_is_forwarded(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("camera_ab12", {
+            "type": "crop_editing", "enabled": True, "fov": [4056, 3040]})
+        events = [e for e in client.get_received() if e["name"] == "module_status"]
+        assert events and events[0]["args"][0]["fov"] == [4056, 3040]

@@ -3,7 +3,7 @@ import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { filterPrivateKeys, checkClipboardCompatibility } from "./configUtils";
 import CopyActionsBar from "./CopyActionsBar";
-import ConfigActionBar from "./ConfigActionBar";
+import ConfigActionBar, { HeaderSaveButton } from "./ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 /**
@@ -90,6 +90,7 @@ function ConfigCardShell({
         <div className="card-header-top">
           <h3>{module.name} ({module.id})</h3>
           <div className="card-header-actions">
+            <HeaderSaveButton onSave={handleSave} isDirty={isDirty} saveDisabled={saveDisabled} />
             <ModuleActionsMenu id={id} name={module.name} isOnline={!!module.online} />
           </div>
         </div>

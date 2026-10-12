@@ -18,14 +18,28 @@
   justify-content: center;
 }
 
-/* Tighter panel — APA only needs health + module list (or + commands on compact) */
-.dashboard-main .dashboard-panel {
-  max-width: 300px;
+/* Side panel: health, module list, then the commands. Fixed width so the
+   stream takes the rest; scrolls on its own if the cards outgrow the height.
+   Cards default to min-width 400px (index.css), wider than this panel. */
+.apa-dashboard-panel {
+  flex: 0 0 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* In the wide 3-column row, prevent the commands card stretching to full height */
-.dashboard-main > .apa-commands {
-  align-self: flex-start;
+.apa-dashboard-panel .card,
+.dashboard-compact-panel .apa-commands {
+  min-width: 0;
+}
+
+.apa-dashboard-panel .apa-commands,
+.dashboard-compact-panel .apa-commands {
+  width: auto;
+  margin: 0;
 }
 
 /* ── Narrow (< 768px): single-column stacked ─────────────────────────────── */

@@ -43,7 +43,6 @@ class AcousticStartleController(Controller):
                 data = dict((k, status[k]) for k in ("sound_files", "selected_file"))
                 self.web.socketio.emit("list_sound_files", data)
             case _:
-                # self.logger.warning(f"No logic for {status} from {module_id}")
                 return False
         return True
 

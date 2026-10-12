@@ -376,12 +376,22 @@ class TestPulsePin:
             output_pins=[pin_obj],
         )
         m._ttl_file_handle = MagicMock()
-        with patch("src.modules.variants.ttl.ttl_module.time.sleep") as sleep_mock, \
+        # Patching ttl_module.time.sleep patches the shared time module, so a
+        # background thread left by another test can sleep through the mock
+        # (CI flaked with "called 5 times"). Count only this thread's sleeps.
+        me = threading.get_ident()
+        mine = []
+
+        def _sleep(seconds):
+            if threading.get_ident() == me:
+                mine.append(seconds)
+
+        with patch("src.modules.variants.ttl.ttl_module.time.sleep", side_effect=_sleep), \
              patch("src.modules.variants.ttl.ttl_module.time.time_ns",
                    side_effect=[0, 1]):
             result = m.pulse_pin(19, duration_ms=999_999)
         assert result["duration_ms"] == TTLModule._MAX_PULSE_MS
-        sleep_mock.assert_called_once_with(TTLModule._MAX_PULSE_MS / 1000.0)
+        assert mine == [TTLModule._MAX_PULSE_MS / 1000.0]
 
 
 # ---------------------------------------------------------------------------

@@ -159,7 +159,7 @@ class TestControllerName:
 # ---------------------------------------------------------------------------
 
 class TestContextHelpers:
-    def test_variant_reads_TYPE_from_saviour_config(self):
+    def test_variant_reads_type_from_saviour_config(self):
         notifier = _make_notifier()
         with patch("builtins.open", mock_open(read_data='ROLE=controller\nTYPE="habitat"\n')):
             assert notifier._variant() == "habitat"

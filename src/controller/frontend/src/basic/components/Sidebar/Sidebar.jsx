@@ -68,6 +68,8 @@ function Sidebar({ navItems }) {
     const handler = () => openUpdateModal();
     window.addEventListener("saviour:open-update-modal", handler);
     return () => window.removeEventListener("saviour:open-update-modal", handler);
+    // Subscribe once on mount; openUpdateModal only sets state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The currently-mounted ConfigCard's useConfigForm broadcasts its dirty

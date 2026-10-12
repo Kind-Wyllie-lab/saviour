@@ -234,6 +234,10 @@ class Recording:
         # (session_name, module_id) → time.time_ns() the liveness check last
         # saw it recording; where a not_recording gap starts.
         self._last_seen_recording_ns: dict = {}
+        # (session, module) -> wall ns of the last heartbeat in which the
+        # module itself reported recording=True (evidence, unlike the above,
+        # which is when the controller last *believed* it was recording).
+        self._last_recording_heartbeat_ns: dict = {}
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
         # session_name → set of (module_id, source) currently self-reporting unhealthy
         self._recording_health_degraded: dict[str, set] = {}
@@ -1800,8 +1804,7 @@ class Recording:
         # too. Without this check, a module merely listed on a dormant
         # SCHEDULED session going offline hours before its window even opens
         # got flagged as a session fault; module_back_online() then "recovered"
-        # it by starting a real recording outside the schedule (found live
-        # 2026-08-27, habitat DailyAudio session — see CHANGELOG).
+        # it by starting a real recording outside the schedule.
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
             # Habitat Session: a module whose plan window is currently shut is
             # supposed to be idle — its dropping offline isn't a session fault.
@@ -1879,12 +1882,9 @@ class Recording:
 
         # "Already recording" is not a fault. A module that kept recording
         # through a controller restart replies this to the recovery-path
-        # start_recording — it's doing exactly what we want. Escalating the
-        # whole session to ERROR on it (16× at once, after a habitat-scale
-        # restart) is what previously wedged an unattended Habitat Session:
-        # ERROR disables _evaluate_plans' self-heal, so out-of-window plan
-        # modules the old recovery path blindly started never got stopped
-        # (found live 2026-09-03, session habitat_CRLLT3_20260903).
+        # start_recording — it's doing exactly what we want. Don't escalate
+        # the session to ERROR on it: ERROR disables _evaluate_plans'
+        # self-heal, which can wedge an unattended Habitat Session.
         if "already recording" in message.lower():
             self.logger.info(
                 f"{module_id} reported '{message}' in '{session_name}' — "
@@ -2112,8 +2112,8 @@ class Recording:
                 return
 
             # Same PTP gate as a session start. A module back from a power-loss
-            # reboot has no RTC and runs on a stale clock until PTP converges
-            # (desk soak 2026-09-30: it booted at "31 Aug"); re-arming it then
+            # reboot has no RTC and runs on a stale clock until PTP converges;
+            # re-arming it then
             # would stamp frames with the wrong time. Deferred, not dropped:
             # the liveness check retries every cycle until the gate passes.
             ptp = self._check_ptp_sync([module_id])
@@ -2603,7 +2603,10 @@ class Recording:
 
 
     def _check_nas_space_periodic(self) -> None:
-        """Periodically alert when NAS free space crosses the warning threshold."""
+        """Periodically check export-share free space. Each ok/low/critical
+        transition is logged, alerted, and recorded in every active session's
+        session_events.log (WARNING / FAULT / RECOVERY): the alert channels
+        alone reach nobody on a rig without a webhook."""
         config = self.facade.get_config()
         rec_cfg = config.get("recording", {})
         nas_warn = rec_cfg.get("nas_warn_free_pct", 15)
@@ -2612,6 +2615,27 @@ class Recording:
         if not nas.get("ok"):
             return  # mount error handled elsewhere
         free = nas["free_pct"]
+        level = "critical" if free < nas_min else "low" if free < nas_warn else "ok"
+        prev = getattr(self, "_share_space_level", "ok")
+        if level != prev:
+            self._share_space_level = level
+            detail = f"export share {free:.1f}% free ({nas['free_gb']:.0f} GiB)"
+            if level == "critical":
+                msg = (f"{detail} -- below the {nas_min}% minimum; exports will "
+                       f"fail once it fills")
+                self.logger.error(msg)
+                event = ("FAULT", msg)
+            elif level == "low":
+                msg = f"{detail} -- below the {nas_warn}% warning level"
+                self.logger.warning(msg)
+                event = ("WARNING", msg) if prev == "ok" else ("RECOVERY", f"{detail} -- above the {nas_min}% minimum again")
+            else:
+                msg = f"{detail} -- space recovered"
+                self.logger.info(msg)
+                event = ("RECOVERY", msg)
+            for name, session in list(self.sessions.items()):
+                if session.state in (SessionState.ACTIVE, SessionState.PAUSED):
+                    self._log_session_event(name, *event)
         if free < nas_min:
             if self._notify_enabled("notify_disk_space"):
                 self.facade.send_alert(
@@ -2745,9 +2769,8 @@ class Recording:
         self._save_sessions()
         self.facade.update_sessions(self.sessions)
 
-        # Surface a degraded verdict as an operator alert -- the report is
-        # generated for every session/day but was previously only a session
-        # badge colour on the Post-Process page. reasons come from
+        # Surface a degraded verdict as an operator alert, not just a badge
+        # colour on the Post-Process page. reasons come from
         # framesync_check.classify(); _framesync_remediation() maps them to a
         # one-line fix hint.
         if status in ("amber", "red"):
@@ -3050,9 +3073,8 @@ class Recording:
 
                         # A full stop is already in flight (waiting for module
                         # confirmations): don't re-send it every cycle -- modules
-                        # that had already stopped answered the duplicate with
-                        # "Not recording", logged as a spurious FAULT (desk soak
-                        # 2026-09-30).
+                        # that had already stopped answer the duplicate with
+                        # "Not recording", logged as a spurious FAULT.
                         if session_name in self._full_stopping:
                             continue
 
@@ -3142,6 +3164,9 @@ class Recording:
             else:
                 self._not_recording_strikes.pop(key, None)
                 self._last_seen_recording_ns[key] = time.time_ns()
+                health = self.facade.get_module_health(m) or {}
+                if health.get("recording") and health.get("last_heartbeat"):
+                    self._last_recording_heartbeat_ns[key] = int(health["last_heartbeat"] * 1e9)
 
         open_for = {
             m for g in session.gaps if g["end_ns"] is None
@@ -3151,12 +3176,21 @@ class Recording:
         for m in not_recording:
             if m in open_for:
                 continue  # already inside an offline/restart/self-stop gap
-            # Starts when the module was last seen recording, not when the
-            # strikes threshold tripped (desk soak: 21 s late).
+            # Starts at the earliest evidence the data stopped: the module's
+            # last heartbeat that reported recording, or failing that when
+            # the controller last saw it recording -- never when the strikes
+            # threshold tripped (desk soak: 21 s late). The heartbeat matters
+            # for a module that reboots faster than the offline timeout: its
+            # status still read RECORDING until it re-registered, so test D's
+            # mic gap started 27 s after the drop and undercounted ~40 s.
+            candidates = [t for t in (
+                self._last_recording_heartbeat_ns.get((session_name, m)),
+                self._last_seen_recording_ns.get((session_name, m)),
+            ) if t]
             self._open_gap(
                 session_name, [m], "not_recording", "error",
                 f"{m} online but not recording",
-                start_ns=self._last_seen_recording_ns.get((session_name, m)),
+                start_ns=min(candidates) if candidates else None,
             )
 
         if not_recording:
@@ -3210,9 +3244,13 @@ class Recording:
             # we can't confirm recovery, so leave the fault as-is. For an
             # unattended session the state is still ACTIVE here — we're just
             # clearing the fault record.
+            # error_message is a fault description ("camera_d074 is offline"),
+            # not a subject -- "Recovered — camera_d074 is offline now
+            # recording" read wrong in test D's event log.
             reason = session.error_message or "faulted modules"
             self._log_session_event(
-                session_name, "RECOVERY", f"Recovered — {reason} now recording"
+                session_name, "RECOVERY",
+                f"Recovered — all modules recording again (was: {reason})"
             )
             session.error_message = ""
             session.error_time = None

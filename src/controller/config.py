@@ -35,7 +35,7 @@ class Config:
     ):
         """
         Initialize the configuration manager
-        
+
         Args:
             logger: Logger instance
             config_file_path: Path to configuration file (optional)
@@ -94,8 +94,8 @@ class Config:
         """
         Load and merge controller-specific config, then persist active_config.json
         Behaviour:
-        - If active config does not exist: full merge 
-        - If active config does exist: only fill in missing keys 
+        - If active config does not exist: full merge
+        - If active config does exist: only fill in missing keys
         """
 
         controller_path = os.path.abspath(controller_config_path)
@@ -201,7 +201,7 @@ class Config:
         Runs within set() and checks if a parameter which has been set belongs to the subcontroller
 
         args:
-            key_path: dot separated path to the parameter 
+            key_path: dot separated path to the parameter
         """
         if hasattr(self, "controller_config_keys") and key_path in self.controller_config_keys:
             self.logger.info(f"controller-specific param updated: {key_path}")
@@ -275,7 +275,7 @@ class Config:
     def get_all(self) -> dict[str, Any]:
         """
         Get the entire configuration
-        
+
         Returns:
             Dictionary containing the entire configuration
         """

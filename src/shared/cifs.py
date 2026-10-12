@@ -12,9 +12,12 @@ option to pass.
 """
 
 import os
+import subprocess
 import tempfile
 
 DEFAULT_DIR = "/run/saviour"
+# Every SAVIOUR CIFS mount uses the same ownership/cache options.
+MOUNT_OPTIONS = "uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
 
 
 def cifs_auth_option(username: str, password: str, name: str = "cifs",
@@ -36,6 +39,23 @@ def cifs_auth_option(username: str, password: str, name: str = "cifs",
         f.write(f"username={username}\npassword={password}\n")
     os.chmod(path, 0o600)
     return f"credentials={path}"
+
+
+def cifs_mount_cmd(host: str, share: str, mount_point, username: str,
+                   password: str, name: str = "cifs") -> list:
+    """argv for ``sudo mount -t cifs //host/share mount_point`` with the
+    credentials file and the standard options."""
+    auth = cifs_auth_option(username, password, name)
+    return ["sudo", "mount", "-t", "cifs", f"//{host}/{share}", str(mount_point),
+            "-o", f"{auth},{MOUNT_OPTIONS}"]
+
+
+def unmount(mount_point, timeout: float | None = None,
+            lazy: bool = False) -> subprocess.CompletedProcess:
+    """``sudo umount [-l] mount_point``; never raises on a non-zero exit."""
+    cmd = ["sudo", "umount"] + (["-l"] if lazy else []) + [str(mount_point)]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False,
+                          timeout=timeout)
 
 
 def redact_secrets(text: str) -> str:

@@ -1887,6 +1887,19 @@ create_recording_folder() {
     chown -R root:root /var/lib/saviour
 }
 
+# Modules run no OS update activity in the background: their code arrives
+# through SAVIOUR (ZIP update / mend.sh), unattended-upgrades isn't installed,
+# and these jobs compete with recording for CPU and I/O. The desktop panel's
+# daily update check (PackageKit, at the boot time of day) and apt's daily
+# list refresh each preceded capture stalls on a loaded camera. Undo with
+# `systemctl unmask packagekit` and
+# `systemctl enable --now apt-daily.timer apt-daily-upgrade.timer`.
+quiet_background_jobs() {
+    systemctl stop packagekit.service >> "$LOG" 2>&1 || true
+    systemctl mask packagekit.service >> "$LOG" 2>&1 || true
+    systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >> "$LOG" 2>&1 || true
+}
+
 generate_ssl_cert() {
     local ssl_dir="/etc/saviour/ssl"
     local cert="$ssl_dir/saviour.crt"
@@ -2067,6 +2080,7 @@ run_configuration() {
     fi
 
     [ "$DEVICE_ROLE" = "module" ] && create_recording_folder
+    [ "$DEVICE_ROLE" = "module" ] && quiet_background_jobs
 
     configure_service
 

@@ -198,7 +198,12 @@ class Controller(ABC):
             import json
             status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
-            self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it # TODO: remove this
+            # Web layer first: browser forwarding plus the variant's own types
+            # (e.g. APA's arduino_state). Its return value says whether anything
+            # there handled the message, so the fallback below doesn't call a
+            # handled type "unknown". (A single dispatch table replacing these
+            # two match blocks is in plans/pre-v1-codebase-cleanup.md.)
+            web_handled = self.web.handle_module_status(module_id, status_data)
             # Any message from a module proves it is reachable — refresh the
             # heartbeat timer so busy modules (e.g. mid-recording) are not
             # incorrectly declared offline just because they missed a periodic send.
@@ -267,6 +272,18 @@ class Controller(ABC):
                     self.facade.module_stopped(module_id)
                     if reason != 'operator':
                         self.facade.module_self_stopped(module_id, status_data)
+                    # Apply any FrameSync role change deferred while recording.
+                    self.facade.reconcile_framesync()
+
+                case 'camera_crop_updated':
+                    # A crop changes camera.width/height on the module itself
+                    # (the output follows the crop's aspect), so take the
+                    # module's config as the new target -- otherwise it reads
+                    # as a FAILED sync and a later config save would push the
+                    # old size back over the crop.
+                    config_data = status_data.get('config')
+                    if config_data and not status_data.get('error'):
+                        self.modules.adopt_module_config(module_id, config_data)
 
                 case 'cmd_ack':
                     command = status_data.get('command', 'unknown')
@@ -352,9 +369,23 @@ class Controller(ABC):
                     self.logger.debug(f"{module_id}: {status_type}")
 
                 case _:
-                    self.logger.info(f"Unknown status type from {module_id}: {status_type}")
+                    if not web_handled:
+                        self._log_unhandled_status_type(module_id, status_type)
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
+
+
+    def _log_unhandled_status_type(self, module_id: str, status_type: str) -> None:
+        """Warn once per type: a module sending a type nothing handles usually
+        sends it repeatedly (APA's arduino_state is 5/s), and one line is
+        enough to point at the cause (e.g. a variant mismatch)."""
+        seen = self.__dict__.setdefault("_unhandled_status_types", set())
+        if status_type in seen:
+            return
+        seen.add(status_type)
+        self.logger.warning(
+            "No handler for status type %r (first from %s); further ones are not logged",
+            status_type, module_id)
 
 
     def on_module_status_change(self, module_id: str, status: str):
@@ -368,9 +399,8 @@ class Controller(ABC):
         # Update the module tracker FIRST, then the recording side: the session
         # monitor thread reads online/RECORDING state from the tracker, and
         # updating it afterwards left a window where a session was in ERROR
-        # for an offline module that still looked RECORDING -- the liveness
-        # check "recovered" it and re-armed the unplugged module (desk soak
-        # 2026-09-30).
+        # for an offline module that still looked RECORDING, and the liveness
+        # check would "recover" it by re-arming the unplugged module.
         if status in ("online", "offline"):
             self.modules.notify_module_online_update(module_id, status == "online")
         if status == "online":
@@ -496,10 +526,10 @@ class Controller(ABC):
     def start(self) -> bool:
         """
         Start the controller.
-        
+
         Returns:
             bool: True if the controller started successfully, False otherwise.
-            
+
         Starts the following:
         - A PTP manager, which starts a thread to run ptp4l and phc2sys
         - A interface manager, which receives input from CLI or web interface and handles it (and may also be used to send commands to modules)
@@ -556,11 +586,11 @@ class Controller(ABC):
     def get_config(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value
-        
+
         Args:
             key: Configuration key path (e.g., "controller.max_buffer_size")
             default: Default value if key doesn't exist
-            
+
         Returns:
             Configuration value
         """
@@ -570,12 +600,12 @@ class Controller(ABC):
     def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
         """
         Set a configuration value
-        
+
         Args:
             key: Configuration key path (e.g., "controller.max_buffer_size")
             value: Value to set
             persist: Whether to save to config file
-            
+
         Returns:
             True if successful
         """
@@ -712,34 +742,6 @@ class Controller(ABC):
             "share_username": username,
             "share_password": password,
         }
-
-
-    def get_samba_info(self):
-        """Get Samba share information from configuration"""
-        try:
-            # Get controller IP address from service manager (already detected and stored)
-            controller_ip = self.network.ip
-
-            # Get Samba configuration from config
-            samba_config = {
-                'share_name': self.config.get('samba.share_name', 'controller_share'),
-                'username': self.config.get('samba.username', 'pi'),
-                'password': self.config.get('samba.password', 'saviour'),
-                'share_path': f'\\\\{controller_ip}\\{self.config.get("samba.share_name", "controller_share")}',
-                'controller_ip': controller_ip
-            }
-
-            self.logger.info(f"Returning Samba info: {samba_config}")
-            return samba_config
-        except Exception as e:
-            self.logger.error(f"Error getting Samba info: {e}")
-            return {
-                'share_name': 'controller_share',
-                'username': 'pi',
-                'password': 'saviour',
-                'share_path': '\\\\192.168.1.1\\controller_share',
-                'controller_ip': '192.168.1.1'
-            }
 
 
 if __name__ == "__main__":

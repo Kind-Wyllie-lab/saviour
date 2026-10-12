@@ -65,6 +65,35 @@ function makeModules() {
       version: "v0.6.1-mock",
       config_sync_status: "SYNCED",
     },
+    // Only in the apa build, which is the only one with a panel for it.
+    ...(import.meta.env.VITE_VARIANT === "apa" ? {
+      "apa_arduino_2904": {
+        id: "apa_arduino_2904",
+        name: "APA rig",
+        type: "apa_arduino",
+        ip: "10.0.0.190",
+        status: "READY",
+        online: true,
+        ready: true,
+        checks: {},
+        group: "other",
+        version: "v0.6.1-mock",
+        config_sync_status: "SYNCED",
+      },
+    } : {}),
+  };
+}
+
+// The APA Arduinos as the module reports them (arduino_state); socketMock.js
+// steps it and handles the module's commands. Poke it from the console via
+// window.__mockSocket.apa / .silenceArduino(ms).
+function makeApaRig() {
+  return {
+    rotating: false, rpm: 0, rpmSetpoint: 2,
+    shockActivated: false, holdUntil: 0, pulseOnUntil: 0, nextPulseAt: 0,
+    attempted: 0, delivered: 0, maxShocks: 50,
+    currentMa: 0.5, timeOnS: 0.5, timeOffS: 1.0,
+    silentUntil: 0,
   };
 }
 
@@ -220,6 +249,7 @@ export const state = {
   moduleConfigs: {},
   systemState: { recording: true, uptime: 71, ptp_sync: 2100 },
   firstRun: { needed: false },
+  apa: makeApaRig(),
 };
 
 export function reset() {
@@ -232,4 +262,5 @@ export function reset() {
   state.moduleConfigs = {};
   state.systemState = { recording: true, uptime: 71, ptp_sync: 2100 };
   state.firstRun = { needed: false };
+  state.apa = makeApaRig();
 }

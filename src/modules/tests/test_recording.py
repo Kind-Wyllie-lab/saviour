@@ -59,13 +59,6 @@ class TestFormatSessionName:
             assert rec._format_session_name("") == ""
 
 
-class TestGetSessionFromFilename:
-    def test_splits_at_first_underscore(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rec, _facade = _make_recording(tmpdir)
-            assert rec.get_session_from_filename("myexp_camera_abc123.ts") == "myexp"
-
-
 class TestGetStartTimeFromFilename:
     def test_extracts_datetime_from_segment_pattern(self):
         with tempfile.TemporaryDirectory() as tmpdir:

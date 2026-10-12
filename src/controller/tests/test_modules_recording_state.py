@@ -10,7 +10,7 @@ report per module_id so the Recordings page can show a session's state while
 it's still running, not just after it stops.
 """
 
-from src.controller.modules import Module, Modules, ModuleRecordingState
+from src.controller.modules import Module, ModuleRecordingState, Modules
 
 
 def _make_modules() -> Modules:

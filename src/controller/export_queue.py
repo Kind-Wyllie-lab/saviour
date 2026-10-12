@@ -161,6 +161,29 @@ class ExportQueue:
             self.logger.info(
                 f"Queued follow-up export for {module_id} → {export_path}")
 
+    def module_back_online(self, module_id: str) -> None:
+        """Re-dispatch an export the module never answered before it dropped.
+
+        A start_export sent just before a module reboots dies with the old
+        process but stays "active" here; without a re-dispatch, later
+        export_ready signals queue behind it or are dropped as duplicates and
+        pending_exports never balances. A module that is in fact still
+        exporting (a network blip, not a reboot) answers "Already exporting"
+        and its running pass completes the entry as before."""
+        with self._lock:
+            meta = self._active_meta.get(module_id)
+            if meta is None:
+                return
+            export_path, attempt, *_ = meta
+            self._active.discard(module_id)
+            self._active_meta.pop(module_id, None)
+            self._queue.insert(0, (module_id, export_path, attempt))
+            self.logger.warning(
+                f"{module_id} back online with an unanswered start_export -- "
+                f"re-dispatching {export_path}")
+            self._dispatch_next()
+            self._save()
+
     def on_export_complete(self, module_id: str) -> None:
         """Call when a module reports export_complete."""
         with self._lock:

@@ -25,7 +25,7 @@ class Communication:
     def __init__(self,
                  config = None):
         """Initialize the communication manager
-        
+
         Args:
             logger: Logger instance
             module_id: The unique identifier for this module
@@ -108,11 +108,11 @@ class Communication:
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
         """Connect to the controller's ZMQ sockets
-        
+
         Args:
             controller_ip: IP address of the controller
             controller_port: Port number of the controller
-            
+
         Returns:
             bool: True if connection was successful
         """
@@ -264,7 +264,7 @@ class Communication:
 
     def start_command_listener(self) -> bool:
         """Start the command listener thread
-        
+
         Returns:
             bool: True if the listener was started successfully
         """
@@ -536,7 +536,7 @@ class Communication:
 
     def send_status(self, status_data: dict[str, Any]) -> None:
         """Send status information to the controller
-        
+
         Args:
             status_data: Dictionary containing status information
         """

@@ -39,7 +39,6 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
-
 from experimental_scorers import ALGORITHM_NAMES, build_scorer  # noqa: E402
 from replay_habitat_motion import (  # noqa: E402
     ReplayTrigger,
@@ -291,7 +290,7 @@ def main() -> None:
               f"({total_span_h:.2f}h across {len(scored_videos)} video(s)) ===")
         print(f"  kept: {kept_s/60:.1f} min of {total_span_s/60:.1f} min "
               f"({100*kept_s/total_span_s:.1f}% of footage)")
-        for name, caught_list, missed, unmatched_list in per_video:
+        for name, _caught_list, missed, unmatched_list in per_video:
             if missed:
                 print(f"\n  missed in {name}:")
                 for ls, le, severity in missed:

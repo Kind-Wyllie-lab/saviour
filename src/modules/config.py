@@ -52,7 +52,7 @@ class Config:
     ):
         """
         Initialize the configuration manager
-        
+
         Args:
             config_file_path: Path to the base configuration file (optional)
             active_config_path: Path to the active configuration file (optional)
@@ -118,8 +118,8 @@ class Config:
         """
         Load and merge module-specific config, then persist active_config.json
         Behaviour:
-        - If active config does not exist: full merge 
-        - If active config does exist: only fill in missing keys 
+        - If active config does not exist: full merge
+        - If active config does exist: only fill in missing keys
         """
 
         module_path = os.path.abspath(module_config_path)
@@ -353,7 +353,7 @@ class Config:
         Runs within set() and checks if a parameter which has been set belongs to the submodule
 
         args:
-            key_path: dot separated path to the parameter 
+            key_path: dot separated path to the parameter
         """
         if hasattr(self, "module_config_keys") and key_path in self.module_config_keys:
             self.logger.info(f"Module-specific param updated: {key_path}")
@@ -376,11 +376,11 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value by its key path
-        
+
         Args:
             key_path: Dot-separated path to the configuration value
             default: Default value to return if key doesn't exist
-            
+
         Returns:
             Configuration value or default if not found
         """
@@ -448,17 +448,43 @@ class Config:
             self.save_active()
 
         if self._check_if_module_config_updated(key_path):
-            # NB: not self.on_module_config_change -- that attribute is never
-            # actually assigned anywhere in production (only set_all() below
-            # gets wired correctly, via self.config.configure_module =
-            # self.configure_module in Module.__init__). Calling it here
-            # unconditionally raised AttributeError on the first single-key
-            # set() of any module-config key -- previously unreachable since
-            # nothing in the codebase called set() for a module-config key
-            # until the camera crop feature's set_camera_crop() did.
+            # configure_module is wired by Module.__init__.
             self.configure_module([key_path])
 
         return True
+
+
+    def set_many(self, updates: dict[str, Any], persist: bool = True) -> list[str]:
+        """Set several dotted keys with one save and one configure_module()
+        call, so keys that must change together (a crop and the output size
+        it implies) reconfigure the camera once, never half-updated. Same
+        rules as set() for each key; unlike set_all() it never prunes
+        anything. Returns the keys that changed."""
+        changed = []
+        with self._lock:
+            for key_path, value in updates.items():
+                if self._sidecar_route(key_path) is not None:
+                    raise ValueError(f"set_many doesn't handle sidecar key {key_path}")
+                parts = key_path.split('.')
+                if parts[-1].startswith('_'):
+                    self.logger.warning(f"Attempt to modify read-only config key: {key_path}")
+                    continue
+                current = self.config
+                for part in parts[:-1]:
+                    if part not in current or not isinstance(current[part], dict):
+                        current[part] = {}
+                    current = current[part]
+                if current.get(parts[-1]) == value:
+                    continue
+                current[parts[-1]] = value
+                changed.append(key_path)
+        if changed and persist:
+            self.save_active()
+        module_keys = [k for k in changed if self._check_if_module_config_updated(k)]
+        if module_keys:
+            # configure_module is wired by Module.__init__.
+            self.configure_module(module_keys)
+        return changed
 
 
     def get_all(self) -> dict[str, Any]:
@@ -489,20 +515,11 @@ class Config:
         # Keys/sections that must survive an update omitting them, because they're
         # never part of the normal save payload for the thing that touches them:
         # - export: system-managed (set via set_export_config), not the frontend's
-        #   editable config. ExportConfigSection.jsx hides the Samba credential
-        #   fields entirely in "controller" mode (the default), so ANY module
-        #   config save -- not just a FrameSync/export-specific one -- could
-        #   otherwise silently wipe a live share_password whenever the frontend's
-        #   cached config snapshot didn't happen to include it (e.g. right after a
-        #   reconnect, while invalidate_config()'s module.config={} reset is still
-        #   in effect). Confirmed live 2026-08-20.
-        # - camera.crop_rect: set only via the separate crop-editor modal's
-        #   set_camera_crop command, never included in the normal ConfigCard save
-        #   payload -- any unrelated camera config save would otherwise prune it,
-        #   then set_all()'s own re-merge-defaults step immediately resets it to
-        #   the base-config default (None), silently discarding a real crop rect.
-        #   Also confirmed live 2026-08-20 (harmless that time only because this
-        #   particular module had never had a crop rect set).
+        #   editable config; a module config save whose cached snapshot lacks
+        #   it (e.g. right after a reconnect) would otherwise wipe the live
+        #   share_password.
+        # - camera.crop_rect: set only by set_camera_crop, never in the normal
+        #   save payload, so any camera config save would reset it to None.
         _NEVER_PRUNE_SECTIONS = {"export"} | self._sidecar_sections
         _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
 

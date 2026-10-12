@@ -123,6 +123,20 @@ class Motor:
         self.speed_error = None
 
 
+    def on_reconnect(self, protocol_instance: Protocol) -> bool:
+        """The Arduino identified again (reset or serial reconnect): rebind and
+        re-send the setpoint. A reset has stopped the motor; a reconnect without
+        one may not have, so stop it explicitly and let the operator restart.
+        Returns True if it was meant to be rotating."""
+        self.arduino = protocol_instance
+        self.arduino.handle_command = self.handle_command
+        was_rotating = self.rotating
+        if was_rotating:
+            self.stop_motor()
+        self.configure_motor()
+        return was_rotating
+
+
     def get_speed(self) -> float:
         return self.state_buffer[-1][0]
 

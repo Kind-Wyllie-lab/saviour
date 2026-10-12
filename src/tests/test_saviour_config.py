@@ -196,7 +196,8 @@ systemctl() {{ echo "CALLED systemctl $*"; }}
 {body}
 run_configuration && echo "RUN_OK"
 """
-    return subprocess.run([BASH, "-c", harness], capture_output=True, text=True,
+    # On stdin, not `-c`: MSYS bash on Windows truncates a ~8 KB argument.
+    return subprocess.run([BASH, "-s"], input=harness, capture_output=True, text=True,
                           timeout=60)
 
 
@@ -238,7 +239,7 @@ select_variant_type module "Module Type" "pick" "microphone"
 echo ---WITHOUT---
 select_variant_type module "Module Type" "pick" ""
 """
-    out = subprocess.run([BASH, "-c", harness], capture_output=True, text=True,
+    out = subprocess.run([BASH, "-s"], input=harness, capture_output=True, text=True,
                          timeout=30).stdout
     with_part, without_part = out.split("---WITHOUT---")
     assert "[detected] AudioMoth" in with_part
@@ -247,3 +248,14 @@ select_variant_type module "Module Type" "pick" ""
     assert "ttl" in with_part                      # every type still offered
     assert "[detected]" not in without_part
     assert "--default-item" not in without_part
+
+
+def test_modules_turn_off_background_update_jobs():
+    """Modules mask PackageKit and disable the apt-daily timers (they
+    competed with recording for CPU); controllers keep them."""
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    body = _extract(src, "quiet_background_jobs")
+    assert "mask packagekit.service" in body
+    assert "disable --now apt-daily.timer apt-daily-upgrade.timer" in body
+    run_cfg = _extract(src, "run_configuration")
+    assert '[ "$DEVICE_ROLE" = "module" ] && quiet_background_jobs' in run_cfg

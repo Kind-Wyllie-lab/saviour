@@ -233,3 +233,28 @@ class TestReconcileFramesync:
 
         assert roles == {}
         controller.communication.send_command.assert_not_called()
+
+
+class TestReconcileSkipsRecordingCameras:
+    """Test D (2026-10-04): a role change restarts the camera; doing that
+    mid-recording orphaned the hailo camera's encoder."""
+
+    def test_recording_camera_is_not_reroled(self):
+        from src.controller.modules import ModuleStatus
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
+        modules._modules["camera_b"].status = ModuleStatus.RECORDING
+        # camera_a (would-be server) is offline -> camera_b should become server
+        _add_camera(modules, "camera_a", framesync_enabled=True, online=False,
+                    sync_mode="server")
+        roles = facade.reconcile_framesync()
+        assert roles["camera_b"] == "server"
+        controller.communication.send_command.assert_not_called()
+
+    def test_idle_camera_is_reroled(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
+        _add_camera(modules, "camera_a", framesync_enabled=True, online=False,
+                    sync_mode="server")
+        facade.reconcile_framesync()
+        controller.communication.send_command.assert_called_once()

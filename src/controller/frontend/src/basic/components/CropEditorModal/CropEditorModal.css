@@ -1,50 +1,5 @@
-/* Big modal dedicated to crop editing -- same layout approach as
-   LoomRoiLineEditorModal.css, renamed to this modal's own class so both
-   can be styled independently if they diverge later. */
-.crop-editor-modal {
-  width: min(96vw, 1600px) !important;
-  max-width: min(96vw, 1600px) !important;
-  height: min(92vh, 950px) !important;
-  max-height: min(92vh, 950px) !important;
-  overflow: hidden;
-  padding: 16px;
-}
-
-.crop-editor-modal__content {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 14px;
-  height: calc(100% - 80px);
-}
-
-.crop-editor-modal__viewer {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: #111;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.crop-editor-modal__viewer img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-
-.crop-editor-modal__viewer canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.crop-editor-modal__sidebar {
-  overflow: auto;
-}
-
+/* Big modal dedicated to crop editing. The `.modal.` / !important
+   duplicates win over the shared .modal sizing rules. */
 .modal.crop-editor-modal {
   width: 98vw !important;
   max-width: 98vw !important;
@@ -59,42 +14,138 @@
 
 .modal.crop-editor-modal .crop-editor-modal__content {
   display: grid !important;
-  grid-template-columns: 1fr 360px !important;
+  grid-template-columns: 1fr 300px !important;
   gap: 14px !important;
-  height: calc(94vh - 120px) !important;
+  height: calc(94vh - 130px) !important;
   min-height: 400px !important;
-}
-
-.modal.crop-editor-modal .crop-editor-modal__viewer {
-  position: relative !important;
-  width: 100% !important;
-  height: 100% !important;
-  background: #111 !important;
-  border-radius: 8px !important;
-  overflow: hidden !important;
-}
-
-.modal.crop-editor-modal .crop-editor-modal__viewer img {
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain !important;
-  display: block !important;
-}
-
-.modal.crop-editor-modal .crop-editor-modal__viewer canvas {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.modal.crop-editor-modal .crop-editor-modal__sidebar {
-  overflow: auto !important;
-  max-height: 100% !important;
 }
 
 .modal-overlay:has(.modal.crop-editor-modal) {
   align-items: flex-start !important;
   justify-content: center !important;
   padding-top: 2vh !important;
+}
+
+.crop-editor-modal__viewer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #111;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* The field of view at its true aspect (sized in JS). The snapshot is
+   squeezed into the output's aspect by the camera; object-fit: fill
+   stretches it back. */
+.crop-editor-modal__stage {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.crop-editor-modal__stage img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  pointer-events: none;
+}
+
+.crop-editor-modal__shade {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.crop-editor-modal__rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #4ade80;
+  cursor: move;
+}
+
+.crop-editor-modal__handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  background: #4ade80;
+  border: 2px solid #111;
+  border-radius: 3px;
+}
+
+.crop-editor-modal__handle--nw { left: 0;    top: 0;    cursor: nwse-resize; }
+.crop-editor-modal__handle--ne { left: 100%; top: 0;    cursor: nesw-resize; }
+.crop-editor-modal__handle--sw { left: 0;    top: 100%; cursor: nesw-resize; }
+.crop-editor-modal__handle--se { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-editor-modal__handle--n  { left: 50%;  top: 0;    cursor: ns-resize; }
+.crop-editor-modal__handle--s  { left: 50%;  top: 100%; cursor: ns-resize; }
+.crop-editor-modal__handle--e  { left: 100%; top: 50%;  cursor: ew-resize; }
+.crop-editor-modal__handle--w  { left: 0;    top: 50%;  cursor: ew-resize; }
+
+.crop-editor-modal__waiting {
+  color: #bbb;
+  font-size: 0.9rem;
+  padding: 16px;
+  text-align: center;
+}
+
+.crop-editor-modal__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  max-height: 100%;
+}
+
+.crop-editor-modal__label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.crop-editor-modal__aspects {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.crop-editor-modal__aspect {
+  padding: 6px 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.crop-editor-modal__aspect--active {
+  border-color: var(--accent-color, #4a90d9);
+  background: var(--accent-color, #4a90d9);
+  color: white;
+}
+
+.crop-editor-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 800px) {
+  .modal.crop-editor-modal .crop-editor-modal__content {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr auto !important;
+  }
 }

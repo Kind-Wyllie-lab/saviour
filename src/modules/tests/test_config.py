@@ -508,3 +508,46 @@ class TestAudiomothLabelSidecar:
         assert not os.path.exists(
             os.path.join(os.path.dirname(cfg.active_config_path), "runtime_state.json")
         )
+
+
+class TestSetMany:
+    """set_many: several keys, one save, one configure_module call, no
+    pruning -- for a crop and the output size it implies."""
+
+    def _cfg(self):
+        cfg = _make_config_with_module(
+            {"module": {"name": "m"}},
+            {"camera": {"width": 1920, "height": 1080, "crop_rect": None, "fps": 30}},
+        )
+        cfg.module_config_keys = {"camera.width", "camera.height",
+                                  "camera.crop_rect", "camera.fps"}
+        calls = []
+        cfg.configure_module = lambda keys: calls.append(list(keys))
+        return cfg, calls
+
+    def test_one_configure_call_for_all_changed_keys(self):
+        cfg, calls = self._cfg()
+        changed = cfg.set_many({
+            "camera.width": 1088, "camera.height": 1088,
+            "camera.crop_rect": {"v": 2, "x": 0.1},
+        })
+        assert sorted(changed) == ["camera.crop_rect", "camera.height", "camera.width"]
+        assert len(calls) == 1 and sorted(calls[0]) == sorted(changed)
+        assert cfg.get("camera.width") == 1088
+        assert cfg.get("camera.fps") == 30            # untouched, not pruned
+
+    def test_unchanged_values_are_skipped(self):
+        cfg, calls = self._cfg()
+        assert cfg.set_many({"camera.width": 1920}) == []
+        assert calls == []
+
+    def test_persists_once(self):
+        cfg, _ = self._cfg()
+        cfg.set_many({"camera.width": 1280, "camera.height": 720})
+        with open(cfg.active_config_path) as f:
+            saved = json.load(f)
+        assert saved["camera"]["width"] == 1280 and saved["camera"]["height"] == 720
+
+    def test_private_keys_are_refused(self):
+        cfg, _ = self._cfg()
+        assert cfg.set_many({"camera._codec": "x"}) == []

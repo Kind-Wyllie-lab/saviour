@@ -14,6 +14,7 @@
         "fps": 30,
         "overlay_timestamp": true,
         "text_size": "medium",
+        "timestamp_position": "top",
         "gain": 1,
         "manual_exposure": false,
         "exposure_time": 10000,

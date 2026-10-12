@@ -234,3 +234,28 @@ class TestExportCredentialsApplied:
         mgr = _make_modules()
         mgr.export_credentials_applied("ghost", self.CREDS)
         assert "ghost" not in mgr._config_states
+
+
+class TestAdoptModuleConfig:
+    """A crop changes camera.width/height on the module itself; the
+    controller adopts the module's config as its target so it reads
+    SYNCED, not a mismatch that a later save would 'fix' by pushing the
+    old size back."""
+
+    def test_adopted_config_becomes_true_and_target(self):
+        mgr = _make_modules()
+        _register(mgr)
+        mgr.received_module_config("camera_abc", {"camera": {"width": 1920, "height": 1080}})
+        mgr.set_target_module_config("camera_abc", {"camera": {"width": 1920, "height": 1080}})
+        mgr.received_module_config("camera_abc", {"camera": {"width": 1920, "height": 1080}})
+
+        cropped = {"camera": {"width": 1088, "height": 1088, "crop_rect": {"v": 2}}}
+        mgr.adopt_module_config("camera_abc", cropped)
+
+        state = mgr._config_states["camera_abc"]
+        assert state.status == ConfigSyncStatus.SYNCED
+        assert state.target_config["camera"]["width"] == 1088
+        assert mgr._modules["camera_abc"].config == cropped
+        # A later echo of the same config stays SYNCED.
+        mgr.received_module_config("camera_abc", cropped)
+        assert state.status == ConfigSyncStatus.SYNCED

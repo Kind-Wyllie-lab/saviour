@@ -49,9 +49,6 @@ class ControllerFacade:
         return self.controller.modules.get_module_configs()
 
 
-    def get_samba_info(self):
-        return self.controller.get_samba_info()
-
     def get_export_credentials(self) -> dict:
         return self.controller.get_export_credentials()
 
@@ -370,6 +367,14 @@ class ControllerFacade:
             roles[mid] = target_role
             if camera_cfg(mid).get("sync_mode", "none") == target_role:
                 continue
+            # A role change restarts the camera, which must never happen
+            # mid-recording (it orphans the running encoder).
+            # Re-run on recording_stopped (Controller.handle_status_update).
+            if self.is_module_recording(mid):
+                self.logger.info(
+                    f"FrameSync reconcile: {mid} should be {target_role} but is "
+                    f"recording -- deferred until it stops")
+                continue
 
             new_camera = dict(camera_cfg(mid))
             new_camera["sync_mode"] = target_role
@@ -397,11 +402,9 @@ class ControllerFacade:
             # sections nothing re-echoes after changing (e.g. export.share_password
             # stays "" forever in true_config, since set_export_config's own ack
             # carries no `config` field to refresh it -- see module.py's
-            # set_export_config). Sending the full object let the module's
-            # Config.set_all() merge overwrite those stale sections for real,
-            # persisting them to disk -- confirmed live: this silently wiped
-            # export.share_password back to "" on every module restart, since
-            # sync_mode almost always needs correcting right after a fresh boot.
+            # set_export_config). Sending the full object would let the
+            # module's set_all() persist those stale values (it wiped
+            # share_password on restart).
             self.send_command(mid, "set_config", {"camera": new_config["camera"]})
 
         return roles
@@ -483,6 +486,7 @@ class ControllerFacade:
 
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online
+        self.controller.export_queue.module_back_online(module_id)
         self.controller.recording.module_back_online(module_id)
 
     def notify_module_recording(self, module_id: str) -> None:
@@ -536,7 +540,6 @@ class ControllerFacade:
 
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
         self.controller.modules.module_ip_changed(module_id, new_module_ip)
-
 
 
     """Notifications"""

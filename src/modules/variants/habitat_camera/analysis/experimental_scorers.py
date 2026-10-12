@@ -25,7 +25,9 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))  # .../src
-from modules.variants.habitat_camera.motion_detector import HabitatMotionDetector  # noqa: E402
+from modules.variants.habitat_camera.motion_detector import (
+    HabitatMotionDetector,  # noqa: E402
+)
 
 
 def _resize_to_width(w0: int, h0: int, target_width: int) -> tuple[int, int]:

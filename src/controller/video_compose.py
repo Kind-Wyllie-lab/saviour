@@ -374,12 +374,32 @@ def _csv_bounds(csv_path: str, skip: int = 0) -> tuple[int, int]:
 
 
 def _representative_frame(stream: CameraStream, t_ns: int, skip: int = 0) -> np.ndarray:
-    """Decode the one frame closest to `t_ns` for a single camera."""
-    cursor = _StreamCursor(stream, skip)
+    """A frame near `t_ns` for a single camera, for the layout preview.
+
+    Seeks (CAP_PROP_POS_MSEC -> nearest keyframe, then a short decode)
+    rather than walking `_StreamCursor` forward from frame 0: that decoded
+    every frame up to mid-session -- tens of thousands on a long .ts, read
+    over the share -- so a first preview could take minutes (field report,
+    2026-10). The seek isn't frame-accurate on MPEG-TS, which is fine for a
+    layout preview; real renders still use the cursor. Falls back to the
+    first frame if the seek reads nothing."""
+    first_ns, _last_ns = _csv_bounds(stream.csv_path, skip)
+    cap = cv2.VideoCapture(stream.video_path)
     try:
-        return cursor.sync_to(t_ns)
+        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, (t_ns - first_ns) / 1e6))
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return frame
     finally:
-        cursor.release()
+        cap.release()
+    cap = cv2.VideoCapture(stream.video_path)
+    try:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            raise ValueError(f"could not decode a frame from {stream.video_path}")
+        return frame
+    finally:
+        cap.release()
 
 
 def _stream_thumb(
@@ -402,22 +422,23 @@ def _stream_thumb(
 
 
 def _attach_audio_preview(
-    frame: np.ndarray, audio_png: str, audio_mode: str
+    frame: np.ndarray, audio_png: str, audio_mode: str,
+    height_px: int | None = None,
 ) -> np.ndarray:
     """Composite a spectrogram PNG into the preview the same way a real
     render places it: `panel` stacked below the video, `strip` overlaid on
-    the bottom of the video."""
+    the bottom of the video, `height_px` tall (default 20% of the video)."""
     spec_img = cv2.imread(audio_png)
     if spec_img is None:
         return frame
     ch, cw = frame.shape[:2]
+    h = height_px or max(2, round(ch * 0.2) // 2 * 2)
     if audio_mode == "panel":
-        panel_h = max(2, round(ch * 0.4) // 2 * 2)
-        panel = cv2.resize(spec_img, (cw, panel_h))
+        panel = cv2.resize(spec_img, (cw, h))
         panel = _label(panel, "audio")
         return np.vstack([frame, panel])
     # strip
-    strip_h = max(2, round(ch * 0.18) // 2 * 2)
+    strip_h = min(h, ch)
     strip = cv2.resize(spec_img, (cw, strip_h))
     out = frame.copy()
     out[ch - strip_h : ch, 0:cw] = strip
@@ -434,6 +455,7 @@ def compose_preview_frame(
     audio_png: str | None = None,
     audio_mode: str | None = None,
     csv_skip: dict[str, int] | None = None,
+    audio_height_px: int | None = None,
 ) -> str:
     """Composite a single frame (at `at_fraction` through the overlap
     window) to a PNG -- a fast layout preview before a full render.
@@ -441,7 +463,7 @@ def compose_preview_frame(
     `cache_dir`, when given, holds one representative PNG per camera so
     repeated previews skip video decode entirely. `audio_png` + `audio_mode`
     ("strip" | "panel") composite a spectrogram into the preview so audio
-    layout modes are visible before rendering.
+    layout modes are visible before rendering, `audio_height_px` tall.
     """
     found = discover_camera_streams(date_dir)
     if streams is not None:
@@ -467,7 +489,8 @@ def compose_preview_frame(
         frame[y : y + h, x : x + w] = pane
 
     if audio_png and audio_mode in ("strip", "panel"):
-        frame = _attach_audio_preview(frame, audio_png, audio_mode)
+        frame = _attach_audio_preview(
+            frame, audio_png, audio_mode, audio_height_px)
 
     os.makedirs(os.path.dirname(output_png) or ".", exist_ok=True)
     if not cv2.imwrite(output_png, frame):

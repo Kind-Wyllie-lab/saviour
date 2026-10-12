@@ -203,6 +203,17 @@ min-width: 300px;
   cursor: default;
 }
 
+/* Header copy of Save (HeaderSaveButton), left of the actions menu. */
+.header-save-button {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.header-save-button--dirty:not(:disabled) {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent);
+}
+
 .card-header {
   margin-bottom: 8px;
 }

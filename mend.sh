@@ -10,7 +10,8 @@
 #   3. Rebuilds the frontend (controller only)
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
 #   5. Installs / refreshes the saviour-config symlink
-#   6. Applies logging and NTP configuration
+#   6. Applies logging and NTP configuration; turns off background OS
+#      update jobs on modules
 #   7. Disables NVMe APST (power-state transitions) on devices with an NVMe root
 #   8. Sets the PoE+ HAT's PSU_MAX_CURRENT bootloader budget (all Pi 4/5 devices)
 #   9. Regenerates the saviour.service systemd unit and restarts it if running
@@ -288,6 +289,9 @@ section "6/8  Logging + NTP"
 # took effect on any Pi in the fleet (found 2026-09-30: every module's
 # journal was RAM-only, which is why reboots left nothing to diagnose).
 # A drop-in that sorts after 40-rpi-* wins.
+# SyncIntervalSec: journald only fsyncs non-crit messages every 5 min by
+# default, so a power cut lost the minutes before the crash -- the ones a
+# postmortem needs. 30 s costs negligible extra writes.
 # PTP units: phc2sys's per-sample output out of the journal (see
 # saviour-config's note above configure_ptp_timetransmitter).
 if [ -f /etc/systemd/system/phc2sys.service ] \
@@ -307,6 +311,7 @@ JOURNALD_DROPIN=/etc/systemd/journald.conf.d/99-saviour.conf
 effective_storage=$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
     | grep -E '^Storage=' | tail -1 | cut -d= -f2)
 if [ -f "$JOURNALD_DROPIN" ] && [ "$effective_storage" = "persistent" ] \
+        && grep -q "^SyncIntervalSec=30s" "$JOURNALD_DROPIN" \
         && [ -n "$(ls -A /var/log/journal 2>/dev/null)" ]; then
     ok "Persistent logging already configured"
 else
@@ -317,6 +322,7 @@ else
 Storage=persistent
 SystemMaxUse=500M
 SystemKeepFree=1G
+SyncIntervalSec=30s
 EOF
     systemctl restart systemd-journald
     journalctl --flush || true
@@ -336,6 +342,28 @@ RootDistanceMaxSec=5
 EOF
     timedatectl set-ntp true
     systemctl restart systemd-timesyncd
+fi
+
+# Modules run no OS update activity in the background: their code arrives
+# through SAVIOUR (ZIP update / mend.sh), unattended-upgrades isn't installed,
+# and these jobs compete with recording for CPU and I/O. The desktop panel's
+# daily update check (PackageKit, at the boot time of day) and apt's daily
+# list refresh each preceded capture stalls on a loaded camera. Undo with
+# `systemctl unmask packagekit` and
+# `systemctl enable --now apt-daily.timer apt-daily-upgrade.timer`.
+if [ "$DETECTED_ROLE" = "module" ]; then
+    if [ "$(systemctl is-enabled packagekit.service 2>/dev/null)" = "masked" ] \
+            && ! systemctl is-enabled --quiet apt-daily.timer 2>/dev/null \
+            && ! systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+        ok "Background OS update jobs already off"
+    else
+        fix "Turning off background OS update jobs (PackageKit, apt-daily timers)"
+        systemctl stop packagekit.service 2>/dev/null || true
+        systemctl mask packagekit.service >/dev/null 2>&1 \
+            || warn "Could not mask packagekit.service"
+        systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 \
+            || warn "Could not disable the apt-daily timers"
+    fi
 fi
 
 # ── 7. NVMe power management ───────────────────────────────────────────────────
@@ -437,6 +465,20 @@ if [ -f /etc/saviour/config ]; then
         fi
     fi
 fi
+
+# Chromium profile locks inherited from a cloned image: SingletonLock is a
+# symlink to "<hostname>-<pid>", and one naming another machine makes the
+# browser refuse with "profile in use by another computer" (2026-10-02).
+# Only locks naming a *different* host are removed, so a Chromium actually
+# running on this device is never touched.
+for lock in /home/*/.config/chromium/SingletonLock /root/.config/chromium/SingletonLock; do
+    [ -L "$lock" ] || continue
+    owner=$(readlink "$lock")
+    if [ "${owner%-*}" != "$(hostname)" ]; then
+        fix "Removing stale Chromium profile lock from ${owner%-*} ($lock)"
+        rm -f "$lock" "$(dirname "$lock")/SingletonCookie" "$(dirname "$lock")/SingletonSocket"
+    fi
+done
 
 # Legacy per-type units (e.g. saviour-camera-module.service) from before the
 # single saviour.service. Found 2026-10-02 crash-looping every 2 s on a desk

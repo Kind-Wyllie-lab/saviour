@@ -12,6 +12,10 @@ void handleCommand(String command, String param) {
     sendMessage(MSG_IDENTITY, SYSTEM_ID);
   }
 
+  else if (command == MSG_KEEPALIVE) {
+    // noteHostPacket() has already done its work
+  }
+
 
   // =============================================================================
   // SPEED CONTROL COMMANDS

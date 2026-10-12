@@ -42,7 +42,9 @@ from pathlib import Path
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))  # .../src
-from modules.variants.habitat_camera.motion_detector import HabitatMotionDetector  # noqa: E402
+from modules.variants.habitat_camera.motion_detector import (
+    HabitatMotionDetector,  # noqa: E402
+)
 
 _DEFAULTS = {
     "algorithm": "frame_diff",

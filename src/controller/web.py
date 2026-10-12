@@ -42,15 +42,16 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller import compose, framesync_check, rest_api
+from src.controller import system_update as su
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
 from src.controller.themes import ThemeError, ThemeStore
+from src.shared.cifs import cifs_mount_cmd, unmount
 from src.shared.data_rate import (
     bytes_per_s_to_mb_per_min,
     estimate_recording_bytes_per_s,
     runway_minutes,
 )
-from src.shared.cifs import cifs_auth_option
 from src.shared.supervised import supervise
 from src.shared.zip_extract import extract_preserving_permissions
 
@@ -203,7 +204,7 @@ def _provisioned_device_type() -> str | None:
     return None
 
 
-class Web(ABC):
+class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     # Outside the JSON config files on purpose -- those are readable/mergeable
     # via the config-sync socket events, and a credential has no business
     # sitting somewhere "get_controller_config" could ever echo back.
@@ -322,6 +323,7 @@ class Web(ABC):
         # page — spun up on first request so no thread starts before the
         # app is serving.
         self._compose_worker = None
+        self._compose_preview_queue = None   # compose.PreviewQueue, lazy
         # Same, for automatic framesync/PTP sync-quality validation.
         self._framesync_worker = None
 
@@ -671,6 +673,14 @@ class Web(ABC):
         return expires is not None and expires >= time.time()
 
 
+    def _export_share_settings(self) -> tuple:
+        """(share_ip, share_path, username, password) from export.* config."""
+        get = self.config.get
+        return (get("export.share_ip", ""),
+                get("export.share_path", "controller_share"),
+                get("export.share_username", ""),
+                get("export.share_password", ""))
+
     def _probe_nas(self) -> dict:
         """Mount the export share, measure free space, and test writability.
 
@@ -699,19 +709,15 @@ class Web(ABC):
             return out
         out["configured"] = True
 
-        share_path = self.config.get("export.share_path", "controller_share")
-        username   = self.config.get("export.share_username", "")
-        password   = self.config.get("export.share_password", "")
+        _, share_path, username, password = self._export_share_settings()
         mount_point = Path("/mnt/nas_probe")
         try:
             mount_point.mkdir(parents=True, exist_ok=True)
             if mount_point.is_mount():
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-            auth_opts = cifs_auth_option(username, password, "nas-probe")
+                unmount(mount_point, timeout=10)
             result = subprocess.run(
-                ["sudo", "mount", "-t", "cifs",
-                 f"//{nas_ip}/{share_path}", str(mount_point),
-                 "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                               "nas-probe"),
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode != 0:
@@ -745,7 +751,7 @@ class Web(ABC):
             out["error"] = f"NAS check failed: {e}"
             return out
         finally:
-            subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+            unmount(mount_point, timeout=10)
 
 
     def _check_nas_free_space(self, probe: "dict | None" = None) -> "str | None":
@@ -782,21 +788,16 @@ class Web(ABC):
         """Attempt one write of session_metadata.json.  Returns True on success."""
         import subprocess
 
-        nas_ip = self.config.get("export.share_ip", "")
+        nas_ip, share_path, username, password = self._export_share_settings()
         if nas_ip:
-            share_path = self.config.get("export.share_path", "controller_share")
-            username   = self.config.get("export.share_username", "")
-            password   = self.config.get("export.share_password", "")
             mount_point = Path("/mnt/controller_export")
             try:
                 mount_point.mkdir(parents=True, exist_ok=True)
                 if mount_point.is_mount():
-                    subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
-                auth_opts = cifs_auth_option(username, password, "metadata")
+                    unmount(mount_point, timeout=10)
                 result = subprocess.run(
-                    ["sudo", "mount", "-t", "cifs",
-                     f"//{nas_ip}/{share_path}", str(mount_point),
-                     "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                    cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                                   "metadata"),
                     capture_output=True, text=True, timeout=15,
                 )
                 if result.returncode != 0:
@@ -815,7 +816,7 @@ class Web(ABC):
                 self.logger.warning(f"Metadata write failed for '{session_name}': {e}")
                 return False
             finally:
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+                unmount(mount_point, timeout=10)
         else:
             share_dir = self.habitat_share_dir / session_name
             try:
@@ -870,7 +871,6 @@ class Web(ABC):
                 daemon=True,
                 name=f"metadata-retry-{session_name}",
             ).start()
-
 
 
     def register_additional_socketio_events(self, handler_func):
@@ -954,9 +954,11 @@ class Web(ABC):
 
         @self.socketio.on("compose_preview")
         def handle_compose_preview(data=None):
-            # One composited frame (~1-3 s of OpenCV) — off the socket
-            # thread so it doesn't stall this client's other events.
-            def _work(spec_dict):
+            # One composited frame, rendered off the socket thread by a
+            # single PreviewQueue worker that keeps only each client's
+            # latest request, and replied to that client alone (with its
+            # request_id) rather than broadcast.
+            def _render(spec_dict):
                 import base64
                 try:
                     spec = compose.ComposeSpec.from_dict(spec_dict or {})
@@ -968,22 +970,19 @@ class Web(ABC):
                         rebuild=bool((spec_dict or {}).get("rebuild")),
                         logger=self.logger,
                     )
-                    self.socketio.emit("compose_preview_ready", {
-                        "image": "data:image/png;base64,"
-                        + base64.b64encode(png).decode(),
-                    })
                 except compose.ComposeError as exc:
-                    self.socketio.emit("compose_preview_ready", {"error": str(exc)})
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.exception("compose preview failed")
-                    self.socketio.emit(
-                        "compose_preview_ready",
-                        {"error": f"internal error: {exc}"},
-                    )
+                    return {"error": str(exc)}
+                return {"image": "data:image/png;base64,"
+                        + base64.b64encode(png).decode()}
 
-            threading.Thread(
-                target=_work, args=(data,), daemon=True, name="compose-preview"
-            ).start()
+            if self._compose_preview_queue is None:
+                self._compose_preview_queue = compose.PreviewQueue(
+                    _render,
+                    lambda sid, payload: self.socketio.emit(
+                        "compose_preview_ready", payload, room=sid),
+                    logger=self.logger,
+                )
+            self._compose_preview_queue.submit(request.sid, data or {})
 
         @self.socketio.on("run_ephys_align")
         def handle_run_ephys_align(data=None):
@@ -1259,14 +1258,9 @@ class Web(ABC):
                     self._authenticated_sids.add(request.sid)
 
             # Send initial module list -- event name/payload shape must match
-            # what useModules.js actually listens for (modules_update, raw
-            # dict) and what the 'get_modules' handler below already sends;
-            # this previously emitted a differently-named, differently-shaped
-            # 'module_update' event that no frontend code has ever listened
-            # for, so a reconnect (e.g. after a brief network blip) never
-            # proactively refreshed a client's module/readiness state -- it
-            # silently depended on some future real change to trigger a
-            # fresh broadcast, until the operator did a full page reload.
+            # what useModules.js listens for (modules_update, raw dict), the
+            # same as the 'get_modules' handler, so a reconnect refreshes the
+            # client's module/readiness state.
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('modules_update', modules)
@@ -1296,8 +1290,8 @@ class Web(ABC):
             Handle command from frontend.
             Command will be formatted as command_name param1=value1 param2=value2 etc
             For example, start_streaming client_ip=192.168.0.55 port=8080
-            Communication manager will format this as cmd/<module_id> <command_name> <param1=value1> <param2=value2> etc 
-            
+            Communication manager will format this as cmd/<module_id> <command_name> <param1=value1> <param2=value2> etc
+
             Args:
                 command (json): The command received from the frontend. Should contain type, module_id (may be "all" or a specific module), and params field
             """
@@ -1379,11 +1373,9 @@ class Web(ABC):
             # validate_readiness makes each module mount+write+unmount against the
             # shared export share (module.py's _check_export()). Dispatching that
             # to every module within the same instant is a thundering herd against
-            # the NAS's SMB server — confirmed live 2026-08-24 on a 20-module
-            # habitat deployment, where most of the fleet failed readiness with a
-            # mix of I/O error / device busy / no-such-file even though the share
-            # was healthy throughout. Stagger dispatch to spread the resulting
-            # mount/write/unmount cycles out over time instead.
+            # the NAS's SMB server (a 20-module fleet mostly failed readiness with
+            # I/O error / device busy against a healthy share). Stagger dispatch
+            # to spread the mount/write/unmount cycles out.
             _READINESS_STAGGER_S = 0.3
             for i, mid in enumerate(modules):
                 if i > 0:
@@ -1433,6 +1425,32 @@ class Web(ABC):
                 _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
 
+        @self.socketio.on("get_sessions_size")
+        def handle_get_sessions_size(data=None):
+            """Total bytes on the share per session, for the session list's
+            selection bar. {names: [...]} -> sessions_size_response
+            {sizes: {name: bytes}}; unknown/invalid names report 0."""
+            import re
+
+            from flask_socketio import emit as _emit
+            names = (data or {}).get("names") or []
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            sizes = {}
+            for name in names[:_MAX_SIZE_SESSIONS]:
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+                    continue
+                total = 0
+                for root, _dirs, filenames in os.walk(os.path.join(share, name)):
+                    for fn in filenames:
+                        try:
+                            total += os.path.getsize(os.path.join(root, fn))
+                        except OSError:
+                            pass
+                sizes[name] = total
+            _emit("sessions_size_response", {"sizes": sizes})
+
+        _MAX_SIZE_SESSIONS = 500
+
         @self.socketio.on("get_session_file_info")
         def handle_get_session_file_info(data=None):
             import re
@@ -1472,24 +1490,37 @@ class Web(ABC):
                 "total_bytes": total,
             })
 
-        def _stream_zip_response(dir_path: str, zip_filename: str):
+        _MAX_ZIP_SESSIONS = 500
+
+        def _stream_zip_response(dir_path, zip_filename: str):
             """Stream a ZIP of every file under dir_path (built incrementally
             in a background thread via _QueueStream, not buffered in memory
             or on disk first) as a Flask response. Shared by the whole-
-            session zip and the per-folder zip below -- same shape, only the
-            root directory and the download filename differ."""
+            session zip, the per-folder zip and the multi-session zip --
+            same shape, only the roots and the download filename differ.
+
+            dir_path is one directory (entries relative to it), or a list
+            of (directory, prefix) pairs, each directory's entries going
+            under its prefix/ in the archive."""
+            roots = ([(dir_path, "")] if isinstance(dir_path, str)
+                     else list(dir_path))
             q = _queue.SimpleQueue()
 
             def _build():
+                root_dir = None
                 try:
                     with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
-                        for root, dirs, filenames in os.walk(dir_path):
-                            dirs.sort()
-                            for fn in sorted(filenames):
-                                full = os.path.join(root, fn)
-                                zf.write(full, os.path.relpath(full, dir_path))
+                        for root_dir, prefix in roots:
+                            for root, dirs, filenames in os.walk(root_dir):
+                                dirs.sort()
+                                for fn in sorted(filenames):
+                                    full = os.path.join(root, fn)
+                                    rel = os.path.relpath(full, root_dir)
+                                    if prefix:
+                                        rel = f"{prefix}/{rel.replace(os.sep, '/')}"
+                                    zf.write(full, rel)
                 except Exception as e:
-                    self.logger.error(f"ZIP stream error for '{dir_path}': {e}")
+                    self.logger.error(f"ZIP stream error for '{root_dir}': {e}")
                 finally:
                     q.put(None)
 
@@ -1549,6 +1580,38 @@ class Web(ABC):
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/sessions/zip")
+        def download_sessions_zip():
+            """Several sessions as one streamed zip, each under its own
+            top-level folder -- the session list's tick-to-download
+            (plans/field-install-feedback-2026-10.md, item 7). ?names=a,b,c.
+            Sessions with no folder on the share are skipped; 404 if none
+            has one."""
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            import re
+            names = [n for n in (request.args.get("names") or "").split(",") if n]
+            names = list(dict.fromkeys(names))          # dedupe, keep order
+            if not names:
+                return "No sessions given", 400
+            if len(names) > _MAX_ZIP_SESSIONS:
+                return f"At most {_MAX_ZIP_SESSIONS} sessions per download", 400
+            if not all(re.fullmatch(r"[A-Za-z0-9_\-]+", n) for n in names):
+                return "Invalid session name", 400
+            share = os.path.realpath(self.config.get("export.mount_path", "/home/pi/controller_share"))
+            roots = []
+            for name in names:
+                session_dir = os.path.realpath(os.path.join(share, name))
+                if not session_dir.startswith(share + os.sep):
+                    return "Forbidden", 403
+                if os.path.isdir(session_dir):
+                    roots.append((session_dir, name))
+            if not roots:
+                return "Not found", 404
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            return _stream_zip_response(
+                roots, f"saviour-{len(roots)}-sessions-{stamp}.zip")
 
         @self.app.route("/api/ephys/upload", methods=["POST"])
         def upload_ephys_dataset():
@@ -1925,67 +1988,6 @@ class Web(ABC):
                 self.socketio.emit("session_error", {"error": result.get("error")})
 
 
-        @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
-        def handle_module_status(data):
-            """Handle module status update"""
-            self.logger.info("IN WEB HANDLE_MODULE_STATUS")
-            try:
-                # self.logger.info(f"Received module status: {data}")
-                if not isinstance(data, dict):
-                    raise ValueError("Status data must be a dictionary")
-
-                module_id = data.get('module_id')
-                status = data.get('status')
-
-                if not module_id or not status:
-                    raise ValueError("Status must include 'module_id' and 'status'")
-
-                # Handle recordings list response
-                if status.get('type') == 'recordings_list':
-                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
-                    module_recordings = status.get('recordings', [])
-
-                    # Send individual module recordings response
-                    self.socketio.emit('module_recordings', {
-                        'module_id': module_id,
-                        'recordings': module_recordings
-                    })
-                    return
-
-                # Handle export complete response
-                if status.get('type') == 'export_complete':
-                    self.logger.info(f"Broadcasting export complete for module {module_id}")
-                    self.socketio.emit('export_complete', {
-                        'module_id': module_id,
-                        'success': status.get('success', False),
-                        'error': status.get('error'),
-                        'filename': status.get('filename')
-                    })
-                    return
-
-                # Handle recording started/stopped status
-                if status.get('type') in ['recording_started', 'recording_stopped']:
-                    self.logger.info(f"Broadcasting recording status for module {module_id}")
-                    self.socketio.emit('module_status', {
-                        'module_id': module_id,
-                        'status': status
-                    })
-                    return
-
-                # For heartbeat and other status types
-                if 'recording_status' not in status:
-                    self.logger.warning("Recording status not in received status update.")
-
-                # Broadcast status to all clients
-                self.socketio.emit('module_status', {
-                    'module_id': module_id,
-                    'status': status
-                })
-
-            except Exception as e:
-                self.logger.error(f"Error handling module status: {e!s}")
-                # Optionally emit error back to client
-                # self.socketio.emit('error', {'message': str(e)})
 
         """ Experiment Metadata """
         # Experiment metadata
@@ -2351,8 +2353,8 @@ class Web(ABC):
             export_changed = any(
                 old_export.get(k) != new_export.get(k) for k in share_keys
             )
-            # The controller is the single authority for the export destination
-            # (the per-module "manual" override was removed 2026-08-28), so a
+            # The controller is the single authority for the export destination,
+            # so a
             # changed share config is always pushed to every connected module
             # here rather than leaving them on stale credentials until they
             # reconnect. The "Sync to All Modules" button remains as a manual
@@ -2551,12 +2553,13 @@ class Web(ABC):
 
 
         # ── Update package store ──────────────────────────────────────────────
-        _UPDATE_STORE = "/var/lib/saviour/updates"
-        _UPDATE_ZIP   = os.path.join(_UPDATE_STORE, "saviour-latest.zip")
-        _UPDATE_META  = os.path.join(_UPDATE_STORE, "update_meta.json")
-        _SRC_ROOT     = "/usr/local/src/saviour"
-        _STAGE_SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
-                            '.pytest_cache', 'dist', '.eggs'}
+        # The git/zip/snapshot/build primitives live in system_update.py
+        # (shared with POST /api/v1/system/update); these handlers add the
+        # Socket.IO progress events around them.
+        _UPDATE_STORE = su.UPDATE_STORE
+        _UPDATE_ZIP   = su.UPDATE_ZIP
+        _UPDATE_META  = su.UPDATE_META
+        _SRC_ROOT     = su.SRC_ROOT
 
         # ── Controller self-update snapshots ──────────────────────────────────
         # Taken automatically right before any code path that overwrites the
@@ -2564,133 +2567,32 @@ class Web(ABC):
         # bad controller update can be rolled back from the UI instead of over
         # SSH. Modules are not covered here by design — they're recovered by
         # staging the (known-good) running controller code and re-pushing it.
-        _CTRL_BACKUP_DIR  = "/var/lib/saviour/controller_backups"
-        _CTRL_BACKUP_KEEP = 3
+        _CTRL_BACKUP_DIR  = su.CTRL_BACKUP_DIR
+        _CTRL_BACKUP_KEEP = su.CTRL_BACKUP_KEEP
         # Excluded from a snapshot: the venv (large; `pip install` re-runs on
         # restart anyway) and git/cache dirs. dist/ is deliberately kept —
         # restoring the built frontend alongside its source makes a revert
         # instant and self-consistent, with no npm build in the loop.
-        _CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/",
-                                 "__pycache__/", ".pytest_cache/", ".eggs/"]
+        _CTRL_BACKUP_EXCLUDES = su.CTRL_BACKUP_EXCLUDES
 
         def _snapshot_controller(reason: str) -> dict:
-            """rsync _SRC_ROOT into a fresh timestamped dir under
-            _CTRL_BACKUP_DIR before an update overwrites it. Unchanged files
-            are hardlinked against the previous snapshot (--link-dest) so
-            keeping several costs little disk. Best-effort: on failure it
-            logs, cleans up the partial dir and returns {"ok": False,...}
-            rather than aborting the update the operator asked for."""
-            import shutil as _shutil
-            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            version = _read_running_version() or "unknown"
-            name = f"{ts}_{version}"
-            dest = os.path.join(_CTRL_BACKUP_DIR, name)
-            os.makedirs(_CTRL_BACKUP_DIR, exist_ok=True)
-            existing = _list_dir_backups(_CTRL_BACKUP_DIR)
-            cmd = ["rsync", "-a", "--delete"]
-            cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
-            if existing:
-                cmd.append("--link-dest="
-                           + os.path.join(_CTRL_BACKUP_DIR, existing[0]["name"]) + "/")
-            cmd += [f"{_SRC_ROOT}/", f"{dest}/"]
-            try:
-                subprocess.run(cmd, check=True, capture_output=True,
-                               text=True, timeout=600)
-                meta = {"version": version,
-                        "created_at": datetime.now(UTC).isoformat(),
-                        "reason": reason}
-                with open(os.path.join(dest, ".backup_meta.json"), "w") as f:
-                    json.dump(meta, f, indent=2)
-                pruned = _prune_dir_backups(_CTRL_BACKUP_DIR, _CTRL_BACKUP_KEEP)
-                self.logger.info(
-                    f"Controller snapshot saved: {name} ({reason})"
-                    + (f"; pruned {pruned}" if pruned else ""))
-                return {"ok": True, "name": name, **meta}
-            except Exception as e:
-                self.logger.error(f"Controller snapshot failed ({reason}): {e}")
-                _shutil.rmtree(dest, ignore_errors=True)
-                return {"ok": False, "error": str(e)}
+            """Best-effort snapshot of _SRC_ROOT before an update overwrites
+            it (su.snapshot); {"ok": False, ...} on failure."""
+            return su.snapshot(reason, _read_running_version() or "unknown",
+                               _SRC_ROOT, _CTRL_BACKUP_DIR)
 
         def _stage_current_version_zip() -> dict:
-            """Zip up _SRC_ROOT's current working tree and write it as the
-            staged update package + metadata. Shared by "Stage Current" (the
-            ZIP tab, packages whatever is on disk right now) and "Git Pull"
-            (packages the tree immediately after a pull lands new code)."""
-            src_root = _SRC_ROOT
-            version = _read_running_version()
-            self.logger.info(f"Staging current version {version} from {src_root}")
-            os.makedirs(_UPDATE_STORE, exist_ok=True)
-            tmp = _UPDATE_ZIP + ".tmp"
-            skipped = 0
-            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
-                for dirpath, dirnames, filenames in os.walk(src_root):
-                    dirnames[:] = [
-                        d for d in dirnames
-                        if d not in _STAGE_SKIP_DIRS and not d.endswith('.egg-info')
-                    ]
-                    for filename in filenames:
-                        if filename.endswith('.pyc'):
-                            continue
-                        abs_path = os.path.join(dirpath, filename)
-                        # Regular files only: a FIFO (lgpio's .lgd-nfy*)
-                        # blocks open() forever.
-                        if not os.path.isfile(abs_path):
-                            continue
-                        rel_path = os.path.relpath(abs_path, src_root)
-                        try:
-                            zf.write(abs_path, rel_path)
-                        except Exception as _fe:
-                            self.logger.warning(f"Skipping {rel_path}: {_fe}")
-                            skipped += 1
-            size = os.path.getsize(tmp)
-            os.replace(tmp, _UPDATE_ZIP)
-            meta = {
-                "version":     version,
-                "filename":    f"saviour-{version}.zip",
-                "size_bytes":  size,
-                "uploaded_at": datetime.now().isoformat(),
-            }
-            with open(_UPDATE_META, "w") as f:
-                json.dump(meta, f, indent=2)
-            self.logger.info(
-                f"Staged current version {version} "
-                f"({size // 1024} KiB, {skipped} files skipped)"
-            )
-            return meta
+            """Zip _SRC_ROOT's working tree as the staged update package.
+            Shared by "Stage Current" and "Git Pull"."""
+            return su.stage_zip(_read_running_version(), _SRC_ROOT,
+                                _UPDATE_ZIP, _UPDATE_META)
 
         def _git_checkout_info() -> dict:
             """Whether _SRC_ROOT is a usable git checkout to pull updates
-            from, and which branch/remote it would use. Gates the "Git Pull"
-            update option -- most deployed devices only ever receive code via
-            the ZIP update path, which explicitly excludes .git from the
-            rsync (see _read_running_version's comment above), so their
-            .git, if present at all, is stale relative to the actual deployed
-            content until a pull resyncs it."""
-            git_dir = os.path.join(_SRC_ROOT, ".git")
-            if not os.path.isdir(git_dir):
-                return {"available": False, "reason": "No git checkout on this device"}
-            try:
-                branch = subprocess.run(
-                    ["git", "-C", _SRC_ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
-                    capture_output=True, text=True, timeout=10, check=False,
-                ).stdout.strip()
-                if not branch or branch == "HEAD":
-                    return {
-                        "available": False,
-                        "reason": "Detached HEAD — checkout a branch first",
-                    }
-                remote = subprocess.run(
-                    ["git", "-C", _SRC_ROOT, "remote", "get-url", "origin"],
-                    capture_output=True, text=True, timeout=10, check=False,
-                ).stdout.strip()
-                if not remote:
-                    return {
-                        "available": False,
-                        "reason": "No 'origin' remote configured",
-                    }
-                return {"available": True, "branch": branch, "remote": remote}
-            except Exception as e:
-                return {"available": False, "reason": str(e)}
+            from. Most deployed devices only ever receive code via the ZIP
+            path, which excludes .git, so their .git (if any) is stale until a
+            pull resyncs it."""
+            return su.git_checkout_info(_SRC_ROOT)
 
         @self.app.route("/update/package")
         def serve_update_package():
@@ -2699,6 +2601,13 @@ class Web(ABC):
             return send_file(_UPDATE_ZIP, as_attachment=True,
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
+
+        def _controller_build_and_restart(rebuild_frontend: bool = True):
+            """pip + optional frontend rebuild, then restart saviour.service
+            (su.build_and_restart). Run on a worker thread. rebuild_frontend=
+            False for the revert path, whose snapshot restored dist/."""
+            su.build_and_restart(_SRC_ROOT, rebuild_frontend,
+                                 emit=self.socketio.emit)
 
         def _broadcast_update_to_modules() -> int:
             """Tell every connected module to pull + apply the staged package.
@@ -2723,59 +2632,6 @@ class Web(ABC):
                 {"stage": "modules_notified", "count": len(modules)})
             return len(modules)
 
-        def _controller_build_and_restart(rebuild_frontend: bool = True):
-            """Best-effort pip + frontend rebuild, then restart the service.
-            Shared by the ZIP 'update controller' path (after its rsync) and
-            the Git-pull 'apply to controller' path (git reset already put
-            the files in place). `rebuild_frontend=False` for the revert
-            path — its snapshot restored a matching dist/, so npm is skipped.
-            Runs on its own thread; ends by restarting
-            saviour.service. The npm build also doubles as a delay that lets
-            modules finish fetching /update/package before the controller
-            drops, when this runs as part of an 'update everything'."""
-            try:
-                pip_result = subprocess.run([
-                    "/usr/local/src/saviour/env/bin/pip", "install", "-q",
-                    "--no-index", "/usr/local/src/saviour/",
-                ])
-                if pip_result.returncode != 0:
-                    self.logger.warning(
-                        "pip install --no-index failed (new dependencies may "
-                        "need a manual `pip install .` with internet access)")
-                frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
-                # nvm's npm needs its own bin dir on PATH to find node
-                # (system_update.find_npm).
-                from src.controller.system_update import find_npm
-                npm_bin, npm_env = find_npm()
-                if not rebuild_frontend:
-                    self.logger.info(
-                        "Skipping frontend rebuild (dist/ restored from snapshot)")
-                elif npm_bin and os.path.isdir(frontend_dir):
-                    self.socketio.emit("deploy_update_status",
-                                       {"stage": "building_frontend"})
-                    self.logger.info("Rebuilding frontend after update...")
-                    subprocess.run([npm_bin, "install", "--silent"],
-                                   cwd=frontend_dir, capture_output=True,
-                                   env=npm_env)
-                    build = subprocess.run([npm_bin, "run", "build"],
-                                           cwd=frontend_dir, capture_output=True,
-                                           env=npm_env)
-                    if build.returncode == 0:
-                        self.logger.info("Frontend rebuilt successfully")
-                    else:
-                        self.logger.warning(
-                            "Frontend build failed after update: "
-                            + build.stderr.decode(errors="replace"))
-                else:
-                    self.logger.warning(
-                        "npm not found — frontend not rebuilt after update")
-            except Exception as e:
-                self.logger.error(f"Controller build step failed: {e}")
-                self.socketio.emit("deploy_update_error", {"error": str(e)})
-                return
-            self.logger.info("Update applied — restarting controller service")
-            time.sleep(2)
-            subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
 
         @self.socketio.on("get_update_info")
         def handle_get_update_info(data=None):
@@ -3082,24 +2938,14 @@ class Web(ABC):
                     self.socketio.emit(
                         "git_pull_status", {"stage": "fetching", "branch": branch},
                     )
-                    subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "fetch", "--prune", "origin", branch],
-                        check=True, capture_output=True, text=True, timeout=120,
-                    )
+                    su.fetch(branch, _SRC_ROOT)
                     # git reset --hard rewrites the controller's live working
                     # tree even for "stage only", so snapshot before it.
                     _snapshot_controller("pre-git-update")
                     self.socketio.emit(
                         "git_pull_status", {"stage": "resetting", "branch": branch},
                     )
-                    subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "reset", "--hard", f"origin/{branch}"],
-                        check=True, capture_output=True, text=True, timeout=30,
-                    )
-                    commit = subprocess.run(
-                        ["git", "-C", _SRC_ROOT, "rev-parse", "--short", "HEAD"],
-                        capture_output=True, text=True, timeout=10, check=False,
-                    ).stdout.strip()
+                    commit = su.reset_to_origin(branch, _SRC_ROOT)
                     self.logger.info(f"Git pull update: {branch} now at {commit}")
                     self.socketio.emit("git_pull_status", {
                         "stage": "staging", "branch": branch, "commit": commit,
@@ -3573,9 +3419,8 @@ class Web(ABC):
                 base = f"saviour_diagnostics_{ts}/modules/{mid}"
                 if data:
                     zf.writestr(f"{base}/logs.txt", data.get('logs', '(no logs)'))
-                    # Previous-boot service + kernel journal (added 2026-08-27):
-                    # the field is absent from an older module that predates
-                    # this, so only write what's actually present.
+                    # Previous-boot service + kernel journal: absent from older
+                    # modules, so only write what's actually present.
                     for key, fname in (
                         ("logs_prevboot", "logs_prevboot.txt"),
                         ("kernel_prevboot", "kernel_prevboot.txt"),
@@ -4125,7 +3970,7 @@ class Web(ABC):
 
 
     def get_exported_recordings(self):
-        """Get list of exported recordings from controller share and NAS directories"""
+        """Get list of exported recordings from the controller share"""
         recordings = []
 
         # Get controller share recordings
@@ -4140,123 +3985,7 @@ class Web(ABC):
                         'destination': 'controller'
                     })
 
-        # Get NAS recordings (if mounted)
-        nas_recordings = self.get_nas_recordings()
-        recordings.extend(nas_recordings)
-
         return recordings
-
-
-    def get_nas_recordings(self):
-        """Get list of exported recordings from NAS"""
-        recordings = []
-        nas_mount_point = Path("/mnt/nas")
-
-        self.logger.info("Scanning NAS for recordings...")
-
-        # Try to mount NAS if not already mounted
-        if not nas_mount_point.exists() or not nas_mount_point.is_mount():
-            self.logger.info("NAS not mounted, attempting to mount...")
-            if not self.mount_nas():
-                self.logger.error("Failed to mount NAS, returning empty list")
-                return recordings  # Return empty list if mounting failed
-
-        self.logger.info(f"NAS is mounted at {nas_mount_point}")
-
-        # Check what's in the root NAS directory
-        if nas_mount_point.exists():
-            root_contents = list(nas_mount_point.iterdir())
-            self.logger.info(f"NAS root contents: {[item.name for item in root_contents]}")
-
-            # Look specifically for export directories
-            export_dirs = [item for item in root_contents if item.is_dir() and item.name.startswith('export_')]
-            self.logger.info(f"Found export directories: {[item.name for item in export_dirs]}")
-        else:
-            self.logger.error(f"NAS mount point does not exist: {nas_mount_point}")
-            return recordings
-
-        # Scan multiple directories for recordings
-        directories_to_scan = ["recordings", "videos", "ttl"]
-
-        for dir_name in directories_to_scan:
-            scan_path = nas_mount_point / dir_name
-            self.logger.info(f"Looking for recordings in: {scan_path}")
-
-            if scan_path.exists():
-                self.logger.info(f"{dir_name} directory exists, scanning for files...")
-                for file in scan_path.glob('**/*'):
-                    self.logger.info(f"Found file: {file} (suffix: {file.suffix})")
-                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"Adding file to recordings list: {file}")
-                        recordings.append({
-                            'filename': f"nas/{dir_name}/{file.relative_to(scan_path)!s}",
-                            'size': file.stat().st_size,
-                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            'is_exported': True,
-                            'destination': 'nas'
-                        })
-            else:
-                self.logger.info(f"{dir_name} directory does not exist: {scan_path}")
-
-        # Also scan for export directories (like export_20250624_220253) in the root
-        self.logger.info("Scanning for export directories in root...")
-        for item in nas_mount_point.iterdir():
-            self.logger.info(f"Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
-            if item.is_dir() and item.name.startswith('export_'):
-                self.logger.info(f"Found export directory: {item}")
-                for file in item.glob('**/*'):
-                    self.logger.info(f"Found file in export directory: {file} (suffix: {file.suffix})")
-                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"Adding export file to recordings list: {file}")
-                        recordings.append({
-                            'filename': f"nas/{item.name}/{file.relative_to(item)!s}",
-                            'size': file.stat().st_size,
-                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            'is_exported': True,
-                            'destination': 'nas'
-                        })
-
-        self.logger.info(f"Found {len(recordings)} NAS recordings")
-        return recordings
-
-
-    def mount_nas(self):
-        """Mount the NAS/export share defined in export.* controller config."""
-        try:
-            import subprocess
-
-            nas_ip = self.config.get("export.share_ip", "")
-            if not nas_ip:
-                self.logger.warning("mount_nas: export.share_ip not configured")
-                return False
-            share_path = self.config.get("export.share_path", "controller_share")
-            username = self.config.get("export.share_username", "")
-            password = self.config.get("export.share_password", "")
-            mount_point = Path("/mnt/controller_export")
-
-            mount_point.mkdir(parents=True, exist_ok=True)
-            if mount_point.is_mount():
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False)
-
-            auth_opts = cifs_auth_option(username, password, "export-mount")
-            mount_cmd = [
-                "sudo", "mount", "-t", "cifs",
-                f"//{nas_ip}/{share_path}",
-                str(mount_point),
-                "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
-            ]
-
-            result = subprocess.run(mount_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                self.logger.error(f"Failed to mount NAS: {result.stderr}")
-                return False
-
-            self.logger.info(f"Successfully mounted //{nas_ip}/{share_path} at {mount_point}")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"NAS mount failed: {e}")
-            return False
 
 
     def _get_own_ip(self) -> str:
@@ -4298,10 +4027,7 @@ class Web(ABC):
         is_remote = bool(nas_ip) and nas_ip != self._get_own_ip()
 
         if mount_point.is_mount():
-            result = subprocess.run(
-                ["sudo", "umount", str(mount_point)],
-                capture_output=True, text=True, check=False,
-            )
+            result = unmount(mount_point)
             if result.returncode != 0:
                 self.logger.warning(
                     f"Could not unmount {mount_point} before remount: {result.stderr}"
@@ -4310,17 +4036,11 @@ class Web(ABC):
         if not is_remote:
             return True
 
-        share_path = self.config.get("export.share_path", "controller_share")
-        username   = self.config.get("export.share_username", "")
-        password   = self.config.get("export.share_password", "")
+        _, share_path, username, password = self._export_share_settings()
         mount_point.mkdir(parents=True, exist_ok=True)
-        auth_opts = cifs_auth_option(username, password, "export-browse")
-        mount_opts = (
-            f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
-        )
         result = subprocess.run(
-            ["sudo", "mount", "-t", "cifs",
-             f"//{nas_ip}/{share_path}", str(mount_point), "-o", mount_opts],
+            cifs_mount_cmd(nas_ip, share_path, mount_point, username, password,
+                           "export-browse"),
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
@@ -4336,13 +4056,17 @@ class Web(ABC):
         return True
 
 
-    def handle_special_module_status(self, module_id, status):
+    def handle_special_module_status(self, module_id, status):  # noqa: B027
         """To be overriden by rig specific functionality"""
         pass
 
 
-    def handle_module_status(self, module_id, status):
-        """Handle status update from a module and emit to frontend"""
+    def handle_module_status(self, module_id, status) -> bool:
+        """Handle status update from a module and emit to frontend.
+
+        Returns True if this layer (or the variant's
+        handle_special_module_status) handled it, so the controller only logs
+        a type as unhandled when nothing did."""
         try:
             # Ensure status has required fields
             if not isinstance(status, dict):
@@ -4382,13 +4106,11 @@ class Web(ABC):
                         'status': status
                     })
 
-                # The module itself detected it couldn't start/stop recording (e.g. a
-                # racing double-start, or a module-specific stop failure). Previously
-                # unmatched here — fell through to handle_special_module_status(),
-                # which every non-APA variant treats as a no-op — so this was silently
-                # dropped instead of reaching the operator. Route it into the same
-                # session-fault path used for offline-module detection, which already
-                # drives FaultAlertModal and the Teams alert.
+                # The module itself couldn't start/stop recording (e.g. a racing
+                # double-start, or a module-specific stop failure). Must not fall
+                # through to handle_special_module_status() (a no-op on most
+                # variants): route it into the session-fault path, which drives
+                # FaultAlertModal and the Teams alert.
                 case ('recording_start_failed' | 'recording_stop_failed'):
                     error = status.get("error", "unknown error")
                     self.logger.warning(f"{status_type} for module {module_id}: {error}")
@@ -4426,11 +4148,9 @@ class Web(ABC):
 
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
-                # Previously silently dropped the same way as above. Not escalated to
-                # a session fault here — "error" covers every command, not just
-                # recording ones, so blindly faulting the session would misfire on
-                # unrelated failures (e.g. a failed trigger_autofocus). At minimum it
-                # must stop disappearing: log it and hand it to the frontend.
+                # Not a session fault -- "error" covers every command (e.g. a failed
+                # trigger_autofocus) -- but it must not vanish: log it and hand it to
+                # the frontend.
                 case "error":
                     error = status.get("error", "unknown error")
                     self.logger.warning(f"Module {module_id} reported an error: {error}")
@@ -4447,16 +4167,18 @@ class Web(ABC):
                 # (loom_controller.py etc.) either doesn't override or logs
                 # "No logic for ..." and drops -- the crop editor's "Saving..."
                 # status would never resolve to saved/failed.
-                case "camera_crop_updated":
-                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
+                # crop_editing: the crop editor's full-view mode (set_crop_editing).
+                # camera_crop_updated carries the module's whole config for the
+                # controller to adopt (controller.py) -- never forward that to
+                # browsers: it includes the export share password.
+                case "camera_crop_updated" | "crop_editing":
+                    self.socketio.emit('module_status', {
+                        **{k: v for k, v in status.items() if k != "config"},
+                        'module_id': module_id,
+                    })
 
-                # loom_camera_module.py's set_loom_roi() sends this directly via
-                # communication.send_status() on a successful save. Previously
-                # unmatched here -- fell to case _ -> handle_special_module_status(),
-                # which loom_controller.py doesn't override for this type (logs
-                # "No logic for loom_roi_updated" and drops), so
-                # LoomRoiLineEditorModal.jsx's "Saving..." status never resolved to
-                # "Saved" even on success.
+                # loom_camera_module.py's set_loom_roi() sends this on a successful
+                # save; LoomRoiLineEditorModal.jsx waits on it to show "Saved".
                 case "loom_roi_updated":
                     self.socketio.emit('module_status', {**status, 'module_id': module_id})
 
@@ -4504,10 +4226,8 @@ class Web(ABC):
                         # write error) come back as the command's own return value,
                         # not a communication.send_status() call, so they surface
                         # here as a cmd_ack rather than through the
-                        # loom_roi_updated case above. Previously fell to the
-                        # "no web-layer action" debug log below and was silently
-                        # dropped -- translated into the shape
-                        # LoomRoiLineEditorModal.jsx already listens for.
+                        # loom_roi_updated case above -- translated into the
+                        # shape LoomRoiLineEditorModal.jsx listens for.
                         self.socketio.emit('module_status', {
                             'type': 'loom_roi_update_failed',
                             'module_id': module_id,
@@ -4527,11 +4247,10 @@ class Web(ABC):
                     pass
 
                 case _:
-                    was_special_status = self.handle_special_module_status(module_id, status)
-                    if not was_special_status:
-                        pass
+                    return bool(self.handle_special_module_status(module_id, status))
         except Exception as e:
             self.logger.error(f"Error handling module status: {e!s}")
+        return True
 
 
     def _register_rest_facade_routes(self):
@@ -4610,7 +4329,7 @@ class Web(ABC):
 
                 self.logger.info(f"Processing command: {command} for module: {module_id}")
 
-                result = self.facade.send_command(module_id, command, params)
+                self.facade.send_command(module_id, command, params)
                 return jsonify({
                     "status": "success",
                     "message": "Command sent successfully",

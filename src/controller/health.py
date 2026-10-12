@@ -24,9 +24,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.supervised import REGISTRY, crash_looping, supervise
-
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
+from src.shared.supervised import REGISTRY, crash_looping, supervise
 
 
 class _CsvEcho:
@@ -695,11 +694,8 @@ class Health:
     # it: a transient 10-20us excursion is harmless to a recording (frames
     # carry their own wall-clock timestamps and analyse_framesync.py detrends
     # slow drift), whereas a restart *guarantees* a multi-second sync loss and
-    # a minutes-long reconvergence. Found 2026-08-27: the old 10us threshold,
-    # combined with a function-scoped `reset_flag` bug (one bad module dragged
-    # every other module into a restart) and a backoff counter that only ever
-    # ratcheted up, turned this watchdog into a self-sustaining fleet-wide
-    # restart loop on a 16-camera habitat rig.
+    # a minutes-long reconvergence. A lower threshold once turned this
+    # watchdog into a fleet-wide restart loop (CHANGELOG 2026-09-07).
     _PTP_OFFSET_RESTART_NS = 50_000
     # Consecutive over-threshold checks before acting — rides out a single
     # noisy sample (e.g. an export burst crossing a non-PTP switch).

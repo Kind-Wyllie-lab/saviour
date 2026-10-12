@@ -6,7 +6,7 @@ This class is responsible for handling and processing commands sent to modules,
 providing a central place for command parsing and execution.
 
 Author: Andrew SG
-Created: 16/05/2025         
+Created: 16/05/2025
 """
 
 import json
@@ -25,7 +25,7 @@ class Command:
     def __init__(self, config: Config=None):
         """
         Initialize the command router
-        
+
         Args:
             config: Manager for configuration
         """
@@ -102,7 +102,7 @@ class Command:
     def handle_command(self, raw_command: str):
         """
         Process a command received from the controller
-        
+
         Args:
             command: The command string to process
         """

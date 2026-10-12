@@ -39,6 +39,13 @@ const SWATCHES = Object.fromEntries(
 
 const PREVIEW_DEBOUNCE_MS = 650;
 
+// Spectrogram height as % of the video's height, per audio mode. Mirrors
+// compose.AUDIO_HEIGHT_PCT_DEFAULT / _RANGE on the backend.
+const AUDIO_HEIGHT = {
+  strip: { def: 20, min: 5, max: 50 },
+  panel: { def: 30, min: 10, max: 100 },
+};
+
 // Group the flat session file list into { dateDir: { cameras: [...], mics: [...] } }.
 // A camera stream is a folder with a video (.ts/.mp4) + a *_timestamps.csv;
 // a mic is a folder with a .flac/.wav + a *_timestamps.txt — the pairs
@@ -138,18 +145,29 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
     color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
     ascale: "log", gain: 2.5,
   });
+  const [audioHeight, setAudioHeight] = usePersistedState("compose_audio_height", {
+    strip: AUDIO_HEIGHT.strip.def, panel: AUDIO_HEIGHT.panel.def,
+  });
   const [jobs, setJobs] = useState({});
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState(null); // { image } | { error }
   const [previewing, setPreviewing] = useState(false);
   const [info, setInfo] = useState(null); // { suggested_fps, cameras, mics } | { error }
   const previewTimer = useRef(null);
+  // Id of the latest preview request; replies to older ones are dropped so
+  // a slow earlier render can't overwrite (or un-spin) a newer one.
+  const previewReqId = useRef(0);
 
   const cams = byDate[dateDir]?.cameras || [];
   const mics = byDate[dateDir]?.mics || [];
   const showSpec = audioMode === "strip" || audioMode === "panel";
   const selectedKey = selected.join("|");
-  const specKey = showSpec ? JSON.stringify(spec) : "";
+  const heightRange = AUDIO_HEIGHT[audioMode];
+  const heightPct = heightRange
+    ? Math.min(heightRange.max, Math.max(heightRange.min,
+        Number(audioHeight?.[audioMode]) || heightRange.def))
+    : null;
+  const specKey = showSpec ? `${JSON.stringify(spec)}|${heightPct}` : "";
 
   // Default to the most recent date dir and select all its cameras.
   useEffect(() => {
@@ -179,6 +197,7 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
     };
     const onRejected = (d) => setNotice(d.error || "Compose request rejected");
     const onPreview = (d) => {
+      if (d.request_id !== undefined && d.request_id !== previewReqId.current) return;
       setPreviewing(false);
       // Keep the last good image visible if this attempt only errored.
       setPreview((prev) => (d.error && prev?.image ? { ...prev, error: d.error } : d));
@@ -224,6 +243,7 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
       : {
           mode: audioMode,
           source: audioSource || undefined,
+          height_pct: heightPct ?? undefined,
           spectrogram:
             audioMode === "track"
               ? {}
@@ -243,7 +263,9 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
     if (!selected.length) return;
     setPreviewing(true);
     setPreview((prev) => (prev?.image ? { image: prev.image } : prev));
+    previewReqId.current += 1;
     socket.emit("compose_preview", {
+      request_id: previewReqId.current,
       session_name: sessionName,
       date_dir: dateDir || undefined,
       streams: selected,
@@ -489,6 +511,21 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
                 <option value="lin">Linear</option>
                 <option value="log">Log</option>
               </select>
+            </div>
+            <div className="form-field">
+              <label title="Spectrogram height as a percentage of the video's height">
+                Height (% of video):
+              </label>
+              <input
+                type="number"
+                min={heightRange.min}
+                max={heightRange.max}
+                step="5"
+                value={audioHeight?.[audioMode] ?? heightRange.def}
+                onChange={(e) =>
+                  setAudioHeight((h) => ({ ...h, [audioMode]: e.target.value }))
+                }
+              />
             </div>
             <div className="form-field">
               <label>Gain:</label>

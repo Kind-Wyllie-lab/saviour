@@ -34,7 +34,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
 from modules.module import command
 
-# Pre-2026-08-24 default roi_json_path pointed here -- inside the deployed
+# The old default roi_json_path pointed here -- inside the deployed
 # source tree, so update_saviour's rsync (module.py, excludes only env/ and
 # .git/) silently overwrote a live-calibrated ROI with whatever was last
 # committed to git. Kept only as a one-time migration source for devices

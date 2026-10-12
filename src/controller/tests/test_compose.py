@@ -504,3 +504,233 @@ def test_worker_cancel_queued_job(tmp_path):
     assert w.get(second.id).state == "cancelled"
     gate["go"] = True
     assert _wait_for(lambda: w.get(first.id).state == "done")
+
+
+# --------------------------------------------------------------------------- #
+# Spectrogram height                                                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_audio_height_pct_defaults_per_mode():
+    assert AudioSpec.from_dict({"mode": "panel"}).effective_height_pct == 30
+    assert AudioSpec.from_dict({"mode": "strip"}).effective_height_pct == 20
+
+
+def test_audio_height_pct_accepted_in_range():
+    a = AudioSpec.from_dict({"mode": "panel", "height_pct": "55"})
+    assert a.height_pct == 55.0 and a.effective_height_pct == 55.0
+
+
+@pytest.mark.parametrize("raw", [
+    {"mode": "strip", "height_pct": 80},     # strip max 50
+    {"mode": "panel", "height_pct": 5},      # panel min 10
+    {"mode": "panel", "height_pct": "tall"},
+])
+def test_audio_height_pct_rejected(raw):
+    with pytest.raises(ComposeError):
+        AudioSpec.from_dict(raw)
+
+
+def test_audio_height_pct_ignored_without_a_spectrogram():
+    assert AudioSpec.from_dict({"mode": "track", "height_pct": 999}).height_pct is None
+
+
+def test_audio_height_px_is_even_and_positive():
+    from src.controller.compose import audio_height_px
+    assert audio_height_px(1080, 30) == 324
+    assert audio_height_px(541, 33) % 2 == 0
+    assert audio_height_px(10, 1) == 2
+
+
+def test_render_preview_passes_the_audio_height(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.controller.compose.probe_dimensions", lambda _p: (640, 480)
+    )
+    dd = tmp_path / "sess" / "20260805" / "camera_a"
+    dd.mkdir(parents=True)
+    (dd / "v.ts").write_bytes(b"x")
+    (dd / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
+
+    seen = {}
+
+    def fake_spec_png(cache_dir, date_dir, audio, width, height, logger=None):
+        seen["png_size"] = (width, height)
+        return str(tmp_path / "spec.png")
+
+    monkeypatch.setattr(
+        "src.controller.compose._preview_spectrogram_png", fake_spec_png)
+
+    def fake_preview(date_dir, out_png, **kw):
+        seen["kw"] = kw
+        with open(out_png, "wb") as f:
+            f.write(b"png")
+        return out_png
+
+    fake_vc = types.SimpleNamespace(compose_preview_frame=fake_preview)
+    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
+    import src.controller as _sc
+    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
+
+    spec = ComposeSpec.from_dict({
+        "session_name": "sess",
+        "audio": {"mode": "panel", "height_pct": 50},
+    })
+    render_preview(str(tmp_path), spec, max_width=640)
+    # 640x480 single camera -> canvas height 480 -> 50% = 240 px
+    assert seen["png_size"] == (640, 240)
+    assert seen["kw"]["audio_height_px"] == 240
+
+
+# --------------------------------------------------------------------------- #
+# ffprobe cache                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_frame_count_probe_is_cached_per_file(tmp_path, monkeypatch):
+    from src.controller import compose
+
+    monkeypatch.setattr(compose, "_PROBE_CACHE", {})
+    calls = []
+    monkeypatch.setattr(compose, "_video_frame_count_uncached",
+                        lambda p: calls.append(p) or 123)
+    v = tmp_path / "v.ts"
+    v.write_bytes(b"abc")
+    assert compose._video_frame_count(str(v)) == 123
+    assert compose._video_frame_count(str(v)) == 123
+    assert len(calls) == 1
+    # The file changing (a re-export) invalidates the entry.
+    v.write_bytes(b"abcdef")
+    assert compose._video_frame_count(str(v)) == 123
+    assert len(calls) == 2
+
+
+def test_failed_probe_is_not_cached(tmp_path, monkeypatch):
+    from src.controller import compose
+
+    monkeypatch.setattr(compose, "_PROBE_CACHE", {})
+    results = iter([0, 77])
+    monkeypatch.setattr(compose, "_video_frame_count_uncached",
+                        lambda p: next(results))
+    v = tmp_path / "v.ts"
+    v.write_bytes(b"abc")
+    assert compose._video_frame_count(str(v)) == 0
+    assert compose._video_frame_count(str(v)) == 77
+
+
+# --------------------------------------------------------------------------- #
+# PreviewQueue                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_preview_queue_keeps_only_the_latest_request_per_client():
+    import threading as _th
+
+    from src.controller.compose import PreviewQueue
+
+    gate = _th.Event()
+    rendered, delivered = [], []
+    done = _th.Event()
+
+    def render(spec):
+        if spec["n"] == 1:
+            gate.wait(5)          # hold the first render while more arrive
+        rendered.append(spec["n"])
+        return {"image": spec["n"]}
+
+    def deliver(client, payload):
+        delivered.append((client, payload))
+        if payload["image"] == 4:
+            done.set()
+
+    q = PreviewQueue(render, deliver)
+    q.submit("a", {"n": 1, "request_id": 1})
+    time.sleep(0.05)              # worker picks up n=1 and blocks
+    for n in (2, 3, 4):
+        q.submit("a", {"n": n, "request_id": n})
+    gate.set()
+    assert done.wait(5)
+    assert rendered == [1, 4]     # 2 and 3 were superseded
+    assert delivered[-1] == ("a", {"image": 4, "request_id": 4})
+
+
+def test_preview_queue_serves_clients_fairly_and_survives_errors():
+    import threading as _th
+
+    from src.controller.compose import PreviewQueue
+
+    delivered = []
+    done = _th.Event()
+
+    def render(spec):
+        if spec.get("boom"):
+            raise RuntimeError("bad frame")
+        return {"ok": spec["who"]}
+
+    def deliver(client, payload):
+        delivered.append((client, payload))
+        if len(delivered) == 3:
+            done.set()
+
+    q = PreviewQueue(render, deliver)
+    q.submit("a", {"who": "a", "boom": True})
+    q.submit("b", {"who": "b"})
+    q.submit("c", {"who": "c"})
+    assert done.wait(5)
+    assert [c for c, _ in delivered] == ["a", "b", "c"]
+    assert "error" in delivered[0][1]
+
+
+def test_preview_queue_restarts_after_going_idle():
+    import threading as _th
+
+    from src.controller.compose import PreviewQueue
+
+    got = []
+    ev = _th.Event()
+    q = PreviewQueue(lambda s: {"n": s["n"]},
+                     lambda c, p: (got.append(p["n"]), ev.set()),
+                     idle_timeout_s=0.05)
+    q.submit("a", {"n": 1})
+    assert ev.wait(5)
+    time.sleep(0.2)               # worker thread exits when idle
+    ev.clear()
+    q.submit("a", {"n": 2})
+    assert ev.wait(5)
+    assert got == [1, 2]
+
+
+def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch):
+    """The real render's spectrogram panel is height_pct of the composited
+    canvas -- it used to be a fixed 240 px while the preview drew 40%."""
+    from src.controller import audio_align, compose
+
+    monkeypatch.setattr(compose, "probe_dimensions", lambda _p: (1280, 720))
+    dd = tmp_path / "sess" / "20260805"
+    (dd / "camera_a").mkdir(parents=True)
+    (dd / "camera_a" / "v.ts").write_bytes(b"x")
+    (dd / "camera_a" / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
+
+    fake_vc = types.SimpleNamespace(
+        compose_session_video=lambda *a, **k: None)
+    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
+    import src.controller as _sc
+    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
+
+    seen = {}
+    monkeypatch.setattr(
+        compose.ComposeWorker, "_apply_audio",
+        lambda self, *a, **k: seen.update(strip_height=a[-1]))
+
+    spec = ComposeSpec.from_dict({
+        "session_name": "sess", "fps": 15,
+        "audio": {"mode": "panel", "height_pct": 25},
+    })
+    worker = ComposeWorker(str(tmp_path))
+    job = types.SimpleNamespace(
+        id="j1", spec=spec.__dict__, state="running", warnings=[],
+        progress=0.0, stage="")
+    monkeypatch.setattr(worker, "_emit", lambda _j: None)
+    worker._render(job)
+    _, _, canvas_h = plan_regions([(1280, 720)], "auto")
+    assert seen["strip_height"] == compose.audio_height_px(canvas_h, 25)
+    assert seen["strip_height"] != audio_align.DEFAULT_STRIP_HEIGHT

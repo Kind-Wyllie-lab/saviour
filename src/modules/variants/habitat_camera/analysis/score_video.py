@@ -27,7 +27,6 @@ import sys
 from pathlib import Path
 
 import cv2
-
 from experimental_scorers import ALGORITHM_NAMES, build_scorer  # noqa: E402
 
 

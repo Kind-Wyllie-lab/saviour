@@ -34,6 +34,7 @@
 
         "overlay_timestamp": true,
         "text_size": "medium",
+        "timestamp_position": "top",
         "overlay_framerate_on_preview": true,
         "livestream_quality": "normal",
 

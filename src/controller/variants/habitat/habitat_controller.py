@@ -40,11 +40,8 @@ class HabitatController(Controller):
     # ── Habitat config ────────────────────────────────────────────────────────
 
     def _get_habitat_config(self) -> dict:
-        # Just the display name for HabitatRecordingControl's top banner.
-        # controller.name is what the user sets on the Settings page; the old
-        # habitat.name / audio_start / audio_end keys (and the one-button
-        # start_habitat_recording campaign flow they fed) were removed
-        # 2026-08-28 -- audio scheduling is a normal scheduled session now.
+        # Just the display name for HabitatRecordingControl's top banner;
+        # controller.name is what the user sets on the Settings page.
         return {"name": self.config.get("controller.name") or "Habitat"}
 
 
@@ -57,9 +54,6 @@ class HabitatController(Controller):
     def handle_special_module_status(self, module_id: str, status: dict):
         match status.get('type'):
             case _:
-                self.logger.warning(
-                    f"Habitat controller has no logic for {status.get('type')} from {module_id}"
-                )
                 return False
 
 

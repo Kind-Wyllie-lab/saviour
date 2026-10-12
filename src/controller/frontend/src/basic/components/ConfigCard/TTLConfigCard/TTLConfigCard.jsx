@@ -8,7 +8,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import CopyActionsBar from "../CopyActionsBar";
-import ConfigActionBar from "../ConfigActionBar";
+import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
@@ -176,6 +176,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             {module.name || id} {collapsed ? "(+)" : "(-)"}
           </h3>
           <div className="card-header-actions">
+            <HeaderSaveButton onSave={saveConfig} isDirty={isDirty} />
             <ModuleActionsMenu id={id} name={module.name || id} isOnline={!!module.online} />
           </div>
         </div>

@@ -27,8 +27,7 @@ function ConfigActionBar({
 }) {
   const loggedIn = useIsLoggedIn();
   const needLogin = loggedIn ? undefined : "Login required for this action";
-  // Nothing to save when the form matches what's already stored.
-  const saveOff = saveDisabled || !loggedIn || !isDirty;
+  const { saveOff, saveTitle } = saveButtonState({ loggedIn, isDirty, saveDisabled });
 
   let chip;
   if (isDirty) {
@@ -50,7 +49,7 @@ function ConfigActionBar({
         type="button"
         onClick={onSave}
         disabled={saveOff}
-        title={needLogin ?? (!isDirty && !saveDisabled ? "No changes to save" : undefined)}
+        title={saveTitle}
       >
         Save Config
       </button>
@@ -68,6 +67,38 @@ function ConfigActionBar({
       <span className="config-action-bar-spacer" />
       {chip}
     </div>
+  );
+}
+
+// One rule for both Save buttons: nothing to save when the form matches
+// what's already stored, and never without a login or when the card says no.
+function saveButtonState({ loggedIn, isDirty, saveDisabled }) {
+  return {
+    saveOff: saveDisabled || !loggedIn || !isDirty,
+    saveTitle: !loggedIn ? "Login required for this action"
+      : !isDirty && !saveDisabled ? "No changes to save"
+      : undefined,
+  };
+}
+
+/**
+ * The same Save as ConfigActionBar's, for the card header (left of the
+ * actions menu), so a long card can be saved without scrolling to the
+ * footer. Highlighted while there are unsaved changes.
+ */
+export function HeaderSaveButton({ onSave, isDirty = false, saveDisabled = false }) {
+  const loggedIn = useIsLoggedIn();
+  const { saveOff, saveTitle } = saveButtonState({ loggedIn, isDirty, saveDisabled });
+  return (
+    <button
+      className={`save-button header-save-button${isDirty ? " header-save-button--dirty" : ""}`}
+      type="button"
+      onClick={onSave}
+      disabled={saveOff}
+      title={saveTitle ?? "Save Config"}
+    >
+      Save
+    </button>
   );
 }
 

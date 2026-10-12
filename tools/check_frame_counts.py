@@ -105,7 +105,7 @@ def main() -> int:
                   f"{('?' if pkts is None else pkts):>9} "
                   f"{('?' if cv2n is None else cv2n):>7} "
                   f"{('?' if deficit is None else f'{deficit:+d}'):>8} "
-                  f"{str(jrows):>9} {str(jremux):>8}{flag}")
+                  f"{jrows!s:>9} {jremux!s:>8}{flag}")
 
     if not any_found:
         print(f"(no camera streams with a *_timestamps.csv found under {date_dir})")

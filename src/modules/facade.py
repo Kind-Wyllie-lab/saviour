@@ -62,6 +62,11 @@ class ModuleFacade:
         return self.module.export.summarize_recording_state(session_name)
 
 
+    def on_recording_stopped(self) -> None:
+        hook = getattr(self.module, "on_recording_stopped", None)
+        if hook is not None:
+            hook()
+
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
 
@@ -140,10 +145,6 @@ class ModuleFacade:
         return self.module.recording.current_filename_prefix
 
 
-    def get_module_name(self) -> str:
-        return self.module.get_module_name()
-
-
     def get_short_mac(self, interface: str = "eth0") -> str:
         """Return the last 4 hex characters of the MAC address on the given interface."""
         return self.module.get_mac_address(interface)[-4:]
@@ -217,7 +218,7 @@ class ModuleFacade:
 
 
     def get_session_from_filename(self, filename: str) -> str:
-        return self.module.recording.get_session_from_filename(filename)
+        return self.module.export.session_from_filename(filename)
 
 
     def get_start_time_from_filename(self, filename: str) -> str:
@@ -297,6 +298,5 @@ class ModuleFacade:
     def unsubscribe_from_topic(self, topic: str):
         """Unsubscribe from commands related to given topic. Typically used when module changes group."""
         self.module.communication.unsubscribe_from_topic(topic)
-
 
 

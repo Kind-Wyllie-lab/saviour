@@ -11,6 +11,7 @@ It is used to control a Pololu G2 Motor Controller with encoder for speed contro
 """
 
 import os
+import signal
 import sys
 import threading
 import time
@@ -27,6 +28,12 @@ from protocol import Protocol
 from shock import Shocker
 
 from modules.module import Module, check, command
+from src.shared.supervised import supervise
+
+
+def _ms_to_s(ms: float | None) -> float | None:
+    """The shock Arduino reports pulse times in ms, -1 before they're set."""
+    return ms / 1000 if ms is not None and ms >= 0 else None
 
 
 class APAModule(Module):
@@ -50,11 +57,20 @@ class APAModule(Module):
         # (the System page's "NO HARDWARE" badge); the per-Arduino readiness
         # checks below already block recording on their own.
         self.hardware_fault: str | None = "Motor and shock Arduinos not yet connected"
+        # What discovery saw, so the fault can say why an Arduino is missing:
+        # ports that opened but haven't identified as motor/shock (unflashed,
+        # wrong sketch), keyed by device -> description, and ports that
+        # wouldn't open, device -> error.
+        self.found_ports: list[str] = []
+        self.unidentified_ports: dict[str, str] = {}
+        self.port_errors: dict[str, str] = {}
+        self._probes: list[Protocol] = []
         self._find_arduino_ports()
 
         # Sending state to controller
         self.send_state_period: float = 0.2
         self.send_state_thread: threading.Thread = None
+        self._send_state_stop: threading.Event | None = None
 
         # Recording-specific variables
         self._shock_file_handle = None
@@ -105,20 +121,25 @@ class APAModule(Module):
         self.logger.info("Both arduino initialized.")
         self._refresh_hardware_fault()
         self.set_arduino_callbacks()
-        self.send_state_thread = threading.Thread(target=self.send_state_loop, daemon=True)
-        self.send_state_thread.start()
+        # An Arduino that re-sends its identity (reset, serial reconnect) runs
+        # this again; keep a single state loop rather than stacking another.
+        if self.send_state_thread is None or not self.send_state_thread.is_alive():
+            # Supervised (src/shared/supervised.py), fresh Event per start.
+            self._send_state_stop = threading.Event()
+            self.send_state_thread = supervise(
+                "apa_arduino.send_state", self.send_state_loop,
+                stop_event=self._send_state_stop, logger=self.logger)
         self.configure_module([])
 
 
     def _find_arduino_ports(self):
         self.logger.info("Searching for connected Arduino.")
-        available_ports = self._get_available_ports()
+        available_ports = self._validate_available_ports(self._get_available_ports())
         if not available_ports:
             self.logger.info("No serial ports found!")
-            return
-        available_ports = self._validate_available_ports(available_ports) # Validate that ports begin with ttyACM
         for port_info in available_ports:
             self._test_port_identity(port_info)
+        self._refresh_hardware_fault()
 
 
     def _get_available_ports(self) -> list:
@@ -141,19 +162,63 @@ class APAModule(Module):
     def _test_port_identity(self, port_info) -> None:
         """Create a protocol object to find identity of arduino"""
         self.logger.info(f"Checking {port_info} for an Arduino")
-        test_protocol = Protocol(port=port_info.device, on_identity=self.handle_identity).start()
+        self.found_ports.append(port_info.device)
+        try:
+            protocol = Protocol(port=port_info.device, on_identity=self.handle_identity)
+        except Exception as e:
+            # Busy port, permissions, a board unplugged mid-probe: report it
+            # as a hardware fault rather than crash-looping the module.
+            self.logger.error("Could not open %s: %s", port_info.device, e)
+            self.port_errors[port_info.device] = str(e)
+            return
+        # Until it identifies (handle_identity), this port is unexplained.
+        self.unidentified_ports.setdefault(
+            port_info.device, port_info.description or port_info.device)
+        self._probes.append(protocol)
+        protocol.start()
 
 
     def handle_identity(self, protocol: Protocol, identity: str) -> None:
         """
-        Callback to be registered with a Protocol object. 
+        Callback to be registered with a Protocol object.
         Once identity has been discovered, return it here.
         """
         self.logger.info(f"{identity} found on {protocol.port}")
+        if identity.lower() not in ("motor", "shock"):
+            self.logger.warning("Unexpected Arduino identity %r on %s", identity, protocol.port)
+            self.unidentified_ports[protocol.port] = f"identifies as {identity!r}"
+            self._refresh_hardware_fault()
+            return
+        self.unidentified_ports.pop(protocol.port, None)
         self.arduino_ports[identity] = protocol.port
         self.connected_arduinos[identity] = protocol
+        existing = {"motor": self.motor, "shock": self.shock}.get(identity.lower())
+        if existing is not None:
+            self._handle_reconnect(identity, existing, protocol)
+            return
         self._initialize_arduino(identity, protocol)
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
+
+
+    def _handle_reconnect(self, identity: str, device: Motor | Shocker, protocol: Protocol) -> None:
+        """An Arduino identified again: a reset (it announces itself on boot,
+        so this also runs once at startup) or a serial reconnect. Rebuilding
+        Motor/Shocker here would zero the shock counts and the trial cap."""
+        interrupted = device.on_reconnect(protocol)
+        self._refresh_hardware_fault()
+        if not interrupted:
+            self.logger.info("%s re-identified; setpoints re-sent", identity)
+            return
+        what = "rotation" if device is self.motor else "shock sequence"
+        self.logger.warning("%s Arduino reset or reconnected mid-%s; it has been stopped", identity, what)
+        if self.recording_shocks:
+            self._write_shock_event(time.time_ns(), f"{identity.upper()}_ARDUINO_RECONNECTED")
+        # Logged by the controller and re-emitted as module_error; the operator
+        # also sees rotating/shock_activated drop in arduino_state.
+        self.communication.send_status({
+            "type": "error",
+            "error": f"APA {identity} Arduino reset or reconnected: {what} stopped",
+        })
 
 
     """Commands from controller"""
@@ -200,11 +265,11 @@ class APAModule(Module):
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
         self.logger.info("Performing %s specific checks", self.module_type)
-        for check in self.module_checks:
-            self.logger.info("Running %s", check.__name__)
-            result, message = check()
+        for check_fn in self.module_checks:
+            self.logger.info("Running %s", check_fn.__name__)
+            result, message = check_fn()
             if not result:
-                self.logger.info("Check failed: %s — %s", check.__name__, message)
+                self.logger.info("Check failed: %s — %s", check_fn.__name__, message)
                 return False, message
         return True, "All checks passed"
 
@@ -217,10 +282,23 @@ class APAModule(Module):
             name for name, obj in (("motor", self.motor), ("shock", self.shock))
             if not obj
         ]
-        self.hardware_fault = (
-            None if not missing
-            else f"{' and '.join(missing)} Arduino not connected"
-        )
+        if not missing:
+            self.hardware_fault = None
+            return
+        fault = f"{' and '.join(missing)} Arduino not connected"
+        # Say why, so an unflashed board or a busy port isn't a mystery.
+        details = []
+        unidentified = getattr(self, "unidentified_ports", {})
+        port_errors = getattr(self, "port_errors", {})
+        if unidentified:
+            found = ", ".join(f"{d} ({desc})" for d, desc in sorted(unidentified.items()))
+            details.append(f"not identified as motor/shock: {found}; check the APA firmware is flashed")
+        if port_errors:
+            details.append("could not open " + ", ".join(
+                f"{d} ({err})" for d, err in sorted(port_errors.items())))
+        if not getattr(self, "found_ports", None) and not port_errors:
+            details.append("no Arduino serial ports (/dev/ttyACM*) found")
+        self.hardware_fault = fault + (" - " + "; ".join(details) if details else "")
 
 
     @check()
@@ -341,12 +419,20 @@ class APAModule(Module):
             attempted = self.shock.attempted_shocks
             attempted_arduino = self.shock.attempted_shocks_from_arduino
             delivered = self.shock.delivered_shocks
+        shock = self.shock
         state = {
-            "shock_activated": self.shock.shock_activated,
-            "grid_live": self.shock.grid_is_live,
+            "shock_activated": shock.shock_activated,
+            "shock_being_delivered": shock.shock_being_delivered,
+            "grid_live": shock.grid_is_live,
             "attempted_shocks": attempted,
             "attempted_shocks_from_arduino": attempted_arduino,
             "delivered_shocks": delivered,
+            "max_shocks": shock._max_shocks,
+            # As the shock Arduino reports them (None until its first state),
+            # so the operator sees what will be delivered, not just the config.
+            "current_ma": shock.current_from_arduino,
+            "time_on_s": _ms_to_s(shock.time_on_from_arduino),
+            "time_off_s": _ms_to_s(shock.time_off_from_arduino),
             "rpm": self.motor.speed_from_arduino,
             "rotating": self.motor.rotating,
             "speed_error": self.motor.speed_error,
@@ -358,9 +444,11 @@ class APAModule(Module):
         self.communication.send_status(status)
 
 
-    def send_state_loop(self):
-        while True:
-            time.sleep(self.send_state_period)
+    def send_state_loop(self, stop_event: threading.Event):
+        """Runs under supervise(): an exception building or sending the state
+        is logged and the loop restarted, rather than silently freezing the
+        frontend's shock/RPM display."""
+        while not stop_event.wait(self.send_state_period):
             self.send_controller_arduino_state()
 
 
@@ -408,7 +496,8 @@ class APAModule(Module):
     def _write_shock_event(self, timestamp_ns: int, event: str):
         """Write a shock event to file"""
         if self._shock_file_handle:
-            self._shock_file_handle.write(f'{timestamp_ns},{event},{self.motor.speed_from_arduino}\n')
+            rpm = self.motor.speed_from_arduino if self.motor else None
+            self._shock_file_handle.write(f'{timestamp_ns},{event},{rpm}\n')
 
 
     def _create_shock_event_file(self) ->  bool:
@@ -451,8 +540,12 @@ class APAModule(Module):
     def _stop_recording(self) -> bool:
         """Stop APA recording and save data"""
         try:
-            # Stop motor
-            self.motor.stop_motor()
+            # Stop motor (the motor Arduino may have dropped out mid-session;
+            # still close and export the shock events file below)
+            if self.motor:
+                self.motor.stop_motor()
+            else:
+                self.logger.warning("stop_recording: no motor connected, skipping motor stop")
 
             # Set recording flag to false
             self.recording_shocks = False
@@ -486,7 +579,7 @@ class APAModule(Module):
 
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "recording_stopped",
                 "status": "error",
                 "error": str(e)
@@ -511,7 +604,20 @@ class APAModule(Module):
 
 
     """Cleanup"""
+    def stop(self) -> bool:
+        # Module.stop() never calls cleanup(), so without this override a
+        # service stop/restart/update left the arena rotating and the shock
+        # sequence armed. Make the hardware safe before tearing down comms.
+        try:
+            self.cleanup()
+        except Exception as e:
+            self.logger.error(f"APA: error during cleanup: {e}")
+        return super().stop()
+
+
     def cleanup(self):
+        if self._send_state_stop is not None:
+            self._send_state_stop.set()
         if self.motor:
             try:
                 self.motor.stop_motor()
@@ -528,16 +634,33 @@ class APAModule(Module):
                 self.logger.info("Closed serial connection to %s", identity)
             except Exception as e:
                 self.logger.warning("Error closing serial connection to %s: %s", identity, e)
+        # Ports that never identified still have a (non-daemon) listen thread
+        # that would otherwise hold up process exit.
+        connected = {id(p) for p in self.connected_arduinos.values()}
+        for protocol in getattr(self, "_probes", []):
+            if id(protocol) in connected:
+                continue
+            try:
+                protocol.stop()
+            except Exception as e:
+                self.logger.warning("Error closing serial port %s: %s", protocol.port, e)
         self.logger.info("APA system shutdown complete")
 
 
 if __name__ == "__main__":
+    # saviour.service runs this file directly, so `systemctl stop/restart`
+    # arrives as SIGTERM, which by default kills Python without running
+    # stop(). Turn it into SystemExit so the finally below stops the motor
+    # and shock. (A watchdog SIGABRT or power loss still can't be caught;
+    # only the Arduino firmware can make those safe.)
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     apa = APAModule()
-    apa.start()
-    # Keep running until interrupted
     try:
+        apa.start()
+        # Keep running until interrupted
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down...")
+    finally:
         apa.stop()

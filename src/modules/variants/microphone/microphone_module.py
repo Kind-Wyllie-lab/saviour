@@ -15,11 +15,11 @@ import json
 import math
 import os
 import random
-import shutil
-import tempfile
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -286,12 +286,9 @@ class AudiomothModule(Module):
         self._find_audiomoths()
 
         if not self.audiomoths:
-            # Previously returned None here and let the caller declare
-            # "recording_started"/success regardless -- a session would run
-            # to completion with zero audio ever recorded and no fault
-            # reported anywhere. Now an explicit False (recording.py gates
-            # _begin_recording on this) plus the module's own fault status,
-            # matching CameraBase's contract for the same failure mode.
+            # Explicit False (recording.py gates _begin_recording on it) plus
+            # the module's own fault status, as CameraBase does; otherwise a
+            # session runs with no audio and no fault.
             self.logger.warning("No audiomoths connected, cannot start recording")
             self.facade.send_status({
                 "type": "recording_start_failed",

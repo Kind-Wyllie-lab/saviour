@@ -135,7 +135,7 @@ class PTP:
             except subprocess.CalledProcessError as e:
                 if e.returncode == 4:  # Unit not found
                     raise PTPError(f"Systemd service {service} not found. "
-                                   f"Please run the setup script to configure PTP services.")
+                                   f"Please run the setup script to configure PTP services.") from e
                 else:
                     self.logger.warning(f"Could not check {service} service status: {e}")
 
@@ -379,7 +379,7 @@ class PTP:
 
     def get_ntp_status(self):
         """Get current NTP synchronization status.
-        
+
         Returns:
             dict: NTP status information
         """
@@ -449,10 +449,10 @@ class PTP:
 
     def get_ptp_buffer(self, max_entries=None):
         """Get the ptp_buffer data.
-        
+
         Args:
             max_entries: Maximum number of entries to return (None for all)
-            
+
         Returns:
             List of ptp_buffer dictionaries with timestamp, offset, and freq values
         """
@@ -469,10 +469,10 @@ class PTP:
 
     def sync_to_network_time(self):
         """Temporarily suspend PTP, sync with NTP, then resume PTP.
-        
+
         This is useful for controllers that need to periodically sync with internet time
         while maintaining PTP synchronization for modules.
-        
+
         Returns:
             bool: True if sync was successful, False otherwise
         """
@@ -500,7 +500,7 @@ class PTP:
             # Step 3: Wait for NTP sync (up to 30 seconds)
             self.logger.info("Waiting for NTP sync...")
             max_wait = 30
-            for i in range(max_wait):
+            for _ in range(max_wait):
                 result = subprocess.run(['timedatectl', 'show', '--property=Synchronized'],
                                        capture_output=True, text=True)
                 if 'yes' in result.stdout.lower():
@@ -544,7 +544,7 @@ class PTP:
             try:
                 subprocess.run(['systemctl', 'start', self.ptp4l_service], check=False)
                 subprocess.run(['systemctl', 'start', self.phc2sys_service], check=False)
-            except:
+            except:  # noqa: E722 -- best-effort restart on the failure path
                 pass
             return False
 

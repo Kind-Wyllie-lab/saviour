@@ -11,7 +11,10 @@
             "motor_speed_rpm": 2,
             "_motor_speed_delay": 2,
             "_encoder_pin": "A2",
-            "_validation_ramp_time_s": 120,
+            "_validation_ramp_time_s": 30,
+            "_pid_gains": [25.0, 2.0, 0.0],
+            "_learn_tolerance_pct": 0.10,
+            "_learn_after_stable_s": 30,
             "_rpm_error_lower_pct": 0.20,
             "_rpm_error_upper_pct": 0.10
         },
@@ -26,6 +29,7 @@
             "_max_shocks": 50
         }
     },
+    "motor_learned_output": {},
     "recording": {
         "segment_length_mins": 120
     }

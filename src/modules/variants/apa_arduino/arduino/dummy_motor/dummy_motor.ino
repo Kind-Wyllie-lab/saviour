@@ -17,7 +17,11 @@
  *   <S:rpm>     set target RPM (0 also stops)
  *   <M:>        start (needs a setpoint > 0)
  *   <N:>        stop
- *   state every 50 ms: <D:rpm,position_deg,setpoint,>
+ *   <F:units>   feedforward (the real sketch's learned motor command); here
+ *               it just shortens the simulated spin-up
+ *   <SET_PID:kp,ki,kd>  accepted and ignored
+ *   state every 50 ms: <D:rpm,position_deg,setpoint,output,> where output is
+ *               UNITS_PER_RPM * rpm while running, so the host can learn it
  *
  * Flash from the module Pi (stop saviour.service first, it holds the port):
  *   arduino-cli compile --fqbn arduino:avr:uno dummy_motor
@@ -28,9 +32,12 @@ const char SYSTEM_ID[] = "MOTOR";
 const unsigned long STATE_PERIOD_MS = 50;
 const unsigned long HOST_TIMEOUT_MS = 1000;
 const float RAMP_TAU_S = 3.0;       // time constant of the simulated spin-up
+const float FF_RAMP_TAU_S = 1.0;    // ... once a feedforward has been sent
+const float UNITS_PER_RPM = 48.5;   // simulated motor command per rpm
 const float RPM_NOISE = 0.03;       // +/- jitter on the reported RPM
 
 float rpmSetpoint = 0;
+float feedforward = 0;
 float rpmCurrent = 0;
 float position = 0;                 // degrees, 0-360
 bool running = false;
@@ -79,6 +86,10 @@ void handleCommand(const String &cmd, const String &param) {
     }
   } else if (cmd == "N") {
     stopMotor();
+  } else if (cmd == "F") {
+    feedforward = param.toFloat();
+  } else if (cmd == "SET_PID") {
+    // accepted for protocol parity; the simulation has no PID
   } else {
     sendMessage("E", "No logic for " + cmd + " " + param);
   }
@@ -128,14 +139,17 @@ void simulate() {
   float dt = (now - lastSimMs) / 1000.0;
   lastSimMs = now;
   float target = running ? rpmSetpoint : 0;
-  rpmCurrent += (target - rpmCurrent) * (dt / (RAMP_TAU_S + dt));
+  float tau = feedforward > 0 ? FF_RAMP_TAU_S : RAMP_TAU_S;
+  rpmCurrent += (target - rpmCurrent) * (dt / (tau + dt));
   position += rpmCurrent * 6.0 * dt;   // rpm * 360 deg / 60 s
   while (position >= 360.0) position -= 360.0;
 }
 
 void sendState() {
   float jitter = rpmCurrent > 0.01 ? (random(-100, 101) / 100.0) * RPM_NOISE : 0;
-  String state = String(rpmCurrent + jitter) + "," + String(position) + "," + String(rpmSetpoint) + ",";
+  float output = running ? UNITS_PER_RPM * rpmCurrent : 0;
+  String state = String(rpmCurrent + jitter) + "," + String(position) + "," + String(rpmSetpoint) + "," +
+                 String(output) + ",";
   sendMessage("D", state);
 }
 

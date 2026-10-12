@@ -12,7 +12,8 @@
  * - DC motor with encoder feedback
  * 
  * Features:
- * - PID-based speed control with configurable gains
+ * - PID-based speed control with configurable gains, on top of a host-supplied
+ *   feedforward, with a soft start and slew-limited output
  * - Encoder feedback for closed-loop control
  * - Smooth motor speed ramping
  * - Serial command interface
@@ -24,7 +25,8 @@
  * - FLIP_MOTOR:0/1 - Flip motor direction
  * - READ_ENCODER - Get current encoder position and RPM
  * - PID_STATUS - Get current PID status and values
- * - SET_PID:Kp:Ki:Kd - Configure PID gains
+ * - SET_PID:Kp,Ki,Kd - Configure PID gains
+ * - F:units - Feedforward: the motor command that held the setpoint last time
  * - SET_SPEED_MANUAL:speed - Manually set motor speed (disables PID)
  * - CLEANUP - Stop motor and disable drivers
  * 
@@ -82,7 +84,24 @@ bool sendResponseFlag = false;
 // PID timing control
 unsigned long lastPidTime = 0;       // Last PID calculation time
 unsigned long currentPidTime = 0;    // Current time for PID calculations
-const unsigned long PID_INTERVAL = 500; // PID update interval (2Hz)
+const unsigned long PID_INTERVAL = 200; // PID update interval (5Hz, the encoder rate)
+
+// Feedforward: the motor command that held the setpoint last time. The host
+// remembers it per setpoint (motor.py) and sends it with F:, so a start heads
+// straight for about the right speed and the integral only trims. 0 = none
+// known: plain PI from zero, which takes minutes to settle.
+double feedforward = 0;
+
+// Soft start: the setpoint the PID chases ramps from 0 over SOFT_START_MS, and
+// the command applied to the motor moves at most SLEW_UNITS_PER_S, in small
+// steps every SLEW_INTERVAL. A start or a PID correction never jerks the table.
+const unsigned long SOFT_START_MS = 2000;
+const double SLEW_UNITS_PER_S = 100;
+const unsigned long SLEW_INTERVAL = 20;
+unsigned long motorStartMs = 0;
+unsigned long lastSlewTime = 0;
+double commandedSpeed = 0;           // what the PID asks for (signed motor units)
+double appliedSpeed = 0;             // what the motor gets, slewed towards it
 
 // =============================================================================
 // ENCODER SYSTEM
@@ -137,6 +156,7 @@ const char MSG_SET_PIN_LOW [] = "L";
 const char MSG_SET_SPEED [] = "S";
 const char MSG_START_MOTOR [] = "M";
 const char MSG_STOP_MOTOR [] = "N";
+const char MSG_SET_FEEDFORWARD [] = "F";
 
 // Messaging Protocol
 const char START_MARKER = '<';
@@ -175,6 +195,8 @@ int sendStatePeriod = 50; // Frequency at which to send state
 // Motor Control
 void applyPID();
 void setMotorControl(double output);
+void slewMotor();
+void resetMotorOutput();
 void stopIfFault();
 void flipMotor(bool flip_direction);
 void setSpeedSmoothly(int speed);
@@ -213,8 +235,9 @@ void applyPID() {
     return;
   }
   
-  // Calculate error (setpoint - current)
-  rpmError = rpmSetpoint - rpmCurrent;
+  // Chase a setpoint that ramps up over the soft start
+  double ramp = min(1.0, (millis() - motorStartMs) / (double)SOFT_START_MS);
+  rpmError = rpmSetpoint * ramp - rpmCurrent;
 
   // Calculate time delta for PID calculations using dedicated timing
   currentPidTime = millis();
@@ -231,8 +254,12 @@ void applyPID() {
     // Debug: Print timing and error values
     static unsigned long lastDebugTime = 0;
     
-    // Integral term: accumulates error over time
-    integral += rpmError * pidTimeDelta;
+    // Integral term: accumulates error over time. Not during the soft
+    // start: the filtered RPM lags the ramp, and integrating that lag winds
+    // the integral up into an overshoot.
+    if (ramp >= 1.0) {
+      integral += rpmError * pidTimeDelta;
+    }
     // Anti-windup: limit integral to prevent saturation
     integral = constrain(integral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
 
@@ -240,11 +267,18 @@ void applyPID() {
     derivative = (rpmError - rpmErrorLast) / pidTimeDelta;
   }
 
-  // Calculate PID output: P + I + D
-  output = Kp * rpmError + Ki * integral + Kd * derivative;
-  
-  // Constrain output to valid motor speed range
-  output = constrain(output, -MAX_SPEED, MAX_SPEED);
+  // Calculate output: feedforward + P + I + D
+  output = feedforward * ramp + Kp * rpmError + Ki * integral + Kd * derivative;
+
+  // Anti-windup: while the output is pinned at a limit, don't let the
+  // integral keep growing in the direction that pins it.
+  if (ramp >= 1.0 && ((output > PID_SPEED_LIMIT && rpmError > 0) || (output < 0 && rpmError < 0))) {
+    integral -= rpmError * pidTimeDelta;
+  }
+
+  // Never drive the table backwards to correct an overshoot (there may be an
+  // animal on it); dropping the drive lets friction slow it.
+  output = constrain(output, 0, PID_SPEED_LIMIT);
 
   // Apply the calculated output to motor control
   setMotorControl(output);
@@ -255,25 +289,33 @@ void applyPID() {
 }
 
 /**
- * Convert PID output to motor speed command
+ * Convert PID output to the motor speed command slewMotor() moves towards
  * 
  * @param output PID controller output value
  */
 void setMotorControl(double output) {
-  // Convert double output to integer speed
-  int targetSpeed = static_cast<int>(-output);
-  
-  // Apply PID speed limit to prevent excessive motor speeds
-  if (targetSpeed > PID_SPEED_LIMIT) {
-    targetSpeed = PID_SPEED_LIMIT;
-  } else if (targetSpeed < -PID_SPEED_LIMIT) {
-    targetSpeed = -PID_SPEED_LIMIT;
-  }
-  
+  commandedSpeed = constrain(-output, -PID_SPEED_LIMIT, PID_SPEED_LIMIT);
+}
+
+/**
+ * Move the applied motor speed towards commandedSpeed, at most
+ * SLEW_UNITS_PER_S, so PID updates reach the motor as a smooth ramp rather
+ * than a step every PID_INTERVAL.
+ */
+void slewMotor() {
+  double maxStep = SLEW_UNITS_PER_S * SLEW_INTERVAL / 1000.0;
+  appliedSpeed += constrain(commandedSpeed - appliedSpeed, -maxStep, maxStep);
+  int speed = static_cast<int>(round(appliedSpeed));
   // Only update motor if speed actually changed (prevents command spam)
-  if (targetSpeed != lastSpeed) {
-    setSpeed(targetSpeed, false); // Don't send response for PID updates
+  if (speed != lastSpeed) {
+    setSpeed(speed, false);
   }
+}
+
+/** Forget the slew state: the motor was stopped or set by hand. */
+void resetMotorOutput() {
+  commandedSpeed = lastSpeed;
+  appliedSpeed = lastSpeed;
 }
 
 // =============================================================================
@@ -443,8 +485,13 @@ float calculateRPM() {
     isStuck = true;
   }
   
-  // If stuck, return previous RPM value to prevent PID spikes
+  // If stuck, return previous RPM value to prevent PID spikes. A stopped
+  // table really is stationary: without this the last running RPM was held
+  // forever, shown as current and fed to the PID on the next start.
   if (isStuck) {
+    if (!motorRunning) {
+      rpmCurrent = 0.0;
+    }
     return rpmCurrent;
   }
   
@@ -591,12 +638,15 @@ void failsafeStop() {
   pidEnabled = false;
   motorRunning = false;
   setSpeedSmoothly(0);
+  resetMotorOutput();
   sendMessage(MSG_ERROR, "Host silent: motor stopped");
 }
 
 // STATE
 void sendState() {
-  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint) + ",";
+  // The output lets the host learn the feedforward for this setpoint.
+  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint) + "," +
+                        String(motorRunning ? output : 0.0) + ",";
   sendMessage(MSG_DATA, stateMessage);
   lastSentState = millis();
 }
@@ -672,5 +722,12 @@ void loop() {
   // Separate timing from encoder readings for stability
   if (currentTime - lastPidTime >= PID_INTERVAL) {
     applyPID();
+  }
+
+  if (currentTime - lastSlewTime >= SLEW_INTERVAL) {
+    lastSlewTime = currentTime;
+    if (motorRunning && pidEnabled) {
+      slewMotor();
+    }
   }
 }

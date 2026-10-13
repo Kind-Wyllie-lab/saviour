@@ -249,6 +249,9 @@ class Controller(ABC):
                     self.logger.info(f"{module_id} has {file_count} file(s) ready to export → {export_path}")
                     self.facade.enqueue_export(module_id, export_path)
 
+                case 'export_progress':
+                    self.facade.export_progress(module_id, status_data)
+
                 case 'export_complete':
                     export_path = status_data.get('export_path', '')
                     self.logger.info(f"{module_id} completed export of {export_path}")

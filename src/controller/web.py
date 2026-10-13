@@ -2221,6 +2221,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             info = self.facade.get_controller_own_share_info()
             self.socketio.emit("controller_samba_info_response", info)
 
+        @self.socketio.on('get_export_queue')
+        def handle_get_export_queue(data=None):
+            """The export queue snapshot (who's exporting, how far, who's
+            waiting); later changes arrive as `export_queue` pushes."""
+            from flask_socketio import emit as _emit
+            _emit('export_queue', self.facade.get_export_queue())
+
         @self.socketio.on('get_export_destination')
         def handle_get_export_destination(data=None):
             """Return where module exports are *actually* going right now --
@@ -4242,8 +4249,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # fell to the variant's handle_special_module_status, which
                 # logs "No logic for ..." as a WARNING on every module
                 # (re)connect and export.
-                case ("export_ready" | "export_failed" | "sync_selftest_result"
-                      | "status" | "streaming_started" | "streaming_stopped"):
+                case ("export_ready" | "export_failed" | "export_progress"
+                      | "sync_selftest_result" | "status" | "streaming_started"
+                      | "streaming_stopped"):
                     pass
 
                 case _:

@@ -440,14 +440,33 @@ class ControllerFacade:
         # never gets a matching complete/failed for the duplicates).
         if self.controller.export_queue.enqueue(module_id, export_path):
             self.controller.recording.module_export_update(module_id, export_path, "pending")
+        self.export_queue_changed()
 
     def export_complete(self, module_id: str, export_path: str = "") -> None:
         self.controller.export_queue.on_export_complete(module_id)
         self.controller.recording.module_export_update(module_id, export_path, "complete")
+        self.export_queue_changed()
 
     def export_failed(self, module_id: str, export_path: str = "") -> None:
         is_final = self.controller.export_queue.on_export_failed(module_id)
         self.controller.recording.module_export_update(module_id, export_path, "failed", final=is_final)
+        self.export_queue_changed()
+
+    def export_progress(self, module_id: str, progress: dict) -> None:
+        self.controller.export_queue.update_progress(module_id, progress)
+        self.export_queue_changed()
+
+    def get_export_queue(self) -> dict:
+        return self.controller.export_queue.snapshot()
+
+    def export_queue_changed(self) -> None:
+        """Push the export queue (who's exporting, how far, who's waiting)
+        to browsers -- the session page's per-module export rows."""
+        try:
+            self.controller.web.socketio.emit(
+                "export_queue", self.controller.export_queue.snapshot())
+        except Exception:  # noqa: BLE001 -- display only; never break export handling
+            self.logger.debug("export_queue emit failed", exc_info=True)
 
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
@@ -488,6 +507,7 @@ class ControllerFacade:
         # What to do when a module comes back online
         self.controller.export_queue.module_back_online(module_id)
         self.controller.recording.module_back_online(module_id)
+        self.export_queue_changed()
 
     def notify_module_recording(self, module_id: str) -> None:
         """Mark a module as RECORDING in the modules tracker immediately,

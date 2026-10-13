@@ -3,6 +3,7 @@ import { useParams, useNavigate, useOutletContext, Link } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
+import useExportQueue from "/src/hooks/useExportQueue";
 import {
   formatFaultTime, formatEpochTime, formatBytes, formatDuration,
   formatScheduledDays, levelClass, DOWNLOAD_ALL_MAX_BYTES,
@@ -14,6 +15,7 @@ import {
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
 import HabitatSessionPanel from "./HabitatSessionPanel";
+import SessionExportStatus from "./SessionExportStatus";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -133,6 +135,7 @@ export default function SessionDetailPage() {
   const { sessionName } = useParams();
   const navigate = useNavigate();
   const { sessions } = useSessions();
+  const exportQueue = useExportQueue();
   const { moduleList: modules } = useModules();
   const { openCopyDrawer } = useOutletContext();
 
@@ -295,11 +298,21 @@ export default function SessionDetailPage() {
     return () => socket.off("module_recording_state_update", handler);
   }, []);
 
-  // Fetch share-side file info once, on mount for this session.
+  // Fetch share-side file info on mount for this session...
   useEffect(() => {
     setFileInfo("loading");
     socket.emit("get_session_file_info", { session_name: sessionName });
   }, [sessionName]);
+
+  // ...and again each time another export lands on the share, so the file
+  // list fills in as modules finish instead of needing a page reload.
+  const exportsLanded = session?.total_exports_complete;
+  const lastExportsLanded = useRef(exportsLanded);
+  useEffect(() => {
+    if (exportsLanded === lastExportsLanded.current) return;
+    lastExportsLanded.current = exportsLanded;
+    socket.emit("get_session_file_info", { session_name: sessionName });
+  }, [sessionName, exportsLanded]);
 
   // Files and events both default to visible on the detail page -- there's
   // room for them here, unlike the old inline-expanding list card, so
@@ -358,6 +371,12 @@ export default function SessionDetailPage() {
   const totalComplete    = session.total_exports_complete ?? 0;
   const totalFailed      = session.total_exports_failed ?? 0;
   const activeSegment    = pendingExports > 0 || completeExports > 0;
+
+  const queueHasSession = !!exportQueue && [
+    ...(exportQueue.active || []), ...(exportQueue.queued || []), ...(exportQueue.rerun || []),
+  ].some((e) => e.session === sessionName);
+  const moduleNames = Object.fromEntries(
+    session.modules.map((id) => [id, modules.find((m) => m.id === id)?.name || id]));
 
   const stopStates    = session.module_stop_states || {};
   const stillStopping = Object.values(stopStates).filter(s => s === "stopping").length;
@@ -686,7 +705,7 @@ export default function SessionDetailPage() {
             </p>
           )}
 
-          {(exportEntries.length > 0 || totalComplete > 0) && (
+          {(exportEntries.length > 0 || totalComplete > 0) && !(isStopped || queueHasSession) && (
             <p className="session-info-text">
               <strong>Exports:</strong>{" "}
               {totalComplete} export{totalComplete !== 1 ? "s" : ""} completed
@@ -700,16 +719,12 @@ export default function SessionDetailPage() {
             </p>
           )}
 
-          {isStopped && (session.pending_exports ?? 0) > 0 && (
-            <p className="session-warning-text">
-              ⏳ {session.pending_exports} export{session.pending_exports !== 1 ? "s" : ""} not yet confirmed on the share
-            </p>
-          )}
-
-          {isStopped && (session.pending_exports ?? 0) === 0 && totalComplete > 0 && (
-            <p className="session-info-text">
-              ✓ All exports confirmed on the share
-            </p>
+          {(isStopped || queueHasSession) && (
+            <SessionExportStatus
+              session={session}
+              queue={exportQueue}
+              moduleNames={moduleNames}
+            />
           )}
 
           {(session.framesync_verdict || framesyncJob
@@ -982,7 +997,7 @@ export default function SessionDetailPage() {
                 Add Module to Session
               </button>
             )}
-            {isStopped && (session.pending_exports ?? 0) > 0 && (
+            {isStopped && (session.pending_exports ?? 0) > 0 && !queueHasSession && (
               <button
                 className="session-btn session-btn--start"
                 onClick={handleRetryExport}

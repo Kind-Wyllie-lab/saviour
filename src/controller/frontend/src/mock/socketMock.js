@@ -16,6 +16,8 @@ import { state, reset } from "./fixtures";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
+const EXPORT_TICK_MS = 1000;     // a module's export_progress period
+const EXPORT_BYTES_PER_TICK = 12_000_000;
 const APA_TICK_MS = 200;         // the module's arduino_state period
 const APA_LEASE_MS = 1000;       // shock.py SHOCK_LEASE_S
 
@@ -38,6 +40,7 @@ class MockSocket {
     setTimeout(() => this._fire("connect"), 30);
 
     this._healthTimer = setInterval(() => this._tickHealth(), HEALTH_TICK_MS);
+    this._exportTimer = setInterval(() => this._tickExports(), EXPORT_TICK_MS);
     this._apaTimer = setInterval(() => this._tickApa(), APA_TICK_MS);
 
     // Expose for console poking: __mockSocket.reset(), .state, .fire(...)
@@ -152,6 +155,52 @@ class MockSocket {
     });
   }
 
+  // The export queue snapshot (export_queue.ExportQueue.snapshot) for the
+  // simulated just-stopped session: one module copying, the rest waiting.
+  _exportSnapshot() {
+    const sim = state.exportSim;
+    const path = (m) => `${sim.session}/20261013/${m}`;
+    const active = [];
+    const queued = [];
+    sim.order.forEach((m, i) => {
+      if (i === sim.index) {
+        const [files, total] = sim.sizes[m];
+        const done = Math.min(sim.bytes, total);
+        active.push({
+          module_id: m, export_path: path(m), session: sim.session, attempt: 1,
+          since: Date.now() / 1000 - 5,
+          progress: {
+            files_total: files, files_done: Math.floor((done / total) * files),
+            bytes_total: total, bytes_done: done,
+            current_file: `${sim.session}_${m}_(0_20261013-151400).ts`,
+            export_path: path(m), updated: Date.now() / 1000,
+          },
+        });
+      } else if (i > sim.index) {
+        queued.push({ module_id: m, export_path: path(m), session: sim.session,
+          attempt: 1, position: i - sim.index });
+      }
+    });
+    return { active, queued, rerun: [], max_concurrent: 1 };
+  }
+
+  _tickExports() {
+    const sim = state.exportSim;
+    if (sim.index >= sim.order.length) return;
+    const m = sim.order[sim.index];
+    sim.bytes += EXPORT_BYTES_PER_TICK;
+    if (sim.bytes >= sim.sizes[m][1]) {
+      const s = state.sessions[sim.session];
+      s.module_export_states[m] = "complete";
+      s.pending_exports = Math.max(0, s.pending_exports - 1);
+      s.total_exports_complete += 1;
+      sim.index += 1;
+      sim.bytes = 0;
+      this._fire("sessions_update", clone(state.sessions));
+    }
+    this._fire("export_queue", this._exportSnapshot());
+  }
+
   _tickHealth() {
     const jitter = (v, amp) => Math.max(0, +(v + (Math.random() - 0.5) * amp).toFixed(1));
     for (const h of Object.values(state.health)) {
@@ -180,6 +229,7 @@ const ROUTER = {
     });
   },
   get_sessions() { this._fire("sessions_update", clone(state.sessions)); },
+  get_export_queue() { this._fire("export_queue", this._exportSnapshot()); },
   get_recording_sessions() { this._fire("recording_sessions", clone(state.sessions)); },
   get_controller_config() { this._fire("controller_config_response", { config: clone(state.controllerConfig) }); },
   get_module_configs() { /* frontend hook ignores the result; no-op */ },

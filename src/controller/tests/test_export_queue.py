@@ -340,3 +340,45 @@ class TestLostDispatchAfterReboot:
         q, facade = _make_queue()
         q.module_back_online("cam")
         facade.send_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Snapshot + live progress (session page export rows)
+# ---------------------------------------------------------------------------
+
+class TestSnapshotAndProgress:
+    def _setup(self):
+        q, _f = _make_queue(max_concurrent=1)
+        with patch.object(q, "_save"):
+            q.enqueue("cam_a", "sess1/20261013/cam_a")
+            q.enqueue("cam_b", "sess1/20261013/cam_b")
+            q.enqueue("mic_c", "sess2/20261013/mic_c")
+        return q
+
+    def test_snapshot_lists_active_and_queued_with_positions(self):
+        snap = self._setup().snapshot()
+        assert [a["module_id"] for a in snap["active"]] == ["cam_a"]
+        assert snap["active"][0]["session"] == "sess1"
+        assert [(e["module_id"], e["position"], e["session"]) for e in snap["queued"]] == [
+            ("cam_b", 1, "sess1"), ("mic_c", 2, "sess2")]
+        assert snap["max_concurrent"] == 1
+
+    def test_progress_kept_for_the_active_module_only(self):
+        q = self._setup()
+        q.update_progress("cam_a", {"files_total": 4, "files_done": 1,
+                                    "bytes_total": 1000, "bytes_done": 250,
+                                    "current_file": "x.ts", "junk": 1})
+        q.update_progress("cam_b", {"files_done": 9})  # queued, not active: ignored
+        snap = q.snapshot()
+        prog = snap["active"][0]["progress"]
+        assert prog["bytes_done"] == 250 and prog["current_file"] == "x.ts"
+        assert "junk" not in prog and "updated" in prog
+
+    def test_progress_cleared_when_the_export_ends(self):
+        q = self._setup()
+        q.update_progress("cam_a", {"files_done": 1})
+        with patch.object(q, "_save"):
+            q.on_export_complete("cam_a")
+        snap = q.snapshot()
+        assert [a["module_id"] for a in snap["active"]] == ["cam_b"]
+        assert snap["active"][0]["progress"] is None

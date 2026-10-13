@@ -25,6 +25,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import statistics
 import subprocess
@@ -36,6 +37,7 @@ from dataclasses import asdict, dataclass, field
 from itertools import pairwise
 
 from src.controller import audio_align
+from src.controller.camera_segments import camera_segments
 
 LAYOUTS = ("auto", "side", "stack", "grid", "loom")
 # none  -> silent composite (default)
@@ -333,11 +335,14 @@ def _prestage_skip(video_path: str, n_csv_rows: int) -> int:
 @dataclass
 class SessionStream:
     name: str          # module folder name
-    video_path: str
+    video_path: str    # first segment
     csv_path: str
     width: int
     height: int
-    csv_skip: int = 0  # leading timestamp rows with no video frame (pre-stage)
+    csv_skip: int = 0  # first segment's leading rows with no video frame
+    # Every segment for the day, oldest first (camera_segments.py); empty
+    # means just video_path/csv_path.
+    segments: list = field(default_factory=list)
 
 
 def resolve_date_dir(session_dir: str, date_dir: str | None) -> str:
@@ -366,20 +371,19 @@ def discover_streams(date_dir: str, wanted: list[str] | None) -> list[SessionStr
         module_dir = os.path.join(date_dir, entry)
         if not os.path.isdir(module_dir):
             continue
-        videos = sorted(
-            glob.glob(os.path.join(module_dir, "*.ts"))
-            + glob.glob(os.path.join(module_dir, "*.mp4"))
-        )
-        csvs = glob.glob(os.path.join(module_dir, "*_timestamps.csv"))
-        if not videos or not csvs:
+        segments = camera_segments(module_dir)
+        if not segments:
             continue
-        w, h = probe_dimensions(videos[0])
+        first = segments[0]
+        w, h = probe_dimensions(first.video_path)
         try:
-            n_rows = sum(1 for _ in open(csvs[0], newline="")) - 1  # minus header
+            with open(first.csv_path, newline="") as f:
+                n_rows = sum(1 for _ in f) - 1  # minus header
         except OSError:
             n_rows = 0
-        skip = _prestage_skip(videos[0], n_rows) if n_rows > 0 else 0
-        streams.append(SessionStream(entry, videos[0], csvs[0], w, h, skip))
+        skip = _prestage_skip(first.video_path, n_rows) if n_rows > 0 else 0
+        streams.append(SessionStream(
+            entry, first.video_path, first.csv_path, w, h, skip, segments))
     if wanted:
         missing = [w for w in wanted if w not in {s.name for s in streams}]
         if missing:
@@ -398,7 +402,8 @@ def camera_window(streams: list[SessionStream]) -> tuple[int, int]:
         rows = read_frame_timestamps(s.csv_path)[s.csv_skip:]  # drop pre-stage rows
         if rows:
             firsts.append(rows[0])
-            lasts.append(rows[-1])
+            # A multi-segment day runs to its last segment's last frame.
+            lasts.append(s.segments[-1].last_ns if s.segments else rows[-1])
     if not firsts:
         raise ComposeError("camera CSVs have no timestamps")
     start, end = max(firsts), min(lasts)
@@ -507,6 +512,46 @@ def clear_preview_cache(session_name: str, date_base: str | None = None) -> None
     shutil.rmtree(target, ignore_errors=True)
 
 
+_SEGMENT_TAG = re.compile(r"_\(\d+_[0-9-]+\)")
+
+
+def _mic_device_key(audio_path: str) -> str:
+    """One AudioMoth's files share a name apart from the `(index_start)`
+    segment tag (and a `_PARTIAL` salvage suffix); a mic folder holds every
+    connected AudioMoth's files side by side."""
+    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    return _SEGMENT_TAG.sub("", stem).removesuffix("_PARTIAL")
+
+
+def find_microphone_segments(date_dir: str, source: str | None) -> list[tuple[str, str]]:
+    """Every (audio_path, sidecar_path) segment of one AudioMoth: the chosen
+    mic folder's (or the first mic folder's) first device by name, the same
+    device `find_microphone` picks. Skips empty and mid-export files."""
+    audio, _sidecar = find_microphone(date_dir, source)
+    mdir = os.path.dirname(audio)
+    key = _mic_device_key(audio)
+    out = []
+    for ext in (".flac", ".wav"):
+        for path in sorted(glob.glob(os.path.join(mdir, f"*{ext}"))):
+            name = os.path.basename(path)
+            if name.startswith("PENDING_") or _mic_device_key(path) != key:
+                continue
+            sidecar = _mic_sidecar_for(path)
+            try:
+                if os.path.getsize(path) > 0 and os.path.isfile(sidecar):
+                    out.append((path, sidecar))
+            except OSError:
+                continue
+    return out
+
+
+def _mic_sidecar_for(audio_path: str) -> str:
+    stem = os.path.splitext(audio_path)[0]
+    if stem.endswith("_PARTIAL"):
+        return stem.removesuffix("_PARTIAL") + "_timestamps_PARTIAL.txt"
+    return stem + "_timestamps.txt"
+
+
 def find_microphone(date_dir: str, source: str | None):
     """The chosen mic's (audio_path, sidecar_path), or the first mic
     folder with an audio file + a `*_timestamps.txt` sidecar."""
@@ -518,7 +563,9 @@ def find_microphone(date_dir: str, source: str | None):
             continue
         for ext in (".flac", ".wav"):
             for audio in sorted(glob.glob(os.path.join(mdir, f"*{ext}"))):
-                sidecar = f"{os.path.splitext(audio)[0]}_timestamps.txt"
+                if os.path.basename(audio).startswith("PENDING_"):
+                    continue
+                sidecar = _mic_sidecar_for(audio)
                 if os.path.isfile(sidecar):
                     return audio, sidecar
     raise ComposeError(
@@ -694,6 +741,31 @@ class ComposeJob:
         return asdict(self)
 
 
+def _aligned_mic_parts(segments: list[tuple[str, str]], t_start: int, t_end: int,
+                       warnings: list | None = None, logger=None) -> list:
+    """(AudioStream, SidecarFit) for each mic segment that overlaps the
+    video window, oldest first. A segment whose sidecar can't be fitted (a
+    salvaged fragment, say) is skipped with a warning rather than failing
+    the render."""
+    parts = []
+    for audio_file, sidecar in segments:
+        try:
+            fit = audio_align.parse_mic_sidecar(sidecar, audio_file)
+        except Exception as exc:  # noqa: BLE001 -- one bad segment mustn't sink the render
+            msg = f"audio segment {os.path.basename(audio_file)} skipped: {exc}"
+            if logger:
+                logger.warning(msg)
+            if warnings is not None:
+                warnings.append(msg)
+            continue
+        seg_end = fit.sample0_wall_ns + int(fit.duration_s * 1e9)
+        if seg_end <= t_start or fit.sample0_wall_ns >= t_end:
+            continue
+        parts.append((audio_align.AudioStream("mic", audio_file, sidecar), fit))
+    parts.sort(key=lambda p: p[1].sample0_wall_ns)
+    return parts
+
+
 class ComposeWorker:
     """One render at a time, small FIFO queue, progress via `on_update`."""
 
@@ -851,7 +923,8 @@ class ComposeWorker:
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,
                                   spec.fps, phase,
                                   audio_height_px(
-                                      canvas_h, audio.effective_height_pct))
+                                      canvas_h, audio.effective_height_pct),
+                                  warnings=job.warnings)
                 _safe_unlink(base_path)
         except _CancelledError:
             _safe_unlink(base_path)
@@ -862,15 +935,18 @@ class ComposeWorker:
 
     def _apply_audio(self, date_dir, streams, audio: AudioSpec,
                      base_path: str, out_path: str, fps: int, phase,
-                     strip_height: int = audio_align.DEFAULT_STRIP_HEIGHT) -> None:
-        audio_file, sidecar = find_microphone(date_dir, audio.source)
+                     strip_height: int = audio_align.DEFAULT_STRIP_HEIGHT,
+                     warnings: list | None = None) -> None:
         t_start, t_end = camera_window(streams)
         window_s = (t_end - t_start) / 1e9
-        fit = audio_align.parse_mic_sidecar(sidecar, audio_file)
+        parts = _aligned_mic_parts(
+            find_microphone_segments(date_dir, audio.source), t_start, t_end,
+            warnings, self._log)
+        if not parts:
+            raise ComposeError("no microphone recording overlaps the video")
         aligned = os.path.splitext(out_path)[0] + "_aligned.flac"
-        audio_align.render_aligned_audio(
-            audio_align.AudioStream("mic", audio_file, sidecar), fit,
-            t_start, window_s, aligned, fit.nominal_rate_hz,
+        audio_align.render_aligned_audio_segments(
+            parts, t_start, window_s, aligned, parts[0][1].nominal_rate_hz,
             progress=phase(0.65, 0.75, "aligning audio"),
         )
         try:

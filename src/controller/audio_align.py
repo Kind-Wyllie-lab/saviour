@@ -673,6 +673,37 @@ def render_aligned_audio(
     return out_path
 
 
+def render_aligned_audio_segments(
+    parts: list[tuple[AudioStream, SidecarFit]],
+    t_start_ns: int, duration_s: float, out_path: str, out_rate: int,
+    progress=None,
+) -> str:
+    """`render_aligned_audio` across a recording's segments: each is aligned
+    on its own sidecar fit (same filter, so each lands at its own wall-clock
+    offset from `t_start_ns`), then they're summed into one track. Segments
+    don't overlap, so the sum is a join, with silence across any gap."""
+    if len(parts) == 1:
+        stream, fit = parts[0]
+        return render_aligned_audio(stream, fit, t_start_ns, duration_s,
+                                    out_path, out_rate, progress)
+    cmd = ["ffmpeg", "-y"]
+    for stream, _fit in parts:
+        cmd += ["-i", stream.audio_path]
+    chains = [
+        f"[{i}:a]{build_align_filter(fit, t_start_ns, out_rate)}[a{i}]"
+        for i, (_stream, fit) in enumerate(parts)
+    ]
+    labels = "".join(f"[a{i}]" for i in range(len(parts)))
+    chains.append(
+        f"{labels}amix=inputs={len(parts)}:normalize=0:duration=longest,"
+        f"aformat=sample_fmts=s16,apad[out]"
+    )
+    cmd += ["-filter_complex", ";".join(chains), "-map", "[out]",
+            "-t", f"{duration_s:.6f}", "-c:a", "flac", out_path]
+    _run_progress(cmd, duration_s, progress)
+    return out_path
+
+
 def render_spectrogram_png(
     aligned_path: str, out_path: str,
     size: tuple[int, int] = DEFAULT_SPECTROGRAM_SIZE,

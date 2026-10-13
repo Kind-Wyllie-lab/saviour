@@ -208,3 +208,115 @@ def test_attach_audio_preview_uses_the_given_height(tmp_path, mode, height_px, e
         assert out[100 - strip_h:, :].mean() > 150   # spectrogram drawn
         if strip_h < 100:
             assert out[: 100 - strip_h, :].mean() == 0  # video untouched
+
+
+# --------------------------------------------------------------------------- #
+# Multi-segment days (camera_segments.py)                                     #
+# --------------------------------------------------------------------------- #
+
+STEP = 33_333_333
+T0 = 1_700_000_000_000_000_000
+
+
+def _write_flat_video(path: str, n_frames: int, value: int, size=(64, 48)) -> bool:
+    w, h = size
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
+    if not writer.isOpened():
+        return False
+    for _ in range(n_frames):
+        writer.write(np.full((h, w, 3), value, dtype=np.uint8))
+    writer.release()
+    return True
+
+
+def _two_segment_camera(date_dir, name="cam", gap_frames=0):
+    """Segment 0: 30 dark frames; segment 1 (index restarted, so it sorts
+    first by name): 30 bright frames starting right after, or after a gap."""
+    d = date_dir / name
+    d.mkdir(parents=True)
+    t1 = T0 + (30 + gap_frames) * STEP
+    for tag, value, t in (("5_a", 20, T0), ("0_b", 200, t1)):
+        vp = str(d / f"s_{name}_({tag}).mp4")
+        if not _write_flat_video(vp, 30, value):
+            pytest.skip("cv2.VideoWriter unavailable (no codec)")
+        _write_csv(str(d / f"s_{name}_({tag})_timestamps.csv"), 30, t0_ns=t, step_ns=STEP)
+    return d
+
+
+def test_discover_finds_every_segment_in_time_order(tmp_path):
+    from src.controller.video_compose import discover_camera_streams
+
+    _two_segment_camera(tmp_path)
+    (stream,) = discover_camera_streams(str(tmp_path))
+    assert [os.path.basename(s.video_path) for s in stream.segments] == [
+        "s_cam_(5_a).mp4", "s_cam_(0_b).mp4"]
+    assert stream.video_path.endswith("(5_a).mp4")
+
+
+def test_segmented_cursor_crosses_into_the_next_segment(tmp_path, monkeypatch):
+    from src.controller import video_compose
+    from src.controller.video_compose import _SegmentedCursor, discover_camera_streams
+
+    monkeypatch.setattr(video_compose, "_probe_frame_count", _cv2_frame_count)
+    _two_segment_camera(tmp_path)
+    (stream,) = discover_camera_streams(str(tmp_path))
+    c = _SegmentedCursor(stream)
+    assert c.first_ts == T0 and c.last_ts == T0 + 59 * STEP
+    assert float(c.sync_to(T0 + 10 * STEP).mean()) < 60
+    assert float(c.sync_to(T0 + 45 * STEP).mean()) > 150
+    c.release()
+
+
+def test_segmented_cursor_shows_black_across_a_real_gap(tmp_path, monkeypatch):
+    from src.controller import video_compose
+    from src.controller.video_compose import _SegmentedCursor, discover_camera_streams
+
+    monkeypatch.setattr(video_compose, "_probe_frame_count", _cv2_frame_count)
+    _two_segment_camera(tmp_path, gap_frames=90)   # 3 s gap
+    (stream,) = discover_camera_streams(str(tmp_path))
+    c = _SegmentedCursor(stream)
+    c.sync_to(T0 + 29 * STEP)
+    assert float(c.sync_to(T0 + 31 * STEP).mean()) > 5    # rotation join: hold
+    assert float(c.sync_to(T0 + 80 * STEP).mean()) == 0   # in the gap: black
+    assert float(c.sync_to(T0 + 125 * STEP).mean()) > 150
+    c.release()
+
+
+def test_compose_renders_across_segments(tmp_path, monkeypatch):
+    from src.controller import video_compose
+    from src.controller.video_compose import compose_session_video
+
+    monkeypatch.setattr(video_compose, "_probe_frame_count", _cv2_frame_count)
+    date_dir = tmp_path / "20261013"
+    _two_segment_camera(date_dir)
+    out = str(tmp_path / "out.mp4")
+    try:
+        compose_session_video(str(date_dir), out, fps=10)
+    except RuntimeError as e:
+        if "VideoWriter" in str(e):
+            pytest.skip("cv2.VideoWriter unavailable for the canvas")
+        raise
+    assert _cv2_frame_count(out) >= 18   # ~1.97 s at 10 fps; one segment is ~9
+    cap = cv2.VideoCapture(out)
+    means = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        means.append(float(fr[60:, :].mean()))
+    cap.release()
+    assert min(means[:5]) < 60 and max(means[-5:]) > 100
+
+
+def test_representative_frame_seeks_in_the_segment_covering_t(tmp_path):
+    from src.controller.video_compose import (
+        _representative_frame,
+        discover_camera_streams,
+    )
+
+    _two_segment_camera(tmp_path)
+    (stream,) = discover_camera_streams(str(tmp_path))
+    # Mid-day falls in the second segment: bright, not the first frame of
+    # the first segment.
+    assert float(_representative_frame(stream, T0 + 45 * STEP).mean()) > 150
+    assert float(_representative_frame(stream, T0 + 5 * STEP).mean()) < 60

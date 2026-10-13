@@ -734,3 +734,95 @@ def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch)
     _, _, canvas_h = plan_regions([(1280, 720)], "auto")
     assert seen["strip_height"] == compose.audio_height_px(canvas_h, 25)
     assert seen["strip_height"] != audio_align.DEFAULT_STRIP_HEIGHT
+
+
+# --------------------------------------------------------------------------- #
+# Multi-segment days                                                          #
+# --------------------------------------------------------------------------- #
+
+def _seg_csv(path, first, n=3, step=1000):
+    rows = "\n".join(f"{i},{first + i * step}" for i in range(n))
+    path.write_text(f"frame_id,timestamp_ns\n{rows}\n")
+
+
+def test_discover_streams_carries_every_segment(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.controller.compose.probe_dimensions", lambda _p: (640, 480))
+    d = tmp_path / "20261013" / "camera_a"
+    d.mkdir(parents=True)
+    for tag, first in (("3_x", 10_000), ("0_y", 20_000), ("1_z", 30_000)):
+        (d / f"s_({tag}).ts").write_bytes(b"x")
+        _seg_csv(d / f"s_({tag})_timestamps.csv", first)
+    (s,) = discover_streams(str(tmp_path / "20261013"), None)
+    assert [os.path.basename(x.video_path) for x in s.segments] == [
+        "s_(3_x).ts", "s_(0_y).ts", "s_(1_z).ts"]
+    assert s.video_path.endswith("s_(3_x).ts")
+    # The window runs to the last segment's last frame, not the first one's.
+    assert camera_window([s]) == (10_000, 32_000)
+
+
+def test_find_microphone_segments_one_device(tmp_path):
+    from src.controller.compose import find_microphone_segments
+
+    d = tmp_path / "20261013" / "audiomoth"
+    d.mkdir(parents=True)
+    for dev in ("AAA", "BBB"):
+        for tag in ("0_1", "1_2"):
+            (d / f"s_audiomoth_4703_{dev}_({tag}).flac").write_bytes(b"x")
+            (d / f"s_audiomoth_4703_{dev}_({tag})_timestamps.txt").write_text("x")
+    (d / "s_audiomoth_4703_AAA_(2_3)_PARTIAL.flac").write_bytes(b"x")
+    (d / "s_audiomoth_4703_AAA_(2_3)_timestamps_PARTIAL.txt").write_text("x")
+    (d / "s_audiomoth_4703_AAA_(3_4)_PARTIAL.flac").write_bytes(b"")   # empty
+    (d / "PENDING_s_audiomoth_4703_AAA_(4_5).flac").write_bytes(b"x")
+    segs = find_microphone_segments(str(tmp_path / "20261013"), None)
+    names = [os.path.basename(a) for a, _ in segs]
+    assert all("AAA" in n for n in names) and len(names) == 3
+    assert any(n.endswith("_PARTIAL.flac") for n in names)
+
+
+def test_aligned_mic_parts_keeps_overlapping_segments(monkeypatch):
+    from src.controller import compose as c
+
+    class Fit:
+        def __init__(self, start_s, dur_s):
+            self.sample0_wall_ns = int(start_s * 1e9)
+            self.duration_s = dur_s
+            self.nominal_rate_hz = 192000
+
+    fits = {"a.flac": Fit(0, 100), "b.flac": Fit(100, 100), "c.flac": Fit(300, 100)}
+
+    def fake_parse(sidecar, audio):
+        if audio == "bad.flac":
+            raise ValueError("too short")
+        return fits[audio]
+
+    monkeypatch.setattr(c.audio_align, "parse_mic_sidecar", fake_parse)
+    warnings = []
+    parts = c._aligned_mic_parts(
+        [("b.flac", "b.txt"), ("a.flac", "a.txt"), ("bad.flac", "x.txt"),
+         ("c.flac", "c.txt")],
+        int(50e9), int(150e9), warnings)
+    assert [p[0].audio_path for p in parts] == ["a.flac", "b.flac"]
+    assert any("bad.flac" in w for w in warnings)
+
+
+def test_render_aligned_audio_segments_mixes_each_aligned_part(monkeypatch):
+    from src.controller import audio_align
+
+    captured = {}
+    monkeypatch.setattr(audio_align, "_run_progress",
+                        lambda cmd, total, cb: captured.setdefault("cmd", cmd))
+
+    class Fit:
+        def __init__(self, s0):
+            self.sample0_wall_ns = s0
+            self.measured_rate_hz = 192000.5
+            self.nominal_rate_hz = 192000
+
+    parts = [(audio_align.AudioStream("mic", "a.flac", "a.txt"), Fit(int(1e9))),
+             (audio_align.AudioStream("mic", "b.flac", "b.txt"), Fit(int(3601e9)))]
+    audio_align.render_aligned_audio_segments(parts, int(1e9), 7200.0, "o.flac", 192000)
+    cmd = captured["cmd"]
+    assert cmd.count("-i") == 2
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "amix=inputs=2:normalize=0" in graph
+    assert "adelay=3600000" in graph   # second segment lands an hour in

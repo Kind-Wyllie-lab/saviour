@@ -30,15 +30,24 @@ from __future__ import annotations
 
 import argparse
 import csv
-import glob
 import logging
 import math
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+
+try:
+    from src.controller.camera_segments import (
+        Segment,
+        camera_segments,
+        csv_bounds,
+        segment_at,
+    )
+except ImportError:  # run as a script: python3 src/controller/video_compose.py
+    from camera_segments import Segment, camera_segments, csv_bounds, segment_at
 
 _LOG = logging.getLogger(__name__)
 
@@ -49,8 +58,19 @@ DEFAULT_FPS = 30
 @dataclass
 class CameraStream:
     name: str
-    video_path: str
+    video_path: str          # first segment (dimensions, labels)
     csv_path: str
+    # Every segment of this camera for the day, oldest first (see
+    # camera_segments.py). Empty means the single video_path/csv_path pair.
+    segments: list[Segment] = field(default_factory=list)
+
+    def segment_list(self) -> list[Segment]:
+        if self.segments:
+            return self.segments
+        bounds = csv_bounds(self.csv_path)
+        if bounds is None:
+            raise ValueError(f"{self.csv_path} has no timestamps")
+        return [Segment(self.video_path, self.csv_path, *bounds)]
 
 
 def discover_camera_streams(date_dir: str) -> list[CameraStream]:
@@ -63,18 +83,14 @@ def discover_camera_streams(date_dir: str) -> list[CameraStream]:
         module_dir = os.path.join(date_dir, entry)
         if not os.path.isdir(module_dir):
             continue
-        videos = sorted(
-            glob.glob(os.path.join(module_dir, "*.ts"))
-            + glob.glob(os.path.join(module_dir, "*.mp4"))
-        )
-        csvs = glob.glob(os.path.join(module_dir, "*_timestamps.csv"))
-        if not videos or not csvs:
+        segments = camera_segments(module_dir)
+        if not segments:
             continue
-        with open(csvs[0], newline="") as f:
-            header = next(csv.reader(f), [])
-        if "timestamp_ns" not in header:
-            continue
-        streams.append(CameraStream(name=entry, video_path=videos[0], csv_path=csvs[0]))
+        first = segments[0]
+        streams.append(CameraStream(
+            name=entry, video_path=first.video_path, csv_path=first.csv_path,
+            segments=segments,
+        ))
     return streams
 
 
@@ -99,12 +115,18 @@ class _StreamCursor:
     """
 
     def __init__(
-        self, stream: CameraStream, skip: int = 0, frame_count: int | None = None
+        self, stream: CameraStream, skip: int | None = 0,
+        frame_count: int | None = None,
     ):
         self.name = stream.name
         self.cap = cv2.VideoCapture(stream.video_path)
         with open(stream.csv_path, newline="") as f:
             ts = [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+        if skip is None:
+            # Same rule as compose._prestage_skip: a couple of leading rows
+            # with no video frame; a bigger deficit is remapped below.
+            skip = (min(_MAX_PRESTAGE_SKIP, max(0, len(ts) - frame_count))
+                    if frame_count else 0)
         # Drop leading rows the CSV logged for frames captured before the
         # encoder started, so timestamps_ns[i] lines up with video frame i.
         self.timestamps_ns = ts[skip:] if 0 < skip < len(ts) else ts
@@ -171,6 +193,76 @@ class _StreamCursor:
 
     def release(self):
         self.cap.release()
+
+
+_MAX_PRESTAGE_SKIP = 2  # mirrors compose._MAX_PRESTAGE_SKIP
+
+# Longer than any segment-rotation join (a frame or two) but short enough
+# that a real recording gap shows as black rather than a frozen frame.
+_SEGMENT_GAP_NS = 500_000_000
+
+
+class _SegmentedCursor:
+    """`_StreamCursor` across a camera's segments, opened one at a time as
+    the requested time reaches them (so only one video is open per camera).
+    Times past a segment's end hold its last frame across a rotation join and
+    show black across a real gap (the module was offline or not recording).
+
+    Frame/CSV mismatches are checked per segment as each opens; `messages`
+    collects the warnings."""
+
+    def __init__(self, stream: CameraStream, first_skip: int = 0):
+        self.name = stream.name
+        self.segments = stream.segment_list()
+        self._first_skip = first_skip
+        self._i = -1
+        self._cur: _StreamCursor | None = None
+        self.messages: list[str] = []
+        self._open(0)
+
+    def _open(self, i: int) -> None:
+        if self._cur is not None:
+            self._cur.release()
+        seg = self.segments[i]
+        single = CameraStream(self.name, seg.video_path, seg.csv_path)
+        self._cur = _StreamCursor(
+            single, self._first_skip if i == 0 else None,
+            _probe_frame_count(seg.video_path),
+        )
+        self._i = i
+        c = self._cur
+        if c.deficit and abs(c.deficit) > 1:
+            where = (f" segment {os.path.basename(seg.video_path)}"
+                     if len(self.segments) > 1 else "")
+            msg = (
+                f"camera '{self.name}'{where}: {c.n_rows} CSV rows vs "
+                f"{c.n_frames} .ts frames ({c.deficit:+d}); frames remapped "
+                f"proportionally, up to ~{c.mismatch_ms:.0f} ms residual "
+                f"alignment error"
+            )
+            _LOG.warning(msg)
+            self.messages.append(msg)
+
+    @property
+    def first_ts(self) -> int:
+        return self.segments[0].first_ns if self._i else self._cur.first_ts
+
+    @property
+    def last_ts(self) -> int:
+        return self.segments[-1].last_ns
+
+    def sync_to(self, t_ns: int):
+        while (self._i + 1 < len(self.segments)
+               and self.segments[self._i + 1].first_ns <= t_ns):
+            self._open(self._i + 1)
+        cur = self._cur
+        if t_ns > cur.last_ts + _SEGMENT_GAP_NS and cur.frame is not None:
+            return np.zeros_like(cur.frame)
+        return cur.sync_to(t_ns)
+
+    def release(self):
+        if self._cur is not None:
+            self._cur.release()
 
 
 def _probe_frame_count(video_path: str) -> int:
@@ -312,20 +404,7 @@ def compose_session_video(
             regions, canvas_w, canvas_h = _grid_regions(len(found))
 
     _skip = csv_skip or {}
-    cursors = [
-        _StreamCursor(s, _skip.get(s.name, 0), _probe_frame_count(s.video_path))
-        for s in ordered
-    ]
-    for c in cursors:
-        if c.deficit and abs(c.deficit) > 1:
-            msg = (
-                f"camera '{c.name}': {c.n_rows} CSV rows vs {c.n_frames} "
-                f".ts frames ({c.deficit:+d}); frames remapped proportionally, "
-                f"up to ~{c.mismatch_ms:.0f} ms residual alignment error"
-            )
-            _LOG.warning(msg)
-            if warnings is not None:
-                warnings.append(msg)
+    cursors = [_SegmentedCursor(s, _skip.get(s.name, 0)) for s in ordered]
     t_start = max(c.first_ts for c in cursors)
     t_end = min(c.last_ts for c in cursors)
     if t_end <= t_start:
@@ -357,6 +436,9 @@ def compose_session_video(
         writer.release()
         for cursor in cursors:
             cursor.release()
+        if warnings is not None:
+            for cursor in cursors:
+                warnings.extend(m for m in cursor.messages if m not in warnings)
 
     return output_path
 
@@ -373,6 +455,14 @@ def _csv_bounds(csv_path: str, skip: int = 0) -> tuple[int, int]:
     return ts[0], ts[-1]
 
 
+def _stream_bounds(stream: CameraStream, skip: int = 0) -> tuple[int, int]:
+    """(first, last) timestamp across all of a camera's segments."""
+    segments = stream.segment_list()
+    first = (_csv_bounds(segments[0].csv_path, skip)[0] if skip
+             else segments[0].first_ns)
+    return first, segments[-1].last_ns
+
+
 def _representative_frame(stream: CameraStream, t_ns: int, skip: int = 0) -> np.ndarray:
     """A frame near `t_ns` for a single camera, for the layout preview.
 
@@ -381,22 +471,28 @@ def _representative_frame(stream: CameraStream, t_ns: int, skip: int = 0) -> np.
     every frame up to mid-session -- tens of thousands on a long .ts, read
     over the share -- so a first preview could take minutes (field report,
     2026-10). The seek isn't frame-accurate on MPEG-TS, which is fine for a
-    layout preview; real renders still use the cursor. Falls back to the
-    first frame if the seek reads nothing."""
-    first_ns, _last_ns = _csv_bounds(stream.csv_path, skip)
-    cap = cv2.VideoCapture(stream.video_path)
+    layout preview; real renders still use the cursor. Seeks within the
+    segment covering `t_ns` (a seek into the first segment used to overshoot
+    it on a multi-segment day and fall back to its first frame). Falls back
+    to that segment's first frame if the seek reads nothing."""
+    seg = segment_at(stream.segment_list(), t_ns)
+    first_ns = seg.first_ns
+    if seg.video_path == stream.video_path and skip:
+        first_ns, _last_ns = _csv_bounds(seg.csv_path, skip)
+    offset_ms = max(0.0, (min(t_ns, seg.last_ns) - first_ns) / 1e6)
+    cap = cv2.VideoCapture(seg.video_path)
     try:
-        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, (t_ns - first_ns) / 1e6))
+        cap.set(cv2.CAP_PROP_POS_MSEC, offset_ms)
         ok, frame = cap.read()
         if ok and frame is not None:
             return frame
     finally:
         cap.release()
-    cap = cv2.VideoCapture(stream.video_path)
+    cap = cv2.VideoCapture(seg.video_path)
     try:
         ok, frame = cap.read()
         if not ok or frame is None:
-            raise ValueError(f"could not decode a frame from {stream.video_path}")
+            raise ValueError(f"could not decode a frame from {seg.video_path}")
         return frame
     finally:
         cap.release()
@@ -410,7 +506,7 @@ def _stream_thumb(
     there for next time. The cache makes repeated "Preview layout" presses
     cheap -- no video decode at all once every stream is cached."""
     if cache_dir:
-        thumb_path = os.path.join(cache_dir, f"{stream.name}.png")
+        thumb_path = os.path.join(cache_dir, f"{stream.name}.seg.png")
         cached = cv2.imread(thumb_path) if os.path.isfile(thumb_path) else None
         if cached is not None:
             return cached
@@ -477,7 +573,7 @@ def compose_preview_frame(
         cw, ch = canvas
 
     _skip = csv_skip or {}
-    bounds = [_csv_bounds(s.csv_path, _skip.get(s.name, 0)) for s in found]
+    bounds = [_stream_bounds(s, _skip.get(s.name, 0)) for s in found]
     t_start = max(b[0] for b in bounds)
     t_end = min(b[1] for b in bounds)
     t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))

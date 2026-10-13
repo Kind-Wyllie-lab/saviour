@@ -43,7 +43,7 @@ const PREVIEW_DEBOUNCE_MS = 650;
 // compose.AUDIO_HEIGHT_PCT_DEFAULT / _RANGE on the backend.
 const AUDIO_HEIGHT = {
   strip: { def: 20, min: 5, max: 50 },
-  panel: { def: 30, min: 10, max: 100 },
+  panel: { def: 100, min: 10, max: 100 },
 };
 
 // Group the flat session file list into { dateDir: { cameras: [...], mics: [...] } }.
@@ -145,7 +145,7 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
     color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
     ascale: "log", gain: 2.5,
   });
-  const [audioHeight, setAudioHeight] = usePersistedState("compose_audio_height", {
+  const [audioHeight, setAudioHeight] = usePersistedState("compose_audio_height_v2", {
     strip: AUDIO_HEIGHT.strip.def, panel: AUDIO_HEIGHT.panel.def,
   });
   const [jobs, setJobs] = useState({});
@@ -157,6 +157,17 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
   // Id of the latest preview request; replies to older ones are dropped so
   // a slow earlier render can't overwrite (or un-spin) a newer one.
   const previewReqId = useRef(0);
+  // Click the preview for fullscreen; Esc (the browser's own) or another
+  // click leaves it. The box goes fullscreen, so a re-render in flight
+  // shows its spinner there too.
+  const previewBoxRef = useRef(null);
+  const togglePreviewFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      previewBoxRef.current?.requestFullscreen?.().catch(() => {});
+    }
+  };
 
   const cams = byDate[dateDir]?.cameras || [];
   const mics = byDate[dateDir]?.mics || [];
@@ -558,12 +569,14 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
             {previewing ? "Rendering…" : "Rebuild"}
           </button>
         </div>
-        <div className="compose-panel__preview-box">
+        <div className="compose-panel__preview-box" ref={previewBoxRef}>
           {preview?.image ? (
             <img
-              className="compose-panel__preview"
+              className="compose-panel__preview compose-panel__preview--zoomable"
               src={preview.image}
               alt="Layout preview (mid-session frame)"
+              title="Click for fullscreen (Esc to exit)"
+              onClick={togglePreviewFullscreen}
             />
           ) : (
             <div className="compose-panel__preview-empty">

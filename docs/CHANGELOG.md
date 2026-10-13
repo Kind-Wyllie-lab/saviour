@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-13
 
+- [x] **Compose: spectrogram panel defaults to 100 % of the video's height; click the preview for fullscreen** (branch `feat/compose-preview-tweaks` → `staging`). `AUDIO_HEIGHT_PCT_DEFAULT["panel"]` 30 → 100 (strip stays 20: it overlays the video); the frontend default matches and its remembered value moved to a new key so the new default applies straight away. The layout preview opens fullscreen on click (the browser's Fullscreen API on the preview box, so an in-flight re-render's spinner shows there too); Esc or another click exits. Compose tests, ruff, lint and all five builds clean.
+
 - [x] **`source-map-js` 1.2.1 → 1.2.2** (Dependabot #52, GHSA-68fv-2mgg-jv7q / CVE-2026-93749, high): event-loop denial of service when parsing a crafted indexed source map. Transitive dev dependency (vite → postcss), used only at build time on a source map someone supplies; nothing ships to the Pis or the browser. Lockfile-only bump inside postcss's existing range; `npm audit` clean, lint and all five builds clean.
 
 ## 2026-10-12

@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-13
+
+- [x] **`source-map-js` 1.2.1 → 1.2.2** (Dependabot #52, GHSA-68fv-2mgg-jv7q / CVE-2026-93749, high): event-loop denial of service when parsing a crafted indexed source map. Transitive dev dependency (vite → postcss), used only at build time on a source map someone supplies; nothing ships to the Pis or the browser. Lockfile-only bump inside postcss's existing range; `npm audit` clean, lint and all five builds clean.
+
 ## 2026-10-12
 
 - [x] **APA commands panel: safer buttons, clearer hierarchy** (branch `fix/apa-command-buttons` → `staging`). Frontend only.

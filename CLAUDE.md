@@ -177,6 +177,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Gap record: gaps are stamped at detection, not at loss → `plans/metadata-gap-record.md`.
 - No PTP start gate on a `module_back_online` re-arm after a power-loss reboot.
 - Export deletes the local copy with no content check; no per-file hashes → `plans/recording-file-hashing.md`.
+- A file whose export was interrupted (left `PENDING_<name>` in `to_export/`) is re-exported to a `PENDING_<session>` folder on the share; found in the test D fast run → `plans/backlog.md`.
 - `_check_ptp_health` restart-loop fix owes a 24 h habitat validation (roadmap A8).
 - `pyproject.toml`: `hatchling` in build-requires breaks offline `pip install -e .` on modules; also `requires-python`/mypy say 3.8, `pytest` is a runtime dep.
 - Recorded rotation at 90°/270° is dropped for non-square resolutions (hardware limit); decided: rotate downstream (frontend / `video_compose`), not built.

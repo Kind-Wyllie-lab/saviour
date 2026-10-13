@@ -7,6 +7,8 @@ delete it here.
 
 ## Correctness / data loss
 
+- **Export picks up a stranded `PENDING_` file and misfiles it** (found 2026-10-06 test D fast run, see `plans/v1.0-roadmap.md`). `Export.export_staged()` renames each file `PENDING_<name>` in `to_export/` while copying it; a reboot or crash mid-copy leaves it under that name. The next `export_staged()` lists everything in `to_export/` and `_extract_session_from_filename()` keeps the prefix, so the file goes to `<share>/PENDING_<session>/…/PENDING_<name>` and the local copy is deleted; the controller drops that export's `complete` (unknown session), leaving `pending_exports` stuck. The half-copied `PENDING_<name>` stub in the real session folder also stays. Fix: at the start of `export_staged()` (under `_export_lock`, so no copy of ours is in flight), rename any `PENDING_<name>` in `to_export/` back to `<name>` (if `<name>` doesn't also exist) and log it; the re-export's `copy2` then overwrites the stub on the share. Test: a `PENDING_` file in `to_export/` exports to the right session folder under its real name.
+
 - **v1.0 exit checklist** — the silent-data-loss subset of this list, promoted to named blockers with a positive acceptance test: `plans/v1.0-roadmap.md`.
 
 - **`pyproject.toml`: `hatchling` in build-requires breaks offline module installs** — build backend is `setuptools.build_meta` so hatchling is never used, but pip's build isolation tries to download it (+ setuptools/setuptools_scm) on every `pip install -e .`. This is the `ERROR: No matching distribution found for hatchling` in module journals. Fix: remove hatchling from requires AND use `--no-build-isolation` in mend.sh/update paths; delete the dead `[tool.hatch.*]` sections.

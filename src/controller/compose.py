@@ -48,7 +48,9 @@ DEFAULT_FPS = 15
 MAX_QUEUE = 4
 # Spectrogram strip/panel height as a percentage of the composited video's
 # height -- defaults per mode, and the accepted range.
-AUDIO_HEIGHT_PCT_DEFAULT = {"strip": 20.0, "panel": 30.0}
+# Panel defaults to the video's full height (strip overlays the video, so
+# it stays small).
+AUDIO_HEIGHT_PCT_DEFAULT = {"strip": 20.0, "panel": 100.0}
 AUDIO_HEIGHT_PCT_RANGE = {"strip": (5.0, 50.0), "panel": (10.0, 100.0)}
 
 

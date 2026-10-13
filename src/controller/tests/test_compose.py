@@ -512,7 +512,7 @@ def test_worker_cancel_queued_job(tmp_path):
 
 
 def test_audio_height_pct_defaults_per_mode():
-    assert AudioSpec.from_dict({"mode": "panel"}).effective_height_pct == 30
+    assert AudioSpec.from_dict({"mode": "panel"}).effective_height_pct == 100
     assert AudioSpec.from_dict({"mode": "strip"}).effective_height_pct == 20
 
 

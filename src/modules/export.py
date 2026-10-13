@@ -26,6 +26,79 @@ import time
 from src.modules.config import Config
 from src.shared.cifs import cifs_mount_cmd
 
+_COPY_CHUNK = 4 * 1024 * 1024
+# How often an export reports its progress to the controller (the session
+# page shows files / bytes done per module).
+PROGRESS_INTERVAL_S = 1.0
+
+
+def _copy_with_progress(src: str, dst: str, on_chunk=None) -> None:
+    """shutil.copy2 in chunks, calling `on_chunk(n_bytes)` after each."""
+    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+        while True:
+            buf = fsrc.read(_COPY_CHUNK)
+            if not buf:
+                break
+            fdst.write(buf)
+            if on_chunk is not None:
+                on_chunk(len(buf))
+    shutil.copystat(src, dst)
+
+
+class _ExportProgress:
+    """Files and bytes done for one export pass, reported through
+    `send(dict)` at most every PROGRESS_INTERVAL_S (plus a final report)."""
+
+    def __init__(self, send, export_path, files: list[str], folder: str):
+        self._send = send
+        self.export_path = export_path
+        self.files_total = len(files)
+        self.bytes_total = 0
+        for name in files:
+            try:
+                self.bytes_total += os.path.getsize(os.path.join(folder, name))
+            except OSError:
+                pass
+        self.files_done = 0
+        self.bytes_done = 0
+        self.current_file = None
+        self._last = 0.0
+
+    def start_file(self, name: str) -> None:
+        self.current_file = name
+        self._report()
+
+    def add_bytes(self, n: int) -> None:
+        self.bytes_done += n
+        self._report()
+
+    def end_file(self, size: int, copied: int) -> None:
+        # A failed copy still moves on: count the file, correct the bytes.
+        self.files_done += 1
+        self.bytes_done += max(0, size - copied)
+        self._report()
+
+    def finish(self) -> None:
+        self.current_file = None
+        self._report(force=True)
+
+    def _report(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last < PROGRESS_INTERVAL_S:
+            return
+        self._last = now
+        try:
+            self._send({
+                "export_path": self.export_path,
+                "files_total": self.files_total,
+                "files_done": self.files_done,
+                "bytes_total": self.bytes_total,
+                "bytes_done": min(self.bytes_done, self.bytes_total),
+                "current_file": self.current_file,
+            })
+        except Exception:  # noqa: BLE001 -- progress must never break an export
+            pass
+
 
 class Export:
     """Manages Samba based file exports"""
@@ -45,6 +118,8 @@ class Export:
         os.makedirs(self.to_export_folder, exist_ok=True)
         os.makedirs(self.exported_folder, exist_ok=True)
         self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
+        # Set by the module: called with a progress dict during each export.
+        self.on_progress = None
 
         # Samba details (configurable)
         self.samba_share_ip = None
@@ -272,6 +347,9 @@ class Export:
                 session_file_map.setdefault((session, date_str), []).append(filename)
 
             source_folder = self.to_export_folder
+            progress = _ExportProgress(
+                getattr(self, "on_progress", None) or (lambda _d: None), export_path,
+                all_files, source_folder)
             exported_count = 0
             exported: list[str] = []
             session_results: dict[str, bool] = {}
@@ -309,14 +387,27 @@ class Export:
                     dest_path        = f"{session_export_path}/{filename}"
 
                     try:
+                        size = os.path.getsize(source_path)
+                    except OSError:
+                        size = 0
+                    copied = 0
+
+                    def on_chunk(n, _p=progress):
+                        nonlocal copied
+                        copied += n
+                        _p.add_bytes(n)
+
+                    progress.start_file(filename)
+                    try:
                         os.rename(source_path, temp_source_path)
                     except OSError as e:
                         self.logger.error(f"Failed to stage {filename} for export: {e}")
                         session_ok = False
+                        progress.end_file(size, copied)
                         continue
 
                     try:
-                        shutil.copy2(temp_source_path, temp_dest_path)
+                        _copy_with_progress(temp_source_path, temp_dest_path, on_chunk)
                         with open(temp_dest_path, "rb") as _f:
                             os.fsync(_f.fileno())
                         os.rename(temp_dest_path, dest_path)
@@ -340,6 +431,7 @@ class Export:
                         except OSError:
                             pass
                         session_ok = False
+                    progress.end_file(size, copied)
 
                 # One session can span several date groups; any failure wins.
                 session_results[session] = (
@@ -373,6 +465,7 @@ class Export:
                     exported_count == len(all_files)
                 )
 
+            progress.finish()
             return session_results
 
         except Exception as e:

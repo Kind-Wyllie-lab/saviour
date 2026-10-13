@@ -1,0 +1,112 @@
+/* Session page: where each module is with getting its files onto the share
+   (SessionExportStatus.jsx). Normal progress is neutral; red only for a
+   failure or a stall. */
+.session-export {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.session-export--done {
+  border-color: color-mix(in srgb, var(--success-color, #2e7d32) 45%, transparent);
+}
+
+.session-export--problem {
+  border-color: var(--error-color, #c62828);
+  background: color-mix(in srgb, var(--error-color, #c62828) 7%, transparent);
+}
+
+.session-export__headline {
+  font-weight: 600;
+}
+
+.session-export--done .session-export__headline {
+  color: var(--success-color, #2e7d32);
+}
+
+.session-export--problem .session-export__headline {
+  color: var(--error-color, #c62828);
+}
+
+.session-export__rows {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-export__row {
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) 1fr;
+  column-gap: 12px;
+  row-gap: 3px;
+  align-items: center;
+}
+
+.session-export__module {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-export__text {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-export__row--waiting .session-export__text {
+  opacity: 0.7;
+}
+
+.session-export__row--done .session-export__text {
+  color: var(--success-color, #2e7d32);
+}
+
+.session-export__row--failed .session-export__text {
+  color: var(--error-color, #c62828);
+}
+
+.session-export__bar {
+  grid-column: 2;
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
+.session-export__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-color, #4a9eff);
+  transition: width 0.8s linear;
+}
+
+/* No numbers yet: a moving stripe rather than an empty bar. */
+.session-export__bar--busy > span {
+  width: 30%;
+  animation: session-export-busy 1.4s ease-in-out infinite;
+}
+
+@keyframes session-export-busy {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(340%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-export__bar--busy > span { animation: none; width: 100%; opacity: 0.4; }
+  .session-export__bar > span { transition: none; }
+}
+
+.session-export__file {
+  grid-column: 2;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

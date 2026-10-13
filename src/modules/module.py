@@ -167,6 +167,9 @@ class Module(ABC):
         self.command = Command(config=self.config) # Command object - routes incoming commands
         self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type) # Network object - registers zeroconf service, discovers controller
         self.facade = ModuleFacade(module=self) # API object - provides internal routing between objects e.g. network and recording
+        # Export progress for the controller's session page (files / bytes).
+        self.export.on_progress = lambda p: self.facade.send_status(
+            {"type": "export_progress", **p})
 
         # A registry of commands that the module can respond to
         self.command_callbacks = {

@@ -57,6 +57,9 @@ class ExportQueue:
         # segment + journal at session stop) need one more pass. Not
         # persisted: an active entry is re-queued on restart anyway.
         self._rerun: dict = {}
+        # module_id -> latest export_progress from the module (files / bytes
+        # done) while its export is active. Not persisted.
+        self._progress: dict = {}
 
     # How long (seconds) a dispatched start_export may go unanswered before
     # we assume the module missed it and re-dispatch on the next export_ready.
@@ -177,6 +180,7 @@ class ExportQueue:
             export_path, attempt, *_ = meta
             self._active.discard(module_id)
             self._active_meta.pop(module_id, None)
+            self._progress.pop(module_id, None)
             self._queue.insert(0, (module_id, export_path, attempt))
             self.logger.warning(
                 f"{module_id} back online with an unanswered start_export -- "
@@ -184,10 +188,46 @@ class ExportQueue:
             self._dispatch_next()
             self._save()
 
+    def update_progress(self, module_id: str, progress: dict) -> None:
+        """Record a module's latest export_progress (files / bytes done)."""
+        keys = ("files_total", "files_done", "bytes_total", "bytes_done",
+                "current_file", "export_path")
+        with self._lock:
+            if module_id in self._active:
+                self._progress[module_id] = {
+                    **{k: progress.get(k) for k in keys}, "updated": time.time()}
+
+    def snapshot(self) -> dict:
+        """What's exporting now and what's waiting, for the session page:
+        `active` (with the module's latest progress) and `queued` (with its
+        position), each entry tagged with the session it belongs to."""
+        def session_of(path: str) -> str:
+            return (path or "").split("/", 1)[0]
+
+        with self._lock:
+            active = [
+                {"module_id": mid, "export_path": meta[0],
+                 "session": session_of(meta[0]), "attempt": meta[1],
+                 "since": meta[2] if len(meta) > 2 else None,
+                 "progress": self._progress.get(mid)}
+                for mid, meta in self._active_meta.items()
+            ]
+            queued = [
+                {"module_id": mid, "export_path": path,
+                 "session": session_of(path), "attempt": attempt,
+                 "position": i + 1}
+                for i, (mid, path, attempt) in enumerate(self._queue)
+            ]
+            rerun = [{"module_id": mid, "session": session_of(path)}
+                     for mid, path in self._rerun.items()]
+        return {"active": active, "queued": queued, "rerun": rerun,
+                "max_concurrent": self._max_concurrent}
+
     def on_export_complete(self, module_id: str) -> None:
         """Call when a module reports export_complete."""
         with self._lock:
             self._active.discard(module_id)
+            self._progress.pop(module_id, None)
             meta = self._active_meta.pop(module_id, None)
             self._queue_rerun(module_id)
             # Wall-clock the dispatch took — the concrete number needed to
@@ -216,6 +256,7 @@ class ExportQueue:
         """
         with self._lock:
             self._active.discard(module_id)
+            self._progress.pop(module_id, None)
             meta = self._active_meta.pop(module_id, None)
             is_final = True
             if meta:

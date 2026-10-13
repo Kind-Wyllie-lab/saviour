@@ -127,7 +127,7 @@ class TestPendingRollback:
 
             with patch.object(exp, "_setup_export", return_value=nas_dir), \
                  patch.object(exp, "_update_samba_settings"), \
-                 patch("shutil.copy2", side_effect=raise_on_copy):
+                 patch("src.modules.export._copy_with_progress", side_effect=raise_on_copy):
                 results = exp.export_staged("session")
 
             # session reports failure
@@ -145,7 +145,7 @@ class TestPendingRollback:
             filename = "session_camera_test_002.flac"
             _write_test_file(exp.to_export_folder, filename)
 
-            def partial_copy(src, dst):
+            def partial_copy(src, dst, *_args):
                 # Write a partial file to simulate interrupted copy
                 with open(dst, "wb") as f:
                     f.write(b"PARTIAL")
@@ -153,7 +153,7 @@ class TestPendingRollback:
 
             with patch.object(exp, "_setup_export", return_value=nas_dir), \
                  patch.object(exp, "_update_samba_settings"), \
-                 patch("shutil.copy2", side_effect=partial_copy):
+                 patch("src.modules.export._copy_with_progress", side_effect=partial_copy):
                 exp.export_staged("session")
 
             pending_dest = os.path.join(nas_dir, f"PENDING_{filename}")
@@ -657,3 +657,52 @@ class TestExportDateFromFilename:
                 result = exp.export_staged("soak/20260930/camera_test")
 
             assert result["soak"] is False
+
+
+# ---------------------------------------------------------------------------
+# Export progress reports (files / bytes) for the controller's session page
+# ---------------------------------------------------------------------------
+
+class TestExportProgress:
+    def test_copy_with_progress_copies_and_counts(self, tmp_path):
+        from src.modules.export import _copy_with_progress
+
+        src = tmp_path / "a.bin"
+        src.write_bytes(b"x" * 10_000)
+        seen = []
+        _copy_with_progress(str(src), str(tmp_path / "b.bin"), seen.append)
+        assert (tmp_path / "b.bin").read_bytes() == src.read_bytes()
+        assert sum(seen) == 10_000
+
+    def test_progress_totals_throttle_and_final_report(self, tmp_path):
+        from src.modules import export as export_mod
+        from src.modules.export import _ExportProgress
+
+        for name, size in (("a.ts", 600), ("b.csv", 400)):
+            (tmp_path / name).write_bytes(b"x" * size)
+        sent = []
+        clock = [100.0]
+        with patch.object(export_mod.time, "monotonic", lambda: clock[0]):
+            p = _ExportProgress(sent.append, "s/d/m", ["a.ts", "b.csv"], str(tmp_path))
+            p.start_file("a.ts")          # first report
+            p.add_bytes(300)              # throttled (same instant)
+            clock[0] += 2
+            p.add_bytes(300)              # reported
+            p.end_file(600, 600)
+            p.start_file("b.csv")
+            p.end_file(400, 0)            # failed copy: still counted as done
+            p.finish()                    # always reported
+        assert sent[0]["files_total"] == 2 and sent[0]["bytes_total"] == 1000
+        assert sent[1]["bytes_done"] == 600
+        assert sent[-1]["files_done"] == 2 and sent[-1]["bytes_done"] == 1000
+        assert sent[-1]["current_file"] is None
+        assert len(sent) == 3
+
+    def test_a_failing_sender_never_breaks_the_export(self, tmp_path):
+        from src.modules.export import _ExportProgress
+
+        def boom(_d):
+            raise RuntimeError("zmq down")
+
+        p = _ExportProgress(boom, "s", [], str(tmp_path))
+        p.finish()  # must not raise

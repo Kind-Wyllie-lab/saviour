@@ -176,6 +176,43 @@ function makeSessions() {
       total_exports_complete: 18, total_exports_failed: 0, pending_exports: 0,
       stopped_epoch: now() - 80000,
     },
+    // Just stopped, its modules still copying to the share one at a time
+    // (socketMock.js steps the export queue).
+    "trial-20261013_161356": {
+      session_name: "trial-20261013_161356",
+      target: "all",
+      state: "stopped",
+      modules: ["camera-module-c3d4", "camera-module-a1b2", "microphone-module-e5f6"],
+      start_time: "2026-10-13T16:13:56",
+      end_time: "2026-10-13T16:27:00",
+      error_message: "",
+      error_time: null,
+      scheduled: false,
+      duration_minutes: 13,
+      timed_stop_at: null,
+      module_stop_states: {},
+      module_export_states: {
+        "camera-module-c3d4": "pending", "camera-module-a1b2": "pending",
+        "microphone-module-e5f6": "pending",
+      },
+      total_exports_complete: 0, total_exports_failed: 0, pending_exports: 3,
+      stopped_epoch: now() - 30,
+    },
+  };
+}
+
+// The export queue for the session above: one module copying at a time.
+function makeExportSim() {
+  const session = "trial-20261013_161356";
+  return {
+    session,
+    order: ["camera-module-c3d4", "camera-module-a1b2", "microphone-module-e5f6"],
+    sizes: {
+      "camera-module-c3d4": [4, 230_000_000], "camera-module-a1b2": [4, 212_000_000],
+      "microphone-module-e5f6": [6, 95_000_000],
+    },
+    index: 0,
+    bytes: 0,
   };
 }
 
@@ -250,6 +287,7 @@ export const state = {
   systemState: { recording: true, uptime: 71, ptp_sync: 2100 },
   firstRun: { needed: false },
   apa: makeApaRig(),
+  exportSim: makeExportSim(),
 };
 
 export function reset() {
@@ -263,4 +301,5 @@ export function reset() {
   state.systemState = { recording: true, uptime: 71, ptp_sync: 2100 };
   state.firstRun = { needed: false };
   state.apa = makeApaRig();
+  state.exportSim = makeExportSim();
 }

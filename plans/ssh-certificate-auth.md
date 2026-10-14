@@ -103,7 +103,8 @@ public key instead of a list of individual keys.
 
 ## Rollout (phased; nobody locked out at any step)
 
-1. **Trust the CA, passwords still on.** *Built 2026-10-14.* Accept: on the
+1. **Trust the CA, passwords still on.** *Built and accepted 2026-10-14*
+   (desk fleet, throwaway CA, since removed; see docs/CHANGELOG.md). Accept: on the
    desk controller and one module, a certificate login works (`ssh -v` shows
    the certificate accepted), an expired certificate is refused, a revoked
    serial is refused, a certificate without the principal is refused, the
@@ -117,6 +118,14 @@ public key instead of a list of individual keys.
    `KbdInteractiveAuthentication no` to the drop-in, pushed from the
    controller like the CA, per rig at a planned time. Guard: refuse unless a
    CA is installed and the device has seen a certificate login. Also:
+   - **Drop-in order.** sshd keeps the first value it reads, and Pis imaged
+     with Raspberry Pi Imager carry cloud-init's
+     `sshd_config.d/50-cloud-init.conf` = `PasswordAuthentication yes`
+     (camera_0fcc, hailo_camera_3606 on the desk fleet, 2026-10-14). It sorts
+     before `50-saviour-ca.conf`, so "passwords off" there would be silently
+     ignored: put the auth settings in a drop-in that sorts first (e.g.
+     `01-saviour-auth.conf`) and/or remove cloud-init's, and check with
+     `sshd -T | grep passwordauthentication`, not by reading the file.
    - **Empty `authorized_keys`.** Trusting a CA revokes nothing: the
      master-image key in every clone's `authorized_keys` keeps working until
      it's removed. `clone_prep.sh` empties it on new clones.

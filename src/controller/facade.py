@@ -221,6 +221,10 @@ class ControllerFacade:
     def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
         return self.controller.recording.clear_ended_sessions(delete_files, force)
 
+    def delete_sessions(self, names: list, delete_files: bool = True,
+                        force: bool = False) -> dict:
+        return self.controller.recording.delete_sessions(names, delete_files, force)
+
     def request_recording_state_refresh(self, session_name: str) -> dict:
         return self.controller.recording.request_recording_state_refresh(session_name)
 

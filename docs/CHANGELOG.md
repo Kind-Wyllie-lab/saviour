@@ -13,6 +13,11 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Session list: Select mode replaces "Clear all ended"; select all; bulk delete** (branch `feat/session-select-mode` → `staging`).
+  - Checkboxes were always on show; now a **Select** button beside "+ New Session" (top of the list, so a long list needs no scrolling) turns on select mode: per-session and per-day ticks, an **All** tick for every finished session, and a bar with the selection size, **Download** (as one zip; sessions still exporting are left out, shown as "Download (N)") and **Delete** (login, inline confirm, deletes the files from the share). **Done** leaves it and clears the ticks. The bottom "Clear all ended" button is gone; Select → All → Delete does the same, and finished sessions with pending exports can now be ticked for deletion.
+  - Backend: `Recording.delete_sessions()` and Socket.IO `delete_sessions` delete the whole set in one request (each through `delete_session()`'s guards); ones blocked by unresolved/failed exports come back as an `export_warning` so the list offers "Force clear N anyway" for just those. This is most of `plans/session-list-multi-select-delete.md`; the bulk REST route is still open.
+  - 2 new tests; lint, all five builds, ruff and the suite clean (bar the 9 known Windows-only failures).
+
 - [x] **Session list: the day's tick sits in the same column as the sessions' ticks** (branch `fix/session-list-tick-alignment` → `staging`). The day header's select-all checkbox was at the right end of the header while every session row's was at the left. It's now first in the header, offset to line up with the rows' checkboxes (row border + padding); a day with nothing tickable keeps an equal-width gap so the dates stay aligned. Lint and all five builds clean.
 
 - [x] **Stale "pending" exports can be marked resolved; the backlog tells them from real exports; hours of recording on the destination card** (branch `feat/resolve-stale-exports` → `staging`).

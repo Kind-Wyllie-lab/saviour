@@ -843,6 +843,25 @@ class Recording:
         self.logger.info(f"Session '{session_name}' deleted (delete_files={delete_files})")
         return {"success": True}
 
+    def delete_sessions(self, names: list, delete_files: bool = True,
+                        force: bool = False) -> dict:
+        """Delete several sessions in one call (the session list's select
+        mode). Each goes through delete_session(), so the same guards apply:
+        running/scheduled sessions are refused, and ones with unresolved or
+        failed exports are skipped unless `force`. One request instead of a
+        burst of single deletes, which returned spurious "Unknown session"
+        404s (plans/session-list-multi-select-delete.md)."""
+        deleted, skipped, errors = [], [], []
+        for name in dict.fromkeys(names or []):   # de-dup, keep order
+            result = self.delete_session(name, delete_files=delete_files, force=force)
+            if result.get("success"):
+                deleted.append(name)
+            elif result.get("export_warning"):
+                skipped.append(name)
+            else:
+                errors.append({"name": name, "error": result.get("error", "")})
+        return {"deleted": deleted, "skipped_sessions": skipped, "errors": errors}
+
     def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
         """Remove all stopped/error sessions. Files are not deleted by default.
 

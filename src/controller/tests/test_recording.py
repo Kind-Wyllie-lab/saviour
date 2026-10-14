@@ -856,6 +856,27 @@ class TestRetryFailedExports:
         facade.send_command.assert_not_called()
 
 
+class TestDeleteSessions:
+    def test_mix_of_deletable_blocked_and_running(self):
+        rec, _facade = _make_recording()
+        rec.sessions["a"] = _session(session_name="a", state=SessionState.STOPPED)
+        rec.sessions["b"] = _session(session_name="b", state=SessionState.STOPPED)
+        rec.sessions["b"].pending_exports = 1
+        rec.sessions["c"] = _session(session_name="c", state=SessionState.ACTIVE)
+        result = rec.delete_sessions(["a", "b", "c", "nope", "a"], delete_files=False)
+        assert result["deleted"] == ["a"]
+        assert result["skipped_sessions"] == ["b"]
+        assert {e["name"] for e in result["errors"]} == {"c", "nope"}
+        assert set(rec.sessions) == {"b", "c"}
+
+    def test_force_deletes_the_export_blocked_ones(self):
+        rec, _facade = _make_recording()
+        rec.sessions["b"] = _session(session_name="b", state=SessionState.STOPPED)
+        rec.sessions["b"].pending_exports = 1
+        result = rec.delete_sessions(["b"], delete_files=False, force=True)
+        assert result["deleted"] == ["b"] and "b" not in rec.sessions
+
+
 class TestResolvePendingExports:
     def _stopped(self, rec, pending=1):
         rec.sessions["exp1"] = _session(state=SessionState.STOPPED, modules=["cam1"])

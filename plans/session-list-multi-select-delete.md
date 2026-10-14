@@ -1,6 +1,12 @@
 # Multi-select delete on the session list
 
-- **Status:** proposed
+- **Status:** mostly done 2026-10-14 (branch `feat/session-select-mode`):
+  `recording.delete_sessions()` + Socket.IO `delete_sessions` (one request for
+  the whole set, so no rapid single-delete burst), and the session list's
+  Select mode (per-session / per-day / All ticks, Download + Delete, force
+  follow-up for export-blocked ones). **Still open:** the bulk REST route
+  `DELETE /api/v1/sessions` (+ `docs/REST_API.md`), and finding the root cause
+  of the rapid single-delete 404 (still reachable via the per-name REST route).
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (new one-liner).

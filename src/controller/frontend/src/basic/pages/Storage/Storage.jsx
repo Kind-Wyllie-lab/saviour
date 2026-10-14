@@ -278,20 +278,51 @@ export default function Storage() {
               <h2>Recording data rate</h2>
               <span className="storage-muted">{range.label}</span>
             </div>
-            {dataRate.recording_module_count > 0 ? (
-              <div className="storage-bignum">
-                {fmt2(dataRate.recording_mb_per_min)} MB/min
-                <span className="storage-bignum__sub">
-                  now · {dataRate.recording_module_count} module
-                  {dataRate.recording_module_count === 1 ? "" : "s"} recording ·
-                  {" "}{gbPerHour(dataRate.recording_mb_per_min)} GB/hour
-                </span>
+            {/* Measured now, and the ceiling if every module recorded at once:
+                the second is what sizes the share for a full rig. */}
+            <div className="storage-rate-pair">
+              <div className="storage-rate">
+                <span className="storage-rate__lbl">Now</span>
+                {dataRate.recording_module_count > 0 ? (
+                  <>
+                    <span className="storage-rate__num">{fmt2(dataRate.recording_mb_per_min)} MB/min</span>
+                    <span className="storage-rate__sub">
+                      {gbPerHour(dataRate.recording_mb_per_min)} GB/hour ·{" "}
+                      {dataRate.recording_module_count} module
+                      {dataRate.recording_module_count === 1 ? "" : "s"} recording
+                    </span>
+                    {dataRate.share_runway_hours != null && (
+                      <span className={`storage-rate__runway storage-projection--${
+                        dataRate.share_runway_hours < 72 ? "danger"
+                          : dataRate.share_runway_hours < 168 ? "warn" : "flat"}`}>
+                        share lasts {humanDuration(dataRate.share_runway_hours * 3600)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="storage-rate__num storage-rate__num--quiet">Not recording</span>
+                )}
               </div>
-            ) : (
-              <div className="storage-bignum storage-bignum--quiet">
-                Not recording now
-              </div>
-            )}
+              {dataRate.fleet_est_mb_per_min > 0 && (
+                <div className="storage-rate">
+                  <span className="storage-rate__lbl">
+                    All {dataRate.fleet_est_module_count} module
+                    {dataRate.fleet_est_module_count === 1 ? "" : "s"} recording
+                  </span>
+                  <span className="storage-rate__num">~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min</span>
+                  <span className="storage-rate__sub">
+                    ~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour · from each module&apos;s config
+                  </span>
+                  {dataRate.est_share_runway_hours != null && (
+                    <span className={`storage-rate__runway storage-projection--${
+                      dataRate.est_share_runway_hours < 72 ? "danger"
+                        : dataRate.est_share_runway_hours < 168 ? "warn" : "flat"}`}>
+                      share lasts {humanDuration(dataRate.est_share_runway_hours * 3600)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
 
             <MiniAreaChart
               data={rateSeries}
@@ -309,28 +340,6 @@ export default function Storage() {
               </div>
             )}
 
-            {dataRate.recording_module_count > 0 && (
-              <div className={`storage-projection storage-projection--${
-                dataRate.share_runway_hours == null ? "flat"
-                  : dataRate.share_runway_hours < 72 ? "danger"
-                  : dataRate.share_runway_hours < 168 ? "warn" : "flat"}`}>
-                {dataRate.share_runway_hours == null
-                  ? "share free space unknown"
-                  : `share holds ${humanDuration(dataRate.share_runway_hours * 3600)} at this rate`}
-              </div>
-            )}
-
-            {dataRate.fleet_est_mb_per_min > 0 && (
-              <p className="storage-muted storage-datarate__flatout">
-                If all {dataRate.fleet_est_module_count} recording-capable
-                {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"} recorded at once:
-                {" "}~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
-                {" "}(~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour, from their config)
-                {dataRate.est_share_runway_hours != null && (
-                  <>; the share would hold {humanDuration(dataRate.est_share_runway_hours * 3600)}</>
-                )}
-              </p>
-            )}
             {rateSeries.length > 1 && (
               <button className="refresh-btn" onClick={downloadRateCsv}>Download CSV</button>
             )}

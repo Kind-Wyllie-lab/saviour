@@ -242,3 +242,49 @@
 .storage-dest strong {
   margin-right: 8px;
 }
+
+/* Data-rate card: measured now beside the all-modules ceiling. */
+.storage-rate-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.storage-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.storage-rate__lbl {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+
+.storage-rate__num {
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-rate__num--quiet {
+  opacity: 0.55;
+  font-size: 1.1rem;
+}
+
+.storage-rate__sub {
+  font-size: 0.78rem;
+  opacity: 0.75;
+}
+
+.storage-rate__runway {
+  font-size: 0.8rem;
+  font-weight: 600;
+}

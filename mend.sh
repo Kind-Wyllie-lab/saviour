@@ -460,6 +460,15 @@ if [ -f /etc/saviour/config ]; then
             "$SAVIOUR_CONFIG_LINK" --apply-firewall >> "$LOG" 2>&1 \
                 && ok "Firewall / interface binding applied" \
                 || warn "Could not apply firewall — run 'sudo saviour-config --apply-firewall' manually"
+
+            # SSH certificate trust (plans/ssh-certificate-auth.md): a module
+            # re-fetches its controller's CA public key + revocation list here,
+            # so a mend carries a new CA or revoked certificate to the fleet.
+            # No CA configured is a normal outcome, not a warning.
+            fix "Syncing SSH certificate trust"
+            "$SAVIOUR_CONFIG_LINK" --apply-ssh >> "$LOG" 2>&1 \
+                && ok "SSH certificate trust in sync" \
+                || warn "Could not sync SSH certificate trust — see /var/log/saviour-config.log"
         else
             warn "saviour-config not installed yet (see step 5 above) — skipping unit regeneration"
         fi

@@ -105,6 +105,25 @@ def check(name=None):
     return decorator
 
 
+CONTROLLER_IP_FILE = "/var/lib/saviour/controller_ip"
+
+
+def _remember_controller_ip(ip: str, logger=None) -> None:
+    """Record the controller's address for `saviour-config --apply-ssh`, which
+    fetches the SSH CA from it (a shell script can't do the mDNS lookup the
+    service does). Best-effort: a failure only means mend falls back to
+    10.0.0.1."""
+    try:
+        os.makedirs(os.path.dirname(CONTROLLER_IP_FILE), exist_ok=True)
+        tmp = CONTROLLER_IP_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(f"{ip}\n")
+        os.replace(tmp, CONTROLLER_IP_FILE)
+    except OSError as e:
+        if logger:
+            logger.debug(f"could not record controller IP: {e}")
+
+
 class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
@@ -188,6 +207,7 @@ class Module(ABC):
             "reboot": self.reboot,
             "restart_service": self.restart_service,
             "run_mend": self.run_mend,
+            "apply_ssh_access": self.apply_ssh_access,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
             "set_export_config": self.set_export_config,
@@ -426,6 +446,38 @@ class Module(ABC):
         return {"result": "started", "output": "Update download started."}
 
 
+    def apply_ssh_access(self, controller_ip: str = "") -> dict:
+        """Re-fetch the controller's SSH CA public key and revocation list
+        and apply them to sshd (`saviour-config --apply-ssh`), so a new CA or
+        a revoked certificate reaches this module now rather than at its next
+        mend. Sent by the controller's `saviour-config --push-ssh`. Only
+        touches sshd's certificate trust; recording is unaffected."""
+        if controller_ip:
+            _remember_controller_ip(controller_ip, self.logger)
+
+        def _do_apply():
+            try:
+                result = subprocess.run(
+                    ["sudo", "/usr/local/bin/saviour-config", "--apply-ssh"],
+                    capture_output=True, text=True, timeout=60, check=False)
+                output = (result.stdout or result.stderr or "").strip()[-500:]
+                ok = result.returncode == 0
+                (self.logger.info if ok else self.logger.warning)(
+                    f"apply_ssh_access: {output}")
+                self.communication.send_status({
+                    "type": "cmd_ack", "command": "apply_ssh_access",
+                    "result": "success" if ok else "error", "output": output,
+                })
+            except Exception as e:
+                self.logger.error(f"apply_ssh_access failed: {e}")
+                self.communication.send_status({
+                    "type": "cmd_ack", "command": "apply_ssh_access",
+                    "result": "error", "output": str(e),
+                })
+
+        threading.Thread(target=_do_apply, daemon=True, name="ssh-access").start()
+        return {"result": "started", "output": "Fetching SSH CA from the controller."}
+
     def run_mend(self, reboot: bool = False) -> dict:
         """Run mend.sh to repair/refresh this device's dependencies, config,
         and systemd unit file, then restart the service.
@@ -603,6 +655,8 @@ class Module(ABC):
             if not self.communication.connect(controller_ip, controller_port):
                 raise Exception("Failed to connect communication manager")
             self.logger.info("Communication manager connected to controller")
+            # For saviour-config --apply-ssh, which fetches the SSH CA from here.
+            _remember_controller_ip(controller_ip, self.logger)
 
             # 3. Start command listener
             self.logger.info("Requesting communication manager to start command listener")

@@ -190,3 +190,32 @@ def test_run_mend_already_running_is_a_clear_error():
     ack = inst.communication.send_status.call_args[0][0]
     assert ack["result"] == "error"
     assert "already running" in ack["output"]
+
+
+# ---------------------------------------------------------------------------
+# apply_ssh_access -- controller-pushed SSH CA refresh
+# ---------------------------------------------------------------------------
+
+def test_apply_ssh_access_records_controller_and_runs_saviour_config(tmp_path):
+    inst = _mend_instance()
+    ip_file = tmp_path / "lib" / "controller_ip"
+    proc = MagicMock(returncode=0, stdout="SSH CA: applied (SHA256:x).", stderr="")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.CONTROLLER_IP_FILE", str(ip_file)), \
+         patch("src.modules.module.subprocess.run", return_value=proc) as run:
+        ret = inst.apply_ssh_access(controller_ip="10.0.5.1")
+    assert ret["result"] == "started"
+    assert ip_file.read_text() == "10.0.5.1\n"
+    assert run.call_args[0][0] == ["sudo", "/usr/local/bin/saviour-config", "--apply-ssh"]
+    ack = inst.communication.send_status.call_args[0][0]
+    assert ack["command"] == "apply_ssh_access" and ack["result"] == "success"
+    assert "applied" in ack["output"]
+
+
+def test_apply_ssh_access_failure_is_reported():
+    inst = _mend_instance()
+    proc = MagicMock(returncode=1, stdout="SSH CA: source unreachable", stderr="")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", return_value=proc):
+        inst.apply_ssh_access()
+    assert inst.communication.send_status.call_args[0][0]["result"] == "error"

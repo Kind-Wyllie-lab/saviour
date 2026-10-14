@@ -5,6 +5,10 @@
 #        sudo saviour-config --apply                 (non-interactive, boot-time provisioning)
 #        sudo saviour-config --regenerate-service     (rewrite the systemd unit only, e.g. after a code-layout change)
 #        sudo saviour-config --apply-firewall         (re-apply just the wlan0/WAN firewall + smb.conf interface binding)
+#        sudo saviour-config --apply-ssh              (sync sshd's SSH CA trust: controller from /etc/saviour/ssh, module from its controller)
+#        sudo saviour-config --set-ssh-ca FILE|none   (controller: set/clear the deployment's SSH CA public key, apply + push)
+#        sudo saviour-config --set-ssh-krl FILE|none  (controller: set/clear the SSH revocation list, apply + push)
+#        sudo saviour-config --push-ssh               (controller: ask connected modules to re-fetch the CA now)
 #
 # Requires whiptail (pre-installed on Raspberry Pi OS).
 # Run after install.sh to assign a role, or any time to reconfigure.
@@ -617,11 +621,12 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 8 \
+            $H $W 9 \
             "configure"   "Configure this device  (role / type)" \
             "hardware"    "Hardware scan  (what's attached)" \
             "network"     "Network settings  (controller only)" \
             "credentials" "Credentials  (controller only)" \
+            "ssh"         "SSH access  (certificate login)" \
             "refresh"     "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"        "View current configuration" \
             "mend"        "Repair / update this device" \
@@ -632,6 +637,7 @@ main_menu() {
             hardware)    show_hardware_scan ;;
             network)     network_settings ;;
             credentials) credentials_menu ;;
+            ssh)         ssh_menu ;;
             refresh)     clone_fix_menu ;;
             view)        view_config ;;
             mend)        run_mend ;;
@@ -2171,6 +2177,296 @@ apply_from_config() {
     run_configuration
 }
 
+# ── SSH certificate access (plans/ssh-certificate-auth.md) ──────────────────
+# Every Pi can trust one SSH certificate authority (CA) for logins as `pi`, on
+# top of passwords and authorized_keys (nothing is switched off by this). The
+# CA is per deployment and never shipped in the repo -- a default CA would let
+# its holder into every lab's Pis. It's set on the controller (the "SSH
+# access" menu, or --set-ssh-ca) and kept in SSH_SRC_DIR; modules fetch it and
+# the revocation list from their controller's web server (GET /ssh/<file>) on
+# every mend, and when the controller pushes (--push-ssh / apply_ssh_access).
+SSH_SRC_DIR="/etc/saviour/ssh"
+SSHD_DIR="/etc/ssh"
+SSHD_BIN="/usr/sbin/sshd"
+SSH_PRINCIPALS="saviour-admin saviour-controller"
+CONTROLLER_IP_FILE="/var/lib/saviour/controller_ip"   # written by the module service
+
+# staged name : installed path. The drop-in is last, so on install sshd never
+# points at a file that isn't there yet. That matters: if RevokedKeys can't be
+# read, sshd refuses every public key, authorized_keys included.
+_ssh_targets() {
+    echo "ca:$SSHD_DIR/saviour_user_ca.pub" \
+         "krl:$SSHD_DIR/saviour_revoked_keys.krl" \
+         "principals:$SSHD_DIR/auth_principals/pi" \
+         "dropin:$SSHD_DIR/sshd_config.d/50-saviour-ca.conf"
+}
+
+# One public key line that ssh-keygen can read.
+_ssh_valid_ca() {
+    [ -s "$1" ] || return 1
+    [ "$(grep -c . "$1")" = "1" ] || return 1
+    ssh-keygen -l -f "$1" >/dev/null 2>&1
+}
+
+# Empty (nothing revoked) or an OpenSSH binary KRL (ssh-keygen -k).
+_ssh_valid_krl() {
+    [ -f "$1" ] || return 1
+    [ -s "$1" ] || return 0
+    [ "$(head -c 6 "$1")" = "SSHKRL" ]
+}
+
+_ssh_fetch() {      # $1 url, $2 out file -> prints the HTTP code (000 = unreachable)
+    local code
+    code=$(curl -sS -m 10 -o "$2" -w '%{http_code}' "$1" 2>>"$LOG") || code="000"
+    echo "${code:-000}"
+}
+
+# Writes this device's desired sshd files into dir $1. Returns 0 when they're
+# staged, 2 when no CA is configured (ours should be removed), 1 when the CA
+# source can't be reached or is invalid (leave everything as it is).
+_ssh_stage() {
+    local out="$1" ip base code
+    get_current_config
+    case "$CURRENT_ROLE" in
+        controller)
+            [ -f "$SSH_SRC_DIR/user_ca.pub" ] || return 2
+            cp "$SSH_SRC_DIR/user_ca.pub" "$out/ca"
+            if [ -f "$SSH_SRC_DIR/revoked_keys.krl" ]; then
+                cp "$SSH_SRC_DIR/revoked_keys.krl" "$out/krl"
+            else
+                : > "$out/krl"
+            fi
+            ;;
+        module)
+            ip=$(tr -d '[:space:]' 2>/dev/null < "$CONTROLLER_IP_FILE")
+            base="http://${ip:-10.0.0.1}:5000/ssh"
+            code=$(_ssh_fetch "$base/user_ca.pub" "$out/ca")
+            case "$code" in
+                200) ;;
+                404) return 2 ;;
+                *) log "ssh: $base/user_ca.pub unreachable (HTTP $code)"; return 1 ;;
+            esac
+            code=$(_ssh_fetch "$base/revoked_keys.krl" "$out/krl")
+            case "$code" in
+                200) ;;
+                404) : > "$out/krl" ;;
+                *) log "ssh: $base/revoked_keys.krl unreachable (HTTP $code)"; return 1 ;;
+            esac
+            ;;
+        *) log "ssh: no role configured"; return 1 ;;
+    esac
+    _ssh_valid_ca "$out/ca" || { log "ssh: CA public key is not one valid key"; return 1; }
+    _ssh_valid_krl "$out/krl" || { log "ssh: revocation list is not an OpenSSH KRL"; return 1; }
+    printf '%s\n' $SSH_PRINCIPALS > "$out/principals"
+    cat > "$out/dropin" <<EOF
+# Managed by saviour-config --apply-ssh; local edits are overwritten.
+# Certificate logins signed by this deployment's SSH CA
+# (plans/ssh-certificate-auth.md).
+TrustedUserCAKeys $SSHD_DIR/saviour_user_ca.pub
+RevokedKeys $SSHD_DIR/saviour_revoked_keys.krl
+AuthorizedPrincipalsFile $SSHD_DIR/auth_principals/%u
+EOF
+    return 0
+}
+
+_ssh_reload() {
+    systemctl reload ssh >> "$LOG" 2>&1 || systemctl reload sshd >> "$LOG" 2>&1 || true
+}
+
+_ssh_remove_installed() {   # drop-in first, so sshd never names a missing file
+    rm -f "$SSHD_DIR/sshd_config.d/50-saviour-ca.conf" "$SSHD_DIR/saviour_user_ca.pub" \
+          "$SSHD_DIR/saviour_revoked_keys.krl" "$SSHD_DIR/auth_principals/pi"
+}
+
+# Brings sshd's CA trust in line with this device's source (see _ssh_stage).
+# Validates with `sshd -t` before reloading and puts the old files back if
+# the new config fails, so it can't leave sshd unable to start.
+apply_ssh_access() {
+    local tmp bak rc pair key dest changed=0
+    tmp=$(mktemp -d)
+    _ssh_stage "$tmp"; rc=$?
+    if [ "$rc" = 1 ]; then
+        rm -rf "$tmp"
+        echo "SSH CA: source unreachable or invalid -- left unchanged (details in $LOG)."
+        return 1
+    fi
+    if [ "$rc" = 2 ]; then
+        rm -rf "$tmp"
+        if [ -e "$SSHD_DIR/sshd_config.d/50-saviour-ca.conf" ]; then
+            _ssh_remove_installed
+            "$SSHD_BIN" -t >> "$LOG" 2>&1 && _ssh_reload
+            log "ssh: no CA configured -- removed certificate trust"
+            echo "SSH CA: none configured -- certificate login removed."
+        else
+            echo "SSH CA: none configured."
+        fi
+        return 0
+    fi
+    for pair in $(_ssh_targets); do
+        key="${pair%%:*}"; dest="${pair#*:}"
+        cmp -s "$tmp/$key" "$dest" || changed=1
+    done
+    if [ "$changed" = 0 ]; then
+        rm -rf "$tmp"
+        echo "SSH CA: up to date ($(ssh-keygen -l -f "$SSHD_DIR/saviour_user_ca.pub" 2>/dev/null | cut -d' ' -f2))."
+        return 0
+    fi
+    bak=$(mktemp -d)
+    for pair in $(_ssh_targets); do
+        key="${pair%%:*}"; dest="${pair#*:}"
+        [ -e "$dest" ] && cp -p "$dest" "$bak/$key"
+    done
+    mkdir -p "$SSHD_DIR/auth_principals" "$SSHD_DIR/sshd_config.d"
+    for pair in $(_ssh_targets); do
+        key="${pair%%:*}"; dest="${pair#*:}"
+        install -m 644 "$tmp/$key" "$dest"
+    done
+    if "$SSHD_BIN" -t >> "$LOG" 2>&1; then
+        _ssh_reload
+        log "ssh: certificate trust applied"
+        echo "SSH CA: applied ($(ssh-keygen -l -f "$tmp/ca" | cut -d' ' -f2))."
+        rc=0
+    else
+        _ssh_remove_installed
+        for pair in $(_ssh_targets); do
+            key="${pair%%:*}"; dest="${pair#*:}"
+            [ "$key" = dropin ] && continue
+            [ -e "$bak/$key" ] && cp -p "$bak/$key" "$dest"
+        done
+        [ -e "$bak/dropin" ] && cp -p "$bak/dropin" "$SSHD_DIR/sshd_config.d/50-saviour-ca.conf"
+        log "ssh: new config failed sshd -t -- previous files restored"
+        echo "SSH CA: the new sshd config failed 'sshd -t'; the previous one was kept." >&2
+        rc=1
+    fi
+    rm -rf "$tmp" "$bak"
+    return "$rc"
+}
+
+# Controller: ask every connected module to re-fetch the CA now (module
+# command apply_ssh_access). Modules that are offline catch up on their next
+# mend. The admin password stays on this box, passed to curl as a header file.
+push_ssh_access() {
+    local ip base hdr ids id n=0
+    ip=$(ip -4 addr show eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+    ip="${ip:-10.0.0.1}"
+    base="http://${ip}:5000"
+    hdr=$(mktemp)
+    chmod 600 "$hdr"
+    printf 'Authorization: Bearer %s\n' "$(tr -d '\n' < /etc/saviour/admin_credentials 2>/dev/null)" > "$hdr"
+    ids=$(curl -s -m 10 -H @"$hdr" "$base/api/v1/modules" 2>>"$LOG" | python3 -c \
+        'import sys, json; print(" ".join(json.load(sys.stdin).get("modules", {})))' 2>>"$LOG")
+    for id in $ids; do
+        if curl -sf -m 10 -X POST -H @"$hdr" -H "Content-Type: application/json" \
+            -d "{\"command\": \"apply_ssh_access\", \"module_id\": \"$id\", \"params\": {\"controller_ip\": \"$ip\"}}" \
+            "$base/facade/send_command" > /dev/null 2>>"$LOG"; then
+            n=$((n + 1))
+        fi
+    done
+    rm -f "$hdr"
+    echo "Asked $n module(s) to fetch the SSH CA now; offline ones pick it up on their next mend."
+}
+
+# Controller: set (or with "none", clear) the deployment's CA public key or
+# revocation list, apply it here, and push it to the modules.
+_ssh_set_source() {      # $1 user_ca.pub | revoked_keys.krl, $2 file | none
+    local name="$1" src="$2"
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        echo "Only a controller holds the CA; modules fetch it from theirs." >&2
+        return 1
+    fi
+    if [ "$src" = "none" ]; then
+        rm -f "$SSH_SRC_DIR/$name"
+        # A KRL is tied to the CA it revokes for, so clearing the CA clears both.
+        [ "$name" = "user_ca.pub" ] && rm -f "$SSH_SRC_DIR/revoked_keys.krl"
+    else
+        if [ "$name" = "user_ca.pub" ]; then
+            _ssh_valid_ca "$src" || { echo "$src is not a single SSH public key." >&2; return 1; }
+        else
+            _ssh_valid_krl "$src" || { echo "$src is not an OpenSSH KRL (ssh-keygen -k)." >&2; return 1; }
+        fi
+        mkdir -p "$SSH_SRC_DIR"
+        install -m 644 "$src" "$SSH_SRC_DIR/$name"
+    fi
+    log "ssh: $name set from $src"
+    apply_ssh_access || return 1
+    push_ssh_access
+}
+
+ssh_status_text() {
+    local ca krl pw ak certs last
+    ca=$(ssh-keygen -l -f "$SSHD_DIR/saviour_user_ca.pub" 2>/dev/null | cut -d' ' -f2-)
+    if [ -s "$SSHD_DIR/saviour_revoked_keys.krl" ]; then
+        krl="set ($(date -r "$SSHD_DIR/saviour_revoked_keys.krl" '+%Y-%m-%d'))"
+    else
+        krl="empty"
+    fi
+    pw=$("$SSHD_BIN" -T 2>/dev/null | awk '$1 == "passwordauthentication" {print $2}')
+    ak=$(grep -cvE '^\s*(#|$)' /home/pi/.ssh/authorized_keys 2>/dev/null)
+    certs=$(journalctl -u ssh --since "-7d" -q -g "Accepted publickey .*CERT" --no-pager 2>/dev/null)
+    last=$(printf '%s\n' "$certs" | tail -n1 | sed -n 's/.* ID \([^ ]*\) .*/\1/p')
+    echo "  CA trusted     : ${ca:-none (certificate login off)}"
+    echo "  Revocation list: $krl"
+    echo "  Password login : ${pw:-unknown}"
+    echo "  authorized_keys: ${ak:-0} key(s) for pi"
+    echo "  Cert logins 7d : $(printf '%s' "$certs" | grep -c .)${last:+  (last: $last)}"
+}
+
+ssh_menu() {
+    get_current_config
+    while true; do
+        local choice status
+        status=$(ssh_status_text)
+        if [ "$CURRENT_ROLE" = "controller" ]; then
+            choice=$(wt --title "SSH access" \
+                --menu "\n$status\n\nThis controller holds the deployment's CA public key; modules fetch it." \
+                $H $W 5 \
+                "ca"     "Set the CA public key  (paste it, or a file path)" \
+                "krl"    "Set the revocation list  (file path)" \
+                "push"   "Push to modules now" \
+                "remove" "Remove the CA  (certificate login off)" \
+                "back"   "Back") || return
+        else
+            choice=$(wt --title "SSH access" \
+                --menu "\n$status\n\nThis module fetches the CA from its controller on every mend." \
+                $H $W 2 \
+                "fetch" "Fetch from the controller now" \
+                "back"  "Back") || return
+        fi
+        local input tmp out
+        case "$choice" in
+            ca)
+                input=$(wt --title "CA public key" --inputbox \
+                    "\nPaste the CA public key (one line: ssh-ed25519 AAAA... comment),\nor give the path to the .pub file.\n\nNever the private key." \
+                    14 $W) || continue
+                tmp=$(mktemp)
+                if [ -f "$input" ]; then cp "$input" "$tmp"; else printf '%s\n' "$input" > "$tmp"; fi
+                out=$(_ssh_set_source user_ca.pub "$tmp" 2>&1)
+                rm -f "$tmp"
+                whiptail --title "CA public key" --msgbox "\n$out" 14 $W ;;
+            krl)
+                input=$(wt --title "Revocation list" --inputbox \
+                    "\nPath to the revocation list (revoked_keys.krl from tools/ssh_ca.py revoke):" \
+                    10 $W) || continue
+                out=$(_ssh_set_source revoked_keys.krl "$input" 2>&1)
+                whiptail --title "Revocation list" --msgbox "\n$out" 14 $W ;;
+            push)
+                out=$(push_ssh_access 2>&1)
+                whiptail --title "Push to modules" --msgbox "\n$out" 10 $W ;;
+            remove)
+                whiptail --title "Remove the CA" --yesno \
+                    "\nStop trusting the CA here and on every module?\n\nPasswords and authorized_keys keep working." \
+                    12 $W || continue
+                out=$(_ssh_set_source user_ca.pub none 2>&1)
+                whiptail --title "Remove the CA" --msgbox "\n$out" 12 $W ;;
+            fetch)
+                out=$(apply_ssh_access 2>&1)
+                whiptail --title "Fetch from the controller" --msgbox "\n$out" 10 $W ;;
+            back) return ;;
+        esac
+    done
+}
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "--apply" ]; then
     apply_from_config
@@ -2243,6 +2539,13 @@ if [ "${1:-}" = "--apply-firewall" ]; then
     fi
     exit 0
 fi
+
+case "${1:-}" in
+    --apply-ssh)   apply_ssh_access; exit $? ;;
+    --set-ssh-ca)  _ssh_set_source user_ca.pub "${2:?usage: --set-ssh-ca FILE|none}"; exit $? ;;
+    --set-ssh-krl) _ssh_set_source revoked_keys.krl "${2:?usage: --set-ssh-krl FILE|none}"; exit $? ;;
+    --push-ssh)    push_ssh_access; exit $? ;;
+esac
 
 main_menu
 # whiptail/newt dialogs paint their own box without a full-screen clear, and

@@ -976,23 +976,40 @@ def _safe_unlink(path: str) -> None:
         pass
 
 
-def any_session_busy_reason(sessions: dict) -> str | None:
+def any_session_busy_reason(sessions: dict,
+                            export_queue: dict | None = None) -> str | None:
     """A reason string if any session is still recording / about to start /
     still exporting -- composing then would load the controller or race the
     share -- else None. `sessions` is facade.get_recording_sessions()'s
     value (RecordingSession objects, or their dicts).
 
     A `stopped` session is *finished* -- it's exactly what compose targets
-    -- so it only counts as busy while it still has exports in flight."""
+    -- so it only counts as busy while it still has exports in flight. With
+    `export_queue` (ExportQueue.snapshot()) that means a module actually
+    exporting or queued for it: a session's `pending_exports` counter can
+    stay above zero after every file has landed (an export lost with a
+    module reboot), and used to block every render indefinitely. Without a
+    snapshot, the counter is the fallback."""
     def field(s, key, default=None):
         return s.get(key, default) if isinstance(s, dict) else getattr(s, key, default)
+
+    exporting = None
+    if export_queue is not None:
+        exporting = {
+            e.get("session") for e in
+            (export_queue.get("active") or []) + (export_queue.get("queued") or [])
+        }
 
     running = {"active", "paused", "scheduled", "pending"}
     for name, s in sessions.items():
         state = str(field(s, "state"))
         if state in running:
             return f"a session ({name}) is still {state}; compose when it has ended"
-        if state == "stopped" and (field(s, "pending_exports", 0) or 0) > 0:
+        if state != "stopped":
+            continue
+        busy = (name in exporting if exporting is not None
+                else (field(s, "pending_exports", 0) or 0) > 0)
+        if busy:
             return (
                 f"a session ({name}) still has exports in flight; "
                 "compose once they finish"

@@ -890,7 +890,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             def _busy():
                 try:
                     return compose.any_session_busy_reason(
-                        self.facade.get_recording_sessions()
+                        self.facade.get_recording_sessions(),
+                        self.facade.get_export_queue(),
                     )
                 except Exception:  # facade not ready / transient — don't block
                     return None

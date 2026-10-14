@@ -826,3 +826,21 @@ def test_render_aligned_audio_segments_mixes_each_aligned_part(monkeypatch):
     graph = cmd[cmd.index("-filter_complex") + 1]
     assert "amix=inputs=2:normalize=0" in graph
     assert "adelay=3600000" in graph   # second segment lands an hour in
+
+
+def test_busy_check_follows_the_export_queue_not_a_stale_counter():
+    """A stopped session whose counter stuck above zero (an export lost with
+    a module reboot) must not block every render once nothing is moving."""
+    stale = {"old": _FakeSession("stopped", pending_exports=1)}
+    empty = {"active": [], "queued": [], "rerun": []}
+    assert any_session_busy_reason(stale, empty) is None
+    assert any_session_busy_reason(stale) is not None        # no snapshot: counter
+    moving = {"active": [{"module_id": "cam", "session": "old"}], "queued": []}
+    assert "old" in any_session_busy_reason(stale, moving)
+    waiting = {"active": [], "queued": [{"module_id": "mic", "session": "old"}]}
+    assert "old" in any_session_busy_reason(stale, waiting)
+    # Another session's export doesn't make this one busy...
+    other = {"active": [{"module_id": "cam", "session": "x"}], "queued": []}
+    assert any_session_busy_reason(stale, other) is None
+    # ...and a running session still blocks regardless of the queue.
+    assert "live" in any_session_busy_reason({"live": _FakeSession("active")}, empty)

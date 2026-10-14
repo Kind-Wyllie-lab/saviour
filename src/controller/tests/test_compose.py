@@ -572,9 +572,14 @@ def test_render_preview_passes_the_audio_height(tmp_path, monkeypatch):
     (dd / "v.ts").write_bytes(b"x")
     (dd / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
 
+    mic = tmp_path / "sess" / "20260805" / "audiomoth"
+    mic.mkdir()
+    (mic / "s_audiomoth_1_AAAA_(0_1).flac").write_bytes(b"x")
+    (mic / "s_audiomoth_1_AAAA_(0_1)_timestamps.txt").write_text("x")
+
     seen = {}
 
-    def fake_spec_png(cache_dir, date_dir, audio, width, height, logger=None):
+    def fake_spec_png(cache_dir, date_dir, audio, width, height, logger=None, device=None):
         seen["png_size"] = (width, height)
         return str(tmp_path / "spec.png")
 
@@ -960,3 +965,89 @@ def test_prune_keeps_the_newest_and_drops_old(tmp_path, monkeypatch):
     (tmp_path / "jobs.json").write_text(_json.dumps({"jobs": jobs}))
     w = ComposeWorker(share_path=str(tmp_path), jobs_file=str(tmp_path / "jobs.json"))
     assert sorted(j["id"] for j in w.list()) == ["j0", "j1"]
+
+
+# --------------------------------------------------------------------------- #
+# Several AudioMoths / mic modules                                             #
+# --------------------------------------------------------------------------- #
+
+def _mic_day(tmp_path):
+    dd = tmp_path / "20261014"
+    for folder, devices in (("audiomoth", ("AAAA1111", "BBBB2222")), ("mic2", ("CCCC3333",))):
+        d = dd / folder
+        d.mkdir(parents=True)
+        for dev in devices:
+            for tag in ("0_1", "1_2"):
+                (d / f"s_{folder}_4703_{dev}_({tag}).flac").write_bytes(b"x")
+                (d / f"s_{folder}_4703_{dev}_({tag})_timestamps.txt").write_text("x")
+    return str(dd)
+
+
+def test_list_mic_devices_one_entry_per_audiomoth(tmp_path):
+    from src.controller.compose import list_mic_devices
+    devs = list_mic_devices(_mic_day(tmp_path))
+    assert [d["label"] for d in devs] == ["audiomoth · 1111", "audiomoth · 2222", "mic2 · 3333"]
+    assert devs[1]["id"] == "audiomoth/s_audiomoth_4703_BBBB2222"
+
+
+def test_resolve_mic_devices_picks_the_listed_ones_or_the_first(tmp_path):
+    from src.controller.compose import resolve_mic_devices
+    dd = _mic_day(tmp_path)
+    picked = resolve_mic_devices(dd, AudioSpec.from_dict({
+        "mode": "panel",
+        "sources": ["mic2/s_mic2_4703_CCCC3333", "audiomoth/s_audiomoth_4703_BBBB2222"]}))
+    assert [d["label"] for d in picked] == ["mic2 · 3333", "audiomoth · 2222"]
+    default = resolve_mic_devices(dd, AudioSpec.from_dict({"mode": "panel"}))
+    assert [d["label"] for d in default] == ["audiomoth · 1111"]
+    with pytest.raises(ComposeError, match="not found"):
+        resolve_mic_devices(dd, AudioSpec.from_dict({
+            "mode": "panel", "sources": ["audiomoth/s_audiomoth_4703_NOPE"]}))
+
+
+def test_device_segments_are_that_device_only(tmp_path):
+    dd = _mic_day(tmp_path)
+    from src.controller.compose import find_microphone_segments
+    segs = find_microphone_segments(dd, "audiomoth", "s_audiomoth_4703_BBBB2222")
+    assert len(segs) == 2 and all("BBBB2222" in a for a, _ in segs)
+
+
+@pytest.mark.parametrize("bad", [["../x/y"], ["audiomoth"], "notalist", ["a/b"] * 9])
+def test_audio_sources_validated(bad):
+    with pytest.raises(ComposeError):
+        AudioSpec.from_dict({"mode": "panel", "sources": bad})
+
+
+def test_panel_heights_split_the_audio_area():
+    from src.controller.compose import panel_heights
+    assert panel_heights(540, 1) == [540]
+    assert panel_heights(540, 2) == [270, 270]
+    assert panel_heights(540, 3) == [180, 180, 180]
+    assert panel_heights(3, 4) == [2, 2, 2, 2]
+
+
+def test_overlay_stacks_one_labelled_panel_per_track(monkeypatch, tmp_path):
+    from src.controller import audio_align
+    cmds = []
+    monkeypatch.setattr(audio_align, "_video_width", lambda p: 1280)
+    monkeypatch.setattr(audio_align, "_media_duration_s", lambda p: 60.0)
+    monkeypatch.setattr(audio_align, "_run", lambda cmd, timeout=None: cmds.append(cmd))
+    monkeypatch.setattr(audio_align, "_run_progress", lambda cmd, total, cb: cmds.append(cmd))
+    audio_align.render_overlay(
+        "v.mp4", ["a.flac", "b.flac"], str(tmp_path / "o.mkv"), 100, 15,
+        stacked=True, panel_count=2, labels=["audiomoth · 1111", "audiomoth · 2222"])
+    final = cmds[-1]
+    graph = final[final.index("-filter_complex") + 1]
+    assert "vstack=inputs=3" in graph and "drawtext=text='audiomoth · 2222'" in graph
+    assert final.count("-loop") == 2                # one wide PNG per panel
+    assert ["-map", "3:a"] == final[final.index("3:a") - 1: final.index("3:a") + 1]
+    assert "title=audiomoth · 1111" in final
+    assert len(cmds) == 3                            # 2 PNG renders + the composite
+
+
+def test_muxed_track_one_audio_stream_per_device(monkeypatch):
+    from src.controller import audio_align
+    seen = {}
+    monkeypatch.setattr(audio_align, "_run", lambda cmd, timeout=None: seen.setdefault("cmd", cmd))
+    audio_align.render_muxed_track("v.mp4", ["a.flac", "b.flac"], "o.mp4", ["x", "y"])
+    cmd = seen["cmd"]
+    assert cmd.count("-i") == 3 and "2:a" in cmd and "title=y" in cmd

@@ -45,6 +45,7 @@ LAYOUTS = ("auto", "side", "stack", "grid", "loom")
 # strip -> scrolling spectrogram strip overlaid on the bottom of the video
 # panel -> full scrolling spectrogram panel below the video (ethogram-style)
 AUDIO_MODES = ("none", "track", "strip", "panel")
+MAX_AUDIO_SOURCES = 8
 DEFAULT_CANVAS_WIDTH = 1920
 DEFAULT_FPS = 15
 MAX_QUEUE = 4
@@ -54,6 +55,15 @@ MAX_QUEUE = 4
 # it stays small).
 AUDIO_HEIGHT_PCT_DEFAULT = {"strip": 20.0, "panel": 100.0}
 AUDIO_HEIGHT_PCT_RANGE = {"strip": (5.0, 50.0), "panel": (10.0, 100.0)}
+
+
+def panel_heights(total_px: int, n: int) -> list[int]:
+    """Split the audio height across `n` stacked panels (even heights, at
+    least 2 px each): the height setting sizes the whole audio area."""
+    if n <= 0:
+        return []
+    each = max(2, total_px // n // 2 * 2)
+    return [each] * n
 
 
 def audio_height_px(video_height: int, height_pct: float) -> int:
@@ -73,6 +83,11 @@ class AudioSpec:
     source: str | None = None                 # mic module folder; None -> first
     spectrogram: dict = field(default_factory=dict)  # -> audio_align.SpectrogramOpts
     height_pct: float | None = None           # strip/panel; None -> mode default
+    # AudioMoths to use, as list_mic_devices() ids ("<folder>/<device>");
+    # empty -> the first device of `source` (or of the first mic folder).
+    # panel: one stacked spectrogram per device; track: one audio track per
+    # device; strip: the first only (more would cover the picture).
+    sources: list = field(default_factory=list)
 
     @property
     def effective_height_pct(self) -> float:
@@ -91,6 +106,13 @@ class AudioSpec:
         source = raw.get("source")
         if source is not None and not _safe_segment(str(source)):
             raise ComposeError("invalid audio.source")
+        sources = raw.get("sources") or []
+        if not isinstance(sources, list) or len(sources) > MAX_AUDIO_SOURCES:
+            raise ComposeError(f"audio.sources must be a list of at most {MAX_AUDIO_SOURCES}")
+        for sid in sources:
+            folder, _, device = str(sid).partition("/")
+            if not (_safe_segment(folder) and device and _safe_segment(device)):
+                raise ComposeError(f"invalid audio source {sid!r}")
         spectrogram = raw.get("spectrogram") or {}
         if not isinstance(spectrogram, dict):
             raise ComposeError("audio.spectrogram must be an object")
@@ -116,7 +138,7 @@ class AudioSpec:
         else:
             height_pct = None
         return cls(mode=mode, source=source, spectrogram=dict(spectrogram),
-                   height_pct=height_pct)
+                   height_pct=height_pct, sources=[str(s) for s in sources])
 
     def spec_opts(self) -> audio_align.SpectrogramOpts:
         return audio_align.SpectrogramOpts(**self.spectrogram)
@@ -490,6 +512,7 @@ def streams_info(share_path: str, session_name: str,
             for s in cams
         ],
         "mics": list_mic_folders(resolved),
+        "mic_devices": list_mic_devices(resolved),
         "suggested_fps": suggest_fps(wanted),
     }
 
@@ -523,13 +546,55 @@ def _mic_device_key(audio_path: str) -> str:
     return _SEGMENT_TAG.sub("", stem).removesuffix("_PARTIAL")
 
 
-def find_microphone_segments(date_dir: str, source: str | None) -> list[tuple[str, str]]:
-    """Every (audio_path, sidecar_path) segment of one AudioMoth: the chosen
-    mic folder's (or the first mic folder's) first device by name, the same
+def list_mic_devices(date_dir: str) -> list[dict]:
+    """Every AudioMoth recorded that day, across every mic folder:
+    `{"id": "<folder>/<device>", "folder", "device", "label"}`. A mic module
+    can carry several AudioMoths, each with its own files in the folder."""
+    out = []
+    for folder in list_mic_folders(date_dir):
+        mdir = os.path.join(date_dir, folder)
+        keys = {}
+        for ext in (".flac", ".wav"):
+            for path in sorted(glob.glob(os.path.join(mdir, f"*{ext}"))):
+                if os.path.basename(path).startswith("PENDING_"):
+                    continue
+                if os.path.isfile(_mic_sidecar_for(path)):
+                    keys.setdefault(_mic_device_key(path), None)
+        for key in keys:
+            # The key is "<session>_<module name>_<id>_<AudioMoth serial>";
+            # the serial's tail is enough to tell a module's devices apart.
+            serial = key.rsplit("_", 1)[-1]
+            out.append({"id": f"{folder}/{key}", "folder": folder, "device": key,
+                        "label": f"{folder} · {serial[-4:] if len(serial) > 4 else serial}"})
+    return out
+
+
+def resolve_mic_devices(date_dir: str, audio: AudioSpec) -> list[dict]:
+    """The devices a render/preview uses: `audio.sources` in order, else the
+    first device of `audio.source` (or of the first mic folder)."""
+    devices = list_mic_devices(date_dir)
+    if audio.sources:
+        by_id = {d["id"]: d for d in devices}
+        missing = [s for s in audio.sources if s not in by_id]
+        if missing:
+            raise ComposeError(f"microphone not found: {', '.join(missing)}")
+        return [by_id[s] for s in audio.sources]
+    pool = [d for d in devices if audio.source in (None, d["folder"])]
+    if not pool:
+        raise ComposeError(
+            f"no microphone recording found{f' for {audio.source}' if audio.source else ''}")
+    return pool[:1]
+
+
+def find_microphone_segments(date_dir: str, source: str | None,
+                             device: str | None = None) -> list[tuple[str, str]]:
+    """Every (audio_path, sidecar_path) segment of one AudioMoth: `device`
+    (a list_mic_devices() device key) in the `source` folder, else that
+    folder's (or the first mic folder's) first device by name, the same
     device `find_microphone` picks. Skips empty and mid-export files."""
     audio, _sidecar = find_microphone(date_dir, source)
     mdir = os.path.dirname(audio)
-    key = _mic_device_key(audio)
+    key = device or _mic_device_key(audio)
     out = []
     for ext in (".flac", ".wav"):
         for path in sorted(glob.glob(os.path.join(mdir, f"*{ext}"))):
@@ -580,14 +645,20 @@ PREVIEW_FFMPEG_TIMEOUT_S = 30
 
 def _preview_spectrogram_png(cache_dir: str, date_dir: str, audio: AudioSpec,
                              width: int, height: int,
-                             logger=None) -> str | None:
+                             logger=None, device: dict | None = None) -> str | None:
     """A representative (unaligned) spectrogram PNG for the preview, cached
     by mic file + spectrogram options so it's rendered once per settings
-    combination. Returns None (preview just omits the audio panel) if
-    ffmpeg or the mic recording isn't usable -- a preview must not fail
-    over audio."""
+    combination. `device` (a list_mic_devices() entry) picks the AudioMoth.
+    Returns None (preview just omits that panel) if ffmpeg or the mic
+    recording isn't usable -- a preview must not fail over audio."""
     try:
-        audio_file, _sidecar = find_microphone(date_dir, audio.source)
+        if device is not None:
+            segs = find_microphone_segments(date_dir, device["folder"], device["device"])
+            if not segs:
+                raise ComposeError(f"no recording for {device['label']}")
+            audio_file = segs[0][0]
+        else:
+            audio_file, _sidecar = find_microphone(date_dir, audio.source)
         try:
             mtime = int(os.path.getmtime(audio_file))
         except OSError:
@@ -635,19 +706,29 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
     )
 
     audio = AudioSpec(**spec.audio)
-    audio_png = None
+    audio_pngs = []
     if audio.mode in ("strip", "panel"):
-        audio_png = _preview_spectrogram_png(
-            cache_dir, date_dir, audio, cw,
-            audio_height_px(ch, audio.effective_height_pct), logger)
+        try:
+            devices = resolve_mic_devices(date_dir, audio)
+        except ComposeError as exc:
+            if logger:
+                logger.warning("compose preview: skipping audio (%s)", exc)
+            devices = []
+        if audio.mode == "strip":
+            devices = devices[:1]
+        each = panel_heights(audio_height_px(ch, audio.effective_height_pct), len(devices))
+        for dev, h in zip(devices, each, strict=False):
+            png = _preview_spectrogram_png(cache_dir, date_dir, audio, cw, h, logger, dev)
+            if png:
+                audio_pngs.append((png, dev["label"], h))
 
     tmp = os.path.join(cache_dir, f".preview_{uuid.uuid4().hex[:8]}.png")
     try:
         video_compose.compose_preview_frame(
             date_dir, tmp, streams=[s.name for s in streams],
             regions=regions, canvas=(cw, ch), cache_dir=cache_dir,
-            audio_png=audio_png,
-            audio_mode=audio.mode if audio_png else None,
+            audio_png=audio_pngs or None,
+            audio_mode=audio.mode if audio_pngs else None,
             csv_skip={s.name: s.csv_skip for s in streams},
             audio_height_px=audio_height_px(ch, audio.effective_height_pct),
         )
@@ -1042,10 +1123,17 @@ class ComposeWorker:
                 warnings=job.warnings,
             )
             if audio.mode != "none":
+                n_panels = 1
+                if audio.mode == "panel":
+                    try:
+                        n_panels = len(resolve_mic_devices(date_dir, audio))
+                    except ComposeError:
+                        pass  # _apply_audio reports the missing mic itself
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,
                                   spec.fps, phase,
-                                  audio_height_px(
+                                  panel_heights(audio_height_px(
                                       canvas_h, audio.effective_height_pct),
+                                      max(1, n_panels))[0],
                                   warnings=job.warnings)
                 _safe_unlink(base_path)
         except _CancelledError:
@@ -1061,29 +1149,46 @@ class ComposeWorker:
                      warnings: list | None = None) -> None:
         t_start, t_end = camera_window(streams)
         window_s = (t_end - t_start) / 1e9
-        parts = _aligned_mic_parts(
-            find_microphone_segments(date_dir, audio.source), t_start, t_end,
-            warnings, self._log)
-        if not parts:
-            raise ComposeError("no microphone recording overlaps the video")
-        aligned = os.path.splitext(out_path)[0] + "_aligned.flac"
-        audio_align.render_aligned_audio_segments(
-            parts, t_start, window_s, aligned, parts[0][1].nominal_rate_hz,
-            progress=phase(0.65, 0.75, "aligning audio"),
-        )
+        devices = resolve_mic_devices(date_dir, audio)
+        if audio.mode == "strip":
+            devices = devices[:1]
+        aligned, labels = [], []
         try:
+            n = len(devices)
+            for i, dev in enumerate(devices):
+                parts = _aligned_mic_parts(
+                    find_microphone_segments(date_dir, dev["folder"], dev["device"]),
+                    t_start, t_end, warnings, self._log)
+                if not parts:
+                    msg = f"{dev['label']}: no recording overlaps the video"
+                    if warnings is not None:
+                        warnings.append(msg)
+                    continue
+                path = os.path.splitext(out_path)[0] + f"_aligned{i}.flac"
+                audio_align.render_aligned_audio_segments(
+                    parts, t_start, window_s, path, parts[0][1].nominal_rate_hz,
+                    progress=phase(0.65 + 0.1 * i / n, 0.65 + 0.1 * (i + 1) / n,
+                                   f"aligning audio ({dev['label']})"),
+                )
+                aligned.append(path)
+                labels.append(dev["label"])
+            if not aligned:
+                raise ComposeError("no microphone recording overlaps the video")
             if audio.mode == "track":
-                audio_align.render_muxed_track(base_path, aligned, out_path)
+                audio_align.render_muxed_track(base_path, aligned, out_path, labels)
             else:  # strip | panel
                 audio_align.render_overlay(
-                    base_path, [aligned], out_path,
+                    base_path, aligned, out_path,
                     strip_height, fps,
                     spec=audio.spec_opts(), stacked=(audio.mode == "panel"),
                     progress=phase(0.75, 1.0, "rendering audio panel"),
                     total_s=window_s,
+                    panel_count=len(aligned) if audio.mode == "panel" else 1,
+                    labels=labels,
                 )
         finally:
-            _safe_unlink(aligned)
+            for path in aligned:
+                _safe_unlink(path)
 
 
 class _CancelledError(Exception):

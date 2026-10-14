@@ -518,6 +518,27 @@ def _stream_thumb(
 
 
 def _attach_audio_preview(
+    frame: np.ndarray, audio_png, audio_mode: str,
+    height_px: int | None = None,
+) -> np.ndarray:
+    """`audio_png` is one PNG path, or a list of (path, label, height) -- one
+    stacked, labelled panel per AudioMoth (`panel` mode)."""
+    if isinstance(audio_png, list):
+        if audio_mode != "panel" or len(audio_png) == 1:
+            path, _label_text, h = audio_png[0]
+            return _attach_audio_preview(frame, path, audio_mode, h)
+        out = frame
+        cw = frame.shape[1]
+        for path, label_text, h in audio_png:
+            img = cv2.imread(path)
+            if img is None:
+                continue
+            out = np.vstack([out, _label(cv2.resize(img, (cw, h)), label_text)])
+        return out
+    return _attach_audio_preview_one(frame, audio_png, audio_mode, height_px)
+
+
+def _attach_audio_preview_one(
     frame: np.ndarray, audio_png: str, audio_mode: str,
     height_px: int | None = None,
 ) -> np.ndarray:

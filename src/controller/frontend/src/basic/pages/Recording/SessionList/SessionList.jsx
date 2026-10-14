@@ -155,6 +155,14 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
     setSelected(new Set());
   };
 
+  // Esc leaves select mode too.
+  useEffect(() => {
+    if (!selectMode) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") exitSelect(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const deleteSelected = () => {
     socket.emit("delete_sessions", { names: selectedNames, delete_files: true });
     setConfirmDelete(false);
@@ -196,7 +204,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
               onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
               title={selectMode ? "Leave select mode" : "Select sessions to download or delete"}
             >
-              {selectMode ? "Done" : "Select"}
+              {selectMode ? "Done ✕" : "Select"}
             </button>
           )}
           {onNewSession && (
@@ -253,6 +261,16 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                 Delete
               </button>
             </span>
+          )}
+          {!confirmDelete && (
+            <button
+              type="button"
+              className="session-list__selection-btn session-list__selection-done"
+              onClick={exitSelect}
+              title="Leave select mode (Esc)"
+            >
+              Done ✕
+            </button>
           )}
           {confirmDelete && (
             <span className="session-list__delete-confirm">

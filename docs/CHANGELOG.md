@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Session list: leaving select mode is obvious** (branch `fix/select-mode-exit` → `staging`). After pressing Select there seemed to be no way out: the button did toggle, but only its word changed ("Done"), in the same small outline style. It's now a filled accent **Done ✕** while selecting, the selection bar has its own **Done ✕**, and Esc leaves select mode. Lint and all five builds clean.
+
 - [x] **Compose: spectrogram panel height up to 300 % of the video** (branch `feat/panel-height-300` → `staging`). It was capped at 100 %, but the height is now shared between stacked AudioMoth panels, so two devices got at most half the video height each. `AUDIO_HEIGHT_PCT_RANGE["panel"]` and the page's limit are now 10-300 % (200 % = two full-height panels); strip stays 5-50 % since it overlays the picture. 2 new test cases; lint and all five builds clean.
 
 - [x] **Post-Process: every AudioMoth, not just one** (branch `feat/compose-multi-mic` → `staging`). Compose used one microphone: the source picker listed mic *modules*, and within a module only its first AudioMoth by name was used, so a module with two AudioMoths (the desk mic) or a rig with several mic modules showed a single spectrogram.

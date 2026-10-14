@@ -281,7 +281,15 @@ function makeStorageOverview() {
       free_gb: 812.4, free_pct: 63, total_gb: 1288.0,
       warn_free_pct: 15, min_free_pct: 5,
     },
-    exports: { pending: 0, failed: 0, sessions: [] },
+    exports: {
+      pending: 4, failed: 0,
+      sessions: [
+        // Exporting now (the export queue sim has it) ...
+        { session_name: "trial-20261013_161356", state: "stopped", pending: 3, failed: 0, complete: 0 },
+        // ... and a count left behind with nothing exporting.
+        { session_name: "habituation-20260901_140000", state: "stopped", pending: 1, failed: 0, complete: 18 },
+      ],
+    },
     disks: [
       {
         module_id: "microphone-module-e5f6", name: "Ceiling mic", type: "microphone",

@@ -856,6 +856,52 @@ class TestRetryFailedExports:
         facade.send_command.assert_not_called()
 
 
+class TestResolvePendingExports:
+    def _stopped(self, rec, pending=1):
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, modules=["cam1"])
+        rec.sessions["exp1"].pending_exports = pending
+        rec.sessions["exp1"].export_stall_alerted = True
+
+    def test_clears_a_stale_count_and_logs_it(self):
+        rec, facade = _make_recording()
+        facade.get_export_queue.return_value = {"active": [], "queued": [], "rerun": []}
+        self._stopped(rec, pending=2)
+        rec._log_session_event = MagicMock()
+        result = rec.resolve_pending_exports("exp1")
+        assert result == {"result": "success", "resolved": 2}
+        assert rec.sessions["exp1"].pending_exports == 0
+        assert rec.sessions["exp1"].export_stall_alerted is False
+        msg = rec._log_session_event.call_args.args[2]
+        assert "2 unconfirmed export(s) marked resolved" in msg
+
+    def test_refused_while_something_is_exporting_for_it(self):
+        rec, facade = _make_recording()
+        facade.get_export_queue.return_value = {
+            "active": [{"module_id": "cam1", "session": "exp1"}], "queued": [], "rerun": []}
+        self._stopped(rec)
+        result = rec.resolve_pending_exports("exp1")
+        assert result["result"] == "error" and "Still exporting" in result["error"]
+        assert rec.sessions["exp1"].pending_exports == 1
+
+    def test_another_sessions_export_does_not_block_it(self):
+        rec, facade = _make_recording()
+        facade.get_export_queue.return_value = {
+            "active": [{"module_id": "cam1", "session": "other"}], "queued": [], "rerun": []}
+        self._stopped(rec)
+        rec._log_session_event = MagicMock()
+        assert rec.resolve_pending_exports("exp1")["result"] == "success"
+
+    def test_only_stopped_sessions_with_a_count(self):
+        rec, facade = _make_recording()
+        facade.get_export_queue.return_value = {}
+        rec.sessions["live"] = _session(session_name="live", state=SessionState.ACTIVE)
+        rec.sessions["live"].pending_exports = 1
+        assert rec.resolve_pending_exports("live")["result"] == "error"
+        self._stopped(rec, pending=0)
+        assert rec.resolve_pending_exports("exp1")["result"] == "error"
+        assert rec.resolve_pending_exports("nope")["result"] == "error"
+
+
 class TestPollRecordingState:
     """_poll_recording_state() -- the periodic (5-min) step that asks every
     module in every non-STOPPED session to report its local

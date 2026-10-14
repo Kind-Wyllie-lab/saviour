@@ -131,3 +131,7 @@
   font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
+
+.session-export__resolve {
+  margin-top: 6px;
+}

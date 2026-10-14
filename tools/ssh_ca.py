@@ -9,6 +9,7 @@ Windows (PowerShell, built-in OpenSSH), macOS and Linux; it only wraps
     python tools/ssh_ca.py sign   --ca D:/saviour-ca/saviour_ca --id andrew ~/.ssh/id_ed25519.pub
     python tools/ssh_ca.py revoke --ca D:/saviour-ca/saviour_ca --serial 3
     python tools/ssh_ca.py install --ca D:/saviour-ca/saviour_ca --host pi@10.0.0.1
+    python tools/ssh_ca.py certify-controller --ca D:/saviour-ca/saviour_ca --host pi@10.0.0.1
     python tools/ssh_ca.py show   ~/.ssh/id_ed25519-cert.pub
 
 Files kept next to the CA key (`<ca>`), none of which belong in git:
@@ -83,29 +84,59 @@ def cmd_init(a) -> None:
     print(f"Public key to give saviour-config: {ca}.pub")
 
 
+def _sign(ca: Path, pub: Path, ident: str, principal: str, valid: str,
+          source_address: str | None) -> tuple[Path, str]:
+    """Certify `pub` with the next serial and log it. Returns (cert, -L text)."""
+    serial = _next_serial(ca)
+    key_id = f"{ident}-{datetime.date.today():%Y%m%d}-s{serial}"
+    args = ["-s", str(ca), "-I", key_id, "-n", principal, "-V", valid, "-z", str(serial)]
+    if source_address:
+        args += ["-O", f"source-address={source_address}"]
+    _run([*args, str(pub)])
+    cert = _cert_path(pub)
+    info = _run(["-L", "-f", str(cert)], capture_output=True, text=True).stdout
+    valid_text = next((ln.split(":", 1)[1].strip() for ln in info.splitlines()
+                       if ln.strip().startswith("Valid:")), "")
+    fp = _run(["-l", "-f", str(pub)], capture_output=True, text=True).stdout.split()[1]
+    _log(ca, {"issued": datetime.datetime.now().isoformat(timespec="seconds"),
+              "serial": serial, "key_id": key_id, "principal": principal,
+              "valid": valid_text, "source_address": source_address or "",
+              "key_fingerprint": fp})
+    return cert, info
+
+
 def cmd_sign(a) -> None:
     ca, pub = Path(a.ca), Path(a.pubkey).expanduser()
     if not pub.name.endswith(".pub"):
         sys.exit(f"{pub} is not a .pub file: sign the PUBLIC key, never the private one.")
-    principal = a.principal
-    serial = _next_serial(ca)
-    key_id = f"{a.id}-{datetime.date.today():%Y%m%d}-s{serial}"
-    args = ["-s", str(ca), "-I", key_id, "-n", principal, "-V", a.valid, "-z", str(serial)]
-    if a.source_address:
-        args += ["-O", f"source-address={a.source_address}"]
-    _run([*args, str(pub)])
-    cert = _cert_path(pub)
-    info = _run(["-L", "-f", str(cert)], capture_output=True, text=True).stdout
-    valid = next((ln.split(":", 1)[1].strip() for ln in info.splitlines()
-                  if ln.strip().startswith("Valid:")), "")
-    fp = _run(["-l", "-f", str(pub)], capture_output=True, text=True).stdout.split()[1]
-    _log(ca, {"issued": datetime.datetime.now().isoformat(timespec="seconds"),
-              "serial": serial, "key_id": key_id, "principal": principal,
-              "valid": valid, "source_address": a.source_address or "",
-              "key_fingerprint": fp})
+    cert, info = _sign(ca, pub, a.id, a.principal, a.valid, a.source_address)
     print(info)
     print(f"Certificate: {cert}")
     print("Keep it next to the key; ssh uses it automatically.")
+
+
+def cmd_certify_controller(a) -> None:
+    """Fetch a controller's own SSH public key, certify it for principal
+    saviour-controller from that controller's address only, and install the
+    certificate there. The controller's scripts then SSH to modules with it."""
+    for exe in ("scp", "ssh"):
+        if not shutil.which(exe):
+            sys.exit(f"{exe} not found.")
+    out = subprocess.run(["ssh", a.host, "sudo saviour-config --controller-key"],
+                         capture_output=True, text=True, check=True).stdout
+    fields = dict(ln.split(" ", 1) for ln in out.splitlines() if " " in ln)
+    if not fields.get("PUBKEY", "").startswith("ssh-"):
+        sys.exit(f"Unexpected reply from {a.host}:\n{out}")
+    with tempfile.TemporaryDirectory() as d:
+        pub = Path(d) / "controller_key.pub"
+        pub.write_text(fields["PUBKEY"].strip() + "\n")
+        cert, info = _sign(Path(a.ca), pub, f"controller-{fields.get('HOST', 'unknown')}",
+                           "saviour-controller", a.valid, f"{fields['IP'].strip()}/32")
+        remote = "/tmp/saviour_controller_key-cert.pub"
+        subprocess.run(["scp", str(cert), f"{a.host}:{remote}"], check=True)
+        subprocess.run(["ssh", a.host, f"sudo saviour-config --set-controller-cert {remote}"
+                        f"; rc=$?; rm -f {remote}; exit $rc"], check=True)
+    print(info)
 
 
 def cmd_revoke(a) -> None:
@@ -180,6 +211,13 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--ca", required=True)
     s.add_argument("--host", required=True, help="e.g. pi@10.0.0.1")
     s.set_defaults(fn=cmd_install)
+
+    s = sub.add_parser("certify-controller",
+                       help="certify a controller's own key (for its SSH to modules) and install it")
+    s.add_argument("--ca", required=True)
+    s.add_argument("--host", required=True, help="e.g. pi@10.0.0.1")
+    s.add_argument("--valid", default="+52w", help="ssh-keygen -V (default +52w)")
+    s.set_defaults(fn=cmd_certify_controller)
 
     s = sub.add_parser("show", help="print a certificate's contents")
     s.add_argument("cert")

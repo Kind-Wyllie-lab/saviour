@@ -99,6 +99,8 @@ export default function ComposeVideoPanel({
   const [fmt, setFmt] = usePersistedState("compose_fmt", "mp4");
   const [audioMode, setAudioMode] = usePersistedState("compose_audio_mode", "none");
   const [audioSource, setAudioSource] = useState("");
+  // AudioMoths to include (list_mic_devices ids), across every mic module.
+  const [audioSources, setAudioSources] = useState([]);
   const [spec, setSpec] = usePersistedState("compose_spec", {
     color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
     ascale: "log", gain: 2.5,
@@ -129,6 +131,8 @@ export default function ComposeVideoPanel({
 
   const cams = byDate[dateDir]?.cameras || [];
   const mics = byDate[dateDir]?.mics || [];
+  const micDevices = info?.mic_devices || [];
+  const micDeviceKey = micDevices.map((d) => d.id).join("|");
   const showSpec = audioMode === "strip" || audioMode === "panel";
   const selectedKey = selected.join("|");
   const heightRange = AUDIO_HEIGHT[audioMode];
@@ -191,12 +195,27 @@ export default function ComposeVideoPanel({
     }
   }, [info?.suggested_fps]);
 
+  // Default to the first AudioMoth; drop ticks for devices not in this day.
+  useEffect(() => {
+    setAudioSources((cur) => {
+      const ids = micDevices.map((d) => d.id);
+      const kept = cur.filter((id) => ids.includes(id));
+      return kept.length ? kept : ids.slice(0, 1);
+    });
+  }, [micDeviceKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleSource = (id) =>
+    setAudioSources((cur) => (cur.includes(id)
+      ? (cur.length > 1 ? cur.filter((x) => x !== id) : cur)   // keep at least one
+      : micDevices.map((d) => d.id).filter((x) => x === id || cur.includes(x))));
+
   const buildAudio = () =>
     audioMode === "none"
       ? { mode: "none" }
       : {
           mode: audioMode,
           source: audioSource || undefined,
+          sources: audioSources.length ? audioSources : undefined,
           height_pct: heightPct ?? undefined,
           spectrogram:
             audioMode === "track"
@@ -237,7 +256,7 @@ export default function ComposeVideoPanel({
     previewTimer.current = setTimeout(() => requestPreview(), PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(previewTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateDir, selectedKey, layout, audioMode, audioSource, specKey]);
+  }, [dateDir, selectedKey, layout, audioMode, audioSource, audioSources.join("|"), specKey]);
 
   if (!dates.length) return null; // nothing composable in this session
 
@@ -387,19 +406,27 @@ export default function ComposeVideoPanel({
             ))}
           </select>
         </div>
-        {audioMode !== "none" && mics.length > 1 && (
-          <div className="form-field">
-            <label>Microphone:</label>
-            <select
-              value={audioSource}
-              onChange={(e) => setAudioSource(e.target.value)}
-            >
-              {mics.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
+        {audioMode !== "none" && micDevices.length > 1 && (
+          <div className="form-field compose-panel__mics">
+            <label>Microphones:</label>
+            <div className="compose-panel__mic-list">
+              {micDevices.map((d) => (
+                <label key={d.id} className="compose-panel__mic">
+                  <input
+                    type="checkbox"
+                    checked={audioSources.includes(d.id)}
+                    onChange={() => toggleSource(d.id)}
+                  />
+                  {d.label}
+                </label>
               ))}
-            </select>
+            </div>
+            <span className="compose-panel__hint">
+              {audioMode === "panel" && "one spectrogram panel per ticked microphone, sharing the height"}
+              {audioMode === "track" && "one audio track per ticked microphone"}
+              {audioMode === "strip" && audioSources.length > 1
+                && "a strip shows the first ticked microphone only; use Panel for several"}
+            </span>
           </div>
         )}
       </div>

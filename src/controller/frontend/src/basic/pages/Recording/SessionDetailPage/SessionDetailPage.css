@@ -811,3 +811,24 @@
 .session-renders__head a:hover {
   text-decoration: underline;
 }
+
+/* Several AudioMoths: tick which to include. */
+.compose-panel__mics {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.compose-panel__mic-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.compose-panel__mic {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}

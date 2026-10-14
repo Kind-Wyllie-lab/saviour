@@ -773,6 +773,7 @@ def render_overlay(
     composite_path: str, aligned_paths: list[str], out_path: str,
     strip_height: int, fps: int, spec: SpectrogramOpts | None = None,
     stacked: bool = False, progress=None, total_s: float | None = None,
+    panel_count: int = 1, labels: list[str] | None = None,
 ) -> str:
     """A `video_compose.py` composite + a spectrogram of the first aligned
     track that scrolls with a **centred** 'now' marker (a dashed vertical
@@ -789,55 +790,96 @@ def render_overlay(
         )
     strip_w, pps = _strip_pixels_per_second(total_s or 1.0)
 
+    # One panel per track when stacked (several AudioMoths), each labelled;
+    # a strip overlaid on the video only ever shows the first.
+    n = max(1, min(panel_count if stacked else 1, len(aligned_paths)))
     tmp_dir = os.path.dirname(out_path) or "."
-    wide_png = os.path.join(tmp_dir, f".strip_{uuid.uuid4().hex[:8]}.png")
+    wide_pngs = [os.path.join(tmp_dir, f".strip_{uuid.uuid4().hex[:8]}.png")
+                 for _ in range(n)]
     try:
-        # 1. the whole recording's spectrogram as one wide, chrome-free PNG.
-        _run([
-            "ffmpeg", "-y", "-i", aligned_paths[0],
-            "-lavfi", spec.pic_filter_nolegend(strip_w, strip_height), wide_png,
-        ])
+        # 1. each recording's spectrogram as one wide, chrome-free PNG.
+        for path, png in zip(aligned_paths, wide_pngs, strict=False):
+            _run([
+                "ffmpeg", "-y", "-i", path,
+                "-lavfi", spec.pic_filter_nolegend(strip_w, strip_height), png,
+            ])
 
-        # 2. pan that PNG so the column for output time `t` sits at mid-width,
-        #    over a dark backing, with a dashed centre line.
+        # 2. pan each PNG so the column for output time `t` sits at mid-width,
+        #    over a dark backing, with a dashed centre line (+ its label).
         dashes = _dashed_line_filters(f"({width}-3)/2", strip_height)
-        strip_chain = (
-            f"color=c=0x101014:s={width}x{strip_height}:r={fps}[bg];"
-            f"[bg][1:v]overlay=x='{width}/2-{pps:.4f}*t':y=0:"
-            f"eof_action=pass:shortest=1[scan];"
-            f"[scan]{dashes}[strip]"
-        )
+        chains = []
+        for i in range(n):
+            label = _drawtext_label((labels or [None] * n)[i]) if n > 1 else ""
+            chains.append(
+                f"color=c=0x101014:s={width}x{strip_height}:r={fps}[bg{i}];"
+                f"[bg{i}][{i + 1}:v]overlay=x='{width}/2-{pps:.4f}*t':y=0:"
+                f"eof_action=pass:shortest=1[scan{i}];"
+                f"[scan{i}]{dashes}{label}[strip{i}]"
+            )
+        strips = "".join(f"[strip{i}]" for i in range(n))
         if stacked:
-            graph = f"{strip_chain};[0:v][strip]vstack=inputs=2:shortest=1[v]"
+            graph = ";".join(chains) + f";[0:v]{strips}vstack=inputs={n + 1}:shortest=1[v]"
         else:
-            graph = f"{strip_chain};[0:v][strip]overlay=0:H-h:shortest=1[v]"
+            graph = chains[0] + ";[0:v][strip0]overlay=0:H-h:shortest=1[v]"
 
-        cmd = ["ffmpeg", "-y", "-i", composite_path, "-loop", "1", "-i", wide_png]
+        cmd = ["ffmpeg", "-y", "-i", composite_path]
+        for png in wide_pngs:
+            cmd += ["-loop", "1", "-i", png]
         for path in aligned_paths:
             cmd += ["-i", path]
         cmd += ["-filter_complex", graph, "-map", "[v]"]
         for i in range(len(aligned_paths)):
-            cmd += ["-map", f"{i + 2}:a"]     # 0=composite, 1=wide PNG
+            cmd += ["-map", f"{i + 1 + n}:a"]     # 0=composite, 1..n=wide PNGs
+        cmd += _audio_titles(labels, len(aligned_paths))
         cmd += ["-shortest", "-c:v", "libx264", "-crf", "20",
                 "-c:a", "flac", out_path]
         _run_progress(cmd, total_s, progress)
     finally:
-        try:
-            os.remove(wide_png)
-        except OSError:
-            pass
+        for png in wide_pngs:
+            try:
+                os.remove(png)
+            except OSError:
+                pass
     return out_path
 
 
+def _drawtext_label(text: str | None) -> str:
+    """`,drawtext=...` naming a stacked panel (top-left), or "" without one.
+    Characters drawtext treats specially are dropped rather than escaped."""
+    if not text:
+        return ""
+    safe = "".join(c for c in text if c.isalnum() or c in " ._-·")
+    return (f",drawtext=text='{safe}':x=8:y=6:fontsize=16:fontcolor=white:"
+            f"box=1:boxcolor=black@0.6:boxborderw=4")
+
+
+def _audio_titles(labels: list[str] | None, n: int) -> list[str]:
+    """`-metadata:s:a:i title=...` per audio track, so a player names them."""
+    out = []
+    for i, label in enumerate((labels or [])[:n]):
+        if label:
+            out += [f"-metadata:s:a:{i}", f"title={label}"]
+    return out
+
+
 def render_muxed_track(
-    composite_path: str, aligned_path: str, out_path: str,
+    composite_path: str, aligned_path, out_path: str,
+    labels: list[str] | None = None,
 ) -> str:
-    """The composite, unchanged, with one aligned audio track muxed in."""
-    _run([
-        "ffmpeg", "-y", "-i", composite_path, "-i", aligned_path,
-        "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
-        "-b:a", "192k", "-movflags", "+faststart", out_path,
-    ])
+    """The composite, unchanged, with the aligned audio muxed in: one track
+    per path (several AudioMoths -> several tracks a player can switch
+    between), titled with `labels`."""
+    paths = [aligned_path] if isinstance(aligned_path, str) else list(aligned_path)
+    cmd = ["ffmpeg", "-y", "-i", composite_path]
+    for path in paths:
+        cmd += ["-i", path]
+    cmd += ["-map", "0:v"]
+    for i in range(len(paths)):
+        cmd += ["-map", f"{i + 1}:a"]
+    cmd += _audio_titles(labels, len(paths))
+    cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", out_path]
+    _run(cmd)
     return out_path
 
 

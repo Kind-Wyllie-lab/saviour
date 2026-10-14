@@ -13,6 +13,12 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Post-Process: every AudioMoth, not just one** (branch `feat/compose-multi-mic` → `staging`). Compose used one microphone: the source picker listed mic *modules*, and within a module only its first AudioMoth by name was used, so a module with two AudioMoths (the desk mic) or a rig with several mic modules showed a single spectrogram.
+  - `compose.list_mic_devices()` lists every AudioMoth across all mic folders (`<folder>/<device>` ids, labels like "audiomoth · 0FAD"); `streams_info` returns them; `AudioSpec.sources` (validated, at most 8) picks which to use, defaulting to the first device as before.
+  - Each device is aligned on its own sidecar segments. **Panel**: one labelled spectrogram panel per device stacked under the video (ffmpeg `drawtext` label), the height setting split between them. **Track**: one audio track per device, titled with its label. **Strip**: the first device only (several would cover the picture). The composite's audio tracks are titled in every mode.
+  - Preview stacks the same labelled panels. Post-Process replaces the Microphone dropdown with a tick per AudioMoth (at least one stays ticked).
+  - Checked on the controller: synthetic two-panel render (640×360 video → 640×600 with two labelled panels, two titled audio tracks) and a two-panel preview of the desk session `NO-NAME-143435` (2.2 s). 8 new tests; lint, all five builds, ruff and the suite clean (bar the 9 known Windows-only failures).
+
 - [x] **Recording page opens on the session that's recording** (branch `feat/recording-default-active-session` → `staging`). It used to open the newest session whatever its state. Now: a session recording now (active or paused), and if several are, the one that started most recently (`recording_start_at`); else the newest as before. Still one-shot per visit, so a session created while you're on the page doesn't move you. Also uses each session's own name rather than the list's keys, which showed 'Session "2" not found' in mock mode. Lint and all five builds clean.
 
 - [x] **Session list: Select mode replaces "Clear all ended"; select all; bulk delete** (branch `feat/session-select-mode` → `staging`).

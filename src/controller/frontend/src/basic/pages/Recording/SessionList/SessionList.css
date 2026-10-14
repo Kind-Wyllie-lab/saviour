@@ -927,3 +927,14 @@
   background: var(--accent-color, #4a90d9);
   color: white;
 }
+
+/* The day tick lines up with the rows' ticks: row border-left (4px) +
+   padding (14px) = 18px in from the edge. */
+.session-day__check {
+  margin-left: 18px;
+  flex-shrink: 0;
+}
+
+.session-day__check--none {
+  display: inline-block;
+}

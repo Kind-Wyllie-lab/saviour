@@ -938,3 +938,65 @@
 .session-day__check--none {
   display: inline-block;
 }
+
+/* Select mode: the button beside New Session, the "All" tick and Delete. */
+.session-list__header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-list__select-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.session-list__select-btn.is-active {
+  border-color: var(--accent-color, #4a9eff);
+  color: var(--accent-color, #4a9eff);
+}
+
+.session-list__select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-list__select-all .session-day__check {
+  margin-left: 0;
+}
+
+.session-list__selection-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.session-list__selection-btn--danger {
+  border-color: var(--error-color, #c62828);
+  color: var(--error-color, #c62828);
+}
+
+.session-list__selection-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.session-list__delete-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-basis: 100%;
+  font-size: 0.8rem;
+}

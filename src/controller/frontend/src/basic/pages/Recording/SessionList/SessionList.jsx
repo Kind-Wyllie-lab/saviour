@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router";
 import socket from "/src/socket";
 import usePersistedState from "/src/hooks/usePersistedState";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import {
   formatFaultTime, formatScheduledDays, formatTarget, formatRecordingMode,
   formatBytes, triggerDownload, groupSessionsByDate, dateGroupLabel, localDateKey,
@@ -17,15 +18,18 @@ const SIZE_DEBOUNCE_MS = 300;
 
 // "Ended" = stopped, or errored-and-not-scheduled-to-retry -- explicitly
 // not pending/active/scheduled. A PENDING session hasn't ended, it just
-// hasn't started yet; "Clear all ended" must never sweep those up.
+// hasn't started yet; selecting must never sweep those up.
 const isEnded = (s) =>
   s.state !== "pending" && s.state !== "active" && s.state !== "error" && s.state !== "scheduled";
 
-// Why a session can't be ticked for download, or null if it can. Only
-// finished sessions whose exports have all landed -- a zip of a session
-// still exporting would silently miss files.
+// Why a session can't be ticked, or null if it can: only finished ones.
 function notSelectableReason(s) {
-  if (!isEnded(s)) return "Only finished sessions can be downloaded";
+  return isEnded(s) ? null : "Only finished sessions can be selected";
+}
+
+// Why a ticked session is left out of a download, or null if it isn't: a
+// zip of a session still exporting would silently miss files.
+function notDownloadableReason(s) {
   if ((s.pending_exports ?? 0) > 0) return "Still exporting -- wait for its files to reach the share";
   return null;
 }
@@ -34,12 +38,15 @@ function notSelectableReason(s) {
 // to the routed detail pane) -- rows are compact on purpose, since this
 // column stays this width regardless of viewport size. All per-session
 // actions (Stop/Start Now/Retry Now/Delete/Retry Export/Add Module) live on
-// SessionDetailPage, reached by clicking a row. The one bulk action here is
-// download: tick sessions (or a whole day via its header) and download them
-// as one zip (plans/field-install-feedback-2026-10.md, items 7-8).
+// SessionDetailPage, reached by clicking a row. Bulk actions live behind
+// Select (top of the list, so a long list needs no scrolling): it shows
+// checkboxes per session, per day and for everything, and a bar to
+// download the ticked sessions as one zip or delete them.
 function SessionList({ sessionList, modules = [], onNewSession, selectedSessionName }) {
   const navigate = useNavigate();
-  const [pendingClearAll, setPendingClearAll] = useState(false);
+  const loggedIn = useIsLoggedIn();
+  const [selectMode, setSelectMode] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [clearAllWarning, setClearAllWarning] = useState(null); // { message, skippedSessions } | null
   // Per-day open/closed overrides; a day with no entry uses the default
   // (today and Upcoming open, older days collapsed).
@@ -51,7 +58,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
   useEffect(() => {
     const handler = (data) => {
       if (!data.export_warning || !data.skipped_sessions) return;
-      // Bulk clear was partially refused — offer a force-clear follow-up.
+      // Bulk delete was partly refused — offer a force follow-up.
       // (A single-session delete refusal is handled on SessionDetailPage now.)
       setClearAllWarning({ message: data.error, skippedSessions: data.skipped_sessions });
     };
@@ -65,14 +72,9 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
     return () => socket.off("sessions_size_response", onSizes);
   }, []);
 
-  const handleClearAllConfirm = () => {
-    socket.emit("clear_ended_sessions", { delete_files: true });
-    setPendingClearAll(false);
-    setClearAllWarning(null);
-  };
-
   const handleForceClearAllConfirm = () => {
-    socket.emit("clear_ended_sessions", { delete_files: true, force: true });
+    socket.emit("delete_sessions", {
+      names: clearAllWarning.skippedSessions, delete_files: true, force: true });
     setClearAllWarning(null);
   };
 
@@ -83,6 +85,8 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
   // just created, not one from hours/days ago).
   const sessions = Object.values(sessionList).slice().reverse();
   const endedSessions = sessions.filter(isEnded);
+  const nAllTicked = endedSessions.filter((s) => selected.has(s.session_name)).length;
+  const allTicked = endedSessions.length > 0 && nAllTicked === endedSessions.length;
   const groups = groupSessionsByDate(sessions);
   const today = localDateKey();
 
@@ -140,17 +144,33 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
   const selectedNames = [...selected];
   const sizeKnown = selectedNames.every((n) => sizes[n] !== undefined);
   const totalBytes = selectedNames.reduce((sum, n) => sum + (sizes[n] || 0), 0);
+  const downloadable = selectedNames.filter((n) => byName[n] && !notDownloadableReason(byName[n]));
+
+  const setAllSelected = (on) =>
+    setSelected(on ? new Set(endedSessions.map((x) => x.session_name)) : new Set());
+
+  const exitSelect = () => {
+    setSelectMode(false);
+    setConfirmDelete(false);
+    setSelected(new Set());
+  };
+
+  const deleteSelected = () => {
+    socket.emit("delete_sessions", { names: selectedNames, delete_files: true });
+    setConfirmDelete(false);
+    setSelected(new Set());
+  };
 
   const downloadSelected = () => {
-    if (!selectedNames.length) return;
+    if (!downloadable.length) return;
     if (sizeKnown && totalBytes > CONFIRM_DOWNLOAD_BYTES
         && !window.confirm(
-          `Download ${selectedNames.length} sessions (${formatBytes(totalBytes)}) as one zip?`)) {
+          `Download ${downloadable.length} sessions (${formatBytes(totalBytes)}) as one zip?`)) {
       return;
     }
     const names = groups
       .flatMap((g) => g.sessions.map((s) => s.session_name))
-      .filter((n) => selected.has(n));
+      .filter((n) => downloadable.includes(n));
     triggerDownload(
       `/api/sessions/zip?names=${encodeURIComponent(names.join(","))}`,
       `saviour-${names.length}-sessions.zip`,
@@ -168,38 +188,84 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
         {sessions.length > 0 && (
           <span className="session-list__count">{sessions.length}</span>
         )}
-        {onNewSession && (
-          <button
-            type="button"
-            className="session-list__new-session-btn"
-            onClick={onNewSession}
-          >
-            + New Session
-          </button>
-        )}
+        <span className="session-list__header-actions">
+          {endedSessions.length > 0 && (
+            <button
+              type="button"
+              className={`session-list__select-btn${selectMode ? " is-active" : ""}`}
+              onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              title={selectMode ? "Leave select mode" : "Select sessions to download or delete"}
+            >
+              {selectMode ? "Done" : "Select"}
+            </button>
+          )}
+          {onNewSession && (
+            <button
+              type="button"
+              className="session-list__new-session-btn"
+              onClick={onNewSession}
+            >
+              + New Session
+            </button>
+          )}
+        </span>
       </div>
 
-      {selectedNames.length > 0 && (
+      {selectMode && (
         <div className="session-list__selection-bar">
+          <label className="session-list__select-all">
+            <input
+              type="checkbox"
+              className="session-day__check"
+              checked={allTicked}
+              ref={(el) => { if (el) el.indeterminate = nAllTicked > 0 && !allTicked; }}
+              onChange={() => setAllSelected(!allTicked)}
+              aria-label="Select all finished sessions"
+            />
+            All
+          </label>
           <span className="session-list__selection-summary">
-            {selectedNames.length} selected
-            {" · "}
-            {sizeKnown ? formatBytes(totalBytes) : "sizing…"}
+            {selectedNames.length
+              ? <>{selectedNames.length} selected · {sizeKnown ? formatBytes(totalBytes) : "sizing…"}</>
+              : `tick sessions (${endedSessions.length} finished)`}
           </span>
-          <button
-            type="button"
-            className="session-list__selection-btn session-list__selection-btn--primary"
-            onClick={downloadSelected}
-          >
-            Download
-          </button>
-          <button
-            type="button"
-            className="session-list__selection-btn"
-            onClick={() => setSelected(new Set())}
-          >
-            Clear
-          </button>
+          {selectedNames.length > 0 && !confirmDelete && (
+            <span className="session-list__selection-actions">
+              <button
+                type="button"
+                className="session-list__selection-btn session-list__selection-btn--primary"
+                onClick={downloadSelected}
+                disabled={!downloadable.length}
+                title={downloadable.length < selectedNames.length
+                  ? `${selectedNames.length - downloadable.length} still exporting; left out of the zip`
+                  : "Download as one zip"}
+              >
+                Download{downloadable.length < selectedNames.length ? ` (${downloadable.length})` : ""}
+              </button>
+              <button
+                type="button"
+                className="session-list__selection-btn session-list__selection-btn--danger"
+                onClick={() => setConfirmDelete(true)}
+                disabled={!loggedIn}
+                title={loggedIn ? "Delete the selected sessions and their files"
+                  : "Login required for this action"}
+              >
+                Delete
+              </button>
+            </span>
+          )}
+          {confirmDelete && (
+            <span className="session-list__delete-confirm">
+              Delete {selectedNames.length} session{selectedNames.length !== 1 ? "s" : ""} and
+              their files from the share?
+              <button type="button" className="session-btn session-btn--delete-confirm" onClick={deleteSelected}>
+                Delete
+              </button>
+              <button type="button" className="session-btn session-btn--cancel" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -238,7 +304,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
               <div className="session-day__header">
                 {/* Same column as the rows' ticks (left), so a day's tick sits
                     directly above the sessions it ticks. */}
-                {selectable.length > 0 ? (
+                {!selectMode ? null : selectable.length > 0 ? (
                   <input
                     type="checkbox"
                     className="session-day__check"
@@ -269,6 +335,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                   session={session}
                   modules={modules}
                   isSelected={session.session_name === selectedSessionName}
+                  showTick={selectMode}
                   ticked={selected.has(session.session_name)}
                   notSelectable={notSelectableReason(session)}
                   onToggleTick={() => toggleSession(session.session_name)}
@@ -280,28 +347,13 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
         })
       )}
 
-      {endedSessions.length > 0 && (
-        pendingClearAll ? (
-          <span className="session-list__clear-all-confirm">
-            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
-            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
-            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="session-list__clear-all-btn"
-            onClick={() => setPendingClearAll(true)}
-          >
-            Clear all ended
-          </button>
-        )
-      )}
     </div>
   );
 }
 
-function SessionRow({ session, modules, isSelected, ticked, notSelectable, onToggleTick, onOpen }) {
+function SessionRow({
+  session, modules, isSelected, showTick, ticked, notSelectable, onToggleTick, onOpen,
+}) {
   const state = session.state;
   const isPending   = state === "pending";
   const isActive    = state === "active";
@@ -335,16 +387,18 @@ function SessionRow({ session, modules, isSelected, ticked, notSelectable, onTog
       onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }}
     >
       <div className="session-row">
-        <span className="session-row__check" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={ticked}
-            disabled={!!notSelectable}
-            onChange={onToggleTick}
-            title={notSelectable || "Tick to download"}
-            aria-label={`Select ${session.session_name}`}
-          />
-        </span>
+        {showTick && (
+          <span className="session-row__check" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={ticked}
+              disabled={!!notSelectable}
+              onChange={onToggleTick}
+              title={notSelectable || "Tick to select"}
+              aria-label={`Select ${session.session_name}`}
+            />
+          </span>
+        )}
         <span className="status-dot--wrap">
           {isPending && (
             <span className="status-dot status-dot--pending" title="Pending - not started yet" />

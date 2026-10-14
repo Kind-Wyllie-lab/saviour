@@ -194,7 +194,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 
 **Reliability / UX**
 - Config changes while `ACTIVE`: `save_controller_config` still ungated; frontend has no `module_config_error` listener.
-- Session list multi-select delete + the rapid-delete 404 race → `plans/session-list-multi-select-delete.md`.
+- Rapid single-delete 404 race (root cause unknown) and a bulk `DELETE /api/v1/sessions` route; multi-select delete itself is done → `plans/session-list-multi-select-delete.md`.
 - TTL: edge timestamps on the Python callback path → `plans/ttl-kernel-timestamping.md`; hardening work → `plans/ttl-module-hardening.md`.
 - pyControl visibility → `plans/pycontrol-live-event-bridge.md`.
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.

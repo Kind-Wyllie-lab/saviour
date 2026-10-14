@@ -2052,6 +2052,36 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     "skipped_sessions": result["skipped_sessions"],
                 })
 
+        @self.socketio.on("delete_sessions")
+        def handle_delete_sessions(data):
+            """Delete the sessions ticked on the session list. Ones held back
+            by unresolved/failed exports come back with the same
+            export_warning shape as clear_ended_sessions, so the list offers
+            a force follow-up for just those."""
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            names = [n for n in (data.get("names") or []) if isinstance(n, str)]
+            if not names:
+                return
+            force = bool(data.get("force"))
+            self.logger.info(f"Received request to delete {len(names)} session(s) (force={force})")
+            result = self.facade.delete_sessions(
+                names, bool(data.get("delete_files", True)), force)
+            if result["skipped_sessions"]:
+                skipped = result["skipped_sessions"]
+                self.socketio.emit("session_error", {
+                    "error": (
+                        f"Deleted {len(result['deleted'])} session(s). Skipped "
+                        f"{len(skipped)} with unresolved or failed exports: "
+                        f"{', '.join(skipped)}."
+                    ),
+                    "export_warning": True,
+                    "skipped_sessions": skipped,
+                })
+            for err in result["errors"]:
+                self.socketio.emit("session_error", {"error": f"{err['name']}: {err['error']}"})
+
         @self.socketio.on("add_module_to_session")
         def handle_add_module_to_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

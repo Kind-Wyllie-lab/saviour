@@ -865,3 +865,98 @@ def test_busy_check_follows_the_export_queue_not_a_stale_counter():
     assert any_session_busy_reason(stale, other) is None
     # ...and a running session still blocks regardless of the queue.
     assert "live" in any_session_busy_reason({"live": _FakeSession("active")}, empty)
+
+
+# --------------------------------------------------------------------------- #
+# Render history: saved, interrupted on restart, delete, re-run, prune        #
+# --------------------------------------------------------------------------- #
+
+def _hist_worker(tmp_path, render=lambda job: "sess/20261014/out.mp4"):
+    w = ComposeWorker(share_path=str(tmp_path), jobs_file=str(tmp_path / "jobs.json"))
+    w._render = render  # type: ignore[assignment]
+    return w
+
+
+def test_history_survives_a_restart(tmp_path):
+    (tmp_path / "sess" / "20261014").mkdir(parents=True)
+    (tmp_path / "sess" / "20261014" / "out.mp4").write_bytes(b"x" * 10)
+    w = _hist_worker(tmp_path)
+    job = w.submit(ComposeSpec.from_dict({"session_name": "sess"}))
+    assert _wait_for(lambda: w.get(job.id).finished_at is not None)
+    time.sleep(0.2)   # the final save follows finished_at; don't hold the file open meanwhile
+    w2 = ComposeWorker(share_path=str(tmp_path), jobs_file=str(tmp_path / "jobs.json"))
+    again = w2.get(job.id)
+    assert again.state == "done" and again.output_bytes == 10
+
+
+def test_running_job_is_interrupted_by_a_restart(tmp_path):
+    import json as _json
+    (tmp_path / "jobs.json").write_text(_json.dumps({"jobs": [
+        {"id": "a1", "spec": {"session_name": "sess"}, "state": "running",
+         "progress": 0.4, "created_at": time.time()}]}))
+    w = ComposeWorker(share_path=str(tmp_path), jobs_file=str(tmp_path / "jobs.json"))
+    job = w.get("a1")
+    assert job.state == "interrupted" and "Re-run" in job.error
+
+
+def test_delete_removes_record_and_optionally_the_video(tmp_path):
+    (tmp_path / "sess" / "20261014").mkdir(parents=True)
+    video = tmp_path / "sess" / "20261014" / "out.mp4"
+    video.write_bytes(b"x")
+    w = _hist_worker(tmp_path)
+    keep = w.submit(ComposeSpec.from_dict({"session_name": "sess"}))
+    assert _wait_for(lambda: w.get(keep.id).state == "done")
+    w.delete(keep.id)
+    assert w.get(keep.id) is None and video.exists()
+    gone = w.submit(ComposeSpec.from_dict({"session_name": "sess"}))
+    assert _wait_for(lambda: w.get(gone.id).state == "done")
+    w.delete(gone.id, delete_file=True)
+    assert not video.exists()
+    with pytest.raises(ComposeError):
+        w.delete("nope")
+
+
+def test_delete_refuses_an_active_job_and_paths_outside_the_share(tmp_path):
+    gate = {"go": False}
+
+    def slow(_job):
+        while not gate["go"]:
+            time.sleep(0.01)
+        return "../outside.mp4"
+
+    outside = tmp_path.parent / "outside.mp4"
+    w = _hist_worker(tmp_path, render=slow)
+    job = w.submit(ComposeSpec.from_dict({"session_name": "sess"}))
+    with pytest.raises(ComposeError, match="cancel"):
+        w.delete(job.id)
+    gate["go"] = True
+    assert _wait_for(lambda: w.get(job.id).state == "done")
+    outside.write_bytes(b"x")
+    try:
+        w.delete(job.id, delete_file=True)   # path escapes the share: kept
+        assert outside.exists()
+    finally:
+        outside.unlink()
+
+
+def test_rerun_queues_the_same_settings(tmp_path):
+    w = _hist_worker(tmp_path)
+    first = w.submit(ComposeSpec.from_dict({"session_name": "sess", "fps": 12}))
+    assert _wait_for(lambda: w.get(first.id).state == "done")
+    second = w.rerun(first.id)
+    assert second.id != first.id and second.spec["fps"] == 12
+
+
+def test_prune_keeps_the_newest_and_drops_old(tmp_path, monkeypatch):
+    import json as _json
+
+    from src.controller import compose as c
+    monkeypatch.setattr(c, "JOBS_KEEP", 2)
+    now = time.time()
+    jobs = [{"id": f"j{i}", "spec": {"session_name": "s"}, "state": "done",
+             "created_at": now - i, "finished_at": now - i} for i in range(4)]
+    jobs.append({"id": "old", "spec": {"session_name": "s"}, "state": "done",
+                 "created_at": now - 200 * 86400, "finished_at": now - 200 * 86400})
+    (tmp_path / "jobs.json").write_text(_json.dumps({"jobs": jobs}))
+    w = ComposeWorker(share_path=str(tmp_path), jobs_file=str(tmp_path / "jobs.json"))
+    assert sorted(j["id"] for j in w.list()) == ["j0", "j1"]

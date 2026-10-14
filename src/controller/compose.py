@@ -736,9 +736,24 @@ class ComposeJob:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
+    output_bytes: int | None = None
 
     def summary(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> ComposeJob:
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in raw.items() if k in known})
+
+
+# Render history (ComposeWorker): kept across restarts like the session list,
+# pruned to the newest JOBS_KEEP, and anything finished more than
+# JOBS_MAX_AGE_S ago. Pruning drops records only; the videos stay on the share.
+JOBS_FILE = "/var/lib/saviour/controller/compose_jobs.json"
+JOBS_KEEP = 100
+JOBS_MAX_AGE_S = 90 * 24 * 3600
+_ACTIVE_STATES = ("queued", "running")
 
 
 def _aligned_mic_parts(segments: list[tuple[str, str]], t_start: int, t_end: int,
@@ -774,6 +789,7 @@ class ComposeWorker:
         busy_check=None,        # () -> str|None : reason a render is disallowed now
         on_update=None,         # (job_summary: dict) -> None
         logger=None,
+        jobs_file: str | None = None,  # history file; None = in memory only
     ):
         self.share_path = share_path
         self._busy_check = busy_check or (lambda: None)
@@ -782,6 +798,9 @@ class ComposeWorker:
         self._jobs: dict[str, ComposeJob] = {}
         self._queue: queue.Queue[str] = queue.Queue()
         self._lock = threading.Lock()
+        self._jobs_file = jobs_file
+        self._last_save = 0.0
+        self._load()
         self._thread = threading.Thread(
             target=self._run_loop, name="compose-worker", daemon=True
         )
@@ -820,6 +839,95 @@ class ComposeWorker:
     def get(self, job_id: str) -> ComposeJob | None:
         return self._jobs.get(job_id)
 
+    def delete(self, job_id: str, delete_file: bool = False) -> None:
+        """Remove a finished job from the history, and its video from the
+        share if `delete_file`. Refuses a queued or running job (cancel it
+        first)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise ComposeError("unknown render job")
+            if job.state in _ACTIVE_STATES:
+                raise ComposeError("cancel the render before deleting it")
+            out = self._output_path(job) if delete_file else None
+            del self._jobs[job_id]
+        if out:
+            _safe_unlink(out)
+        self._save(force=True)
+
+    def rerun(self, job_id: str) -> ComposeJob:
+        """A new job with the same settings (renders start from scratch,
+        so this is how an interrupted or failed one is resumed)."""
+        old = self._jobs.get(job_id)
+        if old is None:
+            raise ComposeError("unknown render job")
+        return self.submit(ComposeSpec(**old.spec))
+
+    def _output_path(self, job: ComposeJob) -> str | None:
+        """The job's video on the share, only if it really is inside it."""
+        if not job.output_rel:
+            return None
+        share = os.path.realpath(self.share_path)
+        path = os.path.realpath(os.path.join(share, job.output_rel))
+        return path if path.startswith(share + os.sep) else None
+
+    # -- history file ----------------------------------------------------- #
+
+    def _load(self) -> None:
+        if not self._jobs_file or not os.path.isfile(self._jobs_file):
+            return
+        try:
+            with open(self._jobs_file) as f:
+                raw = json.load(f)
+        except (OSError, ValueError) as exc:
+            if self._log:
+                self._log.warning("compose job history unreadable (%s); starting empty", exc)
+            return
+        for d in raw.get("jobs", []):
+            try:
+                job = ComposeJob.from_dict(d)
+            except TypeError:
+                continue
+            if job.state in _ACTIVE_STATES:
+                # The controller stopped mid-render (an update, a reboot).
+                job.state = "interrupted"
+                job.stage = "interrupted"
+                job.error = "Stopped by a controller restart; use Re-run to render it again"
+                job.finished_at = job.finished_at or time.time()
+            self._jobs[job.id] = job
+        self._prune()
+
+    def _prune(self) -> None:
+        now = time.time()
+        done = sorted(
+            (j for j in self._jobs.values() if j.state not in _ACTIVE_STATES),
+            key=lambda j: j.created_at, reverse=True)
+        for i, job in enumerate(done):
+            age = now - (job.finished_at or job.created_at)
+            if i >= JOBS_KEEP or age > JOBS_MAX_AGE_S:
+                del self._jobs[job.id]
+
+    def _save(self, force: bool = False) -> None:
+        """Write the history atomically; progress-only changes at most every
+        10 s (a render reports ~100 times)."""
+        if not self._jobs_file:
+            return
+        now = time.time()
+        if not force and now - self._last_save < 10:
+            return
+        self._last_save = now
+        with self._lock:
+            data = {"jobs": [j.summary() for j in self._jobs.values()]}
+        try:
+            os.makedirs(os.path.dirname(self._jobs_file), exist_ok=True)
+            tmp = self._jobs_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, self._jobs_file)
+        except OSError as exc:
+            if self._log:
+                self._log.warning("could not save compose job history: %s", exc)
+
     def list(self) -> list[dict]:
         with self._lock:
             return [j.summary() for j in sorted(
@@ -829,6 +937,7 @@ class ComposeWorker:
     # -- internals ------------------------------------------------------- #
 
     def _emit(self, job: ComposeJob) -> None:
+        self._save(force=job.state not in ("running",) or job.stage in ("starting", "done"))
         try:
             self._on_update(job.summary())
         except Exception:  # noqa: BLE001 -- a broken listener must not kill the worker
@@ -855,6 +964,11 @@ class ComposeWorker:
                     job.stage = "done"
                     job.progress = 1.0
                     job.output_rel = out_rel
+                    out = self._output_path(job)
+                    try:
+                        job.output_bytes = os.path.getsize(out) if out else None
+                    except OSError:
+                        job.output_bytes = None
             except Exception as exc:  # noqa: BLE001 -- report, never crash the loop
                 if job.state == "cancelled":
                     # Operator pressed Cancel: the render unwinds via
@@ -869,6 +983,8 @@ class ComposeWorker:
                     self._log.exception("compose job %s failed", job.id)
             finally:
                 job.finished_at = time.time()
+                with self._lock:
+                    self._prune()
                 self._emit(job)
 
     def _render(self, job: ComposeJob) -> str:

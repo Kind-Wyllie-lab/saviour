@@ -164,14 +164,17 @@
 .compose-job__state--done { color: var(--success-color, #2e7d32); }
 .compose-job__state--error,
 .compose-job__state--cancelled { color: var(--error-color, #c62828); }
+.compose-job__state--interrupted { color: var(--warning-color, #b26a00); }
 
 .compose-job__pct {
   color: var(--text-muted, #888);
   font-variant-numeric: tabular-nums;
 }
 
-.compose-job__head .btn-small {
+.compose-job__actions {
   margin-left: auto;
+  display: flex;
+  gap: 6px;
 }
 
 .compose-job__bar {
@@ -739,4 +742,72 @@
 
 .compose-panel__render-note {
   margin: 6px 0 0;
+}
+
+.compose-job__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 0.78rem;
+  opacity: 0.75;
+}
+
+.compose-job__session {
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-color, #3f7cac);
+  cursor: pointer;
+}
+
+.compose-job__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 0.82rem;
+  background: color-mix(in srgb, var(--error-color, #c62828) 8%, transparent);
+}
+
+.compose-job__confirm-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.compose-job__confirm .btn-danger {
+  background: var(--error-color, #c62828);
+  border-color: var(--error-color, #c62828);
+  color: #fff;
+}
+
+/* Session page: its finished/running renders. */
+.session-renders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.session-renders__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
+.session-renders__head a {
+  color: var(--accent-color, #3f7cac);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+
+.session-renders__head a:hover {
+  text-decoration: underline;
 }

@@ -898,6 +898,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
             self._compose_worker = compose.ComposeWorker(
                 share_path=share,
+                jobs_file=compose.JOBS_FILE,
                 busy_check=_busy,
                 on_update=lambda summary: self.socketio.emit(
                     "compose_job_update", summary
@@ -923,8 +924,32 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         @self.socketio.on("get_compose_jobs")
         def handle_get_compose_jobs(data=None):
             from flask_socketio import emit as _emit
-            worker = self._compose_worker
-            _emit("compose_jobs", {"jobs": worker.list() if worker else []})
+            # Built on first ask, so the saved render history shows straight
+            # after a restart, not only once something new is rendered.
+            _emit("compose_jobs", {"jobs": self._get_compose_worker().list()})
+
+        @self.socketio.on("delete_compose_job")
+        def handle_delete_compose_job(data=None):
+            from flask_socketio import emit as _emit
+            if not self._require_auth("compose_job_rejected"):
+                return
+            data = data or {}
+            try:
+                self._get_compose_worker().delete(
+                    data.get("job_id", ""), bool(data.get("delete_file")))
+            except compose.ComposeError as exc:
+                _emit("compose_job_rejected", {"error": str(exc)})
+                return
+            self.socketio.emit("compose_jobs", {"jobs": self._compose_worker.list()})
+
+        @self.socketio.on("rerun_compose_job")
+        def handle_rerun_compose_job(data=None):
+            from flask_socketio import emit as _emit
+            try:
+                job = self._get_compose_worker().rerun((data or {}).get("job_id", ""))
+                _emit("compose_job_accepted", job.summary())
+            except compose.ComposeError as exc:
+                _emit("compose_job_rejected", {"error": str(exc)})
 
         @self.socketio.on("compose_streams_info")
         def handle_compose_streams_info(data=None):

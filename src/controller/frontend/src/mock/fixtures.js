@@ -214,6 +214,30 @@ function makeSessions() {
   };
 }
 
+// Render (compose) history for the Post-Process page and session pages.
+function makeComposeJobs() {
+  const t = now();
+  const spec = (session, extra = {}) => ({
+    session_name: session, date_dir: "20261013", streams: ["camera-module-a1b2", "camera-module-c3d4"],
+    layout: "auto", fps: 15, fmt: "mp4",
+    audio: { mode: "panel", source: null, spectrogram: {}, height_pct: null }, ...extra,
+  });
+  return {
+    j_running: { id: "j_running", spec: spec("trial-20261013_161356"), state: "running",
+      progress: 0.42, stage: "compositing video", output_rel: null, error: null, warnings: [],
+      created_at: t - 300, started_at: t - 290, finished_at: null, output_bytes: null },
+    j_done: { id: "j_done", spec: spec("habituation-20260901_140000", { fps: 30 }), state: "done",
+      progress: 1, stage: "done",
+      output_rel: "habituation-20260901_140000/20260901/habituation-20260901_140000_composed_j_done.mp4",
+      error: null, warnings: [], created_at: t - 86400, started_at: t - 86390,
+      finished_at: t - 85800, output_bytes: 734_003_200 },
+    j_int: { id: "j_int", spec: spec("habituation-20260901_140000", { audio: { mode: "none" } }),
+      state: "interrupted", progress: 0.61, stage: "interrupted", output_rel: null,
+      error: "Stopped by a controller restart; use Re-run to render it again", warnings: [],
+      created_at: t - 7200, started_at: t - 7190, finished_at: t - 6000, output_bytes: null },
+  };
+}
+
 // The export queue for the session above: one module copying at a time.
 function makeExportSim() {
   const session = "trial-20261013_161356";
@@ -301,6 +325,7 @@ export const state = {
   firstRun: { needed: false },
   apa: makeApaRig(),
   exportSim: makeExportSim(),
+  composeJobs: makeComposeJobs(),
 };
 
 export function reset() {
@@ -315,4 +340,5 @@ export function reset() {
   state.firstRun = { needed: false };
   state.apa = makeApaRig();
   state.exportSim = makeExportSim();
+  state.composeJobs = makeComposeJobs();
 }

@@ -209,6 +209,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     # via the config-sync socket events, and a credential has no business
     # sitting somewhere "get_controller_config" could ever echo back.
     _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
+    # The deployment's SSH CA public key + revocation list, set with
+    # saviour-config on the controller; modules fetch them from /ssh/<file>.
+    _SSH_TRUST_DIR = "/etc/saviour/ssh"
+    _SSH_TRUST_FILES = {"user_ca.pub": "text/plain",
+                        "revoked_keys.krl": "application/octet-stream"}
 
     # Named API tokens for external programs (pyControl etc.) hitting
     # /api/v1 -- an alternative to handing out the web-UI admin password,
@@ -2714,6 +2719,19 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             return send_file(_UPDATE_ZIP, as_attachment=True,
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
+
+        @self.app.route("/ssh/<name>")
+        def serve_ssh_trust(name):
+            """The SSH CA public key and revocation list, for modules'
+            `saviour-config --apply-ssh` (plans/ssh-certificate-auth.md).
+            Unauthenticated like /update/package: both are public by design
+            (a key and a list of revoked serials). 404 = no CA configured,
+            which makes modules drop their certificate trust."""
+            mimetype = self._SSH_TRUST_FILES.get(name)
+            path = os.path.join(self._SSH_TRUST_DIR, name)
+            if mimetype is None or not os.path.isfile(path):
+                return "Not configured", 404
+            return send_file(path, mimetype=mimetype, max_age=0)
 
         def _controller_build_and_restart(rebuild_frontend: bool = True):
             """pip + optional frontend rebuild, then restart saviour.service

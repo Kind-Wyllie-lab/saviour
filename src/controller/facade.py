@@ -431,7 +431,10 @@ class ControllerFacade:
 
     """Events"""
     """Export Queue"""
-    def enqueue_export(self, module_id: str, export_path: str) -> None:
+    def enqueue_export(self, module_id: str, export_path: str,
+                       staged_bytes: int | None = None,
+                       file_count: int | None = None) -> None:
+        self.controller.export_queue.note_staged(module_id, staged_bytes, file_count)
         # export_queue.enqueue() drops export_ready signals for a module that
         # is already queued/active as duplicates -- only count "pending" for
         # a signal it actually accepted, or pending_exports drifts upward

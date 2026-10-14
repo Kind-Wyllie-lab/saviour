@@ -175,13 +175,16 @@ class MockSocket {
             current_file: `${sim.session}_${m}_(0_20261013-151400).ts`,
             export_path: path(m), updated: Date.now() / 1000,
           },
+          staged_bytes: total,
         });
       } else if (i > sim.index) {
         queued.push({ module_id: m, export_path: path(m), session: sim.session,
-          attempt: 1, position: i - sim.index });
+          attempt: 1, position: i - sim.index, staged_bytes: sim.sizes[m][1] });
       }
     });
-    return { active, queued, rerun: [], max_concurrent: 1 };
+    const landed = sim.order.slice(0, sim.index).reduce((n, m) => n + sim.sizes[m][1], 0);
+    const waves = sim.index < sim.order.length ? { [sim.session]: { bytes_done: landed } } : {};
+    return { active, queued, rerun: [], waves, max_concurrent: 1 };
   }
 
   _tickExports() {

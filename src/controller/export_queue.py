@@ -60,6 +60,13 @@ class ExportQueue:
         # module_id -> latest export_progress from the module (files / bytes
         # done) while its export is active. Not persisted.
         self._progress: dict = {}
+        # module_id -> {"bytes", "files"} staged, from its latest export_ready,
+        # so a queued module's size is known before it starts. Not persisted.
+        self._staged: dict = {}
+        # session -> bytes landed on the share in the current "wave" (the run
+        # of exports since the session last had nothing active/queued), for
+        # the session page's overall bar. Not persisted.
+        self._wave_done: dict = {}
 
     # How long (seconds) a dispatched start_export may go unanswered before
     # we assume the module missed it and re-dispatch on the next export_ready.
@@ -188,6 +195,28 @@ class ExportQueue:
             self._dispatch_next()
             self._save()
 
+    def note_staged(self, module_id: str, bytes_total, file_count=None) -> None:
+        """Remember how much a module has staged (from its export_ready)."""
+        if bytes_total is None:
+            return
+        with self._lock:
+            self._staged[module_id] = {"bytes": int(bytes_total),
+                                       "files": file_count}
+
+    def _end_finished_waves(self) -> None:
+        """Must be called while self._lock is held: forget the landed-bytes
+        tally of sessions with nothing active, queued or due to re-run."""
+        live = {self._session_of(m[0]) for m in self._active_meta.values()}
+        live |= {self._session_of(p) for _m, p, _a in self._queue}
+        live |= {self._session_of(p) for p in self._rerun.values()}
+        for session in list(self._wave_done):
+            if session not in live:
+                del self._wave_done[session]
+
+    @staticmethod
+    def _session_of(path: str) -> str:
+        return (path or "").split("/", 1)[0]
+
     def update_progress(self, module_id: str, progress: dict) -> None:
         """Record a module's latest export_progress (files / bytes done)."""
         keys = ("files_total", "files_done", "bytes_total", "bytes_done",
@@ -201,34 +230,44 @@ class ExportQueue:
         """What's exporting now and what's waiting, for the session page:
         `active` (with the module's latest progress) and `queued` (with its
         position), each entry tagged with the session it belongs to."""
-        def session_of(path: str) -> str:
-            return (path or "").split("/", 1)[0]
+        session_of = self._session_of
+
+        def staged(mid):
+            return (self._staged.get(mid) or {}).get("bytes")
 
         with self._lock:
             active = [
                 {"module_id": mid, "export_path": meta[0],
                  "session": session_of(meta[0]), "attempt": meta[1],
                  "since": meta[2] if len(meta) > 2 else None,
-                 "progress": self._progress.get(mid)}
+                 "progress": self._progress.get(mid),
+                 "staged_bytes": staged(mid)}
                 for mid, meta in self._active_meta.items()
             ]
             queued = [
                 {"module_id": mid, "export_path": path,
                  "session": session_of(path), "attempt": attempt,
-                 "position": i + 1}
+                 "position": i + 1, "staged_bytes": staged(mid)}
                 for i, (mid, path, attempt) in enumerate(self._queue)
             ]
-            rerun = [{"module_id": mid, "session": session_of(path)}
+            rerun = [{"module_id": mid, "session": session_of(path),
+                      "staged_bytes": staged(mid)}
                      for mid, path in self._rerun.items()]
+            waves = {s: {"bytes_done": b} for s, b in self._wave_done.items()}
         return {"active": active, "queued": queued, "rerun": rerun,
-                "max_concurrent": self._max_concurrent}
+                "waves": waves, "max_concurrent": self._max_concurrent}
 
     def on_export_complete(self, module_id: str) -> None:
         """Call when a module reports export_complete."""
         with self._lock:
             self._active.discard(module_id)
-            self._progress.pop(module_id, None)
+            progress = self._progress.pop(module_id, None) or {}
+            staged = self._staged.pop(module_id, None) or {}
             meta = self._active_meta.pop(module_id, None)
+            if meta:
+                landed = progress.get("bytes_total") or staged.get("bytes") or 0
+                session = self._session_of(meta[0])
+                self._wave_done[session] = self._wave_done.get(session, 0) + landed
             self._queue_rerun(module_id)
             # Wall-clock the dispatch took — the concrete number needed to
             # confirm/deny export-burst contention on the shared trunk after
@@ -241,6 +280,7 @@ class ExportQueue:
                 f"Queue depth: {len(self._queue)}, active: {len(self._active)}"
             )
             self._dispatch_next()
+            self._end_finished_waves()
             self._save()
 
     def on_export_failed(self, module_id: str) -> bool:
@@ -283,7 +323,10 @@ class ExportQueue:
                     f"Queue depth: {len(self._queue)}, active: {len(self._active)}"
                 )
                 self._queue_rerun(module_id)
+            if is_final:
+                self._staged.pop(module_id, None)
             self._dispatch_next()
+            self._end_finished_waves()
             self._save()
             return is_final
 

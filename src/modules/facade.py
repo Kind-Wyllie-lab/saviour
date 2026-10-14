@@ -230,11 +230,21 @@ class ModuleFacade:
 
     def signal_export_ready(self, export_path: str) -> None:
         """Notify the controller that files are staged and ready to export."""
-        file_count = len(os.listdir(self.module.export.to_export_folder))
+        folder = self.module.export.to_export_folder
+        names = os.listdir(folder)
+        staged_bytes = 0
+        for name in names:
+            try:
+                staged_bytes += os.path.getsize(os.path.join(folder, name))
+            except OSError:
+                pass
         self.send_status({
             "type": "export_ready",
             "export_path": export_path,
-            "file_count": file_count
+            "file_count": len(names),
+            # Lets the controller size a module's export before it starts,
+            # for the session page's overall progress and time estimate.
+            "bytes_total": staged_bytes,
         })
 
 

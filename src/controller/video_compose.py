@@ -363,8 +363,16 @@ def compose_session_video(
     progress=None,
     csv_skip: dict[str, int] | None = None,
     warnings: list[str] | None = None,
+    audio_panels: dict | None = None,
 ) -> str:
     """Compose the session's cameras into one layout video.
+
+    `audio_panels` = {"mode": "panel"|"strip", "pps": px per second,
+    "images": [(wide_png, label, height), ...]} draws scrolling spectrograms:
+    `panel` stacks one under the cameras per image, `strip` overlays the
+    first on the bottom of the frame. Each wide PNG is loaded once and a
+    canvas-wide window copied per frame (an ffmpeg overlay of the whole
+    image per frame took ~650 MB per panel on the controller).
 
     `streams` restricts to those module folder names (order preserved).
     `regions` + `canvas` supply a pre-planned layout (from
@@ -417,7 +425,10 @@ def compose_session_video(
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (canvas_w, canvas_h))
+    panels = _load_audio_panels(audio_panels, canvas_w)
+    out_h = canvas_h + (sum(p.height for p in panels)
+                        if audio_panels and audio_panels.get("mode") == "panel" else 0)
+    writer = cv2.VideoWriter(output_path, fourcc, fps, (canvas_w, out_h))
     if not writer.isOpened():
         raise RuntimeError("VideoWriter failed to open — codec unavailable")
 
@@ -425,10 +436,12 @@ def compose_session_video(
     try:
         for i in range(n_out):
             t = t_start + i * step_ns
-            frame = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+            frame = np.zeros((out_h, canvas_w, 3), dtype=np.uint8)
             for cursor, (x, y, w, h) in zip(cursors, regions, strict=True):
                 pane = _label(_fit_into(cursor.sync_to(t), w, h), cursor.name)
                 frame[y : y + h, x : x + w] = pane
+            if panels:
+                _draw_audio_panels(frame, panels, audio_panels, canvas_h, i / fps)
             writer.write(frame)
             if progress is not None and (i % report_every == 0 or i == n_out - 1):
                 progress(i + 1, n_out, "rendering")
@@ -441,6 +454,58 @@ def compose_session_video(
                 warnings.extend(m for m in cursor.messages if m not in warnings)
 
     return output_path
+
+
+_PANEL_BG = (0x14, 0x10, 0x10)          # BGR of the old ffmpeg 0x101014 backing
+_PLAYHEAD = (0, 215, 255)               # BGR yellow
+
+
+@dataclass
+class _AudioPanel:
+    padded: np.ndarray      # the wide spectrogram with half a canvas each side
+    label: str
+    height: int
+
+
+def _load_audio_panels(spec: dict | None, canvas_w: int) -> list[_AudioPanel]:
+    if not spec:
+        return []
+    images = spec.get("images") or []
+    if spec.get("mode") == "strip":
+        images = images[:1]
+    panels = []
+    for path, label, height in images:
+        img = cv2.imread(path)
+        if img is None:
+            raise ValueError(f"could not read spectrogram image {path}")
+        if img.shape[0] != height:
+            img = cv2.resize(img, (img.shape[1], height))
+        pad = canvas_w // 2
+        padded = np.empty((height, img.shape[1] + canvas_w, 3), dtype=np.uint8)
+        padded[:] = _PANEL_BG
+        padded[:, pad:pad + img.shape[1]] = img
+        panels.append(_AudioPanel(padded, label or "", height))
+    return panels
+
+
+def _draw_audio_panels(frame: np.ndarray, panels: list[_AudioPanel], spec: dict,
+                       video_h: int, t_s: float) -> None:
+    """Scrolling spectrogram(s) for output time `t_s`: the column for `t_s`
+    at mid-width under a dashed playhead (the same mapping the ffmpeg
+    overlay used: image x = width/2 - pps*t)."""
+    canvas_w = frame.shape[1]
+    x = int(round(spec["pps"] * t_s))
+    y = video_h if spec.get("mode") == "panel" else video_h - panels[0].height
+    for panel in panels:
+        x0 = max(0, min(x, panel.padded.shape[1] - canvas_w))
+        window = panel.padded[:, x0:x0 + canvas_w].copy()
+        mid = (canvas_w - 3) // 2
+        for dy in range(0, panel.height, 23):
+            window[dy:dy + 14, mid:mid + 3] = _PLAYHEAD
+        if panel.label and len(panels) > 1:
+            _label(window, panel.label)
+        frame[y:y + panel.height, 0:canvas_w] = window
+        y += panel.height
 
 
 def _csv_bounds(csv_path: str, skip: int = 0) -> tuple[int, int]:

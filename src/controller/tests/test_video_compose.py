@@ -320,3 +320,41 @@ def test_representative_frame_seeks_in_the_segment_covering_t(tmp_path):
     # the first segment.
     assert float(_representative_frame(stream, T0 + 45 * STEP).mean()) > 150
     assert float(_representative_frame(stream, T0 + 5 * STEP).mean()) < 60
+
+
+def test_audio_panels_scroll_under_the_video(tmp_path):
+    """Panel mode: each spectrogram stacks under the cameras and scrolls so
+    the column for time t sits under the mid-width playhead."""
+    from src.controller import video_compose as vc
+
+    # 100 px/s wide image: column x is red for x < 150, green after.
+    img = np.zeros((60, 300, 3), dtype=np.uint8)
+    img[:, :150] = (0, 0, 255)
+    img[:, 150:] = (0, 255, 0)
+    png = str(tmp_path / "s.png")
+    cv2.imwrite(png, img)
+    spec = {"mode": "panel", "pps": 100, "images": [(png, "A", 60), (png, "B", 60)]}
+    panels = vc._load_audio_panels(spec, 40)
+    frame = np.zeros((50 + 120, 40, 3), dtype=np.uint8)
+
+    vc._draw_audio_panels(frame, panels, spec, 50, 1.0)   # t=1 s -> column 100
+    assert (frame[:50] == 0).all()                       # video area untouched
+    assert tuple(frame[100, 5]) == (0, 0, 255)           # below the label: red
+    vc._draw_audio_panels(frame, panels, spec, 50, 2.0)   # column 200: green
+    assert tuple(frame[160, 5]) == (0, 255, 0)
+    assert tuple(frame[100, 19]) == vc._PLAYHEAD         # dashed centre line
+    assert tuple(frame[50 + 30, 10]) == (0, 0, 0)        # label box on panel A
+
+
+def test_audio_strip_overlays_the_bottom_with_the_first_image(tmp_path):
+    from src.controller import video_compose as vc
+
+    img = np.full((8, 100, 3), 200, dtype=np.uint8)
+    png = str(tmp_path / "s.png")
+    cv2.imwrite(png, img)
+    spec = {"mode": "strip", "pps": 10, "images": [(png, "A", 8), (png, "B", 8)]}
+    panels = vc._load_audio_panels(spec, 20)
+    assert len(panels) == 1
+    frame = np.zeros((30, 20, 3), dtype=np.uint8)
+    vc._draw_audio_panels(frame, panels, spec, 30, 5.0)
+    assert (frame[:22] == 0).all() and tuple(frame[29, 2]) == (200, 200, 200)

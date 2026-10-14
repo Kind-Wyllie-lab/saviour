@@ -737,16 +737,20 @@ def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch)
     (dd / "camera_a" / "v.ts").write_bytes(b"x")
     (dd / "camera_a" / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
 
+    seen = {}
     fake_vc = types.SimpleNamespace(
-        compose_session_video=lambda *a, **k: None)
+        compose_session_video=lambda *a, **k: seen.update(panels=k["audio_panels"]))
     monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
     import src.controller as _sc
     monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
 
-    seen = {}
     monkeypatch.setattr(
-        compose.ComposeWorker, "_apply_audio",
-        lambda self, *a, **k: seen.update(strip_height=a[-1]))
+        compose.ComposeWorker, "_align_devices",
+        lambda self, *a, **k: (["a0.flac", "a1.flac"], ["mic A", "mic B"]))
+    monkeypatch.setattr(audio_align, "render_strip_png",
+                        lambda path, png, w, h, spec=None: png)
+    monkeypatch.setattr(audio_align, "render_with_audio",
+                        lambda *a, **k: seen.update(muxed=a[1], labels=a[3]))
 
     spec = ComposeSpec.from_dict({
         "session_name": "sess", "fps": 15,
@@ -759,8 +763,13 @@ def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch)
     monkeypatch.setattr(worker, "_emit", lambda _j: None)
     worker._render(job)
     _, _, canvas_h = plan_regions([(1280, 720)], "auto")
-    assert seen["strip_height"] == compose.audio_height_px(canvas_h, 25)
-    assert seen["strip_height"] != audio_align.DEFAULT_STRIP_HEIGHT
+    panels = seen["panels"]
+    assert panels["mode"] == "panel"
+    heights = [h for _png, _label, h in panels["images"]]
+    assert heights == compose.panel_heights(compose.audio_height_px(canvas_h, 25), 2)
+    assert [lbl for _png, lbl, _h in panels["images"]] == ["mic A", "mic B"]
+    assert seen["muxed"] == ["a0.flac", "a1.flac"]
+    assert seen["labels"] == ["mic A", "mic B"]
 
 
 # --------------------------------------------------------------------------- #

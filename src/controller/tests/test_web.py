@@ -1770,12 +1770,27 @@ class TestTeamsWebhookTest:
 # ---------------------------------------------------------------------------
 
 class TestProbeNas:
-    def test_unconfigured_when_no_share_ip(self):
-        web = _make_web(**{"export.share_ip": ""})
+    def test_no_share_ip_measures_the_controller_share(self, tmp_path):
+        web = _make_web(**{"export.share_ip": "", "export.mount_path": str(tmp_path)})
         probe = web._probe_nas()
-        assert probe["configured"] is False
-        assert probe["reachable"] is False
-        assert probe["free_bytes"] is None
+        assert probe["kind"] == "local" and probe["path"] == str(tmp_path)
+        assert probe["configured"] is True and probe["reachable"] is True
+        assert probe["free_bytes"] > 0 and probe["total_bytes"] >= probe["free_bytes"]
+        assert probe["writable"] is True
+        assert not list(tmp_path.iterdir())          # the probe file is removed
+
+    def test_missing_controller_share_reported_not_blocking(self, tmp_path):
+        web = _make_web(**{"export.share_ip": "",
+                           "export.mount_path": str(tmp_path / "nope")})
+        probe = web._probe_nas()
+        assert probe["reachable"] is False and "not found" in probe["error"]
+        assert web._check_nas_free_space(probe) is None
+
+    def test_low_controller_share_blocks_with_its_own_wording(self):
+        web = _make_web(**{"recording.nas_min_free_pct": 5})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 4, "total_bytes": 100, "error": None, "kind": "local"}
+        assert web._check_nas_free_space(probe).startswith("Controller share has only")
 
     def test_check_free_space_reuses_passed_probe(self):
         web = _make_web(**{"recording.nas_min_free_pct": 5})
@@ -1839,6 +1854,19 @@ class TestNasHealthCheck:
         with patch.object(web, "_probe_nas", return_value=probe):
             web._run_nas_health_check()
         assert web._nas_health["status"] == "error"
+
+    def test_histories_survive_a_restart(self, tmp_path):
+        hist = tmp_path / "storage_history.json"
+        web = self._web(**{"export.share_ip": "10.0.0.1"})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 30, "total_bytes": 100, "error": None}
+        with patch.object(type(web), "_STORAGE_HISTORY_FILE", str(hist)), \
+             patch.object(web, "_probe_nas", return_value=probe):
+            web._run_nas_health_check()
+            assert hist.exists()
+            web2 = self._web(**{"export.share_ip": "10.0.0.1"})
+        assert [s[1:] for s in web2._nas_history] == [(30, 100)]
+        assert len(web2._data_rate_history) == 1
 
     def test_prune_drops_samples_past_retention(self):
         web = self._web()

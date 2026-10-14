@@ -220,3 +220,25 @@
   border-color: var(--accent-color);
   color: var(--accent-color);
 }
+
+/* One history-range selector for both charts, beside Refresh. */
+.storage-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.storage-header .storage-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.storage-bignum--quiet {
+  opacity: 0.6;
+}
+
+.storage-dest strong {
+  margin-right: 8px;
+}

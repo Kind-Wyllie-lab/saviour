@@ -13,6 +13,12 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Storage page: measures the controller's own share; history kept across restarts; clearer data-rate card** (branch `fix/storage-page` → `staging`; field feedback on the desk rig).
+  - With no external NAS (`export.share_ip` empty) the share probe returned "unconfigured" and measured nothing, so the Export destination card said "Not configured", the free-space chart never got a sample and the share's free space appeared nowhere. `_probe_local_share()` now measures `export.mount_path` (free/total, write test): the card shows "Controller share" + path with free GB and the warn/min thresholds. Side effect, intended: the existing gate that refuses a new session below `recording.nas_min_free_pct` now also covers the controller's own disk ("Controller share has only …"); a missing share folder is reported but doesn't block, as before.
+  - Both histories (share free space, recording data rate) were in memory only, so every update or reboot emptied them; they're now saved to `/var/lib/saviour/controller/storage_history.json` after each 5-minute sample and loaded at start (30-day retention as before). History from before this change was never recorded, so the charts fill from now on. A test fixture keeps tests off that path.
+  - Data-rate card: led with the "every module recording at once" config estimate whenever nothing was recording, which read as a preview; it now shows the measured rate (or "Not recording now"), the chart for the selected range with peak and average-while-recording, and the flat-out estimate as a footnote. One History range selector (24h / 7d / 30d / All) beside Refresh replaces the duplicated per-card buttons. The dashboard's System Health widget gains a "Share free" row.
+  - 4 new tests (+1 changed); lint, all five builds, ruff and the suite clean (bar the 9 known Windows-only failures).
+
 - [x] **Post-Process page: no page title, like the other pages** (branch `fix/postprocess-drop-title` → `staging`). It was the only page with an `<h1>`; the sidebar already marks the current page. The intro line ("Jobs run in the background — you can leave this page") moved under the session picker. Lint and all five builds clean.
 
 - [x] **Render (compose) jobs kept as a history, like sessions: interrupted, re-run, delete** (branch `feat/compose-job-history` → `staging`).

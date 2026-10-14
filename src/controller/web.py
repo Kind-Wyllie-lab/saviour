@@ -314,6 +314,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # (ts, fleet_mb_per_min, {module_id: mb_per_min}) — the per-module dict
         # only holds modules recording at that sample, so it stays small.
         self._data_rate_history: deque = deque()
+        self._load_storage_history()
         self._nas_monitor_stop = threading.Event()
 
         # Running flag
@@ -702,11 +703,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         import uuid as _uuid
 
         out = {"configured": False, "reachable": False, "writable": None,
-               "free_bytes": None, "total_bytes": None, "error": None}
+               "free_bytes": None, "total_bytes": None, "error": None,
+               "kind": "nas", "path": None}
 
         nas_ip = self.config.get("export.share_ip", "")
         if not nas_ip:
-            return out
+            return self._probe_local_share(out)
         out["configured"] = True
 
         _, share_path, username, password = self._export_share_settings()
@@ -754,6 +756,37 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             unmount(mount_point, timeout=10)
 
 
+    def _probe_local_share(self, out: dict) -> dict:
+        """No external NAS: modules export to the controller's own share
+        (export.mount_path), so measure that folder's filesystem. Used to
+        report "unconfigured" and measure nothing, so the Storage page never
+        showed the share's free space or built a history for it."""
+        import shutil as _shutil
+        import uuid as _uuid
+
+        path = self.config.get("export.mount_path", "/home/pi/controller_share")
+        out.update(configured=True, kind="local", path=path)
+        if not os.path.isdir(path):
+            out["error"] = f"Controller share folder {path} not found"
+            return out
+        out["reachable"] = True
+        try:
+            usage = _shutil.disk_usage(path)
+            out["free_bytes"], out["total_bytes"] = usage.free, usage.total
+        except OSError as e:
+            out["error"] = f"Cannot measure {path}: {e}"
+            return out
+        probe = os.path.join(path, f".saviour_probe_{_uuid.uuid4().hex}")
+        try:
+            with open(probe, "w") as f:
+                f.write("probe")
+            os.remove(probe)
+            out["writable"] = True
+        except OSError as e:
+            out["writable"] = False
+            out["error"] = f"Controller share {path} is not writable: {e}"
+        return out
+
     def _check_nas_free_space(self, probe: "dict | None" = None) -> "str | None":
         """Mount the NAS and check free space against nas_min_free_pct.
 
@@ -766,6 +799,10 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             probe = self._probe_nas()
         if not probe["configured"]:
             return None
+        if probe.get("kind") == "local" and not probe["reachable"]:
+            # The controller's own share folder is missing: shown on the
+            # Storage page, but not a reason to refuse a session (it never was).
+            return None
         if probe["error"] and not probe["reachable"]:
             return probe["error"]
 
@@ -775,8 +812,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         free_gb = free / 1_073_741_824
         min_free_pct = self.config.get("recording.nas_min_free_pct", 5)
         if free_pct < min_free_pct:
+            where = "Controller share" if probe.get("kind") == "local" else "NAS"
             return (
-                f"NAS has only {free_pct:.1f}% free ({free_gb:.1f} GB) — "
+                f"{where} has only {free_pct:.1f}% free ({free_gb:.1f} GB) — "
                 f"need at least {min_free_pct}% before starting a new session"
             )
         if probe["writable"] is False:
@@ -3647,6 +3685,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             "error": error or probe["error"],
             "checked_at": now,
             "destination": self._export_destination_label(),
+            "kind": probe.get("kind", "nas"),
+            "path": probe.get("path"),
             "reachable": probe["reachable"],
             "writable": probe["writable"],
             "free_bytes": free,
@@ -3674,6 +3714,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
         overview = self._storage_overview()
         self._sample_data_rate_history(now, overview)
+        self._save_storage_history()
 
         self.socketio.emit("nas_health_update", new)
         self.socketio.emit("storage_overview", overview)
@@ -3698,6 +3739,40 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         except Exception as e:
             self.logger.debug(f"_sample_data_rate_history failed: {e}")
 
+    # Both Storage-page histories, kept across restarts (they were in memory
+    # only, so every update or reboot emptied the charts). Written after each
+    # sample (default every 5 min); only where the controller state dir exists.
+    _STORAGE_HISTORY_FILE = "/var/lib/saviour/controller/storage_history.json"
+
+    def _load_storage_history(self) -> None:
+        path = self._STORAGE_HISTORY_FILE
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            self._nas_history.extend(
+                (float(t), int(free), int(total)) for t, free, total in data.get("nas", []))
+            self._data_rate_history.extend(
+                (float(t), float(fleet), dict(per or {}))
+                for t, fleet, per in data.get("rate", []))
+            self._prune_nas_history()
+        except (OSError, ValueError, TypeError) as e:
+            self.logger.warning(f"Storage history unreadable ({e}); starting empty")
+
+    def _save_storage_history(self) -> None:
+        path = self._STORAGE_HISTORY_FILE
+        if not os.path.isdir(os.path.dirname(path)):
+            return
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"nas": [list(s) for s in self._nas_history],
+                           "rate": [list(s) for s in self._data_rate_history]}, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            self.logger.warning(f"Could not save storage history: {e}")
+
     def _prune_nas_history(self):
         cutoff = time.time() - self._NAS_HISTORY_RETENTION_S
         h = self._nas_history
@@ -3709,7 +3784,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         fallback when none is configured."""
         ip = self.config.get("export.share_ip", "")
         share = self.config.get("export.share_path", "controller_share")
-        return f"//{ip}/{share}" if ip else "controller local share"
+        if ip:
+            return f"//{ip}/{share}"
+        return self.config.get("export.mount_path", "/home/pi/controller_share")
 
     def _storage_overview(self) -> dict:
         """Snapshot for the Storage page: destination/NAS state, aggregate

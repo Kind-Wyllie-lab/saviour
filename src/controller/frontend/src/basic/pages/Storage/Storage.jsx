@@ -159,6 +159,18 @@ export default function Storage() {
     [rateHistory]
   );
 
+  // Over the selected range: peak, and average over samples where
+  // something was recording (idle samples are 0 and would drag it down).
+  const rateStats = useMemo(() => {
+    if (rateSeries.length < 2) return null;
+    const busy = rateSeries.filter((p) => p.v > 0);
+    return {
+      peak: Math.max(...rateSeries.map((p) => p.v)),
+      avg: busy.length ? busy.reduce((n, p) => n + p.v, 0) / busy.length : null,
+      busyFrac: busy.length / rateSeries.length,
+    };
+  }, [rateSeries]);
+
   const usedPct = nas.free_pct != null ? 100 - nas.free_pct : null;
 
   const downloadCsv = () => {
@@ -174,6 +186,16 @@ export default function Storage() {
   return (
     <div className="storage-page">
       <div className="storage-header">
+        <div className="storage-range" role="group" aria-label="History range">
+          <span className="storage-muted">History</span>
+          {RANGES.map((r, i) => (
+            <button
+              key={r.label}
+              className={`storage-range__btn ${i === rangeIdx ? "is-active" : ""}`}
+              onClick={() => setRangeIdx(i)}
+            >{r.label}</button>
+          ))}
+        </div>
         <button className="refresh-btn" onClick={() => {
           socket.emit("get_storage_overview");
           requestHistory(range.hours);
@@ -191,6 +213,7 @@ export default function Storage() {
               <StatusPill status={nas.status || "unknown"} />
             </div>
             <div className="storage-dest">
+              {nas.kind === "local" && <strong>Controller share</strong>}
               <code>{nas.destination || "—"}</code>
               <span className="storage-muted">checked {timeAgo(nas.checked_at)}</span>
             </div>
@@ -214,8 +237,8 @@ export default function Storage() {
               </>
             ) : (
               <p className="storage-muted">
-                {nas.status === "unconfigured"
-                  ? "No external share configured — modules export to the controller's local share."
+                {nas.status === "unknown" || !nas.checked_at
+                  ? "Measuring… (first check runs shortly after the controller starts)"
                   : "Free space unavailable."}
               </p>
             )}
@@ -229,21 +252,14 @@ export default function Storage() {
           <section className="storage-card">
             <div className="storage-card__head">
               <h2>Free space over time</h2>
-              <div className="storage-range">
-                {RANGES.map((r, i) => (
-                  <button
-                    key={r.label}
-                    className={`storage-range__btn ${i === rangeIdx ? "is-active" : ""}`}
-                    onClick={() => setRangeIdx(i)}
-                  >{r.label}</button>
-                ))}
-              </div>
+              <span className="storage-muted">{range.label}</span>
             </div>
 
             <MiniAreaChart
               data={pctSeries}
               unit="%"
               yMin={0}
+              emptyText={`No samples in the last ${range.label} yet (one every 5 min)`}
               thresholds={[
                 nas.min_free_pct != null && { v: nas.min_free_pct, label: `min ${nas.min_free_pct}%`, kind: "danger" },
                 nas.warn_free_pct != null && { v: nas.warn_free_pct, label: `warn ${nas.warn_free_pct}%`, kind: "warn" },
@@ -260,74 +276,63 @@ export default function Storage() {
           <section className="storage-card">
             <div className="storage-card__head">
               <h2>Recording data rate</h2>
-              <div className="storage-range">
-                {RANGES.map((r, i) => (
-                  <button
-                    key={r.label}
-                    className={`storage-range__btn ${i === rangeIdx ? "is-active" : ""}`}
-                    onClick={() => setRangeIdx(i)}
-                  >{r.label}</button>
-                ))}
-              </div>
+              <span className="storage-muted">{range.label}</span>
             </div>
             {dataRate.recording_module_count > 0 ? (
-              <>
-                <div className="storage-bignum">
-                  {fmt2(dataRate.recording_mb_per_min)} MB/min
-                  <span className="storage-bignum__sub">
-                    now · {dataRate.recording_module_count} module
-                    {dataRate.recording_module_count === 1 ? "" : "s"} recording ·
-                    {" "}{gbPerHour(dataRate.recording_mb_per_min)} GB/hour
-                  </span>
-                </div>
-                {dataRate.fleet_est_mb_per_min > 0 && (
-                  <div className="storage-muted storage-datarate__flatout">
-                    Fleet flat out: ~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
-                    {" "}(~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour)
-                    {" "}across {dataRate.fleet_est_module_count} recording-capable
-                    {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"}
-                  </div>
-                )}
-                <div className={`storage-projection storage-projection--${
-                  dataRate.share_runway_hours == null ? "flat"
-                    : dataRate.share_runway_hours < 72 ? "danger"
-                    : dataRate.share_runway_hours < 168 ? "warn" : "flat"}`}>
-                  {dataRate.share_runway_hours == null
-                    ? "share free space unknown"
-                    : `share holds ${humanDuration(dataRate.share_runway_hours * 3600)} at this rate`}
-                </div>
-              </>
+              <div className="storage-bignum">
+                {fmt2(dataRate.recording_mb_per_min)} MB/min
+                <span className="storage-bignum__sub">
+                  now · {dataRate.recording_module_count} module
+                  {dataRate.recording_module_count === 1 ? "" : "s"} recording ·
+                  {" "}{gbPerHour(dataRate.recording_mb_per_min)} GB/hour
+                </span>
+              </div>
             ) : (
-              <>
-                <div className="storage-bignum">
-                  ~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
-                  <span className="storage-bignum__sub">
-                    expected fleet total, flat out ·
-                    {" "}{dataRate.fleet_est_module_count || 0} recording-capable
-                    {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"} ·
-                    {" "}~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour
-                  </span>
-                </div>
-                <div className={`storage-projection storage-projection--${
-                  dataRate.est_share_runway_hours == null ? "flat"
-                    : dataRate.est_share_runway_hours < 72 ? "danger"
-                    : dataRate.est_share_runway_hours < 168 ? "warn" : "flat"}`}>
-                  {dataRate.est_share_runway_hours == null
-                    ? "nothing recording — estimated from each module's config"
-                    : `share would hold ${humanDuration(dataRate.est_share_runway_hours * 3600)} `
-                      + `if every module recorded at once`}
-                </div>
-                <p className="storage-muted">
-                  Estimated from each module's config (a worst-case ceiling);
-                  the measured rate replaces it once recording starts.
-                </p>
-              </>
+              <div className="storage-bignum storage-bignum--quiet">
+                Not recording now
+              </div>
+            )}
+
+            <MiniAreaChart
+              data={rateSeries}
+              unit=" MB/min"
+              yMin={0}
+              emptyText={`No samples in the last ${range.label} yet (one every 5 min)`}
+            />
+            {rateStats && (
+              <div className="storage-muted">
+                Last {range.label}: peak {fmt2(rateStats.peak)} MB/min
+                {rateStats.avg != null && (
+                  <> · {fmt2(rateStats.avg)} MB/min average while recording</>
+                )}
+                {" "}· recording in {Math.round(rateStats.busyFrac * 100)}% of samples
+              </div>
+            )}
+
+            {dataRate.recording_module_count > 0 && (
+              <div className={`storage-projection storage-projection--${
+                dataRate.share_runway_hours == null ? "flat"
+                  : dataRate.share_runway_hours < 72 ? "danger"
+                  : dataRate.share_runway_hours < 168 ? "warn" : "flat"}`}>
+                {dataRate.share_runway_hours == null
+                  ? "share free space unknown"
+                  : `share holds ${humanDuration(dataRate.share_runway_hours * 3600)} at this rate`}
+              </div>
+            )}
+
+            {dataRate.fleet_est_mb_per_min > 0 && (
+              <p className="storage-muted storage-datarate__flatout">
+                If all {dataRate.fleet_est_module_count} recording-capable
+                {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"} recorded at once:
+                {" "}~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
+                {" "}(~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour, from their config)
+                {dataRate.est_share_runway_hours != null && (
+                  <>; the share would hold {humanDuration(dataRate.est_share_runway_hours * 3600)}</>
+                )}
+              </p>
             )}
             {rateSeries.length > 1 && (
-              <>
-                <MiniAreaChart data={rateSeries} unit=" MB/min" yMin={0} />
-                <button className="refresh-btn" onClick={downloadRateCsv}>Download CSV</button>
-              </>
+              <button className="refresh-btn" onClick={downloadRateCsv}>Download CSV</button>
             )}
           </section>
 

@@ -11,6 +11,7 @@ import "./MiniAreaChart.css";
  *   decimals:  value label precision, default 1
  *   thresholds:[{ v: number, label: string, kind: "warn"|"danger" }]
  *   yMax / yMin: optional fixed axis bounds (else derived from data + thresholds)
+ *   emptyText: shown when there are no points, default "No history yet"
  */
 export default function MiniAreaChart({
   data = [],
@@ -18,6 +19,7 @@ export default function MiniAreaChart({
   unit = "",
   decimals = 1,
   thresholds = [],
+  emptyText = "No history yet",
   yMax: yMaxProp,
   yMin: yMinProp,
 }) {
@@ -90,7 +92,7 @@ export default function MiniAreaChart({
   return (
     <div className="mini-area-chart" ref={wrapRef}>
       {pts.length === 0 ? (
-        <div className="mini-area-chart__empty">No history yet</div>
+        <div className="mini-area-chart__empty">{emptyText}</div>
       ) : (
         <svg
           viewBox={`0 0 ${W} ${H}`}

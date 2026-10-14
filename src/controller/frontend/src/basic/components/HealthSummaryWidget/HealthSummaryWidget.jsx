@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
+import socket from "/src/socket";
 import "./HealthSummaryWidget.css";
 
 function tempClass(t) {
@@ -61,6 +62,14 @@ function formatDrift(ms) {
 export default function HealthSummaryWidget() {
   const { moduleHealth, controllerHealth } = useHealth();
   const { modules } = useModules();
+
+  // Export share (the controller's own share or an external NAS).
+  const [share, setShare] = useState(null);
+  useEffect(() => {
+    socket.on("nas_health_update", setShare);
+    socket.emit("get_nas_health");
+    return () => socket.off("nas_health_update", setShare);
+  }, []);
 
   // Live ticking controller clock — anchored each time health is received
   const [clockRef, setClockRef] = useState(null);
@@ -207,6 +216,16 @@ export default function HealthSummaryWidget() {
           <span className="hsw-label">Fullest disk</span>
           <span className={`hsw-value ${diskClass(maxDisk)}`}>
             {maxDisk}% - {maxDiskId}
+          </span>
+        </div>
+      )}
+
+      {share?.free_gb != null && (
+        <div className="hsw-row">
+          <span className="hsw-label">Share free</span>
+          <span className={`hsw-value ${
+            share.status === "error" ? "val--danger" : share.status === "warn" ? "val--warn" : "val--ok"}`}>
+            {share.free_gb.toLocaleString()} GB ({Math.round(share.free_pct)}%)
           </span>
         </div>
       )}

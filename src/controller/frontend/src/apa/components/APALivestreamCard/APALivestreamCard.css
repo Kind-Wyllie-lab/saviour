@@ -113,3 +113,27 @@
     flex-direction: column;
     gap: 10px;
   }
+
+/* Camera picker in the card header (more than one camera online). */
+.apa-stream-picker {
+  font: inherit;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  max-width: 70%;
+}
+
+/* Always shown when the stream isn't the APA camera (not dismissible). */
+.apa-stream-flag {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #7a4a00;
+  background: #ffd27a;
+  border: 1px solid #d4820a;
+}

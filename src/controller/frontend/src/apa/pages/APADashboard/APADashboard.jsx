@@ -22,11 +22,44 @@ function useNarrow() {
   return narrow;
 }
 
-function LivestreamOrTemplate({ module, moduleList }) {
-  if (module) return <APALivestreamCard module={module} moduleList={moduleList} />;
+const STREAM_KEY = "apa_dashboard_stream";
+
+const readSaved = () => {
+  try { return localStorage.getItem(STREAM_KEY); } catch { return null; }
+};
+
+/**
+ * The camera on the dashboard: the operator's pick (remembered per browser)
+ * while it's online, else the APA camera, else the first online camera.
+ * One stream at a time, so switching doesn't add load on the Pis.
+ */
+function useStreamChoice(moduleList) {
+  const [savedId, setSavedId] = useState(readSaved);
+  const cameras = moduleList.filter(
+    (m) => m.type?.includes("camera") && m.online !== false && m.status !== "OFFLINE");
+  const apaCamera = cameras.find((m) => m.type === "apa_camera") ?? null;
+  const chosen = cameras.find((m) => m.id === savedId) ?? apaCamera ?? cameras[0] ?? null;
+  const select = (id) => {
+    setSavedId(id);
+    try { localStorage.setItem(STREAM_KEY, id); } catch { /* per-browser nicety only */ }
+  };
+  return { cameras, chosen, select, apaPresent: !!apaCamera };
+}
+
+function LivestreamOrTemplate({ moduleList }) {
+  const { cameras, chosen, select, apaPresent } = useStreamChoice(moduleList);
+  if (chosen) {
+    return (
+      <APALivestreamCard
+        module={chosen} cameras={cameras} onSelect={select}
+        apaPresent={apaPresent} moduleList={moduleList}
+      />
+    );
+  }
   return (
     <div className="apa-camera-template">
       <p>APA camera not connected</p>
+      <p className="apa-camera-template__sub">No other camera is online either.</p>
     </div>
   );
 }
@@ -34,7 +67,6 @@ function LivestreamOrTemplate({ module, moduleList }) {
 function APADashboard() {
   const { moduleList } = useModules();
   const narrow = useNarrow();
-  const apaCamera = moduleList.find((m) => m.type === "apa_camera") ?? null;
 
   // Health and modules first, the rig's commands below them; one side panel
   // at every width above narrow (a third column pushed the panel off-screen).
@@ -51,14 +83,14 @@ function APADashboard() {
       {narrow ? (
         /* ── Narrow (<768px): single column, stream gets full width ── */
         <div className="dashboard-compact">
-          <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
+          <LivestreamOrTemplate moduleList={moduleList} />
           <div className="dashboard-compact-panel">{panel}</div>
         </div>
       ) : (
         /* ── Stream left, panel right ── */
         <div className="dashboard-main">
           <div className="apa-livestream-col">
-            <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
+            <LivestreamOrTemplate moduleList={moduleList} />
           </div>
           <div className="apa-dashboard-panel">{panel}</div>
         </div>

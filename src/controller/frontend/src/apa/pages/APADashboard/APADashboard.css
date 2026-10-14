@@ -56,3 +56,10 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+.apa-camera-template__sub {
+  color: var(--text-color);
+  opacity: 0.6;
+  font-size: 0.85rem;
+  margin: 4px 0 0;
+}

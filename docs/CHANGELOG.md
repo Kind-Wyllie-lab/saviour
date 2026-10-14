@@ -13,6 +13,11 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Post-Process: render time estimate; returning to the page shows the same session and its render; a cancel is not an error** (branch `fix/compose-jobs-eta-and-session` → `staging`).
+  - Render rows show "about N min left" from the progress this browser has seen (not the controller's clock), after 10 s and 1 % of movement.
+  - A render already kept running when leaving the page (jobs live in the controller), but coming back via the sidebar reopened Post-Process on the *alphabetically last* session, hiding the render, which looked like it had died. The page now remembers the last session picked (sessionStorage, as other panel settings) and otherwise defaults to the most recent session. A render running for another session shows as "Rendering <session>: 45% [Show]". While a render runs, a note says it carries on if you leave the page but stops if the controller restarts (e.g. an update).
+  - Cancelling a running render left it marked "error" ("cancelled") and logged an ERROR with a traceback; it now stays "cancelled" and logs one INFO line. 1 new test; lint, all five builds, ruff and the suite clean (bar the 9 known Windows-only failures).
+
 - [x] **Session export panel: overall progress bar and time-left estimate** (branch `feat/export-overall-progress` → `staging`). Under the headline, a bar for the session's whole run of exports ("444 MB / 512 MB · about 2 min left") alongside each module's own bar.
   - Module: `export_ready` now carries `bytes_total` (the staged size), so a queued module's size is known before it starts.
   - Controller: `ExportQueue.note_staged()` keeps each module's staged size; the snapshot adds `staged_bytes` to active/queued/re-run entries and `waves` = bytes already landed per session in the current run of exports (tallied on each export_complete, cleared when the session has nothing active or queued). Not persisted.

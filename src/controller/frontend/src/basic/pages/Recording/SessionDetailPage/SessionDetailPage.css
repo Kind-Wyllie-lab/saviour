@@ -724,3 +724,19 @@
 .session-postprocess-link:hover {
   background: color-mix(in srgb, var(--accent-color, #3f7cac) 10%, transparent);
 }
+
+/* A render running for a session other than the one shown. */
+.compose-panel__elsewhere {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.compose-panel__render-note {
+  margin: 6px 0 0;
+}

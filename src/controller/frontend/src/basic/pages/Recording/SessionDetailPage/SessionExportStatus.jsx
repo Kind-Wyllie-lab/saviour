@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { formatBytes } from "../sessionFormat";
+import { formatBytes, formatEta } from "../sessionFormat";
 import "./SessionExportStatus.css";
 
 // A module's progress report older than this is treated as stale (shown as
@@ -85,15 +85,6 @@ function overallProgress(session, queue) {
     total += q.staged_bytes;
   }
   return { done, total, known, active: entries > 0 };
-}
-
-function formatEta(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
-  if (seconds < 60) return "under a minute left";
-  const mins = Math.ceil(seconds / 60);
-  if (mins < 90) return `about ${mins} min left`;
-  const h = Math.floor(mins / 60);
-  return `about ${h} h ${mins - h * 60} min left`;
 }
 
 /** Seconds remaining from the recent transfer rate, or null if too early. */

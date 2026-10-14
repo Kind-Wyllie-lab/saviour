@@ -960,7 +960,13 @@
 
 .session-list__select-btn.is-active {
   border-color: var(--accent-color, #4a9eff);
-  color: var(--accent-color, #4a9eff);
+  background: var(--accent-color, #4a9eff);
+  color: #fff;
+  font-weight: 600;
+}
+
+.session-list__selection-done {
+  margin-left: auto;
 }
 
 .session-list__select-all {

@@ -43,6 +43,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass, field
 
@@ -590,9 +591,28 @@ def build_align_filter(fit: SidecarFit, t_start_ns: int, out_rate: int) -> str:
     return ",".join(stages)
 
 
+# Renders share the controller with its real-time jobs (PTP grandmaster,
+# the module bus, the web UI), and an H.264 encode takes every core it's
+# offered: ffmpeg runs at low CPU and IO priority, and encodes are capped.
+RENDER_THREADS = 3
+
+
+def _low_priority(cmd: list[str]) -> list[str]:
+    """`cmd` prefixed with `nice` (and `ionice`, best-effort class, lowest
+    level) where they exist, so a render never starves the controller."""
+    if not sys.platform.startswith("linux"):
+        return cmd
+    prefix = []
+    if shutil.which("nice"):
+        prefix += ["nice", "-n", "10"]
+    if shutil.which("ionice"):
+        prefix += ["ionice", "-c2", "-n7"]
+    return prefix + cmd
+
+
 def _run(cmd: list[str], timeout: float | None = None) -> None:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
+        proc = subprocess.run(_low_priority(cmd), capture_output=True, text=True,
                               timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"{cmd[0]} timed out after {timeout:g} s") from exc
@@ -610,7 +630,7 @@ def _run_progress(cmd: list[str], total_s: float | None, on_frac) -> None:
         return
     full = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
     proc = subprocess.Popen(
-        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        _low_priority(full), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
     try:
         for raw in proc.stdout:
@@ -832,6 +852,7 @@ def render_overlay(
             cmd += ["-map", f"{i + 1 + n}:a"]     # 0=composite, 1..n=wide PNGs
         cmd += _audio_titles(labels, len(aligned_paths))
         cmd += ["-shortest", "-c:v", "libx264", "-crf", "20",
+                "-threads", str(RENDER_THREADS),
                 "-c:a", "flac", out_path]
         _run_progress(cmd, total_s, progress)
     finally:
@@ -860,6 +881,37 @@ def _audio_titles(labels: list[str] | None, n: int) -> list[str]:
         if label:
             out += [f"-metadata:s:a:{i}", f"title={label}"]
     return out
+
+
+def render_strip_png(aligned_path: str, out_png: str, width: int, height: int,
+                     spec: SpectrogramOpts | None = None) -> str:
+    """One aligned track's whole spectrogram as a wide, chrome-free PNG, for
+    the compositor to scroll (video_compose `audio_panels`)."""
+    spec = spec or SpectrogramOpts()
+    _run(["ffmpeg", "-y", "-i", aligned_path,
+          "-lavfi", spec.pic_filter_nolegend(width, height), out_png])
+    return out_png
+
+
+def render_with_audio(composite_path: str, aligned_paths: list[str], out_path: str,
+                      labels: list[str] | None = None, progress=None,
+                      total_s: float | None = None) -> str:
+    """The composite (spectrogram panels already drawn in by the compositor)
+    re-encoded to H.264 with every aligned track muxed in. Lean encoder
+    settings: at 1920x1620 x264's defaults alone took ~800 MB; with a short
+    lookahead and RENDER_THREADS it's ~450 MB, leaving the controller room."""
+    cmd = ["ffmpeg", "-y", "-i", composite_path]
+    for path in aligned_paths:
+        cmd += ["-i", path]
+    cmd += ["-map", "0:v"]
+    for i in range(len(aligned_paths)):
+        cmd += ["-map", f"{i + 1}:a"]
+    cmd += _audio_titles(labels, len(aligned_paths))
+    cmd += ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+            "-x264-params", "rc-lookahead=10", "-threads", str(RENDER_THREADS),
+            "-pix_fmt", "yuv420p", "-c:a", "flac", out_path]
+    _run_progress(cmd, total_s, progress)
+    return out_path
 
 
 def render_muxed_track(
@@ -957,6 +1009,7 @@ def render_ethogram(
         "-filter_complex", graph, "-map", "[v]", "-map", "1:a",
         "-r", str(fps), "-shortest",
         "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+        "-threads", str(RENDER_THREADS),
         "-pix_fmt", "yuv420p", "-g", str(fps * 3), "-c:a", "aac", "-b:a", "96k",
         "-movflags", "+faststart", out_path,
     ])

@@ -775,6 +775,7 @@ class PreviewQueue:
             self._cv.notify()
 
     def _run(self) -> None:
+        _lower_thread_priority()
         while True:
             with self._cv:
                 if not self._cv.wait_for(lambda: self._pending,
@@ -1028,6 +1029,7 @@ class ComposeWorker:
                 self._log.exception("compose on_update callback failed")
 
     def _run_loop(self) -> None:
+        _lower_thread_priority()
         while True:
             job_id = self._queue.get()
             job = self._jobs.get(job_id)
@@ -1086,8 +1088,9 @@ class ComposeWorker:
         )
 
         audio = AudioSpec(**spec.audio)
-        # `strip`/`panel` composite a spectrogram video with ffmpeg, so the
-        # base pass writes a temp mp4; `track`/`none` write the final file.
+        # `strip`/`panel`: the compositor draws the spectrograms, then ffmpeg
+        # re-encodes with the audio muxed in, so the base pass writes a temp
+        # mp4; `track`/`none` write the final file.
         needs_ffmpeg_pass = audio.mode in ("strip", "panel")
         fmt = "mkv" if needs_ffmpeg_pass else spec.fmt
         out_name = f"{spec.session_name}_composed_{job.id}.{fmt}"
@@ -1110,87 +1113,119 @@ class ComposeWorker:
                 set_progress(lo + (hi - lo) * frac, _stage or stage)
             return cb
 
-        # `none`/`track` audio is cheap (stream copy); `strip`/`panel` re-encode
-        # the whole video, so give it a real slice of the bar.
-        video_hi = 0.65 if audio.mode in ("strip", "panel") else (
-            0.97 if audio.mode == "track" else 1.0
-        )
+        # `none`/`track` audio is cheap (stream copy); `strip`/`panel` align
+        # the audio first (its spectrograms are drawn into the composite),
+        # then re-encode, so each gets a real slice of the bar.
+        panel_modes = audio.mode in ("strip", "panel")
+        video_lo, video_hi = (0.12, 0.75) if panel_modes else (
+            0.0, 0.97 if audio.mode == "track" else 1.0)
+        aligned, labels, temp_pngs = [], [], []
         try:
+            audio_panels = None
+            if panel_modes:
+                aligned, labels = self._align_devices(
+                    date_dir, streams, audio, out_path, phase(0.0, 0.1, "aligning audio"),
+                    job.warnings)
+                t_start, t_end = camera_window(streams)
+                strip_w, pps = audio_align._strip_pixels_per_second((t_end - t_start) / 1e9)
+                total_h = audio_height_px(canvas_h, audio.effective_height_pct)
+                heights = panel_heights(total_h, len(aligned) if audio.mode == "panel" else 1)
+                images = []
+                for i, (path, h) in enumerate(zip(aligned, heights, strict=False)):
+                    png = os.path.splitext(out_path)[0] + f".panel{i}.png"
+                    temp_pngs.append(png)
+                    audio_align.render_strip_png(path, png, strip_w, h, audio.spec_opts())
+                    images.append((png, labels[i], h))
+                set_progress(0.12, "compositing video")
+                audio_panels = {"mode": audio.mode, "pps": pps, "images": images}
             video_compose.compose_session_video(
                 date_dir, base_path,
                 streams=[s.name for s in streams],
                 regions=regions, canvas=(canvas_w, canvas_h),
-                fps=spec.fps, progress=phase(0.0, video_hi, "compositing video"),
+                fps=spec.fps, progress=phase(video_lo, video_hi, "compositing video"),
                 csv_skip={s.name: s.csv_skip for s in streams},
                 warnings=job.warnings,
+                audio_panels=audio_panels,
             )
-            if audio.mode != "none":
-                n_panels = 1
-                if audio.mode == "panel":
-                    try:
-                        n_panels = len(resolve_mic_devices(date_dir, audio))
-                    except ComposeError:
-                        pass  # _apply_audio reports the missing mic itself
+            if panel_modes:
+                t_start, t_end = camera_window(streams)
+                audio_align.render_with_audio(
+                    base_path, aligned, out_path, labels,
+                    progress=phase(0.75, 1.0, "encoding with audio"),
+                    total_s=(t_end - t_start) / 1e9)
+                _safe_unlink(base_path)
+            elif audio.mode == "track":
                 self._apply_audio(date_dir, streams, audio, base_path, out_path,
-                                  spec.fps, phase,
-                                  panel_heights(audio_height_px(
-                                      canvas_h, audio.effective_height_pct),
-                                      max(1, n_panels))[0],
-                                  warnings=job.warnings)
+                                  spec.fps, phase, warnings=job.warnings)
                 _safe_unlink(base_path)
         except _CancelledError:
             _safe_unlink(base_path)
             _safe_unlink(out_path)
             raise ComposeError("cancelled") from None
+        finally:
+            for path in aligned + temp_pngs:
+                _safe_unlink(path)
 
         return os.path.relpath(out_path, self.share_path)
 
-    def _apply_audio(self, date_dir, streams, audio: AudioSpec,
-                     base_path: str, out_path: str, fps: int, phase,
-                     strip_height: int = audio_align.DEFAULT_STRIP_HEIGHT,
-                     warnings: list | None = None) -> None:
+    def _align_devices(self, date_dir, streams, audio: AudioSpec, out_path: str,
+                       progress, warnings: list | None = None) -> tuple[list, list]:
+        """Each chosen AudioMoth aligned to the camera window as a FLAC next
+        to `out_path`: ([paths], [labels]). Strip mode uses the first only."""
         t_start, t_end = camera_window(streams)
         window_s = (t_end - t_start) / 1e9
         devices = resolve_mic_devices(date_dir, audio)
         if audio.mode == "strip":
             devices = devices[:1]
         aligned, labels = [], []
+        n = len(devices)
         try:
-            n = len(devices)
             for i, dev in enumerate(devices):
                 parts = _aligned_mic_parts(
                     find_microphone_segments(date_dir, dev["folder"], dev["device"]),
                     t_start, t_end, warnings, self._log)
                 if not parts:
-                    msg = f"{dev['label']}: no recording overlaps the video"
                     if warnings is not None:
-                        warnings.append(msg)
+                        warnings.append(f"{dev['label']}: no recording overlaps the video")
                     continue
                 path = os.path.splitext(out_path)[0] + f"_aligned{i}.flac"
                 audio_align.render_aligned_audio_segments(
                     parts, t_start, window_s, path, parts[0][1].nominal_rate_hz,
-                    progress=phase(0.65 + 0.1 * i / n, 0.65 + 0.1 * (i + 1) / n,
-                                   f"aligning audio ({dev['label']})"),
+                    progress=lambda f, _i=i: progress((_i + f) / n),
                 )
                 aligned.append(path)
                 labels.append(dev["label"])
-            if not aligned:
-                raise ComposeError("no microphone recording overlaps the video")
-            if audio.mode == "track":
-                audio_align.render_muxed_track(base_path, aligned, out_path, labels)
-            else:  # strip | panel
-                audio_align.render_overlay(
-                    base_path, aligned, out_path,
-                    strip_height, fps,
-                    spec=audio.spec_opts(), stacked=(audio.mode == "panel"),
-                    progress=phase(0.75, 1.0, "rendering audio panel"),
-                    total_s=window_s,
-                    panel_count=len(aligned) if audio.mode == "panel" else 1,
-                    labels=labels,
-                )
+        except BaseException:
+            for path in aligned:
+                _safe_unlink(path)
+            raise
+        if not aligned:
+            raise ComposeError("no microphone recording overlaps the video")
+        return aligned, labels
+
+    def _apply_audio(self, date_dir, streams, audio: AudioSpec,
+                     base_path: str, out_path: str, fps: int, phase,
+                     warnings: list | None = None) -> None:
+        """`track` mode: the composite, unchanged, with one audio track per
+        AudioMoth muxed in."""
+        aligned, labels = self._align_devices(
+            date_dir, streams, audio, out_path, phase(0.97, 0.99, "aligning audio"),
+            warnings)
+        try:
+            audio_align.render_muxed_track(base_path, aligned, out_path, labels)
         finally:
             for path in aligned:
                 _safe_unlink(path)
+
+
+def _lower_thread_priority() -> None:
+    """Nice the calling thread (Linux schedules threads individually), so
+    the in-process OpenCV compositing of a render or preview yields to the
+    controller's real-time work, as its ffmpeg children do."""
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
+    except (AttributeError, OSError):
+        pass
 
 
 class _CancelledError(Exception):

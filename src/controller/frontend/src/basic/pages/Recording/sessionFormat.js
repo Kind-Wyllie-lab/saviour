@@ -86,6 +86,16 @@ export function levelClass(line) {
   return `fault-alert-log-line--${m[1].toLowerCase()}`;
 }
 
+/** "under a minute left", "about 4 min left", "about 1 h 20 min left". */
+export function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds < 60) return "under a minute left";
+  const mins = Math.ceil(seconds / 60);
+  if (mins < 90) return `about ${mins} min left`;
+  const h = Math.floor(mins / 60);
+  return `about ${h} h ${mins - h * 60} min left`;
+}
+
 export function formatBytes(bytes) {
   if (bytes === 0) return "0 B";
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;

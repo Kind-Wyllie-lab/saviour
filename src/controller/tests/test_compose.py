@@ -506,6 +506,27 @@ def test_worker_cancel_queued_job(tmp_path):
     assert _wait_for(lambda: w.get(first.id).state == "done")
 
 
+def test_worker_cancel_running_job_stays_cancelled(tmp_path):
+    """Cancelling mid-render unwinds via ComposeError("cancelled"); that is
+    the operator's choice, not a failure: the job stays "cancelled"."""
+    started = {"go": False}
+
+    def render(job):
+        started["go"] = True
+        while job.state != "cancelled":
+            time.sleep(0.01)
+        raise ComposeError("cancelled")
+
+    w, updates = _worker(tmp_path, render=render)
+    job = w.submit(ComposeSpec.from_dict({"session_name": "sess"}))
+    assert _wait_for(lambda: started["go"])
+    assert w.cancel(job.id) is True
+    assert _wait_for(lambda: w.get(job.id).finished_at is not None)
+    assert w.get(job.id).state == "cancelled"
+    assert w.get(job.id).error is None
+    assert updates[-1]["state"] == "cancelled"
+
+
 # --------------------------------------------------------------------------- #
 # Spectrogram height                                                          #
 # --------------------------------------------------------------------------- #

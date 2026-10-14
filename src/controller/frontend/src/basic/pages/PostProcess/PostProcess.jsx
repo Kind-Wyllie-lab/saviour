@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
+import usePersistedState from "/src/hooks/usePersistedState";
 import {
   triggerDownload, formatBytes, groupSessionsByDate, dateGroupLabel,
 } from "../Recording/sessionFormat";
@@ -27,14 +28,24 @@ export default function PostProcess() {
     [sessions],
   );
 
-  const [selected, setSelected] = useState(params.get("session") || "");
+  // Remembered so leaving the page (sidebar) and coming back reopens the
+  // same session, and its render, rather than a different one.
+  const [remembered, setRemembered] = usePersistedState("postprocess_session", "");
+  const [selected, setSelectedRaw] = useState(params.get("session") || remembered || "");
+  const setSelected = (name) => {
+    setSelectedRaw(name);
+    setRemembered(name);
+  };
   const [fileInfo, setFileInfo] = useState(null);
   const seededRef = useRef(false);
 
-  // Default to the session in the URL, else the most recent one.
+  // Default to the session in the URL (or the one last picked here), else
+  // the most recent one -- the controller lists sessions oldest first; the
+  // alphabetically last name (what this used) is usually not the newest.
   useEffect(() => {
     if (seededRef.current || !names.length) return;
-    const want = names.includes(selected) ? selected : names[names.length - 1];
+    const newest = Object.keys(sessions || {}).pop();
+    const want = names.includes(selected) ? selected : newest;
     seededRef.current = true;
     if (want !== selected) setSelected(want);
   }, [names]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -102,6 +113,7 @@ export default function PostProcess() {
             session={sessions?.[selected]}
             files={fileInfo.files}
             onRequestDownload={requestDownload}
+            onSelectSession={(name) => names.includes(name) && setSelected(name)}
           />
           <EphysAlignPanel sessionName={selected} />
         </>

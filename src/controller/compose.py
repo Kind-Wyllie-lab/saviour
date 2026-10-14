@@ -856,6 +856,12 @@ class ComposeWorker:
                     job.progress = 1.0
                     job.output_rel = out_rel
             except Exception as exc:  # noqa: BLE001 -- report, never crash the loop
+                if job.state == "cancelled":
+                    # Operator pressed Cancel: the render unwinds via
+                    # ComposeError("cancelled"), which is not a failure.
+                    if self._log:
+                        self._log.info("compose job %s cancelled", job.id)
+                    continue
                 job.state = "error"
                 job.stage = "error"
                 job.error = str(exc)

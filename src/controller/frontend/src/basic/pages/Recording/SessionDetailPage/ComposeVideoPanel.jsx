@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import socket from "/src/socket";
 import usePersistedState from "/src/hooks/usePersistedState";
-import { formatDuration } from "../sessionFormat";
+import { formatDuration, formatEta } from "../sessionFormat";
 import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../syncFormat";
 
 const LAYOUTS = [
@@ -80,9 +80,37 @@ function streamsByDate(files) {
   return byDate;
 }
 
+/** Seconds left for a running render, from the progress this browser has
+ *  seen it make (not the controller's clock, which may differ from ours).
+ *  Null until there's enough to go on: 10 s and 1 % of movement. */
+function useRenderEta(job) {
+  const first = useRef(null);
+  const running = job.state === "running";
+  const p = job.progress || 0;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, [running]);
+  useEffect(() => {
+    if (!running) { first.current = null; return; }
+    if (first.current === null || p < first.current.p) {
+      first.current = { t: Date.now(), p };
+    }
+  }, [running, p]);
+  const f = first.current;
+  if (!running || !f) return null;
+  const dt = (now - f.t) / 1000;
+  const dp = p - f.p;
+  if (dt < 10 || dp < 0.01) return null;
+  return (dt / dp) * (1 - p);
+}
+
 function JobRow({ job, onCancel, onDownload }) {
   const pct = Math.round((job.progress || 0) * 100);
   const active = job.state === "queued" || job.state === "running";
+  const etaText = formatEta(useRenderEta(job));
   const elapsed =
     job.started_at && job.finished_at
       ? formatDuration((job.finished_at - job.started_at) / 60)
@@ -94,6 +122,9 @@ function JobRow({ job, onCancel, onDownload }) {
           {job.stage || job.state}
         </span>
         {active && <span className="compose-job__pct">{pct}%</span>}
+        {active && job.state === "running" && (
+          <span className="compose-job__pct">{etaText || "estimating time left…"}</span>
+        )}
         {elapsed && <span className="compose-job__pct">{elapsed}</span>}
         {active && (
           <button className="btn btn-small" onClick={() => onCancel(job.id)}>
@@ -125,7 +156,9 @@ function JobRow({ job, onCancel, onDownload }) {
   );
 }
 
-export default function ComposeVideoPanel({ sessionName, session, files, onRequestDownload }) {
+export default function ComposeVideoPanel({
+  sessionName, session, files, onRequestDownload, onSelectSession,
+}) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
 
@@ -308,6 +341,12 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
     .sort((a, b) => b.created_at - a.created_at);
   const anyActive = jobList.some(
     (j) => j.state === "queued" || j.state === "running",
+  );
+  // Renders run on the controller, so one started for another session keeps
+  // going while this page shows a different one; say so rather than hide it.
+  const elsewhere = Object.values(jobs).filter(
+    (j) => (j.state === "queued" || j.state === "running")
+      && j.spec?.session_name && j.spec.session_name !== sessionName,
   );
 
   const submit = () => {
@@ -625,6 +664,28 @@ export default function ComposeVideoPanel({ sessionName, session, files, onReque
           {anyActive ? "Rendering…" : "Render video"}
         </button>
       </div>
+
+      {elsewhere.map((j) => (
+        <div key={j.id} className="compose-panel__elsewhere">
+          Rendering <strong>{j.spec.session_name}</strong>:{" "}
+          {j.state === "queued" ? "queued" : `${Math.round((j.progress || 0) * 100)}%`}
+          {onSelectSession && (
+            <button
+              className="btn btn-small"
+              onClick={() => onSelectSession(j.spec.session_name)}
+            >
+              Show
+            </button>
+          )}
+        </div>
+      ))}
+
+      {anyActive && (
+        <div className="compose-panel__hint compose-panel__render-note">
+          The render runs on the controller: it carries on if you leave this
+          page, but stops if the controller restarts (e.g. a software update).
+        </div>
+      )}
 
       {jobList.length > 0 && (
         <div className="compose-panel__jobs">

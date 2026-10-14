@@ -1445,6 +1445,52 @@ class Recording:
         return {"result": "success"}
 
 
+    def resolve_pending_exports(self, session_name: str) -> dict:
+        """Operator clears a stopped session's unconfirmed-export count.
+
+        `pending_exports` can stay above zero after every file has landed:
+        an export lost with a module reboot before its complete arrived (the
+        case fixed in c3e56bb9, but sessions from before it keep the count),
+        or a module that has since left the fleet. Nothing then clears it,
+        and the session shows as still exporting indefinitely. Refused while
+        anything is actually exporting or queued for the session (the count
+        will settle by itself); logged as a session event so the record
+        shows it was cleared by hand rather than confirmed."""
+        session = self.sessions.get(session_name)
+        if session is None:
+            return {"result": "error", "error": "Session not found"}
+        if session.state != SessionState.STOPPED:
+            return {"result": "error", "error": "Only a stopped session's exports can be resolved"}
+        count = session.pending_exports or 0
+        if count <= 0:
+            return {"result": "error", "error": "No unconfirmed exports to resolve"}
+        try:
+            snapshot = self.facade.get_export_queue() or {}
+        except Exception:  # noqa: BLE001 -- no queue view: don't block the operator
+            snapshot = {}
+        moving = [
+            e.get("module_id") for e in
+            (snapshot.get("active") or []) + (snapshot.get("queued") or [])
+            + (snapshot.get("rerun") or [])
+            if e.get("session") == session_name
+        ]
+        if moving:
+            return {"result": "error",
+                    "error": f"Still exporting for this session ({', '.join(moving)}); "
+                             "the count will settle when that finishes"}
+        with self._lock:
+            session.pending_exports = 0
+            session.export_stall_alerted = False
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self._log_session_event(
+            session_name, "INFO",
+            f"{count} unconfirmed export(s) marked resolved by the operator "
+            f"(nothing was exporting for this session)")
+        self.logger.info(f"Resolved {count} pending export(s) for '{session_name}' by hand")
+        return {"result": "success", "resolved": count}
+
+
     def clear_fault(self, session_name: str) -> dict:
         """Operator acknowledges a session fault: wipe the fault record so
         the badge clears. If the session is parked in ERROR, flip it back to

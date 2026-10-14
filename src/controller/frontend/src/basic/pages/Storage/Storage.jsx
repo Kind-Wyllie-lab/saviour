@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import useExportQueue from "/src/hooks/useExportQueue";
+import ResolveExportsButton from "../../components/ResolveExportsButton/ResolveExportsButton";
 import MiniAreaChart from "../../components/MiniAreaChart/MiniAreaChart";
 import { triggerDownload } from "../Recording/sessionFormat";
 import "./Storage.css";
@@ -31,6 +33,14 @@ function humanDuration(seconds) {
   const h = seconds / 3600;
   if (h >= 1.5) return `~${Math.round(h)} hours`;
   return "< 1 hour";
+}
+
+// "53 hours (2.2 days)", "9 hours", "40 minutes" -- hours first, as asked.
+function runwayText(hours) {
+  if (!Number.isFinite(hours) || hours <= 0) return "no time";
+  if (hours < 1) return `${Math.round(hours * 60)} minutes`;
+  const h = Math.round(hours);
+  return hours >= 48 ? `${h} hours (${(hours / 24).toFixed(1)} days)` : `${h} hour${h === 1 ? "" : "s"}`;
 }
 
 function humanMinutes(mins) {
@@ -100,6 +110,7 @@ function CapacityBar({ usedPct, warnAt, dangerAt }) {
 
 export default function Storage() {
   const loggedIn = useIsLoggedIn();
+  const exportQueue = useExportQueue();
   const [overview, setOverview] = useState(null);
   const [history, setHistory] = useState([]);
   const [rateHistory, setRateHistory] = useState([]);
@@ -173,6 +184,17 @@ export default function Storage() {
 
   const usedPct = nas.free_pct != null ? 100 - nas.free_pct : null;
 
+  // Pending counts are the controller's per-session tallies; the export
+  // queue says what's actually moving. A count with nothing moving is a
+  // stale, never-confirmed export, not work in progress.
+  const sessionsMoving = new Set(
+    [...(exportQueue?.active || []), ...(exportQueue?.queued || []),
+      ...(exportQueue?.rerun || [])].map((e) => e.session));
+  const exportingNow = (exportQueue?.active?.length || 0) + (exportQueue?.queued?.length || 0);
+  const unconfirmed = exports.sessions
+    .filter((x) => !sessionsMoving.has(x.session_name))
+    .reduce((n, x) => n + (x.pending || 0), 0);
+
   const downloadCsv = () => {
     const q = range.hours ? `?hours=${range.hours}` : "?hours=all";
     triggerDownload(`/api/nas_history.csv${q}`, `nas_history_${range.label}.csv`);
@@ -226,6 +248,13 @@ export default function Storage() {
                     {nas.free_pct}% of {nas.total_gb?.toLocaleString()} GB
                   </span>
                 </div>
+                {dataRate.est_share_runway_hours != null && (
+                  <div className="storage-dest__runway">
+                    ≈ {runwayText(dataRate.est_share_runway_hours)} of recording if all
+                    {" "}{dataRate.fleet_est_module_count} module
+                    {dataRate.fleet_est_module_count === 1 ? "" : "s"} record
+                  </div>
+                )}
                 <CapacityBar
                   usedPct={usedPct}
                   warnAt={100 - (nas.warn_free_pct ?? 15)}
@@ -350,8 +379,12 @@ export default function Storage() {
             <div className="storage-card__head"><h2>Export backlog</h2></div>
             <div className="storage-stat-row">
               <div className="storage-stat">
-                <span className="storage-stat__num">{exports.pending}</span>
-                <span className="storage-stat__lbl">pending</span>
+                <span className="storage-stat__num">{exportingNow}</span>
+                <span className="storage-stat__lbl">exporting now</span>
+              </div>
+              <div className={`storage-stat ${unconfirmed ? "storage-stat--warn" : ""}`}>
+                <span className="storage-stat__num">{unconfirmed}</span>
+                <span className="storage-stat__lbl">not confirmed</span>
               </div>
               <div className={`storage-stat ${exports.failed ? "storage-stat--bad" : ""}`}>
                 <span className="storage-stat__num">{exports.failed}</span>
@@ -363,27 +396,46 @@ export default function Storage() {
               <p className="storage-muted">All exports up to date.</p>
             ) : (
               <ul className="storage-session-list">
-                {exports.sessions.map((s) => (
-                  <li key={s.session_name}>
-                    <div className="storage-session-list__row">
-                      <span className="storage-session-list__name" title={s.session_name}>
-                        {s.session_name}
-                      </span>
-                      <span className="storage-muted">
-                        {s.pending > 0 && `${s.pending} pending`}
-                        {s.pending > 0 && s.failed > 0 && ", "}
-                        {s.failed > 0 && <span className="storage-bad">{s.failed} failed</span>}
-                      </span>
-                    </div>
-                    {loggedIn && s.failed > 0 && (
-                      <button
-                        className="storage-link storage-link--btn"
-                        onClick={() => socket.emit("retry_failed_exports", { session_name: s.session_name })}
-                      >Retry failed</button>
-                    )}
-                  </li>
-                ))}
+                {exports.sessions.map((s) => {
+                  const moving = sessionsMoving.has(s.session_name);
+                  return (
+                    <li key={s.session_name}>
+                      <div className="storage-session-list__row">
+                        <Link
+                          className="storage-session-list__name"
+                          title={s.session_name}
+                          to={`/recording/sessions/${encodeURIComponent(s.session_name)}`}
+                        >
+                          {s.session_name}
+                        </Link>
+                        <span className="storage-muted">
+                          {s.pending > 0 && (moving
+                            ? `${s.pending} exporting`
+                            : `${s.pending} not confirmed, nothing exporting`)}
+                          {s.pending > 0 && s.failed > 0 && ", "}
+                          {s.failed > 0 && <span className="storage-bad">{s.failed} failed</span>}
+                        </span>
+                      </div>
+                      {loggedIn && s.failed > 0 && (
+                        <button
+                          className="storage-link storage-link--btn"
+                          onClick={() => socket.emit("retry_failed_exports", { session_name: s.session_name })}
+                        >Retry failed</button>
+                      )}
+                      {s.pending > 0 && !moving && s.state === "stopped" && (
+                        <ResolveExportsButton sessionName={s.session_name} count={s.pending} />
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
+            )}
+            {unconfirmed > 0 && (
+              <p className="storage-muted">
+                &quot;Not confirmed&quot; means the controller never heard an export finish and
+                nothing is exporting for that session now (e.g. a module rebooted mid-export).
+                Check its files on the share, then mark it resolved.
+              </p>
             )}
           </section>
 

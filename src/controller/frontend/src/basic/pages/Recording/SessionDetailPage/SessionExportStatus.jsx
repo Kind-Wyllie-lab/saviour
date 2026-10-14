@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { formatBytes, formatEta } from "../sessionFormat";
+import ResolveExportsButton from "../../../components/ResolveExportsButton/ResolveExportsButton";
 import "./SessionExportStatus.css";
 
 // A module's progress report older than this is treated as stale (shown as
@@ -134,8 +135,9 @@ export default function SessionExportStatus({ session, queue, moduleNames = {} }
     headline = "Some files could not be exported";
     tone = "problem";
   } else if (stalled) {
-    headline = `Exports stalled: ${pending} not confirmed on the share. `
-      + "Check the modules are online, then use Retry Export.";
+    headline = `Exports stalled: ${pending} not confirmed on the share, and nothing is `
+      + "exporting. Check the modules are online and use Retry Export, or, if the files "
+      + "are on the share, mark it resolved.";
     tone = "problem";
   } else if (allDone) {
     headline = "All files are on the share";
@@ -158,6 +160,11 @@ export default function SessionExportStatus({ session, queue, moduleNames = {} }
       <div className="session-export__headline">
         {tone === "done" ? "✓ " : ""}{headline}
       </div>
+      {stalled && session.state === "stopped" && (
+        <div className="session-export__resolve">
+          <ResolveExportsButton sessionName={session.session_name} count={pending} />
+        </div>
+      )}
       {showOverall && (
         <div className="session-export__overall">
           <span

@@ -227,6 +227,9 @@ class ControllerFacade:
     def retry_failed_exports(self, session_name: str) -> dict:
         return self.controller.recording.retry_failed_exports(session_name)
 
+    def resolve_pending_exports(self, session_name: str) -> dict:
+        return self.controller.recording.resolve_pending_exports(session_name)
+
     def clear_fault(self, session_name: str) -> dict:
         return self.controller.recording.clear_fault(session_name)
 

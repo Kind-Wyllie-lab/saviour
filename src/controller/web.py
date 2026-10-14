@@ -1974,6 +1974,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
+        @self.socketio.on("resolve_pending_exports")
+        def handle_resolve_pending_exports(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = (data or {}).get("session_name")
+            self.logger.info(f"Received request to resolve pending exports for session '{session_name}'")
+            result = self.facade.resolve_pending_exports(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+            else:
+                self.socketio.emit("storage_overview", self._storage_overview())
+
         @self.socketio.on("clear_fault")
         def handle_clear_fault(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

@@ -13,6 +13,12 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Stale "pending" exports can be marked resolved; the backlog tells them from real exports; hours of recording on the destination card** (branch `feat/resolve-stale-exports` → `staging`).
+  - `testD-160224` (5 Oct) still showed "1 pending" on the Storage page: a count left by an export lost with a module reboot before c3e56bb9, with nothing exporting for it since. Nothing could clear it short of deleting the session. `Recording.resolve_pending_exports()` / socket `resolve_pending_exports` (login required) sets a stopped session's count to 0, refuses while anything is active, queued or due to re-run for that session, and logs a session event ("N unconfirmed export(s) marked resolved by the operator").
+  - Storage backlog: "exporting now" (from the export queue) vs "not confirmed" (a count with nothing moving) vs "failed"; each session links to its page; a not-confirmed one offers **Mark resolved** with an inline warning (it clears the count, it doesn't move or check files). The session page's stalled-exports panel offers the same.
+  - Export destination card: "≈ 53 hours (2.2 days) of recording if all 4 modules record" under the free space, from the all-modules estimate.
+  - 4 new tests; lint, all five builds, ruff and the suite clean (bar the 9 known Windows-only failures).
+
 - [x] **Storage page: the all-modules-recording rate gets equal billing** (branch `feat/storage-flatout-prominent` → `staging`). The data-rate card opens with two figures side by side: **Now** (measured rate, GB/hour, modules recording, how long the share lasts at that rate, or "Not recording") and **All N modules recording** (the config-based ceiling, GB/hour, how long the share would last), instead of the ceiling as a footnote. Lint and all five builds clean.
 
 - [x] **Storage page: measures the controller's own share; history kept across restarts; clearer data-rate card** (branch `fix/storage-page` → `staging`; field feedback on the desk rig).

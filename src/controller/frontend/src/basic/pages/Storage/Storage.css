@@ -288,3 +288,22 @@
   font-size: 0.8rem;
   font-weight: 600;
 }
+
+.storage-stat--warn .storage-stat__num { color: var(--warning-color, #b26a00); }
+
+.storage-session-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+a.storage-session-list__name {
+  color: var(--accent-color, #3f7cac);
+  text-decoration: none;
+}
+
+.storage-dest__runway {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 2px 0 6px;
+}

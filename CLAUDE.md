@@ -189,7 +189,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Web UI: one shared plaintext password, no lockout, `cors_allowed_origins="*"` → `plans/remote-access-auth-hardening.md`.
 - Module MJPEG stream (`:8080+`) unauthenticated on `0.0.0.0` → `plans/mjpeg-stream-auth.md`.
 - No SMB3 `seal` on CIFS; clones share the OS login credential; `push_credentials.sh` disables host-key checks; `saviour.service` runs as root unhardened; modules have no firewall.
-- SSH: password logins on, one `authorized_keys` copied to every clone → certificate login: phase 1 done (per-deployment CA via `saviour-config` → SSH access, `tools/ssh_ca.py`); phases 2-3 (controller certs, passwords off, VNC, cloud-init drop-in) → `plans/ssh-certificate-auth.md`.
+- SSH: password logins on, one `authorized_keys` copied to every clone → certificate login and per-rig login mode (`any`/`keys`/`certs`) built (`saviour-config` → SSH access, `tools/ssh_ca.py`); open: controller cert on hardware, VNC still uses the pi password, rollout to other rigs → `plans/ssh-certificate-auth.md`.
 - GitHub settings reminders (secret scanning, deletions on `main`, …): `plans/backlog.md`.
 
 **Reliability / UX**

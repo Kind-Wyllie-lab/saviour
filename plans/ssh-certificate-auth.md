@@ -1,7 +1,10 @@
 # SSH certificates for fleet login (key-only SSH at scale)
 
-- **Status:** phase 1 built (2026-10-14): CA trust via `saviour-config`,
-  controller-served to modules, `tools/ssh_ca.py`. Passwords still on.
+- **Status:** phases 1-3 built (2026-10-14). CA trust, login modes
+  (`any`/`keys`/`certs`) and the controller certificate via `saviour-config`,
+  controller-served to modules; `tools/ssh_ca.py`. Desk fleet trusts the SIDB
+  IT CA, login mode left at `any`. Not done: controller certificate on
+  hardware (needs the CA holder), VNC, other rigs.
 - **Created:** 2026-10-13
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Security": clones share the OS login
@@ -109,15 +112,25 @@ public key instead of a list of individual keys.
    the certificate accepted), an expired certificate is refused, a revoked
    serial is refused, a certificate without the principal is refused, the
    controller certificate is refused from any address but 10.0.0.1.
-2. **Switch the scripts.** Issue each controller's certificate (a
-   `saviour-config` action to make the controller's key and show its public
-   half for signing). Change `push_credentials.sh` and
-   `tools/framesync_sweep.py` to rely on it. Accept: both run on the desk
-   fleet with no password prompt.
-3. **Passwords off, old keys out.** Add `PasswordAuthentication no` and
-   `KbdInteractiveAuthentication no` to the drop-in, pushed from the
-   controller like the CA, per rig at a planned time. Guard: refuse unless a
-   CA is installed and the device has seen a certificate login. Also:
+2. **Controller certificate.** *Built 2026-10-14.* Key at
+   `/etc/saviour/ssh/controller_key`; `tools/ssh_ca.py certify-controller
+   --ca <ca> --host pi@<controller>` fetches it (`--controller-key`), signs it
+   (`saviour-controller`, `source-address=<controller ip>/32`, 52 weeks) and
+   installs it (`--set-controller-cert`, which refuses a certificate for any
+   other key) with an `ssh_config.d` drop-in for `pi` and `root`.
+   `tools/framesync_sweep.py` runs on the admin PC, so it uses the person's
+   certificate. Accept (outstanding, needs the CA holder):
+   `push_credentials.sh` reaches a module in `certs` mode.
+3. **Passwords off, old keys out.** *Built and accepted on the desk fleet
+   2026-10-14.* The rig's **login mode**, set on the controller
+   (`--set-ssh-login-mode any|keys|certs`, SSH access menu), served at
+   `/ssh/login_mode`, applied as `sshd_config.d/01-saviour-auth.conf`:
+   `keys` = `PasswordAuthentication no` + `KbdInteractiveAuthentication no`;
+   `certs` adds `AuthorizedKeysFile none` (authorized_keys ignored, not
+   deleted, so `any` restores it). Checked with `sshd -T` after the reload.
+   Guard: refused unless the CA is set and the controller has seen a
+   certificate login in 30 days (`--force` overrides). Clearing the CA clears
+   the mode. Notes:
    - **Drop-in order.** sshd keeps the first value it reads, and Pis imaged
      with Raspberry Pi Imager carry cloud-init's
      `sshd_config.d/50-cloud-init.conf` = `PasswordAuthentication yes`
@@ -126,9 +139,8 @@ public key instead of a list of individual keys.
      ignored: put the auth settings in a drop-in that sorts first (e.g.
      `01-saviour-auth.conf`) and/or remove cloud-init's, and check with
      `sshd -T | grep passwordauthentication`, not by reading the file.
-   - **Empty `authorized_keys`.** Trusting a CA revokes nothing: the
-     master-image key in every clone's `authorized_keys` keeps working until
-     it's removed. `clone_prep.sh` empties it on new clones.
+   - **`authorized_keys`.** Trusting a CA revokes nothing; `certs` mode is
+     what stops the master-image key in every clone's `authorized_keys`.
    - **VNC.** RealVNC on the Pis logs in with the `pi` password, the same on
      every clone; SSH passwords off doesn't touch it. Disable VNC fleet-wide
      or rotate the `pi` password per device (backlog: "Fleet image cloning

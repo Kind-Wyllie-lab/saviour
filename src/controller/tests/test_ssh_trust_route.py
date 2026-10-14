@@ -34,4 +34,6 @@ def test_only_the_two_trust_files(tmp_path):
     (tmp_path / "other").write_text("secret")
     c = _client(tmp_path)
     assert c.get("/ssh/other").status_code == 404
-    assert c.get("/ssh/..%2Fother").status_code == 404
+    # A decoded slash never matches /ssh/<name>; whatever else answers (the
+    # frontend's catch-all, when dist/ is built), it isn't the file.
+    assert b"secret" not in c.get("/ssh/..%2Fother").data

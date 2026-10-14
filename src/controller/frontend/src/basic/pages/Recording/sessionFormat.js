@@ -96,6 +96,31 @@ export function formatEta(seconds) {
   return `about ${h} h ${mins - h * 60} min left`;
 }
 
+/** Download URL + file name for a finished render (`output_rel` is
+ *  "<session>/<date>/<file>"; the route wants it relative to the session). */
+export function composeJobDownload(job) {
+  const [session, ...rel] = job.output_rel.split("/");
+  return {
+    url: `/api/sessions/${encodeURIComponent(session)}/download/${rel
+      .map(encodeURIComponent).join("/")}`,
+    name: rel[rel.length - 1],
+  };
+}
+
+/** "2 cameras · grid · 15 fps · audio panel" for a render's settings. */
+export function composeJobSummary(job) {
+  const spec = job.spec || {};
+  const n = spec.streams?.length;
+  const parts = [
+    n ? `${n} camera${n !== 1 ? "s" : ""}` : "all cameras",
+    spec.layout && spec.layout !== "auto" ? spec.layout : null,
+    spec.fps ? `${spec.fps} fps` : null,
+    spec.audio?.mode && spec.audio.mode !== "none" ? `audio ${spec.audio.mode}` : null,
+    spec.date_dir || null,
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
 export function formatBytes(bytes) {
   if (bytes === 0) return "0 B";
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;

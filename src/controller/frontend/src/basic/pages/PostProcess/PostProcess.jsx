@@ -4,9 +4,11 @@ import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
 import usePersistedState from "/src/hooks/usePersistedState";
 import {
-  triggerDownload, formatBytes, groupSessionsByDate, dateGroupLabel,
+  formatBytes, groupSessionsByDate, dateGroupLabel,
 } from "../Recording/sessionFormat";
 import ComposeVideoPanel from "../Recording/SessionDetailPage/ComposeVideoPanel";
+import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
+import useComposeJobs from "/src/hooks/useComposeJobs";
 import EphysAlignPanel from "./EphysAlignPanel";
 import "./PostProcess.css";
 
@@ -37,6 +39,9 @@ export default function PostProcess() {
     setRemembered(name);
   };
   const [fileInfo, setFileInfo] = useState(null);
+  const jobs = useComposeJobs();
+  const allJobs = Object.values(jobs).sort((a, b) => b.created_at - a.created_at);
+  const [showAll, setShowAll] = usePersistedState("postprocess_show_all_renders", true);
   const seededRef = useRef(false);
 
   // Default to the session in the URL (or the one last picked here), else
@@ -64,8 +69,6 @@ export default function PostProcess() {
     socket.emit("get_session_file_info", { session_name: selected });
     return () => socket.off("session_file_info_response", onInfo);
   }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const requestDownload = (url, name) => triggerDownload(url, name);
 
   return (
     <div className="post-process">
@@ -112,7 +115,6 @@ export default function PostProcess() {
             sessionName={selected}
             session={sessions?.[selected]}
             files={fileInfo.files}
-            onRequestDownload={requestDownload}
             onSelectSession={(name) => names.includes(name) && setSelected(name)}
           />
           <EphysAlignPanel sessionName={selected} />
@@ -123,6 +125,29 @@ export default function PostProcess() {
         <div className="post-process__empty">
           This session has no exported files yet.
         </div>
+      )}
+      {allJobs.length > 0 && (
+        <section className="card post-process__renders">
+          <button
+            className="post-process__renders-toggle"
+            onClick={() => setShowAll(!showAll)}
+            aria-expanded={showAll}
+          >
+            {showAll ? "▾" : "▸"} All renders ({allJobs.length})
+          </button>
+          {showAll && (
+            <div className="compose-panel__jobs">
+              {allJobs.map((job) => (
+                <ComposeJobRow
+                  key={job.id}
+                  job={job}
+                  showSession
+                  onShowSession={(name) => names.includes(name) && setSelected(name)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

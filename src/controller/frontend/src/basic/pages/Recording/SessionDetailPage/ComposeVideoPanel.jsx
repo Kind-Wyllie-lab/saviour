@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import socket from "/src/socket";
 import usePersistedState from "/src/hooks/usePersistedState";
-import { formatDuration, formatEta } from "../sessionFormat";
+import useComposeJobs from "/src/hooks/useComposeJobs";
+import ComposeJobRow from "./ComposeJobRow";
 import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../syncFormat";
 
 const LAYOUTS = [
@@ -80,84 +81,8 @@ function streamsByDate(files) {
   return byDate;
 }
 
-/** Seconds left for a running render, from the progress this browser has
- *  seen it make (not the controller's clock, which may differ from ours).
- *  Null until there's enough to go on: 10 s and 1 % of movement. */
-function useRenderEta(job) {
-  const first = useRef(null);
-  const running = job.state === "running";
-  const p = job.progress || 0;
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return undefined;
-    const id = setInterval(() => setNow(Date.now()), 5000);
-    return () => clearInterval(id);
-  }, [running]);
-  useEffect(() => {
-    if (!running) { first.current = null; return; }
-    if (first.current === null || p < first.current.p) {
-      first.current = { t: Date.now(), p };
-    }
-  }, [running, p]);
-  const f = first.current;
-  if (!running || !f) return null;
-  const dt = (now - f.t) / 1000;
-  const dp = p - f.p;
-  if (dt < 10 || dp < 0.01) return null;
-  return (dt / dp) * (1 - p);
-}
-
-function JobRow({ job, onCancel, onDownload }) {
-  const pct = Math.round((job.progress || 0) * 100);
-  const active = job.state === "queued" || job.state === "running";
-  const etaText = formatEta(useRenderEta(job));
-  const elapsed =
-    job.started_at && job.finished_at
-      ? formatDuration((job.finished_at - job.started_at) / 60)
-      : null;
-  return (
-    <div className="compose-job">
-      <div className="compose-job__head">
-        <span className={`compose-job__state compose-job__state--${job.state}`}>
-          {job.stage || job.state}
-        </span>
-        {active && <span className="compose-job__pct">{pct}%</span>}
-        {active && job.state === "running" && (
-          <span className="compose-job__pct">{etaText || "estimating time left…"}</span>
-        )}
-        {elapsed && <span className="compose-job__pct">{elapsed}</span>}
-        {active && (
-          <button className="btn btn-small" onClick={() => onCancel(job.id)}>
-            Cancel
-          </button>
-        )}
-        {job.state === "done" && job.output_rel && (
-          <button className="btn btn-small" onClick={() => onDownload(job)}>
-            Download
-          </button>
-        )}
-      </div>
-      {active && (
-        <div className="compose-job__bar">
-          <div className="compose-job__bar-fill" style={{ width: `${pct}%` }} />
-        </div>
-      )}
-      {job.state === "error" && (
-        <div className="compose-job__error">{job.error}</div>
-      )}
-      {Array.isArray(job.warnings) && job.warnings.length > 0 && (
-        <ul className="compose-job__warnings">
-          {job.warnings.map((w, i) => (
-            <li key={i} className="compose-job__warning">⚠ {w}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 export default function ComposeVideoPanel({
-  sessionName, session, files, onRequestDownload, onSelectSession,
+  sessionName, session, files, onSelectSession,
 }) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
@@ -181,7 +106,7 @@ export default function ComposeVideoPanel({
   const [audioHeight, setAudioHeight] = usePersistedState("compose_audio_height_v2", {
     strip: AUDIO_HEIGHT.strip.def, panel: AUDIO_HEIGHT.panel.def,
   });
-  const [jobs, setJobs] = useState({});
+  const jobs = useComposeJobs();
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState(null); // { image } | { error }
   const [previewing, setPreviewing] = useState(false);
@@ -228,17 +153,7 @@ export default function ComposeVideoPanel({
   }, [dateDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const upsert = (summary) =>
-      setJobs((prev) => ({ ...prev, [summary.id]: summary }));
-    const onList = (data) => {
-      const map = {};
-      for (const j of data.jobs || []) map[j.id] = j;
-      setJobs(map);
-    };
-    const onAccepted = (j) => {
-      setNotice("");
-      upsert(j);
-    };
+    const onAccepted = () => setNotice("");
     const onRejected = (d) => setNotice(d.error || "Compose request rejected");
     const onPreview = (d) => {
       if (d.request_id !== undefined && d.request_id !== previewReqId.current) return;
@@ -247,16 +162,11 @@ export default function ComposeVideoPanel({
       setPreview((prev) => (d.error && prev?.image ? { ...prev, error: d.error } : d));
     };
     const onInfo = (d) => setInfo(d);
-    socket.on("compose_jobs", onList);
-    socket.on("compose_job_update", upsert);
     socket.on("compose_job_accepted", onAccepted);
     socket.on("compose_job_rejected", onRejected);
     socket.on("compose_preview_ready", onPreview);
     socket.on("compose_streams_info", onInfo);
-    socket.emit("get_compose_jobs");
     return () => {
-      socket.off("compose_jobs", onList);
-      socket.off("compose_job_update", upsert);
       socket.off("compose_job_accepted", onAccepted);
       socket.off("compose_job_rejected", onRejected);
       socket.off("compose_preview_ready", onPreview);
@@ -364,16 +274,6 @@ export default function ComposeVideoPanel({
 
   const setSpecField = (k, v) => setSpec((s) => ({ ...s, [k]: v }));
 
-  const download = (job) => {
-    // output_rel is "<session>/<date>/<file>"; the download route wants the
-    // path relative to the session dir.
-    const rel = job.output_rel.split("/").slice(1);
-    const url = `/api/sessions/${sessionName}/download/${rel
-      .map(encodeURIComponent)
-      .join("/")}`;
-    const name = rel[rel.length - 1];
-    if (onRequestDownload) onRequestDownload(url, name, 0);
-  };
 
   return (
     <section className="card compose-panel">
@@ -690,12 +590,7 @@ export default function ComposeVideoPanel({
       {jobList.length > 0 && (
         <div className="compose-panel__jobs">
           {jobList.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              onCancel={(id) => socket.emit("cancel_compose_job", { job_id: id })}
-              onDownload={download}
-            />
+            <ComposeJobRow key={job.id} job={job} />
           ))}
         </div>
       )}

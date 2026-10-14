@@ -233,6 +233,27 @@ const ROUTER = {
   },
   get_sessions() { this._fire("sessions_update", clone(state.sessions)); },
   get_export_queue() { this._fire("export_queue", this._exportSnapshot()); },
+  get_compose_jobs() {
+    this._fire("compose_jobs", { jobs: Object.values(clone(state.composeJobs)) });
+  },
+  delete_compose_job(payload) {
+    delete state.composeJobs[payload?.job_id];
+    this._fire("compose_jobs", { jobs: Object.values(clone(state.composeJobs)) });
+  },
+  rerun_compose_job(payload) {
+    const old = state.composeJobs[payload?.job_id];
+    if (!old) return;
+    const id = `j_${Date.now()}`;
+    state.composeJobs[id] = { ...clone(old), id, state: "queued", stage: "queued",
+      progress: 0, error: null, output_rel: null, output_bytes: null,
+      created_at: Date.now() / 1000, started_at: null, finished_at: null };
+    this._fire("compose_job_accepted", clone(state.composeJobs[id]));
+  },
+  cancel_compose_job(payload) {
+    const j = state.composeJobs[payload?.job_id];
+    if (j) { j.state = "cancelled"; j.stage = "cancelled"; j.finished_at = Date.now() / 1000; }
+    this._fire("compose_job_update", clone(j));
+  },
   get_recording_sessions() { this._fire("recording_sessions", clone(state.sessions)); },
   get_controller_config() { this._fire("controller_config_response", { config: clone(state.controllerConfig) }); },
   get_module_configs() { /* frontend hook ignores the result; no-op */ },

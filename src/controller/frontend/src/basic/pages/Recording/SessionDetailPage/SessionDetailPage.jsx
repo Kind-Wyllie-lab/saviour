@@ -4,6 +4,7 @@ import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
 import useExportQueue from "/src/hooks/useExportQueue";
+import useComposeJobs from "/src/hooks/useComposeJobs";
 import {
   formatFaultTime, formatEpochTime, formatBytes, formatDuration,
   formatScheduledDays, levelClass, DOWNLOAD_ALL_MAX_BYTES,
@@ -16,6 +17,7 @@ import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
 import HabitatSessionPanel from "./HabitatSessionPanel";
 import SessionExportStatus from "./SessionExportStatus";
+import ComposeJobRow from "./ComposeJobRow";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -136,6 +138,7 @@ export default function SessionDetailPage() {
   const navigate = useNavigate();
   const { sessions } = useSessions();
   const exportQueue = useExportQueue();
+  const composeJobs = useComposeJobs();
   const { moduleList: modules } = useModules();
   const { openCopyDrawer } = useOutletContext();
 
@@ -718,6 +721,25 @@ export default function SessionDetailPage() {
               )}
             </p>
           )}
+
+          {(() => {
+            const renders = Object.values(composeJobs)
+              .filter((j) => j.spec?.session_name === sessionName
+                && (j.state === "done" || j.state === "running" || j.state === "queued"))
+              .sort((a, b) => b.created_at - a.created_at);
+            if (!renders.length) return null;
+            return (
+              <div className="session-renders">
+                <div className="session-renders__head">
+                  <strong>Composed videos</strong>
+                  <Link to={`/post-process?session=${encodeURIComponent(sessionName)}`}>
+                    Open in Post-Process
+                  </Link>
+                </div>
+                {renders.map((job) => <ComposeJobRow key={job.id} job={job} />)}
+              </div>
+            );
+          })()}
 
           {(isStopped || queueHasSession) && (
             <SessionExportStatus

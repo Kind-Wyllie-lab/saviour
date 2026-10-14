@@ -545,6 +545,7 @@ def test_audio_height_pct_accepted_in_range():
 @pytest.mark.parametrize("raw", [
     {"mode": "strip", "height_pct": 80},     # strip max 50
     {"mode": "panel", "height_pct": 5},      # panel min 10
+    {"mode": "panel", "height_pct": 301},    # panel max 300
     {"mode": "panel", "height_pct": "tall"},
 ])
 def test_audio_height_pct_rejected(raw):
@@ -1051,3 +1052,9 @@ def test_muxed_track_one_audio_stream_per_device(monkeypatch):
     audio_align.render_muxed_track("v.mp4", ["a.flac", "b.flac"], "o.mp4", ["x", "y"])
     cmd = seen["cmd"]
     assert cmd.count("-i") == 3 and "2:a" in cmd and "title=y" in cmd
+
+
+def test_panel_height_can_exceed_the_video():
+    """Shared between stacked AudioMoth panels, so 200 % = two full-height ones."""
+    a = AudioSpec.from_dict({"mode": "panel", "height_pct": 200})
+    assert a.effective_height_pct == 200

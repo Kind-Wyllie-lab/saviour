@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Compose: spectrogram panel height up to 300 % of the video** (branch `feat/panel-height-300` → `staging`). It was capped at 100 %, but the height is now shared between stacked AudioMoth panels, so two devices got at most half the video height each. `AUDIO_HEIGHT_PCT_RANGE["panel"]` and the page's limit are now 10-300 % (200 % = two full-height panels); strip stays 5-50 % since it overlays the picture. 2 new test cases; lint and all five builds clean.
+
 - [x] **Post-Process: every AudioMoth, not just one** (branch `feat/compose-multi-mic` → `staging`). Compose used one microphone: the source picker listed mic *modules*, and within a module only its first AudioMoth by name was used, so a module with two AudioMoths (the desk mic) or a rig with several mic modules showed a single spectrogram.
   - `compose.list_mic_devices()` lists every AudioMoth across all mic folders (`<folder>/<device>` ids, labels like "audiomoth · 0FAD"); `streams_info` returns them; `AudioSpec.sources` (validated, at most 8) picks which to use, defaulting to the first device as before.
   - Each device is aligned on its own sidecar segments. **Panel**: one labelled spectrogram panel per device stacked under the video (ffmpeg `drawtext` label), the height setting split between them. **Track**: one audio track per device, titled with its label. **Strip**: the first device only (several would cover the picture). The composite's audio tracks are titled in every mode.

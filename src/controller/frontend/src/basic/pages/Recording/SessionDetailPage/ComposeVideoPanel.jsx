@@ -44,7 +44,7 @@ const PREVIEW_DEBOUNCE_MS = 650;
 // compose.AUDIO_HEIGHT_PCT_DEFAULT / _RANGE on the backend.
 const AUDIO_HEIGHT = {
   strip: { def: 20, min: 5, max: 50 },
-  panel: { def: 100, min: 10, max: 100 },
+  panel: { def: 100, min: 10, max: 300 },
 };
 
 // Group the flat session file list into { dateDir: { cameras: [...], mics: [...] } }.

@@ -14,6 +14,21 @@ import SessionList from "./SessionList/SessionList";
 
 const BUILT_VARIANT = import.meta.env.VITE_VARIANT || "basic";
 
+const RECORDING_STATES = new Set(["active", "paused"]);
+
+// Session to open on the Recording page: the most recently started of those
+// recording now, else the newest. Uses each session's own name (the list
+// may be keyed by index, not name).
+function defaultSessionName(sessions) {
+  if (!sessions.length) return null;
+  const started = (s) => s.recording_start_at ?? 0;
+  const live = sessions.filter((s) => RECORDING_STATES.has(s.state));
+  if (live.length) {
+    return live.reduce((a, b) => (started(b) >= started(a) ? b : a)).session_name;
+  }
+  return sessions[sessions.length - 1].session_name;
+}
+
 // Persistent shell for both /recording routes -- a narrow session-list
 // rail on the left (always visible, like a secondary nav), and the routed
 // child (SessionDetailPage, or the "nothing selected" placeholder) filling
@@ -48,21 +63,19 @@ function RecordingLayout() {
     // corresponding row in the rail.
     const { sessionName: selectedSessionName } = useParams();
 
-    // Land on the most recently created session (sessionList's insertion
-    // order from the backend -- new sessions are only ever appended, so the
-    // last entry is the newest regardless of state) rather than the blank
-    // placeholder, so opening the Recording page shows something useful
-    // immediately. One-shot (the ref, not a dependency on sessionList) --
-    // this should only fire on initial load, not yank the operator to a
-    // different session every time a new one is created while they're
-    // deliberately sitting on the index route.
+    // Land on something useful rather than the blank placeholder: a session
+    // that's recording now (if several are, the one that started most
+    // recently -- likely the one just set going), else the most recently
+    // created session (the backend appends new sessions, so the last is the
+    // newest). One-shot per visit (the ref), so a session created while the
+    // operator sits here doesn't yank them away.
     const autoSelected = useRef(false);
     useEffect(() => {
         if (autoSelected.current || selectedSessionName) return;
-        const names = Object.keys(sessionList);
-        if (names.length === 0) return;
+        const name = defaultSessionName(Object.values(sessionList || {}));
+        if (!name) return;
         autoSelected.current = true;
-        navigate(`/recording/sessions/${encodeURIComponent(names[names.length - 1])}`, { replace: true });
+        navigate(`/recording/sessions/${encodeURIComponent(name)}`, { replace: true });
     }, [sessionList, selectedSessionName, navigate]);
 
     // Lifted out of NewSessionForm so ReadinessSummary can scope itself to

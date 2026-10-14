@@ -72,13 +72,6 @@ export default function PostProcess() {
 
   return (
     <div className="post-process">
-      <h1>Post-Process</h1>
-      <p className="post-process__intro">
-        Build aligned videos, spectrograms and (with an uploaded recording)
-        ephys alignment from a finished session. Jobs run in the background —
-        you can leave this page.
-      </p>
-
       <label className="post-process__pick">
         Session
         <select
@@ -104,6 +97,11 @@ export default function PostProcess() {
           </span>
         )}
       </label>
+      <p className="post-process__intro">
+        Build aligned videos, spectrograms and (with an uploaded recording)
+        ephys alignment from a finished session. Jobs run in the background —
+        you can leave this page.
+      </p>
 
       {!selected && (
         <div className="post-process__empty">Pick a session to start.</div>

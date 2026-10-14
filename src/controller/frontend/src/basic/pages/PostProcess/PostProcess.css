@@ -8,13 +8,8 @@
   padding: 8px 4px 40px;
 }
 
-.post-process h1 {
-  margin: 0;
-  font-size: 1.2rem;
-}
-
 .post-process__intro {
-  margin: 0;
+  margin: -8px 0 0;
   color: var(--text-muted, #888);
   font-size: 0.88rem;
 }

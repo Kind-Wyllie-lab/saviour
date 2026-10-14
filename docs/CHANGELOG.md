@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Post-Process page: no page title, like the other pages** (branch `fix/postprocess-drop-title` → `staging`). It was the only page with an `<h1>`; the sidebar already marks the current page. The intro line ("Jobs run in the background — you can leave this page") moved under the session picker. Lint and all five builds clean.
+
 - [x] **Render (compose) jobs kept as a history, like sessions: interrupted, re-run, delete** (branch `feat/compose-job-history` → `staging`).
   - `ComposeWorker(jobs_file=…)` saves jobs to `/var/lib/saviour/controller/compose_jobs.json` (atomic write; progress-only changes at most every 10 s), loads them on start, and marks a job that was queued or running when the controller stopped as `interrupted` ("Stopped by a controller restart; use Re-run…"). Pruned to the newest 100 and anything finished over 90 days ago (records only; videos stay on the share). Finished jobs record `output_bytes`.
   - `delete(job_id, delete_file)` removes a finished job (refuses a queued/running one), and its video only when asked and only if the path is inside the share; socket `delete_compose_job` (login required) then pushes the new list. `rerun(job_id)` / `rerun_compose_job` queues the same settings again (renders start from scratch, so this is resuming). `get_compose_jobs` now builds the worker, so the history shows straight after a restart.

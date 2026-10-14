@@ -67,6 +67,19 @@ function makeModules() {
     },
     // Only in the apa build, which is the only one with a panel for it.
     ...(import.meta.env.VITE_VARIANT === "apa" ? {
+      "apa_camera_7c1e": {
+        id: "apa_camera_7c1e",
+        name: "Arena overhead",
+        type: "apa_camera",
+        ip: "10.0.0.172",
+        status: "READY",
+        online: true,
+        ready: true,
+        checks: {},
+        group: "cameras",
+        version: "v0.6.1-mock",
+        config_sync_status: "SYNCED",
+      },
       "apa_arduino_2904": {
         id: "apa_arduino_2904",
         name: "APA rig",

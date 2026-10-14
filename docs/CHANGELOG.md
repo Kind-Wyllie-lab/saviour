@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-14
+
+- [x] **APA dashboard: pick which camera to watch, APA camera by default, flagged when it isn't** (branch `feat/apa-stream-picker` → `staging`). The dashboard only ever looked for an `apa_camera` module, so a rig without one (the desk fleet) showed "APA camera not connected" despite two working cameras. Now a dropdown in the stream card lists every online camera module (type containing `camera`), defaulting to the APA camera, else the first online camera; the pick is remembered per browser and falls back to the default if that camera goes offline. One stream at a time, so no extra load. Whenever the stream isn't the APA camera an amber, non-dismissible flag says so ("Showing Arena, not the APA camera" / "No APA camera connected: showing Home"), on the card and in fullscreen. With no camera at all the old "APA camera not connected" stays. The APA mock now has an `apa_camera` module. Checked with headless Edge (default APA camera, another camera picked and remembered, no APA camera, fullscreen); lint and all five builds clean.
+
 ## 2026-10-13
 
 - [x] **Session page shows each module's export progress instead of a red "N exports not yet on the share"** (branch `feat/export-progress-display` → `staging`; field feedback after a 13-minute session). After a stop the page counted down "4 exports not yet confirmed on the share" in warning red while everything was normal, and the file list only filled in on reload.

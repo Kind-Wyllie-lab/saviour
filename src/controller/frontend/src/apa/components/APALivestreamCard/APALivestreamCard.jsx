@@ -4,7 +4,24 @@ import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton"
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./APALivestreamCard.css";
 
-function APALivestreamCard({ module, moduleList }) {
+/**
+ * Shown whenever the stream on screen isn't the APA camera: either a
+ * different camera was picked, or there's no APA camera at all. Never
+ * dismissible -- the arena view is what the operator shocks from.
+ */
+export function NotApaCameraFlag({ module, apaPresent }) {
+  if (!module || module.type === "apa_camera") return null;
+  const name = module.name || module.id;
+  return (
+    <div className="apa-stream-flag" role="status">
+      {apaPresent
+        ? `Showing ${name}, not the APA camera`
+        : `No APA camera connected: showing ${name}`}
+    </div>
+  );
+}
+
+function APALivestreamCard({ module, cameras = [], onSelect, apaPresent, moduleList }) {
   const [showStream, setShowStream] = useState(true); // Show placeholder vs stream
   const [fullscreen, setFullscreen] = useState(false); // Track fullscreen
   const [streamKey, setStreamKey] = useState(Date.now());
@@ -13,15 +30,31 @@ function APALivestreamCard({ module, moduleList }) {
     <>
       <div className="livestream-card">
         <div className="stream-card-header">
-          <h3>{module.id}</h3>
+          {cameras.length > 1 && onSelect ? (
+            <select
+              className="apa-stream-picker"
+              value={module.id}
+              onChange={(e) => onSelect(e.target.value)}
+              aria-label="Camera to show"
+            >
+              {cameras.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name || c.id}{c.type === "apa_camera" ? " (APA camera)" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <h3>{module.name || module.id}</h3>
+          )}
           <span className="stream-ip">{module.ip}</span>
         </div>
+        <NotApaCameraFlag module={module} apaPresent={apaPresent} />
 
         <div className="stream-content">
           {showStream ? (
             <div className="stream-video stream-video--clickable snapshot-hover-parent" onClick={() => setFullscreen(true)}>
               <img
-                key={streamKey}
+                key={`${module.id}-${streamKey}`}
                 src={videoFeedUrl(module, { key: streamKey })}
                 alt={`Stream for ${module.id}`}
                 onError={() => {
@@ -40,11 +73,14 @@ function APALivestreamCard({ module, moduleList }) {
         </div>
       </div>
 
-
-
       {/* Conditional fullscreen overlay */}
       {fullscreen && (
-        <APAFullscreenVideo ip={module.ip} moduleList={moduleList} onClose={() => setFullscreen(false)} />
+        <APAFullscreenVideo
+          module={module}
+          apaPresent={apaPresent}
+          moduleList={moduleList}
+          onClose={() => setFullscreen(false)}
+        />
       )}
     </>
   );

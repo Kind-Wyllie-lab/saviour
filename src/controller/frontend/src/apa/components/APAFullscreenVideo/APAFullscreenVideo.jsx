@@ -3,8 +3,10 @@ import "./APAFullscreenVideo.css";
 import APACommands from "../APACommands/APACommands";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
+import { NotApaCameraFlag } from "../APALivestreamCard/APALivestreamCard";
 
-function APAFullscreenVideo({ ip, moduleList, onClose }) {
+function APAFullscreenVideo({ module, apaPresent, moduleList, onClose }) {
+  const ip = module?.ip;
   // Handle ESC key to close fullscreen
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -20,8 +22,11 @@ function APAFullscreenVideo({ ip, moduleList, onClose }) {
         {/* Wrapper anchors the screenshot button to the video without making
             .video-panel positioned (that would re-anchor the close button). */}
         <div className="fullscreen-video-wrap snapshot-hover-parent">
+          <div className="fullscreen-flag">
+            <NotApaCameraFlag module={module} apaPresent={apaPresent} />
+          </div>
           <img
-            src={videoFeedUrl(ip)}
+            src={videoFeedUrl(module ?? ip)}
             alt="Fullscreen camera stream"
             className="fullscreen-video"
           />

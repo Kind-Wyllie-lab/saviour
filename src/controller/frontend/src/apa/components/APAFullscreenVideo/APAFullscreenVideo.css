@@ -68,3 +68,12 @@
 .commands-panel {
   border: 1px solid red;
 } */
+
+/* The not-the-APA-camera flag, over the top-left of the fullscreen video. */
+.fullscreen-flag {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  max-width: 60%;
+}

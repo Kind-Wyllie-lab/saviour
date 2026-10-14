@@ -382,3 +382,34 @@ class TestSnapshotAndProgress:
         snap = q.snapshot()
         assert [a["module_id"] for a in snap["active"]] == ["cam_b"]
         assert snap["active"][0]["progress"] is None
+
+
+class TestOverallProgress:
+    def test_queued_entries_carry_their_staged_size(self):
+        q, _f = _make_queue(max_concurrent=1)
+        with patch.object(q, "_save"):
+            q.note_staged("cam_a", 1000, 4)
+            q.enqueue("cam_a", "s1/d/cam_a")
+            q.note_staged("cam_b", 600, 4)
+            q.enqueue("cam_b", "s1/d/cam_b")
+        snap = q.snapshot()
+        assert snap["active"][0]["staged_bytes"] == 1000
+        assert snap["queued"][0]["staged_bytes"] == 600
+
+    def test_wave_tally_counts_landed_bytes_then_resets(self):
+        q, _f = _make_queue(max_concurrent=1)
+        with patch.object(q, "_save"):
+            q.note_staged("cam_a", 1000)
+            q.enqueue("cam_a", "s1/d/cam_a")
+            q.note_staged("cam_b", 600)
+            q.enqueue("cam_b", "s1/d/cam_b")
+            q.update_progress("cam_a", {"bytes_total": 1100, "bytes_done": 1100})
+            q.on_export_complete("cam_a")
+            assert q.snapshot()["waves"] == {"s1": {"bytes_done": 1100}}
+            q.on_export_complete("cam_b")        # nothing left for s1: wave over
+        assert q.snapshot()["waves"] == {}
+
+    def test_note_staged_ignores_a_missing_size(self):
+        q, _f = _make_queue()
+        q.note_staged("cam_a", None)
+        assert q._staged == {}

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { formatBytes } from "../sessionFormat";
 import "./SessionExportStatus.css";
 
@@ -53,7 +53,78 @@ function moduleRow(moduleId, session, queue) {
   return null;
 }
 
+// The time estimate uses the transfer rate over this trailing window, and
+// waits for this much history before showing anything.
+const RATE_WINDOW_S = 60;
+const RATE_MIN_SPAN_S = 8;
+
+/**
+ * Bytes landed / total for the session's current run of exports: modules
+ * already done in it (the controller's per-session tally), the active
+ * module's progress, and every queued module's staged size. `known` is false
+ * when some module's size isn't known yet (a module on older code), in which
+ * case the bar falls back to counting modules and no estimate is shown.
+ */
+function overallProgress(session, queue) {
+  const name = session.session_name;
+  const mine = (list) => (list || []).filter((e) => e.session === name);
+  let done = queue?.waves?.[name]?.bytes_done ?? 0;
+  let total = done;
+  let known = true;
+  let entries = 0;
+  for (const a of mine(queue?.active)) {
+    entries += 1;
+    const t = a.progress?.bytes_total ?? a.staged_bytes;
+    if (t == null) { known = false; continue; }
+    total += t;
+    done += Math.min(a.progress?.bytes_done ?? 0, t);
+  }
+  for (const q of [...mine(queue?.queued), ...mine(queue?.rerun)]) {
+    entries += 1;
+    if (q.staged_bytes == null) { known = false; continue; }
+    total += q.staged_bytes;
+  }
+  return { done, total, known, active: entries > 0 };
+}
+
+function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds < 60) return "under a minute left";
+  const mins = Math.ceil(seconds / 60);
+  if (mins < 90) return `about ${mins} min left`;
+  const h = Math.floor(mins / 60);
+  return `about ${h} h ${mins - h * 60} min left`;
+}
+
+/** Seconds remaining from the recent transfer rate, or null if too early. */
+function useEta(sessionName, done, total, active) {
+  const samples = useRef([]);
+  const key = useRef(sessionName);
+  if (key.current !== sessionName) {
+    key.current = sessionName;
+    samples.current = [];
+  }
+  useEffect(() => {
+    if (!active) { samples.current = []; return; }
+    const now = Date.now() / 1000;
+    const s = samples.current;
+    // A new run of exports (the tally reset) starts the history afresh.
+    if (s.length && done < s[s.length - 1].done) s.length = 0;
+    if (!s.length || s[s.length - 1].done !== done) s.push({ t: now, done });
+    while (s.length > 2 && now - s[0].t > RATE_WINDOW_S) s.shift();
+  }, [done, active]);
+  const s = samples.current;
+  if (!active || s.length < 2) return null;
+  const span = s[s.length - 1].t - s[0].t;
+  const rate = (s[s.length - 1].done - s[0].done) / span;
+  if (span < RATE_MIN_SPAN_S || rate <= 0) return null;
+  return Math.max(0, total - done) / rate;
+}
+
 export default function SessionExportStatus({ session, queue, moduleNames = {} }) {
+  const overall = overallProgress(session, queue);
+  const eta = useEta(session.session_name, overall.done, overall.total,
+    overall.active && overall.known);
   const rows = session.modules
     .map((id) => ({ id, row: moduleRow(id, session, queue) }))
     .filter((r) => r.row);
@@ -83,11 +154,39 @@ export default function SessionExportStatus({ session, queue, moduleNames = {} }
       + `module${session.modules.length !== 1 ? "s" : ""} done`;
   }
 
+  // Overall bar: bytes across the run when every size is known, else the
+  // share of modules done.
+  const showOverall = tone === "info" && overall.active;
+  const overallFrac = overall.known && overall.total > 0
+    ? overall.done / overall.total
+    : done / Math.max(1, session.modules.length);
+  const etaText = overall.known ? formatEta(eta) : null;
+
   return (
     <div className={`session-export session-export--${tone}`}>
       <div className="session-export__headline">
         {tone === "done" ? "✓ " : ""}{headline}
       </div>
+      {showOverall && (
+        <div className="session-export__overall">
+          <span
+            className="session-export__bar session-export__bar--overall"
+            role="progressbar"
+            aria-label="Overall export progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(overallFrac * 100)}
+          >
+            <span style={{ width: `${overallFrac * 100}%` }} />
+          </span>
+          <span className="session-export__overall-text">
+            {overall.known
+              ? `${formatBytes(overall.done)} / ${formatBytes(overall.total)}`
+              : `${Math.round(overallFrac * 100)}%`}
+            {etaText ? ` · ${etaText}` : overall.known ? " · estimating time left…" : ""}
+          </span>
+        </div>
+      )}
       {!allDone && rows.length > 0 && (
         <ul className="session-export__rows">
           {rows.map(({ id, row }) => (

@@ -110,3 +110,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Overall bar for the session's whole run of exports, under the headline. */
+.session-export__overall {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 2px;
+}
+
+.session-export__bar--overall {
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.session-export__overall-text {
+  font-size: 0.8rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}

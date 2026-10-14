@@ -54,7 +54,9 @@ MAX_QUEUE = 4
 # Panel defaults to the video's full height (strip overlays the video, so
 # it stays small).
 AUDIO_HEIGHT_PCT_DEFAULT = {"strip": 20.0, "panel": 100.0}
-AUDIO_HEIGHT_PCT_RANGE = {"strip": (5.0, 50.0), "panel": (10.0, 100.0)}
+# Panel can exceed the video height: the height is shared between stacked
+# panels (one per AudioMoth), so 200% gives two full-height panels.
+AUDIO_HEIGHT_PCT_RANGE = {"strip": (5.0, 50.0), "panel": (10.0, 300.0)}
 
 
 def panel_heights(total_px: int, n: int) -> list[int]:

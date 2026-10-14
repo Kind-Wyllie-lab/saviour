@@ -200,6 +200,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
 - Field install feedback (slow compose preview, crop stretching/clear, timestamp position, session list by date + bulk download, live mic spectrogram blip) → `plans/field-install-feedback-2026-10.md`.
 - `saviour-config`/`mend.sh` build the frontend as root (root-owned `dist/`); `clone_prep.sh` clears the wrong active-config path.
+- Post-Process compose as a layout editor (output size, place cameras/spectrograms/events/text, timeline range, saved templates) → `plans/compose-layout-editor.md`.
 - A/V sync residual (~150-200 ms audio): `plans/audio-video-sync-residual-validation.md`; buzzer/LED rig built, hardware pending (`docs/AV_SYNC_TEST.md`).
 
 **Maintenance / architecture**

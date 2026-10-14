@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-14
 
+- [x] **Session list: the day's tick sits in the same column as the sessions' ticks** (branch `fix/session-list-tick-alignment` → `staging`). The day header's select-all checkbox was at the right end of the header while every session row's was at the left. It's now first in the header, offset to line up with the rows' checkboxes (row border + padding); a day with nothing tickable keeps an equal-width gap so the dates stay aligned. Lint and all five builds clean.
+
 - [x] **Stale "pending" exports can be marked resolved; the backlog tells them from real exports; hours of recording on the destination card** (branch `feat/resolve-stale-exports` → `staging`).
   - `testD-160224` (5 Oct) still showed "1 pending" on the Storage page: a count left by an export lost with a module reboot before c3e56bb9, with nothing exporting for it since. Nothing could clear it short of deleting the session. `Recording.resolve_pending_exports()` / socket `resolve_pending_exports` (login required) sets a stopped session's count to 0, refuses while anything is active, queued or due to re-run for that session, and logs a session event ("N unconfirmed export(s) marked resolved by the operator").
   - Storage backlog: "exporting now" (from the export queue) vs "not confirmed" (a count with nothing moving) vs "failed"; each session links to its page; a not-confirmed one offers **Mark resolved** with an inline warning (it clears the count, it doesn't move or check files). The session page's stalled-exports panel offers the same.

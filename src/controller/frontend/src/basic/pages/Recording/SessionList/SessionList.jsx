@@ -236,6 +236,21 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
           return (
             <div key={key} className="session-day">
               <div className="session-day__header">
+                {/* Same column as the rows' ticks (left), so a day's tick sits
+                    directly above the sessions it ticks. */}
+                {selectable.length > 0 ? (
+                  <input
+                    type="checkbox"
+                    className="session-day__check"
+                    checked={allTicked}
+                    ref={(el) => { if (el) el.indeterminate = nTicked > 0 && !allTicked; }}
+                    onChange={() => setDaySelected(daySessions, !allTicked)}
+                    title={allTicked ? "Untick this day" : `Tick all ${selectable.length} finished sessions this day`}
+                    aria-label={`Select all sessions on ${dateGroupLabel(key, today)}`}
+                  />
+                ) : (
+                  <span className="session-day__check session-day__check--none" aria-hidden="true" />
+                )}
                 <button
                   type="button"
                   className="session-day__toggle"
@@ -247,17 +262,6 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                   <span className="session-day__label">{dateGroupLabel(key, today)}</span>
                   <span className="session-day__count">{daySessions.length}</span>
                 </button>
-                {selectable.length > 0 && (
-                  <input
-                    type="checkbox"
-                    className="session-day__check"
-                    checked={allTicked}
-                    ref={(el) => { if (el) el.indeterminate = nTicked > 0 && !allTicked; }}
-                    onChange={() => setDaySelected(daySessions, !allTicked)}
-                    title={allTicked ? "Untick this day" : `Tick all ${selectable.length} finished sessions this day`}
-                    aria-label={`Select all sessions on ${dateGroupLabel(key, today)}`}
-                  />
-                )}
               </div>
               {open && daySessions.map((session) => (
                 <SessionRow

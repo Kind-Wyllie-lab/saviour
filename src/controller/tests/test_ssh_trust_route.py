@@ -37,3 +37,9 @@ def test_only_the_two_trust_files(tmp_path):
     # A decoded slash never matches /ssh/<name>; whatever else answers (the
     # frontend's catch-all, when dist/ is built), it isn't the file.
     assert b"secret" not in c.get("/ssh/..%2Fother").data
+
+
+def test_serves_the_login_mode(tmp_path):
+    (tmp_path / "login_mode").write_bytes(b"certs\n")
+    resp = _client(tmp_path).get("/ssh/login_mode")
+    assert resp.status_code == 200 and resp.data == b"certs\n"

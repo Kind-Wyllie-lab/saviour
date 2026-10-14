@@ -213,7 +213,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     # saviour-config on the controller; modules fetch them from /ssh/<file>.
     _SSH_TRUST_DIR = "/etc/saviour/ssh"
     _SSH_TRUST_FILES = {"user_ca.pub": "text/plain",
-                        "revoked_keys.krl": "application/octet-stream"}
+                        "revoked_keys.krl": "application/octet-stream",
+                        "login_mode": "text/plain"}
 
     # Named API tokens for external programs (pyControl etc.) hitting
     # /api/v1 -- an alternative to handing out the web-UI admin password,
@@ -2722,11 +2723,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
         @self.app.route("/ssh/<name>")
         def serve_ssh_trust(name):
-            """The SSH CA public key and revocation list, for modules'
-            `saviour-config --apply-ssh` (plans/ssh-certificate-auth.md).
-            Unauthenticated like /update/package: both are public by design
-            (a key and a list of revoked serials). 404 = no CA configured,
-            which makes modules drop their certificate trust."""
+            """The SSH CA public key, revocation list and login mode, for
+            modules' `saviour-config --apply-ssh`
+            (plans/ssh-certificate-auth.md). Unauthenticated like
+            /update/package: all three are public by design (a key, revoked
+            serials, "keys"/"certs"). 404 on the CA = none configured, which
+            makes modules drop their certificate trust and login mode."""
             mimetype = self._SSH_TRUST_FILES.get(name)
             path = os.path.join(self._SSH_TRUST_DIR, name)
             if mimetype is None or not os.path.isfile(path):

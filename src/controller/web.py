@@ -1014,6 +1014,31 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                       {"session_name": session_name,
                        "error": f"internal error: {exc}"})
 
+        @self.socketio.on("compose_layout_template")
+        def handle_compose_layout_template(data=None):
+            # A built-in starting layout for the editor (an old layout
+            # keyword + audio arrangement), as a layout document.
+            from flask_socketio import emit as _emit
+            data = data or {}
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            reply = {"request_id": data.get("request_id")}
+            try:
+                reply["layout_doc"] = compose.layout_template(
+                    share, data.get("session_name", ""), data.get("date_dir") or None,
+                    template=str(data.get("template") or "auto"),
+                    audio_mode=str(data.get("audio_mode") or "none"),
+                    streams=data.get("streams") or None,
+                    mics=data.get("mics") or None,
+                    spectrogram=data.get("spectrogram") or None,
+                    canvas=data.get("canvas") or None,
+                )
+            except compose.ComposeError as exc:
+                reply["error"] = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("compose_layout_template failed")
+                reply["error"] = f"internal error: {exc}"
+            _emit("compose_layout_template", reply)
+
         @self.socketio.on("cancel_compose_job")
         def handle_cancel_compose_job(data=None):
             from flask_socketio import emit as _emit
@@ -1032,7 +1057,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 import base64
                 try:
                     spec = compose.ComposeSpec.from_dict(spec_dict or {})
-                    png = compose.render_preview(
+                    result = compose.render_preview(
                         self.config.get(
                             "export.mount_path", "/home/pi/controller_share"
                         ),
@@ -1042,8 +1067,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     )
                 except compose.ComposeError as exc:
                     return {"error": str(exc)}
-                return {"image": "data:image/png;base64,"
-                        + base64.b64encode(png).decode()}
+                # The whole frame, plus each tile's own pixels for the
+                # layout editor (it draws them in their boxes).
+                return {
+                    "image": "data:image/png;base64,"
+                    + base64.b64encode(result.png).decode(),
+                    "tiles": {
+                        tid: "data:image/jpeg;base64," + base64.b64encode(b).decode()
+                        for tid, b in result.tiles.items()
+                    },
+                    "scale": result.scale,
+                    "layout_doc": result.doc,
+                }
 
             if self._compose_preview_queue is None:
                 self._compose_preview_queue = compose.PreviewQueue(

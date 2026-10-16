@@ -112,39 +112,118 @@ def test_compose_spec_embeds_audio():
 # --------------------------------------------------------------------------- #
 
 
-def test_render_preview_composites_one_frame(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "src.controller.compose.probe_dimensions", lambda _p: (640, 480)
-    )
+def _fake_video_compose(monkeypatch, **attrs):
+    """video_compose pulls in OpenCV; stand in a fake module so these tests
+    run without it (compose imports it lazily). Patch both the sys.modules
+    entry and the already-bound package attribute -- once the real
+    submodule has been imported (e.g. by test_video_compose.py at
+    collection), `from src.controller import video_compose` reads the
+    attribute and never consults sys.modules."""
+    fake_vc = types.SimpleNamespace(**attrs)
+    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
+    import src.controller as _sc
+    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
+    return fake_vc
+
+
+def _one_camera_session(tmp_path, monkeypatch, dims=(640, 480)):
+    monkeypatch.setattr("src.controller.compose.probe_dimensions", lambda _p: dims)
     dd = tmp_path / "sess" / "20260805" / "camera_a"
     dd.mkdir(parents=True)
     (dd / "v.ts").write_bytes(b"x")
     (dd / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
+    return dd.parent
 
+
+def _add_mic(date_dir, serial="AAAA"):
+    mic = date_dir / "audiomoth"
+    mic.mkdir(exist_ok=True)
+    (mic / f"s_audiomoth_1_{serial}_(0_1).flac").write_bytes(b"x")
+    (mic / f"s_audiomoth_1_{serial}_(0_1)_timestamps.txt").write_text("x")
+    return f"audiomoth/s_audiomoth_1_{serial}"
+
+
+def test_render_preview_composites_one_frame(tmp_path, monkeypatch):
+    _one_camera_session(tmp_path, monkeypatch)
     captured = {}
 
-    def fake_preview(date_dir, out_png, **kw):
-        captured.update(out=out_png, kw=kw)
-        with open(out_png, "wb") as f:
-            f.write(b"\x89PNG-preview")
-        return out_png
+    def fake_preview(date_dir, canvas, tiles, **kw):
+        captured.update(canvas=canvas, tiles=tiles, kw=kw)
+        return "frame", {t["id"]: "pane" for t in tiles}
 
-    # video_compose pulls in OpenCV; stand in a fake module so this test
-    # runs without it (render_preview imports it lazily). Patch both the
-    # sys.modules entry and the already-bound package attribute -- once the
-    # real submodule has been imported (e.g. by test_video_compose.py at
-    # collection), `from src.controller import video_compose` reads the
-    # attribute and never consults sys.modules.
-    fake_vc = types.SimpleNamespace(compose_preview_frame=fake_preview)
-    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
-    import src.controller as _sc
-    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
+    _fake_video_compose(
+        monkeypatch, preview_layout=fake_preview,
+        encode_preview=lambda frame, panes: (b"\x89PNG", {k: b"jpg" for k in panes}))
 
     spec = ComposeSpec.from_dict({"session_name": "sess", "layout": "grid"})
-    data = render_preview(str(tmp_path), spec, max_width=800)
-    assert data == b"\x89PNG-preview"
-    assert captured["kw"]["streams"] == ["camera_a"]
-    assert not os.path.exists(captured["out"])  # temp preview cleaned up
+    result = render_preview(str(tmp_path), spec, max_width=800)
+    assert result.png == b"\x89PNG"
+    assert result.tiles == {"c1": b"jpg"}
+    assert [t["source"] for t in captured["tiles"]] == ["camera_a"]
+    assert captured["tiles"][0]["label_text"] == "camera_a"
+    # A 1920-wide grid, scaled to the 800 px preview.
+    assert result.doc["canvas"]["width"] == 1920
+    assert captured["canvas"][0] == 800 and result.scale == pytest.approx(800 / 1920)
+
+
+def test_render_preview_spectrogram_tile_sizes(tmp_path, monkeypatch):
+    """A legacy panel request previews as a spectrogram tile under the
+    video, height_pct of it, rendered at the preview's scale."""
+    date_dir = _one_camera_session(tmp_path, monkeypatch)
+    _add_mic(date_dir)
+    seen = {}
+
+    def fake_spec_png(cache_dir, date_dir, device, tile, width, height, dur_s,
+                      logger=None):
+        seen["png_size"] = (width, height)
+        return str(tmp_path / "spec.png")
+
+    monkeypatch.setattr("src.controller.compose._preview_tile_spectrogram", fake_spec_png)
+
+    def fake_preview(date_dir, canvas, tiles, **kw):
+        seen["tiles"] = tiles
+        return "frame", {}
+
+    _fake_video_compose(monkeypatch, preview_layout=fake_preview,
+                        encode_preview=lambda f, p: (b"png", {}))
+    spec = ComposeSpec.from_dict({
+        "session_name": "sess", "audio": {"mode": "panel", "height_pct": 50},
+    })
+    result = render_preview(str(tmp_path), spec, max_width=640)
+    # 640x480 camera on a 1920 canvas: 1440 tall, panel 50% = 720 under it;
+    # at the 640 px preview's 1/3 scale that's 640 x 240.
+    assert result.doc["canvas"] == {"width": 1920, "height": 2160, "background": "#000000"}
+    assert seen["png_size"] == (640, 240)
+    spec_tile = seen["tiles"][1]
+    assert spec_tile["kind"] == "spectrogram" and spec_tile["image"].endswith("spec.png")
+
+
+def test_render_preview_of_a_layout_doc_uses_its_rects(tmp_path, monkeypatch):
+    _one_camera_session(tmp_path, monkeypatch)
+    seen = {}
+    _fake_video_compose(
+        monkeypatch,
+        preview_layout=lambda d, canvas, tiles, **kw: (seen.update(tiles=tiles) or "f", {}),
+        encode_preview=lambda f, p: (b"png", {}))
+    spec = ComposeSpec.from_dict({"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 1080, "height": 1080},
+        "tiles": [
+            {"id": "big", "kind": "camera", "source": "camera_a", "rect": [0, 0, 1080, 720]},
+            {"id": "crop", "kind": "camera", "source": "camera_a",
+             "rect": [0, 720, 540, 360], "options": {"crop": [0.25, 0.25, 0.5, 0.5]}},
+        ]}})
+    render_preview(str(tmp_path), spec, max_width=540)
+    assert [t["rect"] for t in seen["tiles"]] == [[0, 0, 540, 360], [0, 360, 270, 180]]
+    assert seen["tiles"][1]["options"]["crop"] == [0.25, 0.25, 0.5, 0.5]
+
+
+def test_render_preview_rejects_a_missing_camera(tmp_path, monkeypatch):
+    _one_camera_session(tmp_path, monkeypatch)
+    spec = ComposeSpec.from_dict({"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 640, "height": 480},
+        "tiles": [{"kind": "camera", "source": "camera_zz", "rect": [0, 0, 640, 480]}]}})
+    with pytest.raises(ComposeError, match="camera_zz"):
+        render_preview(str(tmp_path), spec)
 
 
 # --------------------------------------------------------------------------- #
@@ -564,50 +643,6 @@ def test_audio_height_px_is_even_and_positive():
     assert audio_height_px(10, 1) == 2
 
 
-def test_render_preview_passes_the_audio_height(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "src.controller.compose.probe_dimensions", lambda _p: (640, 480)
-    )
-    dd = tmp_path / "sess" / "20260805" / "camera_a"
-    dd.mkdir(parents=True)
-    (dd / "v.ts").write_bytes(b"x")
-    (dd / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
-
-    mic = tmp_path / "sess" / "20260805" / "audiomoth"
-    mic.mkdir()
-    (mic / "s_audiomoth_1_AAAA_(0_1).flac").write_bytes(b"x")
-    (mic / "s_audiomoth_1_AAAA_(0_1)_timestamps.txt").write_text("x")
-
-    seen = {}
-
-    def fake_spec_png(cache_dir, date_dir, audio, width, height, logger=None, device=None):
-        seen["png_size"] = (width, height)
-        return str(tmp_path / "spec.png")
-
-    monkeypatch.setattr(
-        "src.controller.compose._preview_spectrogram_png", fake_spec_png)
-
-    def fake_preview(date_dir, out_png, **kw):
-        seen["kw"] = kw
-        with open(out_png, "wb") as f:
-            f.write(b"png")
-        return out_png
-
-    fake_vc = types.SimpleNamespace(compose_preview_frame=fake_preview)
-    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
-    import src.controller as _sc
-    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
-
-    spec = ComposeSpec.from_dict({
-        "session_name": "sess",
-        "audio": {"mode": "panel", "height_pct": 50},
-    })
-    render_preview(str(tmp_path), spec, max_width=640)
-    # 640x480 single camera -> canvas height 480 -> 50% = 240 px
-    assert seen["png_size"] == (640, 240)
-    assert seen["kw"]["audio_height_px"] == 240
-
-
 # --------------------------------------------------------------------------- #
 # ffprobe cache                                                               #
 # --------------------------------------------------------------------------- #
@@ -726,50 +761,107 @@ def test_preview_queue_restarts_after_going_idle():
     assert got == [1, 2]
 
 
-def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch):
-    """The real render's spectrogram panel is height_pct of the composited
-    canvas -- it used to be a fixed 240 px while the preview drew 40%."""
+def _render_job(tmp_path, monkeypatch, raw, aligned_ids):
+    """Run ComposeWorker._render on `raw` with the compositor and ffmpeg
+    faked out; returns what each stage was given."""
     from src.controller import audio_align, compose
 
-    monkeypatch.setattr(compose, "probe_dimensions", lambda _p: (1280, 720))
-    dd = tmp_path / "sess" / "20260805"
-    (dd / "camera_a").mkdir(parents=True)
-    (dd / "camera_a" / "v.ts").write_bytes(b"x")
-    (dd / "camera_a" / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
-
-    seen = {}
-    fake_vc = types.SimpleNamespace(
-        compose_session_video=lambda *a, **k: seen.update(panels=k["audio_panels"]))
-    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
-    import src.controller as _sc
-    monkeypatch.setattr(_sc, "video_compose", fake_vc, raising=False)
-
+    seen = {"strips": []}
+    _fake_video_compose(
+        monkeypatch,
+        render_layout=lambda date_dir, out, canvas, tiles, **k: seen.update(
+            out=out, canvas=canvas, tiles=tiles, background=k["background"]))
     monkeypatch.setattr(
-        compose.ComposeWorker, "_align_devices",
-        lambda self, *a, **k: (["a0.flac", "a1.flac"], ["mic A", "mic B"]))
+        compose.ComposeWorker, "_align_mics",
+        lambda self, date_dir, devices, *a, **k: {
+            d["id"]: f"{d['id'].split('/')[-1]}.flac"
+            for d in devices if d["id"] in aligned_ids})
     monkeypatch.setattr(audio_align, "render_strip_png",
-                        lambda path, png, w, h, spec=None: png)
+                        lambda path, png, w, h, spec=None: seen["strips"].append(
+                            (path, w, h)) or png)
     monkeypatch.setattr(audio_align, "render_with_audio",
+                        lambda *a, **k: seen.update(encoded=a[1], labels=a[3]))
+    monkeypatch.setattr(audio_align, "render_muxed_track",
                         lambda *a, **k: seen.update(muxed=a[1], labels=a[3]))
-
-    spec = ComposeSpec.from_dict({
-        "session_name": "sess", "fps": 15,
-        "audio": {"mode": "panel", "height_pct": 25},
-    })
+    spec = ComposeSpec.from_dict(raw)
     worker = ComposeWorker(str(tmp_path))
     job = types.SimpleNamespace(
         id="j1", spec=spec.__dict__, state="running", warnings=[],
         progress=0.0, stage="")
     monkeypatch.setattr(worker, "_emit", lambda _j: None)
-    worker._render(job)
+    seen["out_rel"] = worker._render(job)
+    return seen
+
+
+def test_render_uses_the_same_audio_height_as_the_preview(tmp_path, monkeypatch):
+    """A legacy panel request renders through the layout path: spectrogram
+    tiles height_pct of the canvas, stacked, labelled, both muxed."""
+    from src.controller import compose
+
+    date_dir = _one_camera_session(tmp_path, monkeypatch, dims=(1280, 720))
+    a = _add_mic(date_dir, "AAAA")
+    b = _add_mic(date_dir, "BBBB")
+    seen = _render_job(tmp_path, monkeypatch, {
+        "session_name": "sess", "fps": 15,
+        "audio": {"mode": "panel", "height_pct": 25, "sources": [a, b]},
+    }, {a, b})
     _, _, canvas_h = plan_regions([(1280, 720)], "auto")
-    panels = seen["panels"]
-    assert panels["mode"] == "panel"
-    heights = [h for _png, _label, h in panels["images"]]
+    spectro = [t for t in seen["tiles"] if t["kind"] == "spectrogram"]
+    heights = [t["rect"][3] for t in spectro]
     assert heights == compose.panel_heights(compose.audio_height_px(canvas_h, 25), 2)
-    assert [lbl for _png, lbl, _h in panels["images"]] == ["mic A", "mic B"]
-    assert seen["muxed"] == ["a0.flac", "a1.flac"]
-    assert seen["labels"] == ["mic A", "mic B"]
+    assert [t["rect"][1] for t in spectro] == [canvas_h, canvas_h + heights[0]]
+    assert all(t["options"]["label"] for t in spectro)
+    assert [t["label_text"] for t in spectro] == ["audiomoth · AAAA", "audiomoth · BBBB"]
+    assert seen["canvas"] == (1920, canvas_h + sum(heights))
+    assert seen["encoded"] == ["s_audiomoth_1_AAAA.flac", "s_audiomoth_1_BBBB.flac"]
+    assert seen["out_rel"].endswith(".mkv")
+
+
+def test_render_layout_doc_audio_tracks_only_stream_copies(tmp_path, monkeypatch):
+    date_dir = _one_camera_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    seen = _render_job(tmp_path, monkeypatch, {"session_name": "sess", "fmt": "mp4",
+        "layout_doc": {
+            "canvas": {"width": 640, "height": 480, "background": "#102030"},
+            "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 480]}],
+            "audio_tracks": [a]}}, {a})
+    assert seen["muxed"] == ["s_audiomoth_1_AAAA.flac"]
+    assert "encoded" not in seen
+    assert seen["background"] == (0x30, 0x20, 0x10)
+    assert seen["out_rel"].endswith(".mp4") and seen["out"].endswith(".base.mp4")
+
+
+def test_render_layout_doc_spectrogram_window(tmp_path, monkeypatch):
+    """A tile with a window renders a strip wide enough to show it at full
+    resolution, one strip per distinct (source, size, options)."""
+    date_dir = _one_camera_session(tmp_path, monkeypatch)
+    (date_dir / "camera_a" / "v_timestamps.csv").write_text(
+        "timestamp_ns\n0\n60000000000\n")                 # a 60 s window
+    a = _add_mic(date_dir, "AAAA")
+    tile = {"kind": "spectrogram", "source": a, "rect": [0, 400, 640, 80],
+            "options": {"window_s": 10, "playhead": 0.25}}
+    seen = _render_job(tmp_path, monkeypatch, {"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 640, "height": 480},
+        "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 400]},
+                  {**tile, "id": "s1"}, {**tile, "id": "s2", "z": 2}]}}, {a})
+    assert seen["strips"] == [("s_audiomoth_1_AAAA.flac", 3840, 80)]   # 60 s x 64 px/s
+    spectro = [t for t in seen["tiles"] if t["kind"] == "spectrogram"]
+    assert spectro[0]["pps"] == pytest.approx(64.0) and spectro[0]["win"] == 640
+    assert seen["encoded"] == []          # spectrograms but no audio tracks
+
+
+def test_render_spectrogram_without_audio_is_blank_not_fatal(tmp_path, monkeypatch):
+    date_dir = _one_camera_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    b = _add_mic(date_dir, "BBBB")
+    seen = _render_job(tmp_path, monkeypatch, {"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 640, "height": 480},
+        "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 400]},
+                  {"kind": "spectrogram", "source": b, "rect": [0, 400, 640, 80]}],
+        "audio_tracks": [a]}}, {a})
+    spectro = [t for t in seen["tiles"] if t["kind"] == "spectrogram"]
+    assert spectro[0]["strip"] is None
+    assert seen["encoded"] == ["s_audiomoth_1_AAAA.flac"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1067,3 +1159,25 @@ def test_panel_height_can_exceed_the_video():
     """Shared between stacked AudioMoth panels, so 200 % = two full-height ones."""
     a = AudioSpec.from_dict({"mode": "panel", "height_pct": 200})
     assert a.effective_height_pct == 200
+
+
+def test_preview_spectrogram_has_no_axes_like_the_render(tmp_path, monkeypatch):
+    """The preview's spectrogram tile is drawn without ffmpeg's legend, as
+    the render's is, and covers the tile's window."""
+    from src.controller import audio_align, compose
+
+    date_dir = tmp_path / "20261016"
+    date_dir.mkdir()
+    mic_id = _add_mic(date_dir)
+    cmds = []
+    monkeypatch.setattr(audio_align, "_run", lambda cmd, timeout=None: cmds.append(cmd))
+    device = {d["id"]: d for d in compose.list_mic_devices(str(date_dir))}[mic_id]
+    tile = {"kind": "spectrogram", "source": mic_id, "rect": [0, 0, 640, 120],
+            "options": {"color": "magma", "gain": 2.0}}
+    out = compose._preview_tile_spectrogram(
+        str(tmp_path), str(date_dir), device, tile, 640, 120, 10.0)
+    assert out and out.endswith(".png")
+    (cmd,) = cmds
+    lavfi = cmd[cmd.index("-lavfi") + 1]
+    assert "legend=0" in lavfi and "s=640x120" in lavfi and "color=magma" in lavfi
+    assert cmd[cmd.index("-t") + 1] == "10.000"

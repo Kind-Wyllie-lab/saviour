@@ -742,18 +742,20 @@ def render_source_spectrogram_png(
     size: tuple[int, int] = DEFAULT_SPECTROGRAM_SIZE,
     spec: SpectrogramOpts | None = None,
     start_s: float = 0.0, dur_s: float = 20.0,
-    timeout: float | None = None,
+    timeout: float | None = None, legend: bool = True,
 ) -> str:
     """A static spectrogram PNG straight from a source recording, with no
     PTP alignment -- for the compose preview, where only the look (colour
     map, band, scales) matters, not sample-accurate timing. `start_s` /
-    `dur_s` bound how much audio is decoded so this stays fast on a Pi."""
+    `dur_s` bound how much audio is decoded so this stays fast on a Pi.
+    `legend=False` leaves off the axes, as a render's spectrogram tile."""
     spec = spec or SpectrogramOpts()
+    lavfi = (spec.pic_filter(size[0], size[1]) if legend
+             else spec.pic_filter_nolegend(size[0], size[1]))
     _run([
         "ffmpeg", "-y",
         "-ss", f"{max(0.0, start_s):.3f}", "-t", f"{max(0.1, dur_s):.3f}",
-        "-i", audio_path,
-        "-lavfi", spec.pic_filter(size[0], size[1]), out_path,
+        "-i", audio_path, "-lavfi", lavfi, out_path,
     ], timeout=timeout)
     return out_path
 

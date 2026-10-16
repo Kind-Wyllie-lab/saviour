@@ -190,26 +190,6 @@ def test_representative_frame_falls_back_to_first_frame(tmp_path):
     assert frame is not None and frame.shape[:2] == (48, 64)
 
 
-@pytest.mark.parametrize("mode,height_px,expect_h", [
-    ("panel", 60, 100 + 60),   # stacked below the video
-    ("strip", 30, 100),        # overlaid; frame height unchanged
-    ("strip", 500, 100),       # clamped to the frame
-])
-def test_attach_audio_preview_uses_the_given_height(tmp_path, mode, height_px, expect_h):
-    from src.controller.video_compose import _attach_audio_preview
-
-    png = str(tmp_path / "spec.png")
-    cv2.imwrite(png, np.full((20, 40, 3), 200, dtype=np.uint8))
-    frame = np.zeros((100, 160, 3), dtype=np.uint8)
-    out = _attach_audio_preview(frame, png, mode, height_px)
-    assert out.shape[:2] == (expect_h, 160)
-    if mode == "strip":
-        strip_h = min(height_px, 100)
-        assert out[100 - strip_h:, :].mean() > 150   # spectrogram drawn
-        if strip_h < 100:
-            assert out[: 100 - strip_h, :].mean() == 0  # video untouched
-
-
 # --------------------------------------------------------------------------- #
 # Multi-segment days (camera_segments.py)                                     #
 # --------------------------------------------------------------------------- #
@@ -322,39 +302,129 @@ def test_representative_frame_seeks_in_the_segment_covering_t(tmp_path):
     assert float(_representative_frame(stream, T0 + 5 * STEP).mean()) < 60
 
 
-def test_audio_panels_scroll_under_the_video(tmp_path):
-    """Panel mode: each spectrogram stacks under the cameras and scrolls so
-    the column for time t sits under the mid-width playhead."""
+def test_preview_layout_draws_each_tile_and_returns_its_pixels(tmp_path):
+    """The preview draws tiles with the render's per-tile code and hands
+    back each tile's own pixels for the editor."""
     from src.controller import video_compose as vc
 
+    date_dir = tmp_path / "20261013"
+    _two_segment_camera(date_dir)            # first segment dark, second bright
+    png = str(tmp_path / "spec.png")
+    cv2.imwrite(png, np.full((20, 40, 3), 200, dtype=np.uint8))
+    tiles = [
+        {"id": "c1", "kind": "camera", "source": "cam", "rect": [0, 0, 64, 48],
+         "z": 0, "options": {"fit": "contain", "label": False}},
+        {"id": "a1", "kind": "spectrogram", "source": "mic/x", "rect": [0, 48, 64, 16],
+         "z": 0, "options": {"playhead": 0.5, "label": False}, "image": png},
+        {"id": "a2", "kind": "spectrogram", "source": "mic/y", "rect": [64, 0, 16, 16],
+         "z": 0, "options": {"playhead": 0.5}, "image": None},
+    ]
+    frame, panes = vc.preview_layout(str(date_dir), (80, 64), tiles,
+                                     background=(0, 0, 255), at_fraction=0.9)
+    assert frame.shape == (64, 80, 3)
+    assert set(panes) == {"c1", "a1", "a2"}
+    assert float(frame[:48, :64].mean()) > 150            # 90%: second segment
+    assert tuple(frame[50, 5]) == (200, 200, 200)         # spectrogram stretched in
+    assert tuple(frame[48, 30]) == vc._PLAYHEAD           # dashed playhead at mid
+    assert tuple(frame[8, 70]) == vc._PANEL_BG            # no image: blank panel
+    assert tuple(frame[40, 70]) == (0, 0, 255)            # canvas background
+    assert (panes["a1"] == frame[48:64, 0:64]).all()
+
+
+def test_camera_pane_fit_crop_and_rotate():
+    from src.controller.video_compose import camera_pane
+
+    # 40x20 frame: left half red, right half green.
+    src = np.zeros((20, 40, 3), dtype=np.uint8)
+    src[:, :20] = (0, 0, 255)
+    src[:, 20:] = (0, 255, 0)
+    contain = camera_pane(src, 40, 40, {"fit": "contain"}, (255, 0, 0))
+    assert tuple(contain[2, 20]) == (255, 0, 0)            # letterbox = background
+    assert tuple(contain[20, 5]) == (0, 0, 255)
+    cover = camera_pane(src, 40, 40, {"fit": "cover"})
+    assert tuple(cover[2, 2]) == (0, 0, 255)               # filled, edges cut
+    stretch = camera_pane(src, 10, 30, {"fit": "stretch"})
+    assert stretch.shape == (30, 10, 3)
+    crop = camera_pane(src, 20, 20, {"fit": "stretch", "crop": [0.5, 0, 0.5, 1]})
+    assert (crop == (0, 255, 0)).all()                     # right half only
+    rot = camera_pane(src, 20, 40, {"fit": "stretch", "rotate": 90})
+    assert tuple(rot[2, 10]) == (0, 0, 255)                # left edge now on top
+    assert tuple(rot[38, 10]) == (0, 255, 0)
+
+
+def _two_colour_strip(tmp_path, height=60):
     # 100 px/s wide image: column x is red for x < 150, green after.
-    img = np.zeros((60, 300, 3), dtype=np.uint8)
+    img = np.zeros((height, 300, 3), dtype=np.uint8)
     img[:, :150] = (0, 0, 255)
     img[:, 150:] = (0, 255, 0)
     png = str(tmp_path / "s.png")
     cv2.imwrite(png, img)
-    spec = {"mode": "panel", "pps": 100, "images": [(png, "A", 60), (png, "B", 60)]}
-    panels = vc._load_audio_panels(spec, 40)
-    frame = np.zeros((50 + 120, 40, 3), dtype=np.uint8)
-
-    vc._draw_audio_panels(frame, panels, spec, 50, 1.0)   # t=1 s -> column 100
-    assert (frame[:50] == 0).all()                       # video area untouched
-    assert tuple(frame[100, 5]) == (0, 0, 255)           # below the label: red
-    vc._draw_audio_panels(frame, panels, spec, 50, 2.0)   # column 200: green
-    assert tuple(frame[160, 5]) == (0, 255, 0)
-    assert tuple(frame[100, 19]) == vc._PLAYHEAD         # dashed centre line
-    assert tuple(frame[50 + 30, 10]) == (0, 0, 0)        # label box on panel A
+    return png
 
 
-def test_audio_strip_overlays_the_bottom_with_the_first_image(tmp_path):
+def test_spectrogram_pane_scrolls_under_the_playhead(tmp_path):
+    """A tile-wide window (the old full-width panel): the column for time t
+    sits under the mid-width playhead."""
     from src.controller import video_compose as vc
 
-    img = np.full((8, 100, 3), 200, dtype=np.uint8)
+    strip = vc._load_strip(_two_colour_strip(tmp_path), 60, pps=100, win=40)
+    pane = vc.spectrogram_pane(strip, 1.0, 40, 60)       # t=1 s -> column 100
+    assert tuple(pane[30, 5]) == (0, 0, 255)             # left of 150: red
+    assert tuple(pane[0, 19]) == vc._PLAYHEAD            # dashed centre line
+    pane = vc.spectrogram_pane(strip, 2.0, 40, 60)       # column 200: green
+    assert tuple(pane[30, 5]) == (0, 255, 0)
+    pane = vc.spectrogram_pane(strip, 1.45, 40, 60)      # column 145 at mid
+    assert tuple(pane[30, 10]) == (0, 0, 255) and tuple(pane[30, 30]) == (0, 255, 0)
+
+
+def test_spectrogram_pane_window_and_playhead_position(tmp_path):
+    """A wider window is squeezed into the tile; the playhead moves the
+    'now' column across it."""
+    from src.controller import video_compose as vc
+
+    # 120 strip px shown in a 40 px tile, 'now' a quarter of the way in.
+    strip = vc._load_strip(_two_colour_strip(tmp_path), 60, pps=100, win=120)
+    pane = vc.spectrogram_pane(strip, 1.5, 40, 60, playhead=0.25)
+    assert pane.shape == (60, 40, 3)
+    assert tuple(pane[30, 4]) == (0, 0, 255)             # before 'now': red
+    assert tuple(pane[30, 30]) == (0, 255, 0)            # after: green
+    assert tuple(pane[0, 9]) == vc._PLAYHEAD
+
+
+def test_render_layout_draws_tiles_by_z(tmp_path, monkeypatch):
+    """Two tiles of one camera (one decoder) and a spectrogram over the
+    bottom of the first, drawn above it by z."""
+    from src.controller import video_compose as vc
+
+    monkeypatch.setattr(vc, "_probe_frame_count", _cv2_frame_count)
+    date_dir = tmp_path / "20261013"
+    _two_segment_camera(date_dir)
     png = str(tmp_path / "s.png")
-    cv2.imwrite(png, img)
-    spec = {"mode": "strip", "pps": 10, "images": [(png, "A", 8), (png, "B", 8)]}
-    panels = vc._load_audio_panels(spec, 20)
-    assert len(panels) == 1
-    frame = np.zeros((30, 20, 3), dtype=np.uint8)
-    vc._draw_audio_panels(frame, panels, spec, 30, 5.0)
-    assert (frame[:22] == 0).all() and tuple(frame[29, 2]) == (200, 200, 200)
+    cv2.imwrite(png, np.full((8, 400, 3), 200, dtype=np.uint8))
+    tiles = [
+        {"kind": "spectrogram", "rect": [0, 40, 64, 8], "z": 1,
+         "options": {"playhead": 0.5}, "strip": png, "pps": 100.0, "win": 64},
+        {"kind": "camera", "source": "cam", "rect": [0, 0, 64, 48], "z": 0,
+         "options": {"fit": "contain", "label": False}},
+        {"kind": "camera", "source": "cam", "rect": [64, 0, 32, 48], "z": 0,
+         "options": {"fit": "cover", "label": False}},
+    ]
+    out = str(tmp_path / "out.mp4")
+    try:
+        vc.render_layout(str(date_dir), out, (96, 48), tiles, fps=10)
+    except RuntimeError as e:
+        if "VideoWriter" in str(e):
+            pytest.skip("cv2.VideoWriter unavailable for the canvas")
+        raise
+    cap = cv2.VideoCapture(out)
+    frames = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        frames.append(fr)
+    cap.release()
+    assert len(frames) >= 18
+    last = frames[-1]
+    assert float(last[44, 5:25].mean()) > 170            # spectrogram on top
+    assert float(last[10:30, 70:90].mean()) > 150        # second tile, same camera

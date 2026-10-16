@@ -9,11 +9,15 @@ callbacks the web layer forwards to the client. The artifact is written
 into the session's own date directory so it shows up in the normal
 file browser / download path with no new storage concept.
 
-Phase 1 is video layout only -- presets (`side | stack | grid | loom |
-auto`), planned aspect-ratio-aware from each stream's real dimensions
-(probed with ffprobe, so this module needs neither OpenCV nor Flask).
-Audio modes (muxed track / spectrogram strip / ethogram panel) plug in
-at `_render` in phase 2 via audio_align.py.
+What a render looks like is a layout document (compose_layout.py): a
+canvas and tiles, each a camera or an AudioMoth spectrogram placed in
+output pixels, plus the AudioMoths muxed as audio tracks. The editor
+sends one; an old-style request (a layout keyword -- `side | stack |
+grid | auto` -- planned aspect-ratio-aware from each stream's real
+dimensions, plus an audio mode) is translated into one
+(`layout_from_legacy`), so both go through the same compositor
+(video_compose.render_layout). Planning needs only ffprobe, so this
+module imports neither OpenCV nor Flask at load time.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from itertools import pairwise
 
-from src.controller import audio_align
+from src.controller import audio_align, compose_layout
 from src.controller.camera_segments import camera_segments
 
 LAYOUTS = ("auto", "side", "stack", "grid", "loom")
@@ -155,6 +159,9 @@ class ComposeSpec:
     fps: int = DEFAULT_FPS
     fmt: str = "mp4"
     audio: dict = field(default_factory=dict)   # -> AudioSpec
+    # A layout document (compose_layout.py) from the editor. When set it
+    # replaces `streams` / `layout` / `audio`, and `layout` reads "custom".
+    layout_doc: dict | None = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> ComposeSpec:
@@ -163,9 +170,17 @@ class ComposeSpec:
         name = str(raw.get("session_name", "")).strip()
         if not _safe_name(name):
             raise ComposeError("invalid or missing session_name")
-        layout = str(raw.get("layout", "auto")).lower()
-        if layout not in LAYOUTS:
-            raise ComposeError(f"layout must be one of {', '.join(LAYOUTS)}")
+        layout_doc = raw.get("layout_doc")
+        if layout_doc is not None:
+            try:
+                layout_doc = compose_layout.validate_layout(layout_doc)
+            except compose_layout.LayoutError as exc:
+                raise ComposeError(str(exc)) from exc
+            layout = "custom"
+        else:
+            layout = str(raw.get("layout", "auto")).lower()
+            if layout not in LAYOUTS:
+                raise ComposeError(f"layout must be one of {', '.join(LAYOUTS)}")
         fmt = str(raw.get("fmt", "mp4")).lower()
         if fmt not in ("mp4", "mkv"):
             raise ComposeError("fmt must be mp4 or mkv")
@@ -186,9 +201,11 @@ class ComposeSpec:
         if date_dir is not None and not _safe_segment(str(date_dir)):
             raise ComposeError("invalid date_dir")
         audio = asdict(AudioSpec.from_dict(raw.get("audio")))
+        if layout_doc is not None:
+            streams, audio = None, asdict(AudioSpec())
         return cls(
             session_name=name, date_dir=date_dir, streams=streams,
-            layout=layout, fps=fps, fmt=fmt, audio=audio,
+            layout=layout, fps=fps, fmt=fmt, audio=audio, layout_doc=layout_doc,
         )
 
 
@@ -502,6 +519,11 @@ def streams_info(share_path: str, session_name: str,
     resolved = resolve_date_dir(session_dir, date_dir)
     cams = discover_streams(resolved, None)
     wanted = [s for s in cams if not streams or s.name in streams] or cams
+    try:
+        t0, t1 = camera_window(wanted)
+        duration_s = round((t1 - t0) / 1e9, 3)
+    except (ComposeError, OSError, ValueError, KeyError):
+        duration_s = None
     return {
         "session_name": session_name,
         "date_dir": os.path.basename(resolved),
@@ -516,6 +538,11 @@ def streams_info(share_path: str, session_name: str,
         "mics": list_mic_folders(resolved),
         "mic_devices": list_mic_devices(resolved),
         "suggested_fps": suggest_fps(wanted),
+        # The selected cameras' overlap -- what a render covers.
+        "duration_s": duration_s,
+        # Lets the editor size an "auto" spectrogram window like a render.
+        "playhead_pps": audio_align.PLAYHEAD_PPS,
+        "max_strip_px": audio_align._MAX_STRIP_PX,
     }
 
 
@@ -643,54 +670,207 @@ def find_microphone(date_dir: str, source: str | None):
 # Bounds the preview's ffmpeg spectrogram call: a stuck ffmpeg used to leave
 # the preview spinning forever with no error.
 PREVIEW_FFMPEG_TIMEOUT_S = 30
+# A spectrogram tile's preview shows this much audio when its window is
+# "auto" and the session length can't be read.
+PREVIEW_SPECTROGRAM_S = 20.0
 
 
-def _preview_spectrogram_png(cache_dir: str, date_dir: str, audio: AudioSpec,
-                             width: int, height: int,
-                             logger=None, device: dict | None = None) -> str | None:
-    """A representative (unaligned) spectrogram PNG for the preview, cached
-    by mic file + spectrogram options so it's rendered once per settings
-    combination. `device` (a list_mic_devices() entry) picks the AudioMoth.
-    Returns None (preview just omits that panel) if ffmpeg or the mic
-    recording isn't usable -- a preview must not fail over audio."""
-    try:
-        if device is not None:
-            segs = find_microphone_segments(date_dir, device["folder"], device["device"])
-            if not segs:
-                raise ComposeError(f"no recording for {device['label']}")
-            audio_file = segs[0][0]
+# --------------------------------------------------------------------------- #
+# Layouts: legacy translation, templates, resolving against a session         #
+# --------------------------------------------------------------------------- #
+
+
+def _spectrogram_options(audio: AudioSpec) -> dict:
+    opts = asdict(audio.spec_opts())
+    return {**opts, "window_s": None, "playhead": 0.5}
+
+
+def layout_from_legacy(spec: ComposeSpec, streams: list[SessionStream],
+                       devices: list[dict],
+                       canvas_width: int = DEFAULT_CANVAS_WIDTH) -> dict:
+    """The layout document an old-style request (a `layout` keyword plus an
+    `audio` mode) describes, so old callers and saved jobs render through
+    the same compositor as the editor. `devices` are the AudioMoths the
+    request resolves to (resolve_mic_devices); `strip` uses the first.
+
+    Reproduces the old placement exactly: cameras where plan_regions puts
+    them; a `strip` over the bottom of the video; `panel`s stacked under
+    it, labelled when there's more than one; one spectrogram window per
+    tile pixel (`window_s` None)."""
+    regions, cw, ch = plan_regions(
+        [(s.width, s.height) for s in streams], spec.layout, canvas_width)
+    tiles = [
+        {"id": f"c{i + 1}", "kind": "camera", "source": s.name, "rect": list(r),
+         "z": 0, "options": {"fit": "contain", "label": True}}
+        for i, (s, r) in enumerate(zip(streams, regions, strict=True))
+    ]
+    audio = AudioSpec(**spec.audio)
+    canvas_h = ch
+    tracks: list[str] = []
+    if audio.mode in ("strip", "panel") and devices:
+        devs = devices[:1] if audio.mode == "strip" else devices
+        heights = panel_heights(audio_height_px(ch, audio.effective_height_pct),
+                                len(devs))
+        opts = _spectrogram_options(audio)
+        if audio.mode == "strip":
+            h = min(heights[0], ch)
+            tiles.append({"id": "a1", "kind": "spectrogram", "source": devs[0]["id"],
+                          "rect": [0, ch - h, cw, h], "z": 1,
+                          "options": {**opts, "label": False}})
         else:
-            audio_file, _sidecar = find_microphone(date_dir, audio.source)
+            y = ch
+            for i, (dev, h) in enumerate(zip(devs, heights, strict=True)):
+                tiles.append({"id": f"a{i + 1}", "kind": "spectrogram",
+                              "source": dev["id"], "rect": [0, y, cw, h], "z": 0,
+                              "options": {**opts, "label": len(devs) > 1}})
+                y += h
+            canvas_h = y
+        tracks = [d["id"] for d in devs]
+    elif audio.mode == "track":
+        tracks = [d["id"] for d in devices]
+    try:
+        return compose_layout.validate_layout({
+            "canvas": {"width": cw, "height": canvas_h, "background": "#000000"},
+            "tiles": tiles, "audio_tracks": tracks,
+        })
+    except compose_layout.LayoutError as exc:
+        raise ComposeError(str(exc)) from exc
+
+
+@dataclass
+class ResolvedLayout:
+    """A layout bound to one session day: its document, the camera streams
+    it shows and the AudioMoths it uses (list_mic_devices entries by id)."""
+    date_dir: str
+    doc: dict
+    streams: list[SessionStream]
+    devices: dict[str, dict]
+
+    def stream(self, name: str) -> SessionStream:
+        return next(s for s in self.streams if s.name == name)
+
+
+def resolve_layout(date_dir: str, spec: ComposeSpec, strict_audio: bool = True,
+                   logger=None) -> ResolvedLayout:
+    """`spec`'s layout document (translated from the legacy fields if it
+    has none) with every source checked against what `date_dir` holds.
+    `strict_audio=False` (the preview) drops a missing microphone with a
+    warning instead of failing."""
+    if spec.layout_doc:
+        doc = spec.layout_doc
+        streams = discover_streams(date_dir, compose_layout.camera_sources(doc))
+        by_id = {d["id"]: d for d in list_mic_devices(date_dir)}
+        missing = [m for m in compose_layout.mic_sources(doc) if m not in by_id]
+        if missing:
+            raise ComposeError(f"microphone not found: {', '.join(missing)}")
+        devices = {m: by_id[m] for m in compose_layout.mic_sources(doc)}
+        return ResolvedLayout(date_dir, doc, streams, devices)
+
+    streams = discover_streams(date_dir, spec.streams)
+    audio = AudioSpec(**spec.audio)
+    devices: list[dict] = []
+    if audio.mode != "none":
+        try:
+            devices = resolve_mic_devices(date_dir, audio)
+        except ComposeError as exc:
+            if strict_audio:
+                raise
+            if logger:
+                logger.warning("compose preview: skipping audio (%s)", exc)
+    doc = layout_from_legacy(spec, streams, devices)
+    return ResolvedLayout(date_dir, doc, streams, {d["id"]: d for d in devices})
+
+
+def layout_template(share_path: str, session_name: str, date_dir: str | None,
+                    template: str = "auto", audio_mode: str = "none",
+                    streams: list[str] | None = None, mics: list[str] | None = None,
+                    spectrogram: dict | None = None,
+                    canvas: dict | None = None) -> dict:
+    """A built-in starting layout for the editor: one of the old layout
+    keywords (`auto | side | stack | grid`) with an old audio arrangement
+    (`none | track | strip | panel`) over the chosen cameras and AudioMoths,
+    as a layout document. With `canvas` ({width, height}) the arrangement
+    is scaled to fit that canvas and centred on it; without, the canvas is
+    the arrangement's natural size."""
+    raw = {"session_name": session_name, "date_dir": date_dir, "layout": template,
+           "streams": streams or None,
+           "audio": {"mode": audio_mode, "sources": mics or [],
+                     "spectrogram": spectrogram or {}}}
+    spec = ComposeSpec.from_dict(raw)
+    session_dir = os.path.join(share_path, spec.session_name)
+    if not os.path.isdir(session_dir):
+        raise ComposeError("session directory not found")
+    resolved = resolve_layout(resolve_date_dir(session_dir, spec.date_dir), spec,
+                              strict_audio=False)
+    doc = resolved.doc
+    if canvas:
+        try:
+            target = compose_layout.validate_canvas(
+                {"background": doc["canvas"]["background"], **canvas})
+        except compose_layout.LayoutError as exc:
+            raise ComposeError(str(exc)) from exc
+        doc = compose_layout.fit_to_canvas(doc, target["width"], target["height"])
+        doc["canvas"]["background"] = target["background"]
+    return doc
+
+
+def _tile_label(resolved: ResolvedLayout, tile: dict) -> str:
+    if tile["kind"] == "camera":
+        return tile["source"]
+    dev = resolved.devices.get(tile["source"])
+    return dev["label"] if dev else tile["source"]
+
+
+def _preview_tile_spectrogram(cache_dir: str, date_dir: str, device: dict,
+                              tile: dict, width: int, height: int, dur_s: float,
+                              logger=None) -> str | None:
+    """A representative (unaligned) spectrogram PNG for one spectrogram
+    tile's preview, `dur_s` of the device's first recording, cached by file
+    + options + size so it's rendered once per settings combination.
+    Returns None (the tile previews blank) if ffmpeg or the recording isn't
+    usable -- a preview must not fail over audio."""
+    try:
+        segs = find_microphone_segments(date_dir, device["folder"], device["device"])
+        if not segs:
+            raise ComposeError(f"no recording for {device['label']}")
+        audio_file = segs[0][0]
         try:
             mtime = int(os.path.getmtime(audio_file))
         except OSError:
             mtime = 0
-        # `strip` and `panel` render the same source spectrogram (only the
-        # placement differs), so the mode is deliberately not in the key.
+        opts = compose_layout.spectrogram_opts(tile)
         key = hashlib.md5(
-            f"{audio_file}|{mtime}|{width}x{height}|"
-            f"{json.dumps(audio.spectrogram, sort_keys=True)}".encode()
+            f"{audio_file}|{mtime}|{width}x{height}|{dur_s:.2f}|nolegend|"
+            f"{json.dumps(asdict(opts), sort_keys=True)}".encode()
         ).hexdigest()[:12]
         out = os.path.join(cache_dir, f"spec_{key}.png")
         if not os.path.isfile(out):
             audio_align.render_source_spectrogram_png(
-                audio_file, out, size=(width, height), spec=audio.spec_opts(),
-                timeout=PREVIEW_FFMPEG_TIMEOUT_S,
+                audio_file, out, size=(max(2, width), max(2, height)), spec=opts,
+                dur_s=dur_s, timeout=PREVIEW_FFMPEG_TIMEOUT_S, legend=False,
             )
         return out
     except Exception as exc:  # noqa: BLE001 -- preview must not fail over audio
         if logger:
-            logger.warning("compose preview: skipping audio panel (%s)", exc)
+            logger.warning("compose preview: skipping spectrogram (%s)", exc)
         return None
 
 
+@dataclass
+class PreviewResult:
+    png: bytes                       # the whole composited frame
+    tiles: dict[str, bytes]          # tile id -> that tile's pixels (JPEG)
+    scale: float                     # preview px per output px
+    doc: dict                        # the layout previewed (full size)
+
+
 def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
-                   rebuild: bool = False, logger=None) -> bytes:
-    """One composited frame (mid-window) as PNG bytes -- a fast layout
-    preview before committing to a full render. Cameras are drawn from
-    cached per-module thumbnails (rebuilt on `rebuild=True`); a `strip`/
-    `panel` audio mode is composited in the same place a real render puts
-    it."""
+                   rebuild: bool = False, logger=None) -> PreviewResult:
+    """One composited frame (mid-window) of `spec`'s layout, drawn by the
+    same per-tile code as a render, at most `max_width` wide. Cameras come
+    from cached per-module thumbnails (rebuilt on `rebuild=True`);
+    spectrogram tiles show a representative stretch of their recording.
+    Also returns each tile's own pixels, for the editor."""
     from src.controller import video_compose
 
     session_dir = os.path.join(share_path, spec.session_name)
@@ -702,42 +882,36 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
         clear_preview_cache(spec.session_name, date_base)
     cache_dir = _preview_cache_dir(spec.session_name, date_base)
 
-    streams = discover_streams(date_dir, spec.streams)
-    regions, cw, ch = plan_regions(
-        [(s.width, s.height) for s in streams], spec.layout, canvas_width=max_width,
-    )
-
-    audio = AudioSpec(**spec.audio)
-    audio_pngs = []
-    if audio.mode in ("strip", "panel"):
-        try:
-            devices = resolve_mic_devices(date_dir, audio)
-        except ComposeError as exc:
-            if logger:
-                logger.warning("compose preview: skipping audio (%s)", exc)
-            devices = []
-        if audio.mode == "strip":
-            devices = devices[:1]
-        each = panel_heights(audio_height_px(ch, audio.effective_height_pct), len(devices))
-        for dev, h in zip(devices, each, strict=False):
-            png = _preview_spectrogram_png(cache_dir, date_dir, audio, cw, h, logger, dev)
-            if png:
-                audio_pngs.append((png, dev["label"], h))
-
-    tmp = os.path.join(cache_dir, f".preview_{uuid.uuid4().hex[:8]}.png")
+    resolved = resolve_layout(date_dir, spec, strict_audio=False, logger=logger)
+    small, scale = compose_layout.scaled(resolved.doc, max_width)
     try:
-        video_compose.compose_preview_frame(
-            date_dir, tmp, streams=[s.name for s in streams],
-            regions=regions, canvas=(cw, ch), cache_dir=cache_dir,
-            audio_png=audio_pngs or None,
-            audio_mode=audio.mode if audio_pngs else None,
-            csv_skip={s.name: s.csv_skip for s in streams},
-            audio_height_px=audio_height_px(ch, audio.effective_height_pct),
-        )
-        with open(tmp, "rb") as f:
-            return f.read()
-    finally:
-        _safe_unlink(tmp)
+        t0, t1 = camera_window(resolved.streams)
+        total_s = (t1 - t0) / 1e9
+    except ComposeError:
+        total_s = 0.0
+
+    tiles = []
+    for full, tile in zip(resolved.doc["tiles"], small["tiles"], strict=True):
+        tile = {**tile, "label_text": _tile_label(resolved, tile), "label_scale": scale}
+        if tile["kind"] == "spectrogram":
+            device = resolved.devices.get(tile["source"])
+            window_s = tile["options"].get("window_s")
+            if window_s is None:
+                _w, pps = audio_align._strip_pixels_per_second(total_s or 1.0)
+                window_s = full["rect"][2] / pps if total_s else PREVIEW_SPECTROGRAM_S
+            window_s = max(0.5, min(window_s, 120.0))
+            tile["image"] = (_preview_tile_spectrogram(
+                cache_dir, date_dir, device, tile, tile["rect"][2], tile["rect"][3],
+                window_s, logger) if device else None)
+        tiles.append(tile)
+
+    frame, panes = video_compose.preview_layout(
+        date_dir, (small["canvas"]["width"], small["canvas"]["height"]), tiles,
+        cache_dir=cache_dir, csv_skip={s.name: s.csv_skip for s in resolved.streams},
+        background=compose_layout.hex_to_bgr(small["canvas"]["background"]),
+    )
+    png, tile_jpegs = video_compose.encode_preview(frame, panes)
+    return PreviewResult(png, tile_jpegs, scale, resolved.doc)
 
 
 class PreviewQueue:
@@ -1082,20 +1256,22 @@ class ComposeWorker:
         if not os.path.isdir(session_dir):
             raise ComposeError("session directory not found")
         date_dir = resolve_date_dir(session_dir, spec.date_dir)
-        streams = discover_streams(date_dir, spec.streams)
-        regions, canvas_w, canvas_h = plan_regions(
-            [(s.width, s.height) for s in streams], spec.layout,
-        )
+        resolved = resolve_layout(date_dir, spec)
+        doc = resolved.doc
+        t_start, t_end = camera_window(resolved.streams)
+        total_s = (t_end - t_start) / 1e9
 
-        audio = AudioSpec(**spec.audio)
-        # `strip`/`panel`: the compositor draws the spectrograms, then ffmpeg
-        # re-encodes with the audio muxed in, so the base pass writes a temp
-        # mp4; `track`/`none` write the final file.
-        needs_ffmpeg_pass = audio.mode in ("strip", "panel")
-        fmt = "mkv" if needs_ffmpeg_pass else spec.fmt
+        spectro = [t for t in doc["tiles"] if t["kind"] == "spectrogram"]
+        mics = compose_layout.mic_sources(doc)
+        # Spectrogram tiles: the composite is re-encoded to H.264 by ffmpeg
+        # with the audio muxed in (Matroska, FLAC), so the compositor writes
+        # a temp file. Audio tracks only: the video is stream-copied with the
+        # audio muxed in. Neither: the compositor writes the final file.
+        encode = bool(spectro)
+        fmt = "mkv" if encode else spec.fmt
         out_name = f"{spec.session_name}_composed_{job.id}.{fmt}"
         out_path = os.path.join(date_dir, out_name)
-        base_path = out_path + ".base.mp4" if audio.mode != "none" else out_path
+        base_path = out_path + ".base.mp4" if mics else out_path
 
         def set_progress(frac: float, stage: str) -> None:
             if job.state == "cancelled":
@@ -1113,71 +1289,82 @@ class ComposeWorker:
                 set_progress(lo + (hi - lo) * frac, _stage or stage)
             return cb
 
-        # `none`/`track` audio is cheap (stream copy); `strip`/`panel` align
-        # the audio first (its spectrograms are drawn into the composite),
-        # then re-encode, so each gets a real slice of the bar.
-        panel_modes = audio.mode in ("strip", "panel")
-        video_lo, video_hi = (0.12, 0.75) if panel_modes else (
-            0.0, 0.97 if audio.mode == "track" else 1.0)
-        aligned, labels, temp_pngs = [], [], []
+        if encode:
+            video_lo, video_hi = 0.12, 0.75
+        elif mics:
+            video_lo, video_hi = 0.1, 0.99
+        else:
+            video_lo, video_hi = 0.0, 1.0
+        aligned: dict[str, str] = {}
+        temp_pngs: list[str] = []
         try:
-            audio_panels = None
-            if panel_modes:
-                aligned, labels = self._align_devices(
-                    date_dir, streams, audio, out_path, phase(0.0, 0.1, "aligning audio"),
-                    job.warnings)
-                t_start, t_end = camera_window(streams)
-                strip_w, pps = audio_align._strip_pixels_per_second((t_end - t_start) / 1e9)
-                total_h = audio_height_px(canvas_h, audio.effective_height_pct)
-                heights = panel_heights(total_h, len(aligned) if audio.mode == "panel" else 1)
-                images = []
-                for i, (path, h) in enumerate(zip(aligned, heights, strict=False)):
-                    png = os.path.splitext(out_path)[0] + f".panel{i}.png"
-                    temp_pngs.append(png)
-                    audio_align.render_strip_png(path, png, strip_w, h, audio.spec_opts())
-                    images.append((png, labels[i], h))
-                set_progress(0.12, "compositing video")
-                audio_panels = {"mode": audio.mode, "pps": pps, "images": images}
-            video_compose.compose_session_video(
+            if mics:
+                aligned = self._align_mics(
+                    date_dir, [resolved.devices[m] for m in mics], t_start, t_end, out_path,
+                    phase(0.0, 0.1, "aligning audio"), job.warnings)
+            tiles = []
+            strip_cache: dict[tuple, str] = {}
+            for tile in doc["tiles"]:
+                tile = {**tile, "label_text": _tile_label(resolved, tile)}
+                if tile["kind"] == "spectrogram":
+                    tile.update(strip=None, pps=1.0, win=2)
+                    src = aligned.get(tile["source"])
+                    if src:
+                        w, h = tile["rect"][2], tile["rect"][3]
+                        window_s = tile["options"]["window_s"]
+                        strip_w, pps = compose_layout.spectrogram_strip(w, window_s, total_s)
+                        opts = compose_layout.spectrogram_opts(tile)
+                        key = (tile["source"], strip_w, h,
+                               json.dumps(asdict(opts), sort_keys=True))
+                        if key not in strip_cache:
+                            png = (os.path.splitext(out_path)[0]
+                                   + f".panel{len(strip_cache)}.png")
+                            temp_pngs.append(png)
+                            audio_align.render_strip_png(src, png, strip_w, h, opts)
+                            strip_cache[key] = png
+                        tile.update(strip=strip_cache[key], pps=pps,
+                                    win=compose_layout.window_px(w, window_s, pps))
+                tiles.append(tile)
+            set_progress(video_lo, "compositing video")
+            video_compose.render_layout(
                 date_dir, base_path,
-                streams=[s.name for s in streams],
-                regions=regions, canvas=(canvas_w, canvas_h),
-                fps=spec.fps, progress=phase(video_lo, video_hi, "compositing video"),
-                csv_skip={s.name: s.csv_skip for s in streams},
+                (doc["canvas"]["width"], doc["canvas"]["height"]), tiles,
+                fps=spec.fps,
+                background=compose_layout.hex_to_bgr(doc["canvas"]["background"]),
+                csv_skip={s.name: s.csv_skip for s in resolved.streams},
+                progress=phase(video_lo, video_hi, "compositing video"),
                 warnings=job.warnings,
-                audio_panels=audio_panels,
             )
-            if panel_modes:
-                t_start, t_end = camera_window(streams)
+            track_ids = [m for m in doc["audio_tracks"] if m in aligned]
+            tracks = [aligned[m] for m in track_ids]
+            labels = [resolved.devices[m]["label"] for m in track_ids]
+            if encode:
                 audio_align.render_with_audio(
-                    base_path, aligned, out_path, labels,
+                    base_path, tracks, out_path, labels,
                     progress=phase(0.75, 1.0, "encoding with audio"),
-                    total_s=(t_end - t_start) / 1e9)
+                    total_s=total_s)
                 _safe_unlink(base_path)
-            elif audio.mode == "track":
-                self._apply_audio(date_dir, streams, audio, base_path, out_path,
-                                  spec.fps, phase, warnings=job.warnings)
+            elif mics:
+                audio_align.render_muxed_track(base_path, tracks, out_path, labels)
                 _safe_unlink(base_path)
         except _CancelledError:
             _safe_unlink(base_path)
             _safe_unlink(out_path)
             raise ComposeError("cancelled") from None
         finally:
-            for path in aligned + temp_pngs:
+            for path in list(aligned.values()) + temp_pngs:
                 _safe_unlink(path)
 
         return os.path.relpath(out_path, self.share_path)
 
-    def _align_devices(self, date_dir, streams, audio: AudioSpec, out_path: str,
-                       progress, warnings: list | None = None) -> tuple[list, list]:
-        """Each chosen AudioMoth aligned to the camera window as a FLAC next
-        to `out_path`: ([paths], [labels]). Strip mode uses the first only."""
-        t_start, t_end = camera_window(streams)
+    def _align_mics(self, date_dir: str, devices: list[dict], t_start: int, t_end: int,
+                    out_path: str, progress,
+                    warnings: list | None = None) -> dict[str, str]:
+        """Each AudioMoth aligned to the camera window as a FLAC next to
+        `out_path`: {device id: path}. A device with no recording in the
+        window is left out with a warning; none at all fails the render."""
         window_s = (t_end - t_start) / 1e9
-        devices = resolve_mic_devices(date_dir, audio)
-        if audio.mode == "strip":
-            devices = devices[:1]
-        aligned, labels = [], []
+        aligned: dict[str, str] = {}
         n = len(devices)
         try:
             for i, dev in enumerate(devices):
@@ -1193,29 +1380,14 @@ class ComposeWorker:
                     parts, t_start, window_s, path, parts[0][1].nominal_rate_hz,
                     progress=lambda f, _i=i: progress((_i + f) / n),
                 )
-                aligned.append(path)
-                labels.append(dev["label"])
+                aligned[dev["id"]] = path
         except BaseException:
-            for path in aligned:
+            for path in aligned.values():
                 _safe_unlink(path)
             raise
         if not aligned:
             raise ComposeError("no microphone recording overlaps the video")
-        return aligned, labels
-
-    def _apply_audio(self, date_dir, streams, audio: AudioSpec,
-                     base_path: str, out_path: str, fps: int, phase,
-                     warnings: list | None = None) -> None:
-        """`track` mode: the composite, unchanged, with one audio track per
-        AudioMoth muxed in."""
-        aligned, labels = self._align_devices(
-            date_dir, streams, audio, out_path, phase(0.97, 0.99, "aligning audio"),
-            warnings)
-        try:
-            audio_align.render_muxed_track(base_path, aligned, out_path, labels)
-        finally:
-            for path in aligned:
-                _safe_unlink(path)
+        return aligned
 
 
 def _lower_thread_priority() -> None:

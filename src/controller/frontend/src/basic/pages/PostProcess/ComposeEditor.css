@@ -1,0 +1,391 @@
+/* Post-Process compose layout editor. Buttons, job rows, swatches and the
+   sync line reuse the compose-panel styles (SessionDetailPage.css). */
+
+.compose-editor__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.compose-editor__title h3 {
+  margin: 0;
+}
+
+.compose-editor__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  font-size: 0.88rem;
+}
+
+.compose-editor__inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compose-editor__check {
+  color: var(--secondary-text-color);
+}
+
+.compose-editor__spacer {
+  flex: 1;
+}
+
+.compose-editor__size input {
+  width: 80px;
+}
+
+.compose-editor__toolbar input[type="color"] {
+  width: 36px;
+  height: 26px;
+  padding: 0 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--card-bg-color);
+  cursor: pointer;
+}
+
+.compose-editor__warn {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #b26a00;
+  background: rgba(178, 106, 0, 0.08);
+  font-size: 0.85rem;
+}
+
+.compose-editor__body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 260px;
+  gap: 12px;
+  align-items: start;
+  margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+  .compose-editor__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* sources palette */
+.compose-editor__sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.compose-editor__sources-head {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.compose-editor__source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  cursor: grab;
+}
+
+.compose-editor__source-name {
+  flex: 1 1 100%;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.compose-editor__source .btn-small {
+  margin-left: auto;
+}
+
+.compose-editor__track {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--secondary-text-color);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* canvas */
+.compose-editor__stage {
+  min-width: 0;
+}
+
+.layout-canvas__wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  border-radius: 6px;
+  /* a checkerboard behind the canvas, so its edges and background read */
+  background-color: var(--bg-color);
+  background-image:
+    linear-gradient(45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  box-sizing: border-box;
+}
+
+.layout-canvas {
+  position: relative;
+  flex: none;
+  outline: 1px solid var(--border-color);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  user-select: none;
+  touch-action: none;
+}
+
+.layout-canvas:focus-visible {
+  outline: 2px solid var(--accent-color);
+}
+
+body.layout-canvas-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.layout-tile {
+  position: absolute;
+  box-sizing: border-box;
+  cursor: move;
+  outline: 1px dashed rgba(255, 255, 255, 0.35);
+  outline-offset: -1px;
+}
+
+.layout-tile:hover {
+  outline: 1px solid rgba(100, 149, 237, 0.9);
+}
+
+.layout-tile--selected,
+.layout-tile--selected:hover {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 0;
+}
+
+.layout-tile__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.layout-tile__empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 2px;
+  box-sizing: border-box;
+  color: #bbb;
+  font-size: 0.75rem;
+  text-align: center;
+  background: repeating-linear-gradient(
+    45deg, rgba(60, 60, 70, 0.9), rgba(60, 60, 70, 0.9) 6px,
+    rgba(45, 45, 55, 0.9) 6px, rgba(45, 45, 55, 0.9) 12px);
+}
+
+.layout-tile--spectrogram .layout-tile__empty {
+  background: #101014;
+}
+
+.layout-tile__tag {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  max-width: calc(100% - 4px);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.68rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.layout-tile:hover .layout-tile__tag,
+.layout-tile--selected .layout-tile__tag {
+  opacity: 1;
+}
+
+.layout-tile__handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  background: var(--accent-color);
+  box-sizing: border-box;
+  z-index: 2;
+}
+
+.layout-tile__handle--tl { left: 0; top: 0; cursor: nwse-resize; }
+.layout-tile__handle--t { left: 50%; top: 0; cursor: ns-resize; }
+.layout-tile__handle--tr { left: 100%; top: 0; cursor: nesw-resize; }
+.layout-tile__handle--r { left: 100%; top: 50%; cursor: ew-resize; }
+.layout-tile__handle--br { left: 100%; top: 100%; cursor: nwse-resize; }
+.layout-tile__handle--b { left: 50%; top: 100%; cursor: ns-resize; }
+.layout-tile__handle--bl { left: 0; top: 100%; cursor: nesw-resize; }
+.layout-tile__handle--l { left: 0; top: 50%; cursor: ew-resize; }
+
+.layout-canvas__guide {
+  position: absolute;
+  pointer-events: none;
+  background: #ff3db5;
+  z-index: 1000;
+}
+
+.layout-canvas__guide--x { top: 0; bottom: 0; width: 1px; }
+.layout-canvas__guide--y { left: 0; right: 0; height: 1px; }
+
+.compose-editor__stage-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--secondary-text-color);
+  font-size: 0.8rem;
+}
+
+/* the server-rendered frame: hidden until "View full frame" */
+.compose-editor__full {
+  display: none;
+}
+
+.compose-editor__full:fullscreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  cursor: zoom-out;
+}
+
+.compose-editor__full:fullscreen img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* inspector */
+.tile-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.tile-inspector--empty {
+  color: var(--secondary-text-color);
+}
+
+.tile-inspector__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tile-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tile-inspector__delete {
+  color: var(--error-color, #c62828);
+}
+
+.tile-inspector__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.tile-inspector__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile-inspector__field > span:first-child {
+  color: var(--secondary-text-color);
+  font-size: 0.78rem;
+}
+
+.tile-inspector__field select,
+.tile-inspector__field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.tile-inspector__input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tile-inspector__input em {
+  font-style: normal;
+  color: var(--secondary-text-color);
+  font-size: 0.75rem;
+}
+
+.tile-inspector__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.tile-inspector__sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--secondary-text-color);
+}
+
+.tile-inspector__hint {
+  margin: 0;
+  color: var(--secondary-text-color);
+  font-size: 0.75rem;
+}
+
+.compose-editor__render-row {
+  margin-top: 14px;
+}
+
+.compose-editor__fps {
+  width: 70px;
+}

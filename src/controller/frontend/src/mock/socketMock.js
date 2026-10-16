@@ -350,7 +350,127 @@ const ROUTER = {
     delete state.modules[id]; delete state.health[id];
     this._fire("modules_update", clone(state.modules));
   },
+
+  // ── Post-Process compose editor (no real video: tiles are drawn as SVG) ──
+  get_session_file_info(payload) {
+    const name = payload?.session_name;
+    const day = "20261013";
+    const files = [];
+    for (const cam of MOCK_CAMERAS) {
+      files.push({ path: `${day}/${cam.name}/${name}_${cam.name}.ts`, name: `${name}_${cam.name}.ts`, size: 9e8 });
+      files.push({ path: `${day}/${cam.name}/${name}_${cam.name}_timestamps.csv`, name: `${name}_${cam.name}_timestamps.csv`, size: 2e6 });
+    }
+    files.push({ path: `${day}/microphone-1/${name}_mic.flac`, name: `${name}_mic.flac`, size: 4e8 });
+    files.push({ path: `${day}/microphone-1/${name}_mic_timestamps.txt`, name: `${name}_mic_timestamps.txt`, size: 1e4 });
+    this._fire("session_file_info_response", {
+      session_name: name, files, total_bytes: files.reduce((a, f) => a + f.size, 0),
+    });
+  },
+  compose_streams_info(payload) {
+    this._fire("compose_streams_info", {
+      session_name: payload?.session_name, date_dir: payload?.date_dir || "20261013",
+      dates: ["20261013"], cameras: MOCK_CAMERAS, mics: ["microphone-1"],
+      mic_devices: MOCK_MICS, suggested_fps: 30, duration_s: 1834.5,
+      playhead_pps: 120, max_strip_px: 48000,
+    });
+  },
+  compose_layout_template(payload) {
+    const cams = MOCK_CAMERAS.filter((c) => !payload?.streams || payload.streams.includes(c.name));
+    const n = cams.length;
+    const cols = Math.ceil(Math.sqrt(n));
+    const cellW = Math.round(1920 / cols / 2) * 2;
+    const cellH = Math.round(cellW * 9 / 16 / 2) * 2;
+    const rows = Math.ceil(n / cols);
+    const tiles = cams.map((c, i) => ({
+      id: `c${i + 1}`, kind: "camera", source: c.name,
+      rect: [(i % cols) * cellW, Math.floor(i / cols) * cellH, cellW, cellH], z: 0,
+      options: { fit: "contain", crop: null, rotate: 0, label: true },
+    }));
+    let height = cellH * rows;
+    const audio = payload?.audio_mode;
+    const spec = { color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
+      ascale: "log", gain: 2.5, ...(payload?.spectrogram || {}), window_s: null, playhead: 0.5 };
+    if (audio === "panel" || audio === "strip") {
+      const h = Math.round(height * (audio === "strip" ? 0.2 : 0.5) / 2) * 2;
+      tiles.push({ id: "a1", kind: "spectrogram", source: MOCK_MICS[0].id,
+        rect: [0, audio === "strip" ? height - h : height, cellW * cols, h],
+        z: audio === "strip" ? 1 : 0, options: { ...spec, label: false } });
+      if (audio === "panel") height += h;
+    }
+    this._fire("compose_layout_template", {
+      request_id: payload?.request_id,
+      layout_doc: {
+        canvas: { width: cellW * cols, height, background: "#000000" }, tiles,
+        audio_tracks: audio && audio !== "none" ? [MOCK_MICS[0].id] : [],
+      },
+    });
+  },
+  compose_preview(payload) {
+    const doc = payload?.layout_doc;
+    if (!doc) { this._fire("compose_preview_ready", { request_id: payload?.request_id, error: "mock: no layout" }); return; }
+    const tiles = {};
+    for (const t of doc.tiles) tiles[t.id] = mockTileImage(t);
+    this._fire("compose_preview_ready", {
+      request_id: payload?.request_id, tiles, scale: 1, layout_doc: doc,
+      image: mockFrameImage(doc),
+    });
+  },
+  compose_session_video(payload) {
+    const id = `j_${Date.now()}`;
+    state.composeJobs[id] = { id, spec: clone(payload), state: "queued", stage: "queued",
+      progress: 0, output_rel: null, error: null, warnings: [],
+      created_at: Date.now() / 1000, started_at: null, finished_at: null, output_bytes: null };
+    this._fire("compose_job_accepted", clone(state.composeJobs[id]));
+  },
 };
+
+const MOCK_CAMERAS = [
+  { name: "camera-module-a1b2", width: 1456, height: 1088, fps: 30.0 },
+  { name: "camera-module-c3d4", width: 1280, height: 720, fps: 29.97 },
+  { name: "hailo-camera-3606", width: 1280, height: 720, fps: 30.0 },
+];
+const MOCK_MICS = [
+  { id: "microphone-1/trial_microphone-1_1_24F319046A4B3C2D", folder: "microphone-1",
+    device: "trial_microphone-1_1_24F319046A4B3C2D", label: "microphone-1 · 3C2D" },
+  { id: "microphone-1/trial_microphone-1_1_24F3190400001111", folder: "microphone-1",
+    device: "trial_microphone-1_1_24F3190400001111", label: "microphone-1 · 1111" },
+];
+const MOCK_HUES = { "camera-module-a1b2": 210, "camera-module-c3d4": 140, "hailo-camera-3606": 30 };
+
+function svgUrl(svg) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function mockTileSvg(t, w, h) {
+  const [, , tw, th] = t.rect;
+  w = w || tw; h = h || th;
+  if (t.kind === "spectrogram") {
+    const bars = Array.from({ length: 60 }, (_, i) => {
+      const bh = (0.2 + 0.7 * Math.abs(Math.sin(i * 1.7))) * h;
+      return `<rect x="${(i * w) / 60}" y="${h - bh}" width="${w / 80}" height="${bh}" fill="#e8c34a" opacity="0.7"/>`;
+    }).join("");
+    const px = (t.options?.playhead ?? 0.5) * w;
+    return `<rect width="${w}" height="${h}" fill="#141014"/>${bars}`
+      + `<line x1="${px}" x2="${px}" y1="0" y2="${h}" stroke="#ffd700" stroke-width="3" stroke-dasharray="14 9"/>`;
+  }
+  const hue = MOCK_HUES[t.source] ?? 280;
+  return `<rect width="${w}" height="${h}" fill="hsl(${hue},40%,28%)"/>`
+    + `<circle cx="${w / 2}" cy="${h / 2}" r="${Math.min(w, h) / 4}" fill="hsl(${hue},55%,55%)"/>`
+    + (t.options?.label ? `<rect width="${Math.min(w, 14 * t.source.length + 12)}" height="34" fill="#000"/>`
+      + `<text x="6" y="24" font-family="sans-serif" font-size="20" fill="#fff">${t.source}</text>` : "");
+}
+
+function mockTileImage(t) {
+  const [, , w, h] = t.rect;
+  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${mockTileSvg(t)}</svg>`);
+}
+
+function mockFrameImage(doc) {
+  const { width, height, background } = doc.canvas;
+  const order = doc.tiles.map((t, i) => [t, i]).sort((a, b) => (a[0].z - b[0].z) || (a[1] - b[1]));
+  const body = order.map(([t]) => `<g transform="translate(${t.rect[0]},${t.rect[1]})">${mockTileSvg(t)}</g>`).join("");
+  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="${background}"/>${body}</svg>`);
+}
 
 // No module-level side effects: the singleton is constructed by socket.jsx
 // only when VITE_MOCK=1, so this whole module tree-shakes out of a real build.

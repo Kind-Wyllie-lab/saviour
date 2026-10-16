@@ -1,6 +1,6 @@
 # Compose layout editor (Post-Process)
 
-- **Status:** proposed
+- **Status:** in progress (phase 1 shipped 2026-10-16, see `docs/CHANGELOG.md`)
 - **Created:** 2026-10-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX".
@@ -127,6 +127,19 @@ document server-side, so existing callers and saved jobs keep working, and
   the pixel rate (`_strip_pixels_per_second` already caps it).
 
 ## Phases
+
+**Phase 1 as built (2026-10-16)**, differences from the text below:
+- The editor uses its own canvas component, not `DraggableTile` (its grip
+  bar and 160×120 screen-px minimum don't suit a scaled canvas).
+- Camera `fit` is `contain` / `cover` / `stretch`; spectrogram `window_s`
+  null means the old scroll speed (one strip pixel per tile pixel).
+- The preview returns each tile's pixels as well as the frame, so the
+  editor shows real content in the boxes while you drag.
+- Spectrogram previews are still unaligned (a stretch from the start of the
+  recording); aligning them to the previewed time belongs with the timeline.
+- Waveform tiles, text and event tracks are not in phase 1 (open questions
+  below: recommend waveform after phase 1, text via a bundled TTF + Pillow,
+  one shared template list with role binding).
 
 1. **Layout model + editor (cameras + spectrograms).** Layout JSON and
    validation; old-request translation; compositor tile drawing for camera

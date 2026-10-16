@@ -77,13 +77,13 @@ export default function Timeline({
 
   const step = (d) => onPreview(Math.min(w1, Math.max(w0, previewMs + d)));
   const length = outMs - inMs;
-  // Cameras first, then the AudioMoths (dimmed when the layout doesn't use
-  // them), each a labelled lane of its recorded stretches.
+  // The layout's cameras, then its AudioMoths (as a spectrogram or an audio
+  // track), each a labelled lane of its recorded stretches.
   const lanes = [
     ...cameras.map((c) => ({ key: `c:${c.name}`, label: c.name, kind: "camera",
-      segments: c.segments, used: true })),
+      segments: c.segments })),
     ...mics.map((m) => ({ key: `m:${m.id}`, label: m.label, kind: "mic",
-      segments: m.segments, used: m.used })),
+      segments: m.segments })),
   ];
 
   return (
@@ -91,8 +91,7 @@ export default function Timeline({
       <div className="timeline__body">
       <div className="timeline__labels" aria-hidden="true">
         {lanes.map((l) => (
-          <span key={l.key} className={`timeline__label${l.used ? "" : " timeline__label--unused"}`}
-            title={l.used ? l.label : `${l.label} (not in the layout)`}>
+          <span key={l.key} className="timeline__label" title={l.label}>
             {l.label}
           </span>
         ))}
@@ -101,7 +100,7 @@ export default function Timeline({
         title="Click or drag to preview that moment">
         {lanes.map((l) => (
           <div key={l.key}
-            className={`timeline__lane timeline__lane--${l.kind}${l.used ? "" : " timeline__lane--unused"}`}
+            className={`timeline__lane timeline__lane--${l.kind}`}
             title={`${l.label}: recorded`}>
             {(l.segments || []).map(([a, b], i) => {
               const s = nsToMs(a);

@@ -6,14 +6,15 @@ import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../Recording/syncFormat";
 import LayoutCanvas, { SOURCE_MIME } from "./LayoutCanvas";
 import TileInspector from "./TileInspector";
+import Timeline from "./Timeline";
 import {
   CANVAS_PRESETS, DEFAULT_SPECTROGRAM, LIMITS, TEMPLATES, TEMPLATE_AUDIO,
-  clampRect, fitToCanvas, missingSources, newCameraTile, newSpectrogramTile,
-  newTileId, streamsByDate,
+  clampRect, fitToCanvas, formatSpan, missingSources, msToNs, newCameraTile,
+  newSpectrogramTile, newTileId, nsToMs, streamsByDate,
 } from "./composeLayout";
 import "./ComposeEditor.css";
 
-const PREVIEW_DEBOUNCE_MS = 500;
+const PREVIEW_DEBOUNCE_MS = 300;
 const UNDO_DEPTH = 50;
 
 /**
@@ -35,6 +36,8 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   const [images, setImages] = useState({});
   const [preview, setPreview] = useState(null);       // { image, error }
   const [previewing, setPreviewing] = useState(false);
+  const [previewMs, setPreviewMs] = useState(null);    // the moment previewed
+  const [previewedMs, setPreviewedMs] = useState(null); // what the last reply showed
   const [notice, setNotice] = useState("");
   const [template, setTemplate] = usePersistedState("compose_template", "auto");
   const [templateAudio, setTemplateAudio] = usePersistedState("compose_template_audio", "none");
@@ -61,6 +64,16 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   const docKey = JSON.stringify(doc);
   const selected = doc?.tiles.find((t) => t.id === selectedId) || null;
   const hasSpectrogram = !!doc?.tiles.some((t) => t.kind === "spectrogram");
+  const dayInfo = info?.session_name === sessionName && info?.date_dir === dateDir;
+  const windowMs = dayInfo && info.window_start_ns != null
+    ? [nsToMs(info.window_start_ns), nsToMs(info.window_end_ns)] : null;
+  const range = doc?.range || { start_ns: null, end_ns: null, speed: 1 };
+  const rangeMs = [nsToMs(range.start_ns), nsToMs(range.end_ns)];
+  const speed = Number(range.speed) || 1;
+  const rangeLenMs = windowMs
+    ? Math.max(0, Math.min(windowMs[1], rangeMs[1] ?? windowMs[1])
+      - Math.max(windowMs[0], rangeMs[0] ?? windowMs[0]))
+    : null;
 
   // Every edit goes through here so it can be undone. Reads the latest
   // layout from a ref (not a state updater, which StrictMode runs twice).
@@ -121,6 +134,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       }
       setPreview({ image: d.image });
       setImages(d.tiles || {});
+      setPreviewedMs(nsToMs(d.t_ns));
     };
     const onTemplate = (d) => {
       if (d.request_id !== templateReqId.current) return;
@@ -182,7 +196,17 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     if (infoReady && !doc) applyTemplate("auto", "none");
   }, [infoReady, !doc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The preview follows every edit (debounced).
+  // Preview the middle of the day until the user scrubs; keep a scrubbed
+  // time when it's still inside the (possibly new) window.
+  const windowKey = windowMs ? windowMs.join("|") : "";
+  useEffect(() => {
+    if (!windowMs) return;
+    setPreviewMs((cur) => (cur != null && cur >= windowMs[0] && cur <= windowMs[1]
+      ? cur : Math.round((windowMs[0] + windowMs[1]) / 2)));
+  }, [windowKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The preview follows every edit and every scrub (debounced; the
+  // controller only renders each browser's latest request).
   useEffect(() => {
     if (!doc || !infoReady || missing.length) return undefined;
     const timer = setTimeout(() => {
@@ -191,10 +215,18 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       socket.emit("compose_preview", {
         request_id: previewReqId.current, session_name: sessionName,
         date_dir: dateDir, layout_doc: doc,
+        preview_t_ns: previewMs != null ? msToNs(previewMs) : undefined,
       });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [docKey, infoReady, missing.length, dateDir, sessionName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docKey, infoReady, missing.length, dateDir, sessionName, previewMs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setRange = ([a, b]) => setDoc((d) => ({
+    ...d, range: { ...(d.range || {}), speed, start_ns: msToNs(a), end_ns: msToNs(b) },
+  }));
+  const setSpeed = (v) => setDoc((d) => ({
+    ...d, range: { start_ns: null, end_ns: null, ...(d.range || {}), speed: v },
+  }));
 
   if (!dates.length) return null; // nothing composable in this session
 
@@ -401,6 +433,15 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 onDropSource={(kind, source, x, y) => addSource(kind, source, { x, y })}
                 onDelete={deleteTile}
               />
+              {windowMs && previewMs != null && (
+                <Timeline
+                  windowMs={windowMs}
+                  cameras={cameras.filter((c) => camSources.includes(c.name))}
+                  rangeMs={rangeMs} speed={speed}
+                  previewMs={previewMs} previewedMs={previewedMs}
+                  onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}
+                />
+              )}
               <div className="compose-editor__stage-foot">
                 <span>
                   {doc.canvas.width}×{doc.canvas.height} · {doc.tiles.length} tile
@@ -429,7 +470,8 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
 
         <TileInspector
           tile={selected} doc={doc || { canvas: { width: 1, height: 1 }, tiles: [] }}
-          cameras={cameras} micDevices={micDevices} durationS={info?.duration_s} info={info}
+          cameras={cameras} micDevices={micDevices}
+          durationS={rangeLenMs != null ? rangeLenMs / 1000 : info?.duration_s} info={info}
           onChange={(patch) => selected && updateTile(selected.id, patch)}
           onDelete={() => selected && deleteTile(selected.id)}
           onDuplicate={duplicate} onZ={setZ}
@@ -457,9 +499,10 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
             <option value="mkv">MKV</option>
           </select>
         </label>
-        {info?.duration_s ? (
+        {rangeLenMs ? (
           <span className="compose-panel__hint">
-            {formatSeconds(info.duration_s)} of video (the cameras&apos; overlap)
+            {formatSpan(rangeLenMs / speed)} of video
+            {speed !== 1 ? ` (${formatSpan(rangeLenMs)} at ${speed}×)` : ""}
           </span>
         ) : null}
       </div>
@@ -508,13 +551,6 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       )}
     </section>
   );
-}
-
-function formatSeconds(s) {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.round(s % 60);
-  return h ? `${h} h ${m} min` : m ? `${m} min ${sec} s` : `${sec} s`;
 }
 
 /** Custom canvas width × height, applied on Enter / leaving the field

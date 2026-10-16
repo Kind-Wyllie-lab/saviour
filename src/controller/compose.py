@@ -523,7 +523,7 @@ def streams_info(share_path: str, session_name: str,
         t0, t1 = camera_window(wanted)
         duration_s = round((t1 - t0) / 1e9, 3)
     except (ComposeError, OSError, ValueError, KeyError):
-        duration_s = None
+        t0 = t1 = duration_s = None
     return {
         "session_name": session_name,
         "date_dir": os.path.basename(resolved),
@@ -532,14 +532,19 @@ def streams_info(share_path: str, session_name: str,
             {
                 "name": s.name, "width": s.width, "height": s.height,
                 "fps": round(r, 2) if (r := stream_fps(s.csv_path)) else None,
+                # Each segment's [first, last] frame time (ns), for the
+                # timeline's coverage bars.
+                "segments": [[g.first_ns, g.last_ns] for g in s.segments],
             }
             for s in cams
         ],
         "mics": list_mic_folders(resolved),
         "mic_devices": list_mic_devices(resolved),
         "suggested_fps": suggest_fps(wanted),
-        # The selected cameras' overlap -- what a render covers.
+        # The selected cameras' overlap -- what a render covers at most.
         "duration_s": duration_s,
+        "window_start_ns": t0,
+        "window_end_ns": t1,
         # Lets the editor size an "auto" spectrogram window like a render.
         "playhead_pps": audio_align.PLAYHEAD_PPS,
         "max_strip_px": audio_align._MAX_STRIP_PX,
@@ -731,7 +736,7 @@ def layout_from_legacy(spec: ComposeSpec, streams: list[SessionStream],
     try:
         return compose_layout.validate_layout({
             "canvas": {"width": cw, "height": canvas_h, "background": "#000000"},
-            "tiles": tiles, "audio_tracks": tracks,
+            "tiles": tiles, "audio_tracks": tracks, "range": None,
         })
     except compose_layout.LayoutError as exc:
         raise ComposeError(str(exc)) from exc
@@ -748,6 +753,19 @@ class ResolvedLayout:
 
     def stream(self, name: str) -> SessionStream:
         return next(s for s in self.streams if s.name == name)
+
+    def window(self) -> tuple[int, int]:
+        """The stretch a render covers: the cameras' overlap, narrowed to
+        the layout's range."""
+        try:
+            return compose_layout.clip_range(
+                self.doc.get("range") or {}, camera_window(self.streams))
+        except compose_layout.LayoutError as exc:
+            raise ComposeError(str(exc)) from exc
+
+    @property
+    def speed(self) -> float:
+        return float((self.doc.get("range") or {}).get("speed") or 1.0)
 
 
 def resolve_layout(date_dir: str, spec: ComposeSpec, strict_audio: bool = True,
@@ -856,21 +874,85 @@ def _preview_tile_spectrogram(cache_dir: str, date_dir: str, device: dict,
         return None
 
 
+_FIT_CACHE: dict[tuple, object] = {}
+_FIT_CACHE_LOCK = threading.Lock()
+
+
+def _mic_fit(audio_file: str, sidecar: str):
+    """parse_mic_sidecar, cached per (sidecar, size, mtime): every scrubbed
+    preview needs the fits of the segments near the previewed time."""
+    try:
+        st = os.stat(sidecar)
+        key = (sidecar, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return audio_align.parse_mic_sidecar(sidecar, audio_file)
+    with _FIT_CACHE_LOCK:
+        if key in _FIT_CACHE:
+            return _FIT_CACHE[key]
+    fit = audio_align.parse_mic_sidecar(sidecar, audio_file)
+    with _FIT_CACHE_LOCK:
+        if len(_FIT_CACHE) >= 256:
+            _FIT_CACHE.pop(next(iter(_FIT_CACHE)))
+        _FIT_CACHE[key] = fit
+    return fit
+
+
+def _preview_window_spectrogram(cache_dir: str, date_dir: str, device: dict,
+                                tile: dict, width: int, height: int,
+                                t0_ns: int, dur_s: float, logger=None) -> str | None:
+    """The spectrogram a render's tile shows around the previewed time:
+    `dur_s` of aligned audio from wall-clock `t0_ns`, `width` x `height`.
+    None if this device has no recording there or it can't be read (the
+    tile previews blank); never fails the preview."""
+    try:
+        parts = []
+        t1_ns = t0_ns + int(dur_s * 1e9)
+        for audio_file, sidecar in find_microphone_segments(
+                date_dir, device["folder"], device["device"]):
+            fit = _mic_fit(audio_file, sidecar)
+            seg_end = fit.sample0_wall_ns + int(fit.duration_s * 1e9)
+            if seg_end > t0_ns and fit.sample0_wall_ns < t1_ns:
+                parts.append((audio_align.AudioStream("mic", audio_file, sidecar), fit))
+        if not parts:
+            return None
+        opts = compose_layout.spectrogram_opts(tile)
+        key = hashlib.md5(
+            f"{[p[0].audio_path for p in parts]}|{t0_ns // 1_000_000}|{dur_s:.3f}|"
+            f"{width}x{height}|{json.dumps(asdict(opts), sort_keys=True)}".encode()
+        ).hexdigest()[:12]
+        out = os.path.join(cache_dir, f"specw_{key}.png")
+        if not os.path.isfile(out):
+            audio_align.render_window_spectrogram_png(
+                parts, t0_ns, dur_s, out, (max(2, width), max(2, height)), opts,
+                timeout=PREVIEW_FFMPEG_TIMEOUT_S)
+        return out
+    except Exception as exc:  # noqa: BLE001 -- preview must not fail over audio
+        if logger:
+            logger.warning("compose preview: spectrogram at the previewed time "
+                           "unavailable (%s)", exc)
+        return None
+
+
 @dataclass
 class PreviewResult:
     png: bytes                       # the whole composited frame
     tiles: dict[str, bytes]          # tile id -> that tile's pixels (JPEG)
     scale: float                     # preview px per output px
     doc: dict                        # the layout previewed (full size)
+    t_ns: int | None = None          # the wall-clock time previewed
 
 
 def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
-                   rebuild: bool = False, logger=None) -> PreviewResult:
-    """One composited frame (mid-window) of `spec`'s layout, drawn by the
-    same per-tile code as a render, at most `max_width` wide. Cameras come
-    from cached per-module thumbnails (rebuilt on `rebuild=True`);
-    spectrogram tiles show a representative stretch of their recording.
-    Also returns each tile's own pixels, for the editor."""
+                   rebuild: bool = False, logger=None,
+                   at_ns: int | None = None) -> PreviewResult:
+    """One composited frame of `spec`'s layout at wall-clock `at_ns`
+    (clamped to the recording; default the middle of the range), drawn by the
+    same per-tile code as a render, at most `max_width` wide: the camera
+    frames a render shows at that time, and each spectrogram tile's window
+    of aligned audio around it (falling back to a stretch from the start of
+    the recording if that can't be read). Frames are cached per camera and
+    time (cleared on `rebuild=True`). Also returns each tile's own pixels,
+    for the editor."""
     from src.controller import video_compose
 
     session_dir = os.path.join(share_path, spec.session_name)
@@ -885,10 +967,14 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
     resolved = resolve_layout(date_dir, spec, strict_audio=False, logger=logger)
     small, scale = compose_layout.scaled(resolved.doc, max_width)
     try:
-        t0, t1 = camera_window(resolved.streams)
+        t0, t1 = resolved.window()
         total_s = (t1 - t0) / 1e9
+        # Scrubbing can show any moment of the recording (that's how the
+        # range is chosen), so clamp to the cameras' overlap, not the range.
+        w0, w1 = camera_window(resolved.streams)
+        t = t0 + (t1 - t0) // 2 if at_ns is None else max(w0, min(w1, int(at_ns)))
     except ComposeError:
-        total_s = 0.0
+        total_s, t = 0.0, None
 
     tiles = []
     for full, tile in zip(resolved.doc["tiles"], small["tiles"], strict=True):
@@ -900,18 +986,27 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
                 _w, pps = audio_align._strip_pixels_per_second(total_s or 1.0)
                 window_s = full["rect"][2] / pps if total_s else PREVIEW_SPECTROGRAM_S
             window_s = max(0.5, min(window_s, 120.0))
-            tile["image"] = (_preview_tile_spectrogram(
-                cache_dir, date_dir, device, tile, tile["rect"][2], tile["rect"][3],
-                window_s, logger) if device else None)
+            w, h = tile["rect"][2], tile["rect"][3]
+            image = None
+            if device and t is not None:
+                playhead = tile["options"].get("playhead", 0.5)
+                image = _preview_window_spectrogram(
+                    cache_dir, date_dir, device, tile, w, h,
+                    t - int(playhead * window_s * 1e9), window_s, logger)
+            if device and image is None:
+                image = _preview_tile_spectrogram(
+                    cache_dir, date_dir, device, tile, w, h, window_s, logger)
+            tile["image"] = image
         tiles.append(tile)
 
     frame, panes = video_compose.preview_layout(
         date_dir, (small["canvas"]["width"], small["canvas"]["height"]), tiles,
         cache_dir=cache_dir, csv_skip={s.name: s.csv_skip for s in resolved.streams},
         background=compose_layout.hex_to_bgr(small["canvas"]["background"]),
+        at_ns=t,
     )
     png, tile_jpegs = video_compose.encode_preview(frame, panes)
-    return PreviewResult(png, tile_jpegs, scale, resolved.doc)
+    return PreviewResult(png, tile_jpegs, scale, resolved.doc, t)
 
 
 class PreviewQueue:
@@ -1258,8 +1353,10 @@ class ComposeWorker:
         date_dir = resolve_date_dir(session_dir, spec.date_dir)
         resolved = resolve_layout(date_dir, spec)
         doc = resolved.doc
-        t_start, t_end = camera_window(resolved.streams)
-        total_s = (t_end - t_start) / 1e9
+        t_start, t_end = resolved.window()
+        speed = resolved.speed
+        total_s = (t_end - t_start) / 1e9          # recording time covered
+        out_s = total_s / speed                    # length of the video
 
         spectro = [t for t in doc["tiles"] if t["kind"] == "spectrogram"]
         mics = compose_layout.mic_sources(doc)
@@ -1334,19 +1431,35 @@ class ComposeWorker:
                 csv_skip={s.name: s.csv_skip for s in resolved.streams},
                 progress=phase(video_lo, video_hi, "compositing video"),
                 warnings=job.warnings,
+                t_range=(t_start, t_end), speed=speed,
             )
             track_ids = [m for m in doc["audio_tracks"] if m in aligned]
+            if track_ids and speed != 1.0:
+                lo, hi = compose_layout.AUDIO_SPEED_RANGE
+                if lo <= speed <= hi:
+                    for m in track_ids:
+                        stretched = os.path.splitext(aligned[m])[0] + "_tempo.flac"
+                        temp_pngs.append(stretched)
+                        audio_align.render_tempo(aligned[m], stretched, speed)
+                        aligned[m] = stretched
+                else:
+                    job.warnings.append(
+                        f"audio tracks left out: {speed:g}x is outside the "
+                        f"{lo:g}-{hi:g}x that audio can be played at")
+                    track_ids = []
             tracks = [aligned[m] for m in track_ids]
             labels = [resolved.devices[m]["label"] for m in track_ids]
             if encode:
                 audio_align.render_with_audio(
                     base_path, tracks, out_path, labels,
                     progress=phase(0.75, 1.0, "encoding with audio"),
-                    total_s=total_s)
+                    total_s=out_s)
                 _safe_unlink(base_path)
-            elif mics:
+            elif mics and tracks:
                 audio_align.render_muxed_track(base_path, tracks, out_path, labels)
                 _safe_unlink(base_path)
+            elif mics:
+                os.replace(base_path, out_path)
         except _CancelledError:
             _safe_unlink(base_path)
             _safe_unlink(out_path)

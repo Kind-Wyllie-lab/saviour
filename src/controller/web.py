@@ -1064,6 +1064,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                         spec,
                         rebuild=bool((spec_dict or {}).get("rebuild")),
                         logger=self.logger,
+                        at_ns=_int_or_none((spec_dict or {}).get("preview_t_ns")),
                     )
                 except compose.ComposeError as exc:
                     return {"error": str(exc)}
@@ -1078,7 +1079,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     },
                     "scale": result.scale,
                     "layout_doc": result.doc,
+                    "t_ns": result.t_ns,
                 }
+
+            def _int_or_none(v):
+                try:
+                    return int(v) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
 
             if self._compose_preview_queue is None:
                 self._compose_preview_queue = compose.PreviewQueue(

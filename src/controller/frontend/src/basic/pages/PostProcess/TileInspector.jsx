@@ -201,8 +201,8 @@ export default function TileInspector({
             />
           </div>
           <p className="tile-inspector__hint">
-            The preview shows the start of the recording at this window; the render
-            scrolls the aligned audio past the playhead.
+            The preview shows the aligned audio around the previewed moment; the
+            render scrolls it past the playhead.
           </p>
         </>
       )}

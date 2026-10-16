@@ -308,3 +308,48 @@ def test_template_without_a_mic_drops_the_audio(tmp_path, monkeypatch):
     share = _session(tmp_path, monkeypatch)
     doc = layout_template(str(share), "sess", None, "auto", audio_mode="panel")
     assert [t["kind"] for t in doc["tiles"]] == ["camera", "camera"]
+
+
+
+# --------------------------------------------------------------------------- #
+# Time range                                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_range_defaults_to_everything_at_1x():
+    assert cl.validate_layout(_doc())["range"] == {
+        "start_ns": None, "end_ns": None, "speed": 1.0}
+
+
+@pytest.mark.parametrize("rng,match", [
+    ({"start_ns": 10, "end_ns": 10}, "after its start"),
+    ({"speed": 0.1}, "speed"),
+    ({"speed": 16}, "speed"),
+    ({"start_ns": "soon"}, "start_ns"),
+    ({"end_ns": True}, "end_ns"),
+    ("all", "range must be an object"),
+])
+def test_range_rejects(rng, match):
+    with pytest.raises(cl.LayoutError, match=match):
+        cl.validate_layout(_doc(range=rng))
+
+
+def test_range_keeps_big_ns_exact():
+    t = 1_792_150_317_501_365_400
+    rng = cl.validate_layout(_doc(range={"start_ns": t, "end_ns": str(t + 10**9),
+                                         "speed": 4}))["range"]
+    assert rng == {"start_ns": t, "end_ns": t + 10**9, "speed": 4.0}
+
+
+def test_clip_range_to_the_window():
+    assert cl.clip_range({"start_ns": None, "end_ns": None}, (100, 200)) == (100, 200)
+    assert cl.clip_range({"start_ns": 150, "end_ns": 999}, (100, 200)) == (150, 200)
+    assert cl.clip_range({"start_ns": 50, "end_ns": 120}, (100, 200)) == (100, 120)
+    with pytest.raises(cl.LayoutError, match="outside"):
+        cl.clip_range({"start_ns": 300, "end_ns": None}, (100, 200))
+
+
+def test_legacy_layout_has_the_default_range():
+    spec = ComposeSpec.from_dict({"session_name": "s"})
+    doc = layout_from_legacy(spec, _streams((1280, 720)), [])
+    assert doc["range"] == {"start_ns": None, "end_ns": None, "speed": 1.0}

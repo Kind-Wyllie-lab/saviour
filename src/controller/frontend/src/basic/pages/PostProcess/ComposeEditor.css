@@ -389,3 +389,109 @@ body.layout-canvas-dragging {
 .compose-editor__fps {
   width: 70px;
 }
+
+/* timeline */
+.timeline {
+  margin-top: 10px;
+  font-size: 0.82rem;
+}
+
+.timeline__track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 24px;
+  padding: 4px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.timeline__lane {
+  position: relative;
+  height: 8px;
+}
+
+.timeline__seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--accent-color);
+  opacity: 0.55;
+}
+
+.timeline__dim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.timeline__edge {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 8px;
+  margin-left: -4px;
+  border-radius: 3px;
+  background: #2e7d32;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.timeline__edge--out {
+  background: #c62828;
+}
+
+.timeline__playhead {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 3px;
+  margin-left: -1px;
+  background: #ffd700;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+  z-index: 3;
+}
+
+.timeline__scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--secondary-text-color);
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.timeline__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 6px;
+}
+
+.timeline__now,
+.timeline__range,
+.timeline__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timeline__now strong {
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: center;
+}
+
+.timeline__field input {
+  width: 84px;
+  font-variant-numeric: tabular-nums;
+}

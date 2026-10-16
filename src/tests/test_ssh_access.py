@@ -24,7 +24,8 @@ FUNCS = ("log", "get_current_config", "_ssh_targets", "_ssh_valid_ca",
          "_ssh_effective_passwords", "apply_ssh_access", "push_ssh_access",
          "_ssh_require_controller", "_ssh_set_source", "_ssh_cert_logins",
          "_ssh_set_login_mode", "_ssh_controller_ip", "ssh_controller_key",
-         "ssh_set_controller_cert")
+         "ssh_set_controller_cert", "_ssh_stage_pending_ca", "ssh_setup_step",
+         "_ssh_forget_controller_key")
 
 BASH = shutil.which("bash")
 KEYGEN = shutil.which("ssh-keygen")
@@ -109,6 +110,8 @@ SSH_PRINCIPALS="saviour-admin saviour-controller"
 CONTROLLER_IP_FILE='{p("controller_ip")}'
 SSH_CTL_KEY='{p("src")}/controller_key'
 SSH_CLIENT_DIR='{p("ssh_client")}'
+SSH_CA_PENDING=""
+DEVICE_ROLE='{role}'
 {funcs}
 push_ssh_access() {{ echo "PUSHED"; }}
 {body}
@@ -420,3 +423,66 @@ def test_controller_cert_for_another_key_is_refused(rig):
              f"ssh_set_controller_cert '{(rig / 'other-cert.pub').as_posix()}'; echo rc=$?")
     assert "rc=1" in r.stdout and "not for this controller" in r.stderr
     assert not (rig / "ssh_client" / "50-saviour-controller.conf").exists()
+
+
+# --------------------------------------------------------------------------- #
+# SSH in device setup (phase 5)                                               #
+# --------------------------------------------------------------------------- #
+
+def _fn_body(name: str) -> str:
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return _extract(src, name)
+
+
+def test_setup_installs_a_pasted_ca_on_a_controller(rig):
+    key = (rig / "ca.pub").read_text().strip()
+    r = _run(rig, "controller",
+             f"_ssh_stage_pending_ca '{key}' && ssh_setup_step; echo rc=$?")
+    assert "rc=0" in r.stdout and "applied" in r.stdout, r.stdout + r.stderr
+    assert (rig / "src" / "user_ca.pub").read_text().strip() == key
+    assert _installed(rig)["ca"].exists()
+    assert not _auth(rig).exists()           # setup never turns passwords off
+
+
+def test_setup_accepts_a_path_and_rejects_junk(rig):
+    r = _run(rig, "controller",
+             f"_ssh_stage_pending_ca '{(rig / 'ca.pub').as_posix()}' && echo staged;"
+             " _ssh_stage_pending_ca 'not a key' || echo rejected")
+    assert "staged" in r.stdout and "rejected" in r.stdout
+
+
+def test_setup_with_no_ca_anywhere_is_a_quiet_no_op(rig):
+    r = _run(rig, "module", "ssh_setup_step; echo rc=$?")
+    assert "rc=0" in r.stdout and "none configured" in r.stdout
+
+
+def test_setup_step_failure_is_reported_not_raised(rig):
+    shutil.copy(rig / "ca.pub", rig / "served" / "user_ca.pub")
+    r = _run(rig, "module", "set -e; ssh_setup_step || true; echo survived",
+             CURL_DOWN="1")
+    assert "survived" in r.stdout and "left unchanged" in r.stdout
+
+
+def test_clone_fix_forgets_the_controller_key_but_keeps_the_ca(rig):
+    _with_ca(rig)
+    _run(rig, "controller", "ssh_controller_key")
+    (rig / "ssh_client").mkdir(exist_ok=True)
+    (rig / "ssh_client" / "50-saviour-controller.conf").write_text("x\n")
+    (rig / "src" / "controller_key-cert.pub").write_text("cert\n")
+    _run(rig, "controller", "_ssh_forget_controller_key")
+    assert not list((rig / "src").glob("controller_key*"))
+    assert not (rig / "ssh_client" / "50-saviour-controller.conf").exists()
+    assert (rig / "src" / "user_ca.pub").exists()
+
+
+def test_setup_flow_wiring():
+    """Where phase 5 hooks into saviour-config's own flows."""
+    run_cfg = _fn_body("run_configuration")
+    assert "ssh_setup_step || true" in run_cfg
+    # After the config is written (the step reads the new role), before the
+    # service restart.
+    assert (run_cfg.index("write_provisioned_marker") < run_cfg.index("ssh_setup_step")
+            < run_cfg.index("systemctl restart saviour.service"))
+    assert "ask_ssh_ca || return" in _fn_body("configure_device")
+    assert "_ssh_forget_controller_key" in _fn_body("run_clone_fix")
+    assert "ssh_status_text" in _fn_body("view_config")

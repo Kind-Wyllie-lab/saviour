@@ -772,6 +772,7 @@ configure_device() {
     if [ "$role" = "controller" ]; then
         select_gateway_mode || return
         select_controller_ip || return
+        ask_ssh_ca || return
     fi
 
     # Step 5: confirm
@@ -781,6 +782,7 @@ configure_device() {
     summary+="  Hostname :  $new_hn\n"
     if [ "$role" = "controller" ]; then
         summary+="\nWill enable  : PTP grandmaster, Samba, DHCP, mDNS, iptables"
+        summary+="\n  SSH CA       : $(_ssh_setup_summary)"
         summary+="\n\n  New IP address : ${DEVICE_IP%%/*}"
         summary+="\n  !! Your SSH/network connection will drop during setup."
         summary+="\n  Reconnect to ${DEVICE_IP%%/*} after the device reboots."
@@ -950,8 +952,9 @@ view_config() {
     else
         content+="    (file not found)\n"
     fi
+    content+="\n  SSH:\n$(ssh_status_text)\n"
 
-    whiptail --title "Current Configuration" --msgbox "$content" 16 $W
+    whiptail --title "Current Configuration" --msgbox "$content" 26 $W
 }
 
 clone_fix_menu() {
@@ -975,6 +978,7 @@ clone_fix_menu() {
     if [ "$CURRENT_ROLE" = "controller" ]; then
         msg+="    • Regenerate SSL certificate\n"
         msg+="    • Regenerate Samba password (modules must re-save config)\n"
+        msg+="    • Drop its own SSH key + certificate (re-run certify-controller)\n"
     fi
     msg+="\n  The device will reboot automatically."
 
@@ -1995,6 +1999,8 @@ run_clone_fix() {
         rm -f /etc/saviour/ssl/saviour.crt /etc/saviour/ssl/saviour.key
         generate_ssl_cert
         configure_samba_share
+        _ssh_forget_controller_key
+        log "Removed the controller's own SSH key and certificate"
     fi
 
     set +e
@@ -2112,6 +2118,11 @@ run_configuration() {
     write_config
     write_provisioned_marker
     log "Configuration written: ${DEVICE_TYPE} ${DEVICE_ROLE}"
+
+    # SSH certificate trust + login mode (plans/ssh-certificate-auth.md).
+    # Never fatal; modules also sync on every connection to a controller.
+    progress "Applying SSH settings…"
+    ssh_setup_step || true
 
     systemctl restart saviour.service >> "$LOG" 2>&1 || true
     log "Configuration complete"
@@ -2562,6 +2573,80 @@ EOF
     log "ssh: controller certificate installed ($(ssh-keygen -L -f "$cert" | awk '/Valid:/ {$1=""; print}'))"
     echo "Controller certificate installed:"
     ssh-keygen -L -f "$SSH_CTL_KEY-cert.pub" | grep -E "Key ID|Valid|source-address|saviour-"
+}
+
+# ── SSH in device setup (plans/ssh-certificate-auth.md phase 5) ──────────
+SSH_CA_PENDING=""   # a CA public key from configure_device, installed by ssh_setup_step
+
+# $1 = a pasted key or a path. Stages it in a temp file and sets
+# SSH_CA_PENDING when it's one valid public key; returns 1 otherwise.
+_ssh_stage_pending_ca() {
+    local tmp
+    tmp=$(mktemp)
+    if [ -f "$1" ]; then cp "$1" "$tmp"; else printf '%s\n' "$1" > "$tmp"; fi
+    if _ssh_valid_ca "$tmp"; then
+        SSH_CA_PENDING="$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# configure_device step: a controller with no CA yet is offered one
+# (optional; blank skips). The login mode is never offered here -- it stays
+# `any` until someone has logged in with a certificate (the mode's guard), so
+# setting up a device can't lock anyone out.
+ask_ssh_ca() {
+    [ "$DEVICE_ROLE" = "controller" ] || return 0
+    [ -f "$SSH_SRC_DIR/user_ca.pub" ] && return 0
+    local input
+    while true; do
+        input=$(wt --title "SSH certificate authority (optional)" --inputbox \
+            "\nPaste this deployment's SSH CA public key (ssh-ed25519 AAAA... comment),\nor the path to its .pub file. Leave blank to skip: it can be set\nlater under SSH access.\n\nNever the private key." \
+            15 $W) || return 1
+        [ -z "$input" ] && return 0
+        _ssh_stage_pending_ca "$input" && return 0
+        whiptail --title "Not a public key" --msgbox \
+            "\nThat isn't a single SSH public key. Try again, or leave it blank to skip." 9 $W
+    done
+}
+
+# One line for configure_device's confirmation summary.
+_ssh_setup_summary() {
+    if [ -n "$SSH_CA_PENDING" ]; then
+        echo "will trust $(ssh-keygen -l -f "$SSH_CA_PENDING" | cut -d' ' -f2)"
+    elif [ -f "$SSH_SRC_DIR/user_ca.pub" ]; then
+        echo "keeps $(ssh-keygen -l -f "$SSH_SRC_DIR/user_ca.pub" | cut -d' ' -f2)"
+    else
+        echo "none (set later under SSH access)"
+    fi
+}
+
+# run_configuration step, both roles: install a CA chosen during setup, then
+# sync sshd with this device's source. Never fatal: a module whose controller
+# isn't reachable yet keeps what it has and syncs on its first connection.
+ssh_setup_step() {
+    local out rc
+    if [ -n "$SSH_CA_PENDING" ] && [ "$DEVICE_ROLE" = "controller" ]; then
+        mkdir -p "$SSH_SRC_DIR"
+        install -m 644 "$SSH_CA_PENDING" "$SSH_SRC_DIR/user_ca.pub"
+        rm -f "$SSH_CA_PENDING"
+        SSH_CA_PENDING=""
+        log "ssh: CA set during setup"
+    fi
+    out=$(apply_ssh_access 2>&1)
+    rc=$?
+    echo "    $out"
+    log "ssh setup step: $out"
+    return "$rc"
+}
+
+# Identity refresh on a cloned controller: the certificate names the
+# original's key and address, so the clone starts without either. The CA,
+# revocation list and login mode are rig-wide and stay.
+_ssh_forget_controller_key() {
+    rm -f "$SSH_CTL_KEY" "$SSH_CTL_KEY.pub" "$SSH_CTL_KEY-cert.pub" \
+          "$SSH_CLIENT_DIR/50-saviour-controller.conf"
 }
 
 ssh_status_text() {

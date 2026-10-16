@@ -219,3 +219,22 @@ def test_apply_ssh_access_failure_is_reported():
          patch("src.modules.module.subprocess.run", return_value=proc):
         inst.apply_ssh_access()
     assert inst.communication.send_status.call_args[0][0]["result"] == "error"
+
+
+def test_connecting_to_a_controller_syncs_ssh_settings():
+    """Phase 5: every connection fetches the controller's SSH settings, so a
+    new module (or one whose controller just set a CA) needs no push."""
+    inst = _mend_instance()
+    proc = MagicMock(returncode=0, stdout="SSH CA: up to date", stderr="")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", return_value=proc) as run:
+        inst._sync_ssh_access_soon()
+    assert run.call_args[0][0] == ["sudo", "/usr/local/bin/saviour-config", "--apply-ssh"]
+
+
+def test_connect_path_calls_the_ssh_sync():
+    import inspect
+
+    from src.modules.module import Module
+    src = inspect.getsource(Module._when_controller_discovered_inner)
+    assert src.index("_remember_controller_ip") < src.index("_sync_ssh_access_soon()")

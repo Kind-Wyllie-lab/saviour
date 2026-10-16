@@ -606,3 +606,71 @@ def test_raises_without_audio_streams(tmp_path):
     date_dir.mkdir()
     with pytest.raises(ValueError, match="No audio streams"):
         align_session_audio(str(date_dir), AlignOptions(out_dir=str(tmp_path / "o")))
+
+
+
+# --------------------------------------------------------------------------- #
+# Short aligned windows (compose preview) and tempo                           #
+# --------------------------------------------------------------------------- #
+
+
+def _wfit(sample0_ns, measured=192_019.2, nominal=192_000, n_blocks=10_000):
+    from src.controller.audio_align import SidecarFit
+    return SidecarFit(sample0_ns, measured, nominal, 8192, n_blocks, 0, 0.1, 0.2, 0,
+                      sample0_ns)
+
+
+def test_window_inputs_seek_into_the_file():
+    from src.controller.audio_align import AudioStream, window_inputs
+    fit = _wfit(1_000_000_000_000)
+    t0 = fit.sample0_wall_ns + 10 * 10**9            # 10 s into the recording
+    inputs, chains = window_inputs([(AudioStream("m", "a.flac", "a.txt"), fit)], t0, 2.0)
+    seek = float(inputs[inputs.index("-ss") + 1])
+    # 10 s of wall time is 10 * measured samples = that / nominal s of file.
+    assert seek == pytest.approx(10 * 192_019.2 / 192_000, abs=1e-6)
+    assert "asetrate=192019.2" in chains[0] and "adelay" not in chains[0]
+
+
+def test_window_inputs_delay_a_segment_that_starts_inside_the_window():
+    from src.controller.audio_align import AudioStream, window_inputs
+    fit = _wfit(1_000_000_000_000)
+    t0 = fit.sample0_wall_ns - 1_500_000_000         # window opens 1.5 s early
+    inputs, chains = window_inputs([(AudioStream("m", "a.flac", "a.txt"), fit)], t0, 4.0)
+    assert float(inputs[inputs.index("-ss") + 1]) == 0.0
+    assert "adelay=1500:all=1" in chains[0]
+    # Ending before the window starts: no input at all.
+    assert window_inputs([(AudioStream("m", "a.flac", "a.txt"), fit)], t0, 1.0) == ([], [])
+
+
+def test_window_spectrogram_mixes_segments(monkeypatch, tmp_path):
+    from src.controller import audio_align as aa
+    cmds = []
+    monkeypatch.setattr(aa, "_run", lambda cmd, timeout=None: cmds.append(cmd))
+    a, b = _wfit(10**12), _wfit(10**12 + 4 * 10**9)
+    parts = [(aa.AudioStream("m", "a.flac", "a.txt"), a),
+             (aa.AudioStream("m", "b.flac", "b.txt"), b)]
+    aa.render_window_spectrogram_png(parts, 10**12 + 3 * 10**9, 2.0,
+                                     str(tmp_path / "w.png"), (320, 80))
+    graph = cmds[0][cmds[0].index("-filter_complex") + 1]
+    assert cmds[0].count("-i") == 2 and "amix=inputs=2" in graph
+    assert "legend=0" in graph and "s=320x80" in graph and "atrim=0:2.000000" in graph
+    with pytest.raises(ValueError):
+        aa.render_window_spectrogram_png(parts, 10**15, 2.0, "x.png", (10, 10))
+
+
+@pytest.mark.parametrize("speed,stages", [
+    (1.5, ["atempo=1.500000"]),
+    (0.5, ["atempo=0.500000"]),
+    (4.0, ["atempo=2.000000", "atempo=2.000000"]),
+    (0.25, ["atempo=0.500000", "atempo=0.500000"]),
+])
+def test_atempo_chain(speed, stages):
+    from src.controller.audio_align import atempo_chain
+    assert atempo_chain(speed).split(",") == stages
+
+
+def test_window_inputs_skip_a_segment_that_ended_before_the_window():
+    from src.controller.audio_align import AudioStream, window_inputs
+    fit = _wfit(10**12, n_blocks=100)                # ~4.3 s long
+    assert window_inputs([(AudioStream("m", "a.flac", "a.txt"), fit)],
+                         10**12 + 10 * 10**9, 2.0) == ([], [])

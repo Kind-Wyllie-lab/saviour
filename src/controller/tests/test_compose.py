@@ -770,7 +770,8 @@ def _render_job(tmp_path, monkeypatch, raw, aligned_ids):
     _fake_video_compose(
         monkeypatch,
         render_layout=lambda date_dir, out, canvas, tiles, **k: seen.update(
-            out=out, canvas=canvas, tiles=tiles, background=k["background"]))
+            out=out, canvas=canvas, tiles=tiles, background=k["background"],
+            t_range=k.get("t_range"), speed=k.get("speed")))
     monkeypatch.setattr(
         compose.ComposeWorker, "_align_mics",
         lambda self, date_dir, devices, *a, **k: {
@@ -789,7 +790,9 @@ def _render_job(tmp_path, monkeypatch, raw, aligned_ids):
         id="j1", spec=spec.__dict__, state="running", warnings=[],
         progress=0.0, stage="")
     monkeypatch.setattr(worker, "_emit", lambda _j: None)
+    monkeypatch.setattr(compose.os, "replace", lambda a, b: seen.update(renamed=(a, b)))
     seen["out_rel"] = worker._render(job)
+    seen["warnings"] = job.warnings
     return seen
 
 
@@ -1181,3 +1184,97 @@ def test_preview_spectrogram_has_no_axes_like_the_render(tmp_path, monkeypatch):
     lavfi = cmd[cmd.index("-lavfi") + 1]
     assert "legend=0" in lavfi and "s=640x120" in lavfi and "color=magma" in lavfi
     assert cmd[cmd.index("-t") + 1] == "10.000"
+
+
+
+# --------------------------------------------------------------------------- #
+# Timeline: range + speed through the render, preview at a time              #
+# --------------------------------------------------------------------------- #
+
+
+def _sixty_second_session(tmp_path, monkeypatch):
+    date_dir = _one_camera_session(tmp_path, monkeypatch)
+    (date_dir / "camera_a" / "v_timestamps.csv").write_text(
+        "timestamp_ns\n0\n60000000000\n")
+    return date_dir
+
+
+def test_render_passes_the_range_and_speed(tmp_path, monkeypatch):
+    date_dir = _sixty_second_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    from src.controller import audio_align
+    stretched = []
+    monkeypatch.setattr(audio_align, "render_tempo",
+                        lambda src, dst, speed: stretched.append((src, speed)) or dst)
+    seen = _render_job(tmp_path, monkeypatch, {"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 640, "height": 480},
+        "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 400]},
+                  {"kind": "spectrogram", "source": a, "rect": [0, 400, 640, 80],
+                   "options": {"window_s": 10}}],
+        "audio_tracks": [a],
+        "range": {"start_ns": 20 * 10**9, "end_ns": 50 * 10**9, "speed": 1.5}}}, {a})
+    assert seen["t_range"] == (20 * 10**9, 50 * 10**9) and seen["speed"] == 1.5
+    # The strip covers the 30 s of recording in the range (64 px/s).
+    assert seen["strips"] == [("s_audiomoth_1_AAAA.flac", 1920, 80)]
+    assert stretched == [("s_audiomoth_1_AAAA.flac", 1.5)]
+    assert seen["encoded"] == ["s_audiomoth_1_AAAA_tempo.flac"]
+
+
+def test_render_drops_audio_too_fast_to_play(tmp_path, monkeypatch):
+    date_dir = _sixty_second_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    seen = _render_job(tmp_path, monkeypatch, {"session_name": "sess", "fmt": "mp4",
+        "layout_doc": {
+            "canvas": {"width": 640, "height": 480},
+            "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 480]}],
+            "audio_tracks": [a], "range": {"speed": 4}}}, {a})
+    assert "muxed" not in seen and seen["speed"] == 4.0
+    assert any("4x" in w for w in seen["warnings"])
+    assert seen["out_rel"].endswith(".mp4")
+
+
+def test_render_rejects_a_range_outside_the_recording(tmp_path, monkeypatch):
+    _sixty_second_session(tmp_path, monkeypatch)
+    with pytest.raises(ComposeError, match="outside"):
+        _render_job(tmp_path, monkeypatch, {"session_name": "sess", "layout_doc": {
+            "canvas": {"width": 640, "height": 480},
+            "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 480]}],
+            "range": {"start_ns": 100 * 10**9}}}, set())
+
+
+def test_streams_info_reports_the_window_and_coverage(tmp_path, monkeypatch):
+    _sixty_second_session(tmp_path, monkeypatch)
+    info = streams_info(str(tmp_path), "sess")
+    assert info["window_start_ns"] == 0 and info["window_end_ns"] == 60 * 10**9
+    assert info["cameras"][0]["segments"] == [[0, 60 * 10**9]]
+
+
+def test_preview_at_a_time_uses_the_window_spectrogram(tmp_path, monkeypatch):
+    date_dir = _sixty_second_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    seen = {}
+    monkeypatch.setattr(
+        "src.controller.compose._preview_window_spectrogram",
+        lambda cache, dd, dev, tile, w, h, t0, dur, logger=None: seen.update(
+            t0=t0, dur=dur, size=(w, h)) or "win.png")
+    _fake_video_compose(
+        monkeypatch,
+        preview_layout=lambda d, canvas, tiles, **kw: (
+            seen.update(at=kw["at_ns"], image=tiles[1]["image"]) or "f", {}),
+        encode_preview=lambda f, p: (b"png", {}))
+    spec = ComposeSpec.from_dict({"session_name": "sess", "layout_doc": {
+        "canvas": {"width": 640, "height": 480},
+        "tiles": [{"kind": "camera", "source": "camera_a", "rect": [0, 0, 640, 400]},
+                  {"kind": "spectrogram", "source": a, "rect": [0, 400, 640, 80],
+                   "options": {"window_s": 8, "playhead": 0.25}}],
+        "range": {"start_ns": 10 * 10**9}}})
+    res = render_preview(str(tmp_path), spec, max_width=640, at_ns=30 * 10**9)
+    assert res.t_ns == seen["at"] == 30 * 10**9
+    assert seen["t0"] == 28 * 10**9 and seen["dur"] == 8   # 'now' a quarter in
+    assert seen["image"] == "win.png"
+    # Before the range is still previewable (that's how a start is picked);
+    # outside the recording clamps to it; no time = the middle of the range.
+    assert render_preview(str(tmp_path), spec, max_width=640, at_ns=1).t_ns == 1
+    assert render_preview(str(tmp_path), spec, max_width=640,
+                          at_ns=99 * 10**9).t_ns == 60 * 10**9
+    assert render_preview(str(tmp_path), spec, max_width=640).t_ns == 35 * 10**9

@@ -428,3 +428,129 @@ def test_render_layout_draws_tiles_by_z(tmp_path, monkeypatch):
     last = frames[-1]
     assert float(last[44, 5:25].mean()) > 170            # spectrogram on top
     assert float(last[10:30, 70:90].mean()) > 150        # second tile, same camera
+
+
+# --------------------------------------------------------------------------- #
+# Timeline: seeking cursors, a render range, playback speed                  #
+# --------------------------------------------------------------------------- #
+
+
+def _ramp_stream(tmp_path, n=250):
+    """Frame i is a flat grey of brightness i (n <= 256)."""
+    vp = str(tmp_path / "ramp.mp4")
+    cp = str(tmp_path / "ramp_timestamps.csv")
+    writer = cv2.VideoWriter(vp, cv2.VideoWriter_fourcc(*"mp4v"), 30, (64, 48))
+    if not writer.isOpened():
+        pytest.skip("cv2.VideoWriter unavailable (no codec)")
+    for i in range(n):
+        writer.write(np.full((48, 64, 3), i, dtype=np.uint8))
+    writer.release()
+    _write_csv(cp, n, t0_ns=T0, step_ns=STEP)
+    return CameraStream(name="ramp", video_path=vp, csv_path=cp)
+
+
+def test_cursor_long_jump_seeks_to_the_right_frame(tmp_path, monkeypatch):
+    from src.controller import video_compose as vc
+
+    s = _ramp_stream(tmp_path)
+    c = vc._StreamCursor(s, frame_count=250)
+    seeks = []
+    real_seek = c._seek
+    monkeypatch.setattr(c, "_seek", lambda t: seeks.append(t) or real_seek(t))
+    frame = c.sync_to(T0 + 200 * STEP)
+    assert seeks == [200] and c.idx == 200 and c.row == 200
+    assert abs(float(frame.mean()) - 200) < 4    # frame 200 itself
+    # A short step forward grabs instead of seeking.
+    c.sync_to(T0 + 205 * STEP)
+    assert seeks == [200] and c.idx == 205
+    c.release()
+
+
+def test_cursor_picks_the_nearest_row(tmp_path):
+    from src.controller import video_compose as vc
+
+    s = _ramp_stream(tmp_path, n=60)
+    c = vc._StreamCursor(s, frame_count=60)
+    c.sync_to(T0 + 10 * STEP + STEP // 3)       # nearer row 10
+    assert c.row == 10
+    c.sync_to(T0 + 20 * STEP + 2 * STEP // 3)   # nearer row 21
+    assert c.row == 21
+    c.sync_to(T0 + 5 * STEP)                    # never moves backward
+    assert c.row == 21
+    c.release()
+
+
+def test_segmented_cursor_opens_the_segment_covering_the_start(tmp_path, monkeypatch):
+    from src.controller import video_compose as vc
+
+    monkeypatch.setattr(vc, "_probe_frame_count", _cv2_frame_count)
+    _two_segment_camera(tmp_path)
+    (stream,) = vc.discover_camera_streams(str(tmp_path))
+    opened = []
+    real_open = vc._SegmentedCursor._open
+    monkeypatch.setattr(vc._SegmentedCursor, "_open",
+                        lambda self, i: opened.append(i) or real_open(self, i))
+    c = vc._SegmentedCursor(stream, start_ns=T0 + 45 * STEP)
+    assert opened == [1]                         # never opened segment 0
+    assert float(c.sync_to(T0 + 45 * STEP).mean()) > 150
+    c.release()
+
+
+def _render_frames(path):
+    cap = cv2.VideoCapture(path)
+    out = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        out.append(fr)
+    cap.release()
+    return out
+
+
+def test_render_layout_range_and_speed(tmp_path, monkeypatch):
+    from src.controller import video_compose as vc
+
+    monkeypatch.setattr(vc, "_probe_frame_count", _cv2_frame_count)
+    date_dir = tmp_path / "20261013"
+    _two_segment_camera(date_dir)
+    tiles = [{"kind": "camera", "source": "cam", "rect": [0, 0, 64, 48], "z": 0,
+              "options": {"fit": "contain", "label": False}}]
+    out = str(tmp_path / "range.mp4")
+    try:
+        # Only the bright second segment, at 10 fps output.
+        vc.render_layout(str(date_dir), out, (64, 48), tiles, fps=10,
+                         t_range=(T0 + 32 * STEP, T0 + 59 * STEP))
+    except RuntimeError as e:
+        if "VideoWriter" in str(e):
+            pytest.skip("cv2.VideoWriter unavailable for the canvas")
+        raise
+    frames = _render_frames(out)
+    assert len(frames) == 8                      # 27 frames of 1/30 s at 10 fps
+    assert min(float(f.mean()) for f in frames) > 150
+    # The whole day at 2x: half the output frames.
+    out2 = str(tmp_path / "fast.mp4")
+    vc.render_layout(str(date_dir), out2, (64, 48), tiles, fps=10, speed=2.0)
+    vc.render_layout(str(date_dir), out, (64, 48), tiles, fps=10)
+    n1, n2 = len(_render_frames(out)), len(_render_frames(out2))
+    assert n2 == n1 // 2
+    with pytest.raises(ValueError, match="outside"):
+        vc.render_layout(str(date_dir), out, (64, 48), tiles, fps=10,
+                         t_range=(T0 + 100 * STEP, None))
+
+
+def test_preview_layout_at_a_time(tmp_path, monkeypatch):
+    from src.controller import video_compose as vc
+
+    monkeypatch.setattr(vc, "_probe_frame_count", _cv2_frame_count)
+    date_dir = tmp_path / "20261013"
+    _two_segment_camera(date_dir)
+    tiles = [{"id": "c", "kind": "camera", "source": "cam", "rect": [0, 0, 64, 48],
+              "z": 0, "options": {"fit": "contain", "label": False}}]
+    cache = str(tmp_path / "cache")
+    early, _ = vc.preview_layout(str(date_dir), (64, 48), tiles, cache_dir=cache,
+                                 at_ns=T0 + 3 * STEP)
+    late, _ = vc.preview_layout(str(date_dir), (64, 48), tiles, cache_dir=cache,
+                                at_ns=T0 + 50 * STEP)
+    assert float(early.mean()) < 60 and float(late.mean()) > 150
+    assert len([f for f in os.listdir(cache) if f.endswith(".at.png")]) == 2

@@ -255,3 +255,35 @@ export function resizeRect(start, edges, dx, dy, aspect) {
   }
   return [x, y, w, h];
 }
+
+// ── timeline ─────────────────────────────────────────────────────────────
+
+export const SPEEDS = [0.5, 1, 2, 4, 8];
+
+// Times here are epoch milliseconds (Numbers stay exact at ms; wall-clock
+// ns don't fit a double). The layout document carries ns as strings.
+export const nsToMs = (ns) => (ns == null ? null : Math.round(Number(ns) / 1e6));
+export const msToNs = (ms) => (ms == null ? null : `${Math.round(ms)}000000`);
+
+const pad = (n, w = 2) => String(Math.floor(n)).padStart(w, "0");
+
+/** "1:02:03.4" (or "2:03.4") for a span of ms. */
+export function formatSpan(ms) {
+  const neg = ms < 0;
+  let s = Math.abs(ms) / 1000;
+  const h = Math.floor(s / 3600);
+  s -= h * 3600;
+  const m = Math.floor(s / 60);
+  s -= m * 60;
+  const sec = `${pad(s)}.${Math.floor((s % 1) * 10)}`;
+  return `${neg ? "-" : ""}${h ? `${h}:${pad(m)}` : m}:${sec}`;
+}
+
+/** Parse "h:mm:ss(.s)", "m:ss" or seconds into ms; null if it isn't one. */
+export function parseSpan(text) {
+  const parts = String(text).trim().split(":").map(Number);
+  if (!parts.length || parts.some((p) => !Number.isFinite(p) || p < 0) || parts.length > 3) {
+    return null;
+  }
+  return parts.reduce((acc, p) => acc * 60 + p, 0) * 1000;
+}

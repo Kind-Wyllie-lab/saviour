@@ -29,11 +29,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import logging
 import math
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, field
 
 import cv2
@@ -162,25 +164,54 @@ class _StreamCursor:
         self.frame = frame
         return True
 
+    def _skip(self) -> bool:
+        """Step one frame without converting it (about twice as fast as a
+        read on a Pi 5) -- for frames that are passed over."""
+        if not self.cap.grab():
+            return False
+        self.idx += 1
+        return True
+
+    def _seek(self, target: int) -> bool:
+        """Jump straight to frame `target`. OpenCV's frame seek lands on
+        exactly that frame on the cameras' MPEG-TS (checked against a
+        sequential decode on the desk fleet, 2026-10-16) in under 250 ms,
+        where decoding forward runs at ~200 frames/s."""
+        if not self.cap.set(cv2.CAP_PROP_POS_FRAMES, target):
+            return False
+        ok, frame = self.cap.read()
+        if not ok:
+            return False
+        self.idx = target
+        self.frame = frame
+        return True
+
     def _frame_for_row(self, row: int) -> int:
         if not self._remap:
             return row
         return round(row * (self.n_frames - 1) / (self.n_rows - 1))
 
     def sync_to(self, t_ns: int):
-        """Walk the CSV row pointer to the row nearest `t_ns`, then decode
-        forward to that row's mapped frame. Called with monotonically
-        increasing `t_ns`, so both pointers only move forward."""
-        while self.row + 1 < self.n_rows:
-            if abs(self.timestamps_ns[self.row + 1] - t_ns) > abs(
-                self.timestamps_ns[self.row] - t_ns
-            ):
-                break
-            self.row += 1
+        """Move the CSV row pointer to the row nearest `t_ns`, then bring
+        the decoder to that row's mapped frame: frames passed over are
+        grabbed, not converted, and a long jump (a later start, a fast
+        playback speed) seeks. Called with increasing `t_ns`, so both
+        pointers only move forward."""
+        ts = self.timestamps_ns
+        i = bisect.bisect_left(ts, t_ns, lo=self.row)
+        if i >= self.n_rows:
+            i = self.n_rows - 1
+        elif i > self.row and abs(ts[i - 1] - t_ns) <= abs(ts[i] - t_ns):
+            i -= 1
+        self.row = max(self.row, i)
         target = self._frame_for_row(self.row)
-        while self.idx < target:
-            if not self._advance():
-                break
+        if target - self.idx > _SEEK_FRAMES and self._seek(target):
+            return self.frame
+        while self.idx < target - 1:
+            if not self._skip():
+                return self.frame
+        if self.idx < target:
+            self._advance()
         return self.frame
 
     @property
@@ -196,6 +227,9 @@ class _StreamCursor:
 
 
 _MAX_PRESTAGE_SKIP = 2  # mirrors compose._MAX_PRESTAGE_SKIP
+# Further ahead than this, seek rather than grab forward (a seek costs about
+# as much as grabbing ~100 frames).
+_SEEK_FRAMES = 90
 
 # Longer than any segment-rotation join (a frame or two) but short enough
 # that a real recording gap shows as black rather than a frozen frame.
@@ -211,14 +245,24 @@ class _SegmentedCursor:
     Frame/CSV mismatches are checked per segment as each opens; `messages`
     collects the warnings."""
 
-    def __init__(self, stream: CameraStream, first_skip: int = 0):
+    def __init__(self, stream: CameraStream, first_skip: int = 0,
+                 start_ns: int | None = None, log_mismatch: bool = True):
         self.name = stream.name
+        # A render logs a frame/CSV mismatch once; a preview (one per
+        # scrub) keeps quiet and leaves it to the render's warnings.
+        self._log_mismatch = log_mismatch
         self.segments = stream.segment_list()
         self._first_skip = first_skip
         self._i = -1
         self._cur: _StreamCursor | None = None
         self.messages: list[str] = []
-        self._open(0)
+        # Open the segment covering `start_ns` directly: opening each
+        # earlier one would read (and frame-count) videos nothing uses.
+        self._open(self._index_at(start_ns) if start_ns is not None else 0)
+
+    def _index_at(self, t_ns: int) -> int:
+        firsts = [s.first_ns for s in self.segments]
+        return max(0, bisect.bisect_right(firsts, t_ns) - 1)
 
     def _open(self, i: int) -> None:
         if self._cur is not None:
@@ -240,7 +284,8 @@ class _SegmentedCursor:
                 f"proportionally, up to ~{c.mismatch_ms:.0f} ms residual "
                 f"alignment error"
             )
-            _LOG.warning(msg)
+            if self._log_mismatch:
+                _LOG.warning(msg)
             self.messages.append(msg)
 
     @property
@@ -252,9 +297,9 @@ class _SegmentedCursor:
         return self.segments[-1].last_ns
 
     def sync_to(self, t_ns: int):
-        while (self._i + 1 < len(self.segments)
-               and self.segments[self._i + 1].first_ns <= t_ns):
-            self._open(self._i + 1)
+        i = self._index_at(t_ns)
+        if i > self._i:
+            self._open(i)
         cur = self._cur
         if t_ns > cur.last_ts + _SEGMENT_GAP_NS and cur.frame is not None:
             return np.zeros_like(cur.frame)
@@ -265,9 +310,33 @@ class _SegmentedCursor:
             self._cur.release()
 
 
+_FRAME_COUNTS: dict[tuple, int] = {}
+_FRAME_COUNTS_LOCK = threading.Lock()
+
+
 def _probe_frame_count(video_path: str) -> int:
     """Video frame count via ffprobe packet count; 0 if ffprobe is absent
-    or fails (this module otherwise has no ffmpeg dependency)."""
+    or fails (this module otherwise has no ffmpeg dependency). Counting
+    reads the whole file, so a result is cached per (path, size, mtime):
+    every scrubbed preview opens a cursor."""
+    try:
+        st = os.stat(video_path)
+        key = (video_path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return _probe_frame_count_uncached(video_path)
+    with _FRAME_COUNTS_LOCK:
+        if key in _FRAME_COUNTS:
+            return _FRAME_COUNTS[key]
+    n = _probe_frame_count_uncached(video_path)
+    if n:
+        with _FRAME_COUNTS_LOCK:
+            if len(_FRAME_COUNTS) >= 512:
+                _FRAME_COUNTS.pop(next(iter(_FRAME_COUNTS)))
+            _FRAME_COUNTS[key] = n
+    return n
+
+
+def _probe_frame_count_uncached(video_path: str) -> int:
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -529,15 +598,22 @@ def render_layout(
     csv_skip: dict[str, int] | None = None,
     progress=None,
     warnings: list[str] | None = None,
+    t_range: tuple[int | None, int | None] | None = None,
+    speed: float = 1.0,
 ) -> str:
     """Render a resolved layout (compose_layout.py, resolved by compose.py)
-    over the window every camera tile's stream covers.
+    over the window every camera tile's stream covers, narrowed to
+    `t_range` (wall-clock ns, either end None = open) and played at
+    `speed` (2.0 = twice as fast: half the frames, same `fps`). Cameras
+    open at the range start (seeking into the right segment), so a late
+    start costs a seek, not a decode of everything before it.
 
     Each tile is a dict with `kind`, `rect` [x, y, w, h], `z`, `options`
     and `label_text`. A camera tile names its module folder in `source`. A
     spectrogram tile carries `strip` (a wide chrome-free PNG of its aligned
     audio over the whole window, or None when there's no audio), `pps`
-    (strip pixels per second) and `win` (strip pixels shown at once). Each
+    (strip pixels per second of *recording* time, from the range start)
+    and `win` (strip pixels shown at once). Each
     wide PNG is loaded once and a tile-wide window copied per frame (an
     ffmpeg overlay of the whole image per frame took ~650 MB per panel on
     the controller). One decoder per camera however many tiles show it.
@@ -559,14 +635,22 @@ def render_layout(
         raise ValueError("a layout needs at least one camera tile")
 
     _skip = csv_skip or {}
-    cursors = {n: _SegmentedCursor(found[n], _skip.get(n, 0)) for n in names}
+    bounds = [_stream_bounds(found[n], _skip.get(n, 0)) for n in names]
+    t_start = max(b[0] for b in bounds)
+    t_end = min(b[1] for b in bounds)
+    if t_range is not None:
+        if t_range[0] is not None:
+            t_start = max(t_start, int(t_range[0]))
+        if t_range[1] is not None:
+            t_end = min(t_end, int(t_range[1]))
+    if t_end <= t_start:
+        raise ValueError(
+            "Camera streams in this session have no overlapping time window"
+            if t_range is None else "the time range lies outside the cameras' recording"
+        )
+    cursors = {n: _SegmentedCursor(found[n], _skip.get(n, 0), start_ns=t_start)
+               for n in names}
     try:
-        t_start = max(c.first_ts for c in cursors.values())
-        t_end = min(c.last_ts for c in cursors.values())
-        if t_end <= t_start:
-            raise ValueError(
-                "Camera streams in this session have no overlapping time window"
-            )
         strips = {
             i: _load_strip(t["strip"], t["rect"][3], t["pps"], t["win"])
             for i, t in enumerate(tiles)
@@ -575,8 +659,9 @@ def render_layout(
         order = [(i, t) for i, t in sorted(
             enumerate(tiles), key=lambda p: (p[1].get("z", 0), p[0]))]
 
-        step_ns = int(1e9 / fps)
-        n_out = int((t_end - t_start) / step_ns)
+        # Recording time advanced per output frame.
+        step_ns = int(1e9 * speed / fps)
+        n_out = max(1, int((t_end - t_start) / step_ns))
         canvas_w, canvas_h = canvas
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"),
@@ -597,7 +682,7 @@ def render_layout(
                         pane = camera_pane(synced[tile["source"]], w, h,
                                            tile["options"], background)
                     elif idx in strips:
-                        pane = spectrogram_pane(strips[idx], i / fps, w, h,
+                        pane = spectrogram_pane(strips[idx], i * speed / fps, w, h,
                                                 tile["options"].get("playhead", 0.5))
                     else:
                         pane = _blank_pane(w, h)
@@ -672,23 +757,60 @@ def _representative_frame(stream: CameraStream, t_ns: int, skip: int = 0) -> np.
         cap.release()
 
 
+# Cached preview frames kept per session day (each scrub adds one per camera).
+_THUMB_KEEP = 240
+
+
+def _frame_at(stream: CameraStream, t_ns: int, skip: int = 0) -> np.ndarray:
+    """The frame a render shows for `stream` at `t_ns`: the same cursor
+    (row nearest `t_ns`, mapped frame, exact seek), so the preview matches
+    the render frame for frame. Falls back to the approximate
+    `_representative_frame` if the cursor can't produce one."""
+    cursor = None
+    try:
+        cursor = _SegmentedCursor(stream, skip, start_ns=t_ns, log_mismatch=False)
+        frame = cursor.sync_to(t_ns)
+        if frame is not None:
+            return frame
+    except (OSError, ValueError, cv2.error) as exc:
+        _LOG.warning("preview frame for %s via cursor failed (%s)", stream.name, exc)
+    finally:
+        if cursor is not None:
+            cursor.release()
+    return _representative_frame(stream, t_ns, skip)
+
+
+def _prune_thumbs(cache_dir: str) -> None:
+    try:
+        thumbs = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir)
+                  if f.endswith(".at.png")]
+        if len(thumbs) <= _THUMB_KEEP:
+            return
+        thumbs.sort(key=os.path.getmtime)
+        for path in thumbs[:len(thumbs) - _THUMB_KEEP]:
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def _stream_thumb(
     stream: CameraStream, t_ns: int, cache_dir: str | None, skip: int = 0
 ) -> np.ndarray:
-    """A representative frame for `stream`, read from a cached PNG in
-    `cache_dir` when present, otherwise decoded from the video and written
-    there for next time. The cache makes repeated "Preview layout" presses
-    cheap -- no video decode at all once every stream is cached."""
-    if cache_dir:
-        thumb_path = os.path.join(cache_dir, f"{stream.name}.seg.png")
-        cached = cv2.imread(thumb_path) if os.path.isfile(thumb_path) else None
-        if cached is not None:
-            return cached
-        frame = _representative_frame(stream, t_ns, skip)
-        os.makedirs(cache_dir, exist_ok=True)
-        cv2.imwrite(thumb_path, frame)
-        return frame
-    return _representative_frame(stream, t_ns, skip)
+    """`stream`'s frame at `t_ns`, read from a cached PNG in `cache_dir`
+    when present, otherwise decoded and written there for next time. The
+    cache makes re-previewing after a layout tweak cheap: no video decode
+    once each camera's frame at that time is cached."""
+    if not cache_dir:
+        return _frame_at(stream, t_ns, skip)
+    thumb_path = os.path.join(cache_dir, f"{stream.name}_{t_ns}.at.png")
+    cached = cv2.imread(thumb_path) if os.path.isfile(thumb_path) else None
+    if cached is not None:
+        return cached
+    frame = _frame_at(stream, t_ns, skip)
+    os.makedirs(cache_dir, exist_ok=True)
+    cv2.imwrite(thumb_path, frame)
+    _prune_thumbs(cache_dir)
+    return frame
 
 
 def preview_layout(
@@ -699,17 +821,19 @@ def preview_layout(
     csv_skip: dict[str, int] | None = None,
     background: tuple[int, int, int] = (0, 0, 0),
     at_fraction: float = 0.5,
+    at_ns: int | None = None,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-    """One composited frame of a resolved layout, at `at_fraction` through
-    the cameras' overlap window, drawn with the same per-tile code as
-    `render_layout`: `(frame, {tile_id: tile_pixels})`. The editor shows
-    each tile's own pixels in its box, so moving one doesn't wait for a
-    re-render.
+    """One composited frame of a resolved layout, at wall-clock `at_ns`
+    (clamped to the cameras' overlap) or else `at_fraction` through it,
+    drawn with the same per-tile code as `render_layout`: `(frame,
+    {tile_id: tile_pixels})`. The editor shows each tile's own pixels in
+    its box, so moving one doesn't wait for a re-render.
 
-    Camera frames come from one cached thumbnail per camera (`cache_dir`),
-    so repeated previews skip video decode. A spectrogram tile carries
-    `image`: a representative spectrogram PNG (or None), stretched to the
-    tile under the playhead."""
+    Camera frames are the ones a render shows at that time (same cursor,
+    so the same frame), cached per camera and time in `cache_dir` so
+    re-previewing after a layout tweak skips video decode. A spectrogram
+    tile carries `image`: its spectrogram PNG for the window around that
+    time (or None), stretched to the tile under the playhead."""
     found = {s.name: s for s in discover_camera_streams(date_dir)}
     names: list[str] = []
     for t in tiles:
@@ -722,7 +846,10 @@ def preview_layout(
     bounds = [_stream_bounds(found[n], _skip.get(n, 0)) for n in names]
     t_start = max(b[0] for b in bounds)
     t_end = min(b[1] for b in bounds)
-    t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
+    if at_ns is not None:
+        t = max(t_start, min(t_end, int(at_ns)))
+    else:
+        t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
     thumbs = {n: _stream_thumb(found[n], t, cache_dir, _skip.get(n, 0)) for n in names}
 
     cw, ch = canvas

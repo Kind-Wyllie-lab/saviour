@@ -760,6 +760,81 @@ def render_source_spectrogram_png(
     return out_path
 
 
+def window_inputs(parts: list[tuple[AudioStream, SidecarFit]], t0_ns: int,
+                  dur_s: float) -> tuple[list[str], list[str]]:
+    """ffmpeg inputs + per-input filter chains putting `dur_s` of aligned
+    audio from wall-clock `t0_ns` at time 0, decoding only that stretch of
+    each segment (`-ss` input seek), for a short window anywhere in a long
+    recording. The file's own clock runs at the nominal rate, so a wall-
+    clock offset becomes a file offset scaled by measured/nominal. Accurate
+    to well under a millisecond for a window of seconds; the full render
+    still uses `render_aligned_audio_segments`."""
+    inputs: list[str] = []
+    chains: list[str] = []
+    for stream, fit in parts:
+        n0 = (t0_ns - fit.sample0_wall_ns) / 1e9 * fit.measured_rate_hz
+        if n0 >= fit.n_samples:
+            continue                     # the window starts after this segment
+        delay_s = 0.0 if n0 >= 0 else -n0 / fit.measured_rate_hz
+        seek_s = max(0.0, n0) / fit.nominal_rate_hz
+        take_s = (dur_s - delay_s) * fit.measured_rate_hz / fit.nominal_rate_hz + 0.05
+        if take_s <= 0:
+            continue
+        inputs += ["-ss", f"{seek_s:.6f}", "-t", f"{take_s:.6f}", "-i", stream.audio_path]
+        stages = [f"asetrate={fit.measured_rate_hz:.6f}",
+                  f"aresample={fit.nominal_rate_hz}", "aformat=sample_fmts=s16"]
+        if delay_s * 1e3 >= 0.5:
+            stages.append(f"adelay={round(delay_s * 1e3)}:all=1")
+        chains.append(f"[{len(chains)}:a]{','.join(stages)}[w{len(chains)}]")
+    return inputs, chains
+
+
+def render_window_spectrogram_png(
+    parts: list[tuple[AudioStream, SidecarFit]], t0_ns: int, dur_s: float,
+    out_png: str, size: tuple[int, int], spec: SpectrogramOpts | None = None,
+    timeout: float | None = None,
+) -> str:
+    """A chrome-free spectrogram of `dur_s` of aligned audio from wall-clock
+    `t0_ns`, `size` px, silence where no segment covers it: the compose
+    preview's spectrogram tile at the previewed time. Raises ValueError if
+    no segment overlaps the window."""
+    spec = spec or SpectrogramOpts()
+    inputs, chains = window_inputs(parts, t0_ns, dur_s)
+    if not chains:
+        raise ValueError("no audio in this window")
+    labels = "".join(f"[w{i}]" for i in range(len(chains)))
+    mix = (f"{labels}amix=inputs={len(chains)}:normalize=0:duration=longest,"
+           if len(chains) > 1 else f"{labels}")
+    graph = ";".join(chains + [
+        f"{mix}apad,atrim=0:{dur_s:.6f},"
+        f"{spec.pic_filter_nolegend(size[0], size[1])}[out]"
+    ])
+    _run(["ffmpeg", "-y", *inputs, "-filter_complex", graph, "-map", "[out]",
+          "-frames:v", "1", out_png], timeout=timeout)
+    return out_png
+
+
+def atempo_chain(speed: float) -> str:
+    """ffmpeg `atempo` stages for `speed` (each stage takes 0.5-2)."""
+    stages = []
+    while speed > 2.0:
+        stages.append(2.0)
+        speed /= 2.0
+    while speed < 0.5:
+        stages.append(0.5)
+        speed /= 0.5
+    stages.append(speed)
+    return ",".join(f"atempo={v:.6f}" for v in stages)
+
+
+def render_tempo(in_path: str, out_path: str, speed: float) -> str:
+    """An aligned track played at `speed` (pitch kept), for a render that
+    isn't 1x."""
+    _run(["ffmpeg", "-y", "-i", in_path, "-af", atempo_chain(speed),
+          "-c:a", "flac", out_path])
+    return out_path
+
+
 def _video_width(path: str) -> int:
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",

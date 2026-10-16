@@ -24,6 +24,10 @@ delete it here.
   - Noise: controller logs `No logic for ... streaming_started` as a WARNING on every module (re)connect.
   - The controller's npm lives under nvm (`~/.nvm`), so a non-login `ssh ... npm run build` fails; source `~/.nvm/nvm.sh` first (`saviour-config` already does).
 
+- **Desk fleet 2026-10-16 (compose timeline test, 3-min session, 1-min camera segments):**
+  - `apa_arduino_2904` logged "back online — restarted recording" every ~30 s for the whole session (a `not_recording` gap, severity error), then stayed `stopping` after the timed stop, holding the session `ACTIVE` until a manual `POST .../stop`. The other three modules stopped and exported normally. Not investigated.
+  - Container-side frame surplus seen again (see the In-flight `_encoder_active` item): segment 2 of 4 on **both** `camera_0fcc` and `ai camera` had 1830 `.ts` frames for 1802 CSV rows (−28); segments 0, 1 and 3 matched. Compose remaps it proportionally and warns (up to ~470 ms residual).
+
 ## Security (open)
 
 Threat model context above — the deferred items are a deliberate decision, not an oversight.

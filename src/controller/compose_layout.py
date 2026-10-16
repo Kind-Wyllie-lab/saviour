@@ -20,7 +20,8 @@ and the render, so what the editor shows is what gets rendered.
          "options": {"window_s": 20, "playhead": 0.5, "color": "intensity",
                      "fmin_hz": 15000, "fmax_hz": 96000, "gain": 2.5}}
       ],
-      "audio_tracks": ["mic/<device>"]
+      "audio_tracks": ["mic/<device>"],
+      "range": {"start_ns": null, "end_ns": null, "speed": 1.0}
     }
 
 Camera sources are module folder names, mic sources are
@@ -51,6 +52,10 @@ MAX_CANVAS_W = 3840
 MAX_CANVAS_H = 4320
 MIN_TILE = 8
 SPECTROGRAM_WINDOW_RANGE_S = (0.5, 600.0)
+# Output playback speed; audio is kept (time-stretched) only within
+# AUDIO_SPEED_RANGE, and dropped with a warning outside it.
+SPEED_RANGE = (0.5, 8.0)
+AUDIO_SPEED_RANGE = (0.5, 2.0)
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _SPEC_FIELDS = ("color", "fmin_hz", "fmax_hz", "fscale", "ascale", "gain")
@@ -204,6 +209,45 @@ def _validate_tile(raw, canvas: dict, index: int) -> dict:
             "options": options}
 
 
+def validate_range(raw) -> dict:
+    """`{"start_ns", "end_ns", "speed"}`: the stretch of the session to
+    render (absolute wall-clock ns, either end null = the cameras' own
+    start/end) and the playback speed. Absent = everything at 1x."""
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise LayoutError("range must be an object")
+    ends = []
+    for key in ("start_ns", "end_ns"):
+        v = raw.get(key)
+        if v is None:
+            ends.append(None)
+            continue
+        if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+            raise LayoutError(f"range.{key} must be a whole number of ns or null")
+        try:
+            ends.append(int(v))
+        except (TypeError, ValueError) as exc:
+            raise LayoutError(f"range.{key} must be a whole number of ns or null") from exc
+    start, end = ends
+    if start is not None and end is not None and end <= start:
+        raise LayoutError("range end must be after its start")
+    speed = _float(raw.get("speed", 1.0), "range.speed")
+    lo, hi = SPEED_RANGE
+    if not lo <= speed <= hi:
+        raise LayoutError(f"range.speed must be between {lo:g} and {hi:g}")
+    return {"start_ns": start, "end_ns": end, "speed": speed}
+
+
+def clip_range(rng: dict, window: tuple[int, int]) -> tuple[int, int]:
+    """The part of `window` (the cameras' overlap, ns) that `rng` selects."""
+    w0, w1 = window
+    start = w0 if rng.get("start_ns") is None else max(w0, rng["start_ns"])
+    end = w1 if rng.get("end_ns") is None else min(w1, rng["end_ns"])
+    if end <= start:
+        raise LayoutError("the chosen time range lies outside the cameras' recording")
+    return start, end
+
+
 def validate_layout(raw) -> dict:
     """A normalised copy of a layout document, or LayoutError. Fills in
     option defaults, so a stored document always carries every field."""
@@ -231,7 +275,8 @@ def validate_layout(raw) -> dict:
         sid = _validate_mic_id(sid, "audio track")
         if sid not in tracks:
             tracks.append(sid)
-    return {"canvas": canvas, "tiles": tiles, "audio_tracks": tracks}
+    return {"canvas": canvas, "tiles": tiles, "audio_tracks": tracks,
+            "range": validate_range(raw.get("range"))}
 
 
 # --------------------------------------------------------------------------- #

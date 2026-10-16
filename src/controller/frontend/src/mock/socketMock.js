@@ -370,7 +370,8 @@ const ROUTER = {
     this._fire("compose_streams_info", {
       session_name: payload?.session_name, date_dir: payload?.date_dir || "20261013",
       dates: ["20261013"], cameras: MOCK_CAMERAS, mics: ["microphone-1"],
-      mic_devices: MOCK_MICS, suggested_fps: 30, duration_s: 1834.5,
+      mic_devices: MOCK_MICS, suggested_fps: 30, duration_s: MOCK_DAY_S,
+      window_start_ns: `${MOCK_T0_MS}000000`, window_end_ns: `${MOCK_T0_MS + MOCK_DAY_S * 1000}000000`,
       playhead_pps: 120, max_strip_px: 48000,
     });
   },
@@ -412,6 +413,7 @@ const ROUTER = {
     for (const t of doc.tiles) tiles[t.id] = mockTileImage(t);
     this._fire("compose_preview_ready", {
       request_id: payload?.request_id, tiles, scale: 1, layout_doc: doc,
+      t_ns: payload?.preview_t_ns ?? null,
       image: mockFrameImage(doc),
     });
   },
@@ -424,10 +426,16 @@ const ROUTER = {
   },
 };
 
+const MOCK_T0_MS = Date.UTC(2026, 9, 13, 14, 0, 0);
+const MOCK_DAY_S = 3 * 3600 + 25 * 60;
+const seg = (a, b) => [`${MOCK_T0_MS + a * 1000}000000`, `${MOCK_T0_MS + b * 1000}000000`];
 const MOCK_CAMERAS = [
-  { name: "camera-module-a1b2", width: 1456, height: 1088, fps: 30.0 },
-  { name: "camera-module-c3d4", width: 1280, height: 720, fps: 29.97 },
-  { name: "hailo-camera-3606", width: 1280, height: 720, fps: 30.0 },
+  { name: "camera-module-a1b2", width: 1456, height: 1088, fps: 30.0,
+    segments: [seg(0, 3600), seg(3600, 7200), seg(7200, MOCK_DAY_S)] },
+  { name: "camera-module-c3d4", width: 1280, height: 720, fps: 29.97,
+    segments: [seg(0, 3600), seg(3600, 5100), seg(5900, MOCK_DAY_S)] },
+  { name: "hailo-camera-3606", width: 1280, height: 720, fps: 30.0,
+    segments: [seg(0, 3600), seg(3600, 7200), seg(7200, MOCK_DAY_S)] },
 ];
 const MOCK_MICS = [
   { id: "microphone-1/trial_microphone-1_1_24F319046A4B3C2D", folder: "microphone-1",

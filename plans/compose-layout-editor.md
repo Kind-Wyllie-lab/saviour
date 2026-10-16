@@ -1,6 +1,6 @@
 # Compose layout editor (Post-Process)
 
-- **Status:** in progress (phase 1 shipped 2026-10-16, see `docs/CHANGELOG.md`)
+- **Status:** in progress (phases 1 and 2 shipped 2026-10-16, see `docs/CHANGELOG.md`)
 - **Created:** 2026-10-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX".
@@ -140,6 +140,13 @@ document server-side, so existing callers and saved jobs keep working, and
 - Waveform tiles, text and event tracks are not in phase 1 (open questions
   below: recommend waveform after phase 1, text via a bundled TTF + Pillow,
   one shared template list with role binding).
+
+**Phase 2 as built (2026-10-16):** range + speed in the layout document,
+exact frame seeks (measured on the desk cameras before relying on them),
+preview at any time with aligned spectrograms, timeline UI with per-camera
+coverage. Audio is time-stretched between 0.5x and 2x and dropped beyond.
+The range is a single stretch; a list of ranges (event-centred clips,
+`plans/habitat-post-processing.md`) is still open.
 
 1. **Layout model + editor (cameras + spectrograms).** Layout JSON and
    validation; old-request translation; compositor tile drawing for camera

@@ -154,6 +154,12 @@ Arbitrary video effects, transitions, multiple output files per render,
 editing on the module side, or a timeline with clips on tracks (this is a
 layout for one continuous window of a session, not a video editor).
 
+Habitat (16 motion-triggered cameras + 16 AudioMoths, multi-day, rendered
+on the habitat's own server) is out of scope here; this plan targets a
+typical rig (a few cameras / mics / TTL). What habitat needs on top, and the
+few things this design should keep open for it, are in
+`plans/habitat-post-processing.md`.
+
 ## Open questions
 
 - Waveform and event-track tiles: worth it in phase 1, or only spectrograms?

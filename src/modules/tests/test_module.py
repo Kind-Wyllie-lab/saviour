@@ -227,9 +227,37 @@ def test_connecting_to_a_controller_syncs_ssh_settings():
     inst = _mend_instance()
     proc = MagicMock(returncode=0, stdout="SSH CA: up to date", stderr="")
     with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.time.sleep"), \
          patch("src.modules.module.subprocess.run", return_value=proc) as run:
         inst._sync_ssh_access_soon()
     assert run.call_args[0][0] == ["sudo", "/usr/local/bin/saviour-config", "--apply-ssh"]
+    assert run.call_count == 1                       # success: no retry
+
+
+def test_ssh_sync_retries_while_the_controller_web_server_starts():
+    """Desk fleet 2026-10-16: modules connected over ZMQ 0.5 s before the
+    controller's web server served, so the first fetch failed."""
+    inst = _mend_instance()
+    down = MagicMock(returncode=1, stdout="SSH CA: source unreachable", stderr="")
+    up = MagicMock(returncode=0, stdout="SSH CA: up to date", stderr="")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.time.sleep") as sleep, \
+         patch("src.modules.module.subprocess.run", side_effect=[down, up]) as run:
+        inst._sync_ssh_access_soon()
+    assert run.call_count == 2
+    assert sleep.call_args_list[0].args == (3,)
+    inst.logger.warning.assert_not_called()          # a retried failure isn't a warning
+
+
+def test_ssh_sync_gives_up_with_a_warning():
+    inst = _mend_instance()
+    down = MagicMock(returncode=1, stdout="SSH CA: source unreachable", stderr="")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.time.sleep"), \
+         patch("src.modules.module.subprocess.run", return_value=down) as run:
+        inst._sync_ssh_access_soon()
+    assert run.call_count == 3
+    inst.logger.warning.assert_called_once()
 
 
 def test_connect_path_calls_the_ssh_sync():

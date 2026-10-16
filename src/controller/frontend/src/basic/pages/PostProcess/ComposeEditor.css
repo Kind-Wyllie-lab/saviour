@@ -396,6 +396,37 @@ body.layout-canvas-dragging {
   font-size: 0.82rem;
 }
 
+.timeline__body {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+/* lane labels, aligned with the track's lanes (same padding, height, gap) */
+.timeline__labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 0;
+  max-width: 140px;
+}
+
+.timeline__label {
+  height: 10px;
+  line-height: 10px;
+  font-size: 0.68rem;
+  color: var(--secondary-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.timeline__label--unused {
+  opacity: 0.5;
+}
+
 .timeline__track {
   position: relative;
   display: flex;
@@ -413,7 +444,15 @@ body.layout-canvas-dragging {
 
 .timeline__lane {
   position: relative;
-  height: 8px;
+  height: 10px;
+}
+
+.timeline__lane--mic .timeline__seg {
+  background: #e0a03a;
+}
+
+.timeline__lane--unused .timeline__seg {
+  opacity: 0.25;
 }
 
 .timeline__seg {

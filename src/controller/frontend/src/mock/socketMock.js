@@ -439,9 +439,11 @@ const MOCK_CAMERAS = [
 ];
 const MOCK_MICS = [
   { id: "microphone-1/trial_microphone-1_1_24F319046A4B3C2D", folder: "microphone-1",
-    device: "trial_microphone-1_1_24F319046A4B3C2D", label: "microphone-1 · 3C2D" },
+    device: "trial_microphone-1_1_24F319046A4B3C2D", label: "microphone-1 · 3C2D",
+    segments: [seg(2, 3600), seg(3600, MOCK_DAY_S)] },
   { id: "microphone-1/trial_microphone-1_1_24F3190400001111", folder: "microphone-1",
-    device: "trial_microphone-1_1_24F3190400001111", label: "microphone-1 · 1111" },
+    device: "trial_microphone-1_1_24F3190400001111", label: "microphone-1 · 1111",
+    segments: [seg(2, 4400), seg(6000, MOCK_DAY_S)] },
 ];
 const MOCK_HUES = { "camera-module-a1b2": 210, "camera-module-c3d4": 140, "hailo-camera-3606": 30 };
 

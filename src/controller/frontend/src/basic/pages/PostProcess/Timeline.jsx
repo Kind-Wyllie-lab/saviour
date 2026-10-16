@@ -28,14 +28,15 @@ function SpanInput({ value, onCommit, label, title }) {
 }
 
 /**
- * The session day as a track: each camera's recorded stretches, the range
+ * The session as a track: when each camera and AudioMoth recorded, the range
  * to render (drag its edges, or type offsets), and the preview playhead
  * (drag it, or click the track). The canvas shows the real frame at the
  * playhead, so finding the moment to start from is scrubbing, not
  * guessing. Speed plays the range faster or slower.
  */
 export default function Timeline({
-  windowMs, cameras, rangeMs, speed, previewMs, previewedMs, onRange, onSpeed, onPreview,
+  windowMs, cameras, mics = [], rangeMs, speed, previewMs, previewedMs, onRange, onSpeed,
+  onPreview,
 }) {
   const trackRef = useRef(null);
   const [w0, w1] = windowMs;
@@ -76,14 +77,33 @@ export default function Timeline({
 
   const step = (d) => onPreview(Math.min(w1, Math.max(w0, previewMs + d)));
   const length = outMs - inMs;
+  // Cameras first, then the AudioMoths (dimmed when the layout doesn't use
+  // them), each a labelled lane of its recorded stretches.
+  const lanes = [
+    ...cameras.map((c) => ({ key: `c:${c.name}`, label: c.name, kind: "camera",
+      segments: c.segments, used: true })),
+    ...mics.map((m) => ({ key: `m:${m.id}`, label: m.label, kind: "mic",
+      segments: m.segments, used: m.used })),
+  ];
 
   return (
     <div className="timeline">
+      <div className="timeline__body">
+      <div className="timeline__labels" aria-hidden="true">
+        {lanes.map((l) => (
+          <span key={l.key} className={`timeline__label${l.used ? "" : " timeline__label--unused"}`}
+            title={l.used ? l.label : `${l.label} (not in the layout)`}>
+            {l.label}
+          </span>
+        ))}
+      </div>
       <div className="timeline__track" ref={trackRef} onPointerDown={drag("playhead")}
         title="Click or drag to preview that moment">
-        {cameras.map((c) => (
-          <div key={c.name} className="timeline__lane" title={`${c.name}: recorded`}>
-            {(c.segments || []).map(([a, b], i) => {
+        {lanes.map((l) => (
+          <div key={l.key}
+            className={`timeline__lane timeline__lane--${l.kind}${l.used ? "" : " timeline__lane--unused"}`}
+            title={`${l.label}: recorded`}>
+            {(l.segments || []).map(([a, b], i) => {
               const s = nsToMs(a);
               const e = nsToMs(b);
               if (e < w0 || s > w1) return null;
@@ -103,10 +123,12 @@ export default function Timeline({
         <span className="timeline__playhead" style={{ left: pct(previewMs) }}
           onPointerDown={drag("playhead")} />
       </div>
+      <span />
       <div className="timeline__scale">
         <span>{clock(w0)}</span>
         <span>{formatSpan(span)} recorded</span>
         <span>{clock(w1)}</span>
+      </div>
       </div>
 
       <div className="timeline__controls">

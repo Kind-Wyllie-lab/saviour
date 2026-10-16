@@ -15,11 +15,13 @@ import {
 import "./ComposeEditor.css";
 
 const PREVIEW_DEBOUNCE_MS = 300;
+// Output frame rates offered besides "match cameras" (compose allows 1-60).
+const FPS_CHOICES = [60, 50, 30, 25, 24, 15, 12, 10, 5, 1];
 const UNDO_DEPTH = 50;
 
 /**
  * Post-Process compose: a layout editor (plans/compose-layout-editor.md).
- * Pick the output canvas, place the day's cameras and AudioMoth
+ * Pick the output canvas, place the session's cameras and AudioMoth
  * spectrograms on it, set each tile's options, and render. The layout
  * document this edits is exactly what the controller previews and renders
  * (src/controller/compose_layout.py), so the canvas is what you get.
@@ -367,7 +369,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
         )}
       </div>
       <p className="modal-subtext">
-        Place this day's cameras and spectrograms on the output canvas. What
+        Place this session's cameras and spectrograms on the output canvas. What
         you see here is what gets rendered, aligned by each camera's real
         per-frame timestamp. Renders run in the background; you can leave
         this page.
@@ -377,7 +379,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
 
       <div className="compose-editor__toolbar">
         <label className="compose-editor__inline">
-          Start from
+          Template
           <select value={template} onChange={(e) => setTemplate(e.target.value)}>
             {TEMPLATES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
@@ -393,8 +395,8 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
           keep canvas size
         </label>
         <button className="btn btn-small" onClick={() => applyTemplate()} disabled={!infoReady}
-          title="Replace the layout with this arrangement of every camera">
-          Apply
+          title="Replace the current layout with this template, using every camera (Undo brings the old layout back)">
+          Apply template
         </button>
         <span className="compose-editor__spacer" />
         <button className="btn btn-small" onClick={undo} disabled={!undoStack.current.length}
@@ -429,7 +431,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
 
       {missing.length > 0 && (
         <div className="compose-editor__warn">
-          This layout uses sources this day doesn&apos;t have: {missing.join(", ")}.
+          This layout uses sources this session doesn&apos;t have{dates.length > 1 ? " on this day" : ""}: {missing.join(", ")}.
           Change those tiles&apos; source, delete them, or start from a template.
         </div>
       )}
@@ -446,7 +448,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 {c.width}×{c.height}{c.fps ? ` · ${c.fps} fps` : ""}
               </span>
               <button className="btn btn-small" disabled={full || !doc}
-                onClick={() => addSource("camera", c.name)}>Add</button>
+                onClick={() => addSource("camera", c.name)}>Add camera</button>
             </div>
           ))}
           {!cameras.length && <div className="compose-panel__hint">Loading…</div>}
@@ -464,7 +466,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                     audio track
                   </label>
                   <button className="btn btn-small" disabled={full || !doc}
-                    onClick={() => addSource("spectrogram", d.id)}>Spectrogram</button>
+                    onClick={() => addSource("spectrogram", d.id)}>Add spectrogram</button>
                 </div>
               ))}
             </>
@@ -485,6 +487,11 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 <Timeline
                   windowMs={windowMs}
                   cameras={cameras.filter((c) => camSources.includes(c.name))}
+                  mics={micDevices.map((d) => ({
+                    ...d,
+                    used: (doc?.audio_tracks || []).includes(d.id)
+                      || doc?.tiles.some((t) => t.kind === "spectrogram" && t.source === d.id),
+                  }))}
                   rangeMs={rangeMs} speed={speed}
                   previewMs={previewMs} previewedMs={previewedMs}
                   onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}
@@ -499,7 +506,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 {preview?.image && (
                   <button className="btn btn-small"
                     onClick={() => fullRef.current?.requestFullscreen?.().catch(() => {})}>
-                    View full frame
+                    <span aria-hidden="true">⛶</span> View fullscreen
                   </button>
                 )}
               </div>
@@ -529,14 +536,19 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       </div>
 
       <div className="compose-editor__toolbar compose-editor__render-row">
-        <label className="compose-editor__inline">
-          Output FPS
-          <input type="number" min="1" max="60" value={fps} className="compose-editor__fps"
-            placeholder={info?.suggested_fps || ""}
-            onChange={(e) => { fpsTouched.current = true; setFps(e.target.value); }} />
-          {!fpsTouched.current && info?.suggested_fps ? (
-            <span className="compose-panel__hint">(camera rate)</span>
-          ) : null}
+        <label className="compose-editor__inline"
+          title="Frames per second of the video. Matching the cameras keeps every frame they recorded; a lower rate makes a smaller file and renders faster. 1-60 fps; cameras faster than 60 fps are down-sampled.">
+          Output frame rate
+          <select value={fpsTouched.current ? fps : "match"}
+            onChange={(e) => {
+              fpsTouched.current = e.target.value !== "match";
+              setFps(e.target.value === "match" ? String(info?.suggested_fps || "") : e.target.value);
+            }}>
+            <option value="match">Match cameras{info?.suggested_fps ? ` (${info.suggested_fps} fps)` : ""}</option>
+            {FPS_CHOICES.filter((f) => f !== info?.suggested_fps).map((f) => (
+              <option key={f} value={String(f)}>{f} fps</option>
+            ))}
+          </select>
         </label>
         <label className="compose-editor__inline">
           Format
@@ -563,7 +575,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
         </div>
       ) : (
         <div className="compose-panel__sync compose-panel__sync--muted">
-          Sync quality not yet validated for this day.
+          Sync quality not yet validated for this {dates.length > 1 ? "day" : "session"}.
         </div>
       )}
 

@@ -1278,3 +1278,17 @@ def test_preview_at_a_time_uses_the_window_spectrogram(tmp_path, monkeypatch):
     assert render_preview(str(tmp_path), spec, max_width=640,
                           at_ns=99 * 10**9).t_ns == 60 * 10**9
     assert render_preview(str(tmp_path), spec, max_width=640).t_ns == 35 * 10**9
+
+
+def test_streams_info_reports_each_audiomoths_recorded_stretches(tmp_path, monkeypatch):
+    date_dir = _sixty_second_session(tmp_path, monkeypatch)
+    a = _add_mic(date_dir, "AAAA")
+    from src.controller import compose
+    fit = types.SimpleNamespace(sample0_wall_ns=5 * 10**9, duration_s=20.0)
+    monkeypatch.setattr(compose, "_mic_fit", lambda audio, sidecar: fit)
+    info = streams_info(str(tmp_path), "sess")
+    (dev,) = info["mic_devices"]
+    assert dev["id"] == a and dev["segments"] == [[5 * 10**9, 25 * 10**9]]
+    # An unreadable sidecar just leaves the lane empty.
+    monkeypatch.setattr(compose, "_mic_fit", lambda audio, sidecar: 1 / 0)
+    assert streams_info(str(tmp_path), "sess")["mic_devices"][0]["segments"] == []

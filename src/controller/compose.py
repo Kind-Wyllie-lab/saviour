@@ -539,7 +539,8 @@ def streams_info(share_path: str, session_name: str,
             for s in cams
         ],
         "mics": list_mic_folders(resolved),
-        "mic_devices": list_mic_devices(resolved),
+        "mic_devices": [{**d, "segments": mic_segments(resolved, d)}
+                        for d in list_mic_devices(resolved)],
         "suggested_fps": suggest_fps(wanted),
         # The selected cameras' overlap -- what a render covers at most.
         "duration_s": duration_s,
@@ -600,6 +601,22 @@ def list_mic_devices(date_dir: str) -> list[dict]:
             serial = key.rsplit("_", 1)[-1]
             out.append({"id": f"{folder}/{key}", "folder": folder, "device": key,
                         "label": f"{folder} · {serial[-4:] if len(serial) > 4 else serial}"})
+    return out
+
+
+def mic_segments(date_dir: str, device: dict) -> list[list[int]]:
+    """One AudioMoth's recorded stretches as [first, last] wall-clock ns
+    (from each segment's sidecar fit), for the timeline. A segment whose
+    sidecar can't be fitted is left out."""
+    out = []
+    for audio_file, sidecar in find_microphone_segments(
+            date_dir, device["folder"], device["device"]):
+        try:
+            fit = _mic_fit(audio_file, sidecar)
+        except Exception:  # noqa: BLE001 -- a bad sidecar only loses its lane bar
+            continue
+        out.append([fit.sample0_wall_ns, fit.sample0_wall_ns + int(fit.duration_s * 1e9)])
+    out.sort()
     return out
 
 

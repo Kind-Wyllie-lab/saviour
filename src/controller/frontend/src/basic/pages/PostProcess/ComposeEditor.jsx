@@ -117,6 +117,53 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     setSelectedId(tile.id);
   };
 
+  // Keyboard, page-wide while the editor is open (not only when the canvas
+  // has focus, which clicking a tile never gave it), but never while typing
+  // in a field: Delete/Backspace removes the selected tile, arrows nudge it
+  // (Shift: 10 px), Escape deselects, Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or
+  // Ctrl+Y redoes. A ref keeps the listener on the latest state.
+  const keyRef = useRef(null);
+  keyRef.current = (e) => {
+    const el = e.target;
+    if (el?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el?.tagName)) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (mod && key === "z") {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && key === "y") {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (mod || e.altKey || !doc) return;
+    const tile = doc.tiles.find((t) => t.id === selectedId);
+    if (!tile) return;
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      deleteTile(tile.id);
+      return;
+    }
+    if (e.key === "Escape") {
+      setSelectedId(null);
+      return;
+    }
+    const step = e.shiftKey ? 10 : 1;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+      ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    const [x, y, w, h] = tile.rect;
+    updateTile(tile.id, { rect: clampRect([x + d[0], y + d[1], w, h], doc.canvas) });
+  };
+  useEffect(() => {
+    const onKey = (e) => keyRef.current?.(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // ── data from the controller ─────────────────────────────────────────
   useEffect(() => {
     if (!dates.length) return;
@@ -350,8 +397,10 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
           Apply
         </button>
         <span className="compose-editor__spacer" />
-        <button className="btn btn-small" onClick={undo} disabled={!undoStack.current.length}>Undo</button>
-        <button className="btn btn-small" onClick={redo} disabled={!redoStack.current.length}>Redo</button>
+        <button className="btn btn-small" onClick={undo} disabled={!undoStack.current.length}
+          title="Undo (Ctrl+Z)">Undo</button>
+        <button className="btn btn-small" onClick={redo} disabled={!redoStack.current.length}
+          title="Redo (Ctrl+Shift+Z or Ctrl+Y)">Redo</button>
       </div>
 
       {doc && (
@@ -431,7 +480,6 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 onRect={(id, rect) => updateTile(id, { rect })}
                 images={images} labelFor={labelFor}
                 onDropSource={(kind, source, x, y) => addSource(kind, source, { x, y })}
-                onDelete={deleteTile}
               />
               {windowMs && previewMs != null && (
                 <Timeline

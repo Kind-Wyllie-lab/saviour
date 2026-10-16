@@ -487,11 +487,8 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 <Timeline
                   windowMs={windowMs}
                   cameras={cameras.filter((c) => camSources.includes(c.name))}
-                  mics={micDevices.map((d) => ({
-                    ...d,
-                    used: (doc?.audio_tracks || []).includes(d.id)
-                      || doc?.tiles.some((t) => t.kind === "spectrogram" && t.source === d.id),
-                  }))}
+                  mics={micDevices.filter((d) => (doc?.audio_tracks || []).includes(d.id)
+                    || doc?.tiles.some((t) => t.kind === "spectrogram" && t.source === d.id))}
                   rangeMs={rangeMs} speed={speed}
                   previewMs={previewMs} previewedMs={previewedMs}
                   onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}

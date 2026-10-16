@@ -423,10 +423,6 @@ body.layout-canvas-dragging {
   text-align: right;
 }
 
-.timeline__label--unused {
-  opacity: 0.5;
-}
-
 .timeline__track {
   position: relative;
   display: flex;
@@ -449,10 +445,6 @@ body.layout-canvas-dragging {
 
 .timeline__lane--mic .timeline__seg {
   background: #e0a03a;
-}
-
-.timeline__lane--unused .timeline__seg {
-  opacity: 0.25;
 }
 
 .timeline__seg {

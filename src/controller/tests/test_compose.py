@@ -1159,3 +1159,25 @@ def test_panel_height_can_exceed_the_video():
     """Shared between stacked AudioMoth panels, so 200 % = two full-height ones."""
     a = AudioSpec.from_dict({"mode": "panel", "height_pct": 200})
     assert a.effective_height_pct == 200
+
+
+def test_preview_spectrogram_has_no_axes_like_the_render(tmp_path, monkeypatch):
+    """The preview's spectrogram tile is drawn without ffmpeg's legend, as
+    the render's is, and covers the tile's window."""
+    from src.controller import audio_align, compose
+
+    date_dir = tmp_path / "20261016"
+    date_dir.mkdir()
+    mic_id = _add_mic(date_dir)
+    cmds = []
+    monkeypatch.setattr(audio_align, "_run", lambda cmd, timeout=None: cmds.append(cmd))
+    device = {d["id"]: d for d in compose.list_mic_devices(str(date_dir))}[mic_id]
+    tile = {"kind": "spectrogram", "source": mic_id, "rect": [0, 0, 640, 120],
+            "options": {"color": "magma", "gain": 2.0}}
+    out = compose._preview_tile_spectrogram(
+        str(tmp_path), str(date_dir), device, tile, 640, 120, 10.0)
+    assert out and out.endswith(".png")
+    (cmd,) = cmds
+    lavfi = cmd[cmd.index("-lavfi") + 1]
+    assert "legend=0" in lavfi and "s=640x120" in lavfi and "color=magma" in lavfi
+    assert cmd[cmd.index("-t") + 1] == "10.000"

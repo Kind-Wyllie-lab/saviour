@@ -332,9 +332,14 @@ def _loom_regions(
     return ordered_regions, loom_w + right_width, right_h, order
 
 
-def _label(frame: np.ndarray, text: str) -> np.ndarray:
-    cv2.rectangle(frame, (0, 0), (14 * len(text) + 12, 34), (0, 0, 0), -1)
-    cv2.putText(frame, text, (6, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+def _label(frame: np.ndarray, text: str, scale: float = 1.0) -> np.ndarray:
+    """A name label top-left; `scale` < 1 for a preview drawn smaller than
+    the render, so the label keeps its size relative to the frame."""
+    s = scale
+    cv2.rectangle(frame, (0, 0), (round((14 * len(text) + 12) * s), round(34 * s)),
+                  (0, 0, 0), -1)
+    cv2.putText(frame, text, (round(6 * s), round(24 * s)), cv2.FONT_HERSHEY_SIMPLEX,
+                0.8 * s, (255, 255, 255), max(1, round(2 * s)))
     return frame
 
 
@@ -453,7 +458,7 @@ def _tile_order(tiles: list[dict]) -> list[dict]:
 
 def _finish_pane(pane: np.ndarray, tile: dict) -> np.ndarray:
     if tile.get("options", {}).get("label") and tile.get("label_text"):
-        _label(pane, tile["label_text"])
+        _label(pane, tile["label_text"], tile.get("label_scale", 1.0))
     return pane
 
 

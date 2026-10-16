@@ -840,14 +840,14 @@ def _preview_tile_spectrogram(cache_dir: str, date_dir: str, device: dict,
             mtime = 0
         opts = compose_layout.spectrogram_opts(tile)
         key = hashlib.md5(
-            f"{audio_file}|{mtime}|{width}x{height}|{dur_s:.2f}|"
+            f"{audio_file}|{mtime}|{width}x{height}|{dur_s:.2f}|nolegend|"
             f"{json.dumps(asdict(opts), sort_keys=True)}".encode()
         ).hexdigest()[:12]
         out = os.path.join(cache_dir, f"spec_{key}.png")
         if not os.path.isfile(out):
             audio_align.render_source_spectrogram_png(
                 audio_file, out, size=(max(2, width), max(2, height)), spec=opts,
-                dur_s=dur_s, timeout=PREVIEW_FFMPEG_TIMEOUT_S,
+                dur_s=dur_s, timeout=PREVIEW_FFMPEG_TIMEOUT_S, legend=False,
             )
         return out
     except Exception as exc:  # noqa: BLE001 -- preview must not fail over audio
@@ -892,7 +892,7 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
 
     tiles = []
     for full, tile in zip(resolved.doc["tiles"], small["tiles"], strict=True):
-        tile = {**tile, "label_text": _tile_label(resolved, tile)}
+        tile = {**tile, "label_text": _tile_label(resolved, tile), "label_scale": scale}
         if tile["kind"] == "spectrogram":
             device = resolved.devices.get(tile["source"])
             window_s = tile["options"].get("window_s")

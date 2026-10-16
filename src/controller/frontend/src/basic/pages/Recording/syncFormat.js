@@ -91,7 +91,7 @@ export function ptpChip(session) {
 
 // `report_rel` is "<session>/<YYYYMMDD>/framesync_report.json" (relative to the
 // share); the per-file download route wants the path relative to the session
-// dir, so drop the leading session segment -- same as ComposeVideoPanel.
+// dir, so drop the leading session segment -- same as streamsByDate (PostProcess/composeLayout.js).
 export function reportDownloadUrl(sessionName, reportRel) {
   if (!reportRel) return null;
   const rel = reportRel.split("/").slice(1).map(encodeURIComponent).join("/");

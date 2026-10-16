@@ -332,7 +332,7 @@
   cursor: zoom-in;
 }
 
-/* Fullscreen preview (ComposeVideoPanel: click the image; Esc exits). */
+/* Fullscreen preview (click the image; Esc exits). */
 .compose-panel__preview-box:fullscreen {
   max-width: none;
   display: flex;

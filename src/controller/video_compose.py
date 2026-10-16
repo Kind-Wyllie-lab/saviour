@@ -338,17 +338,122 @@ def _label(frame: np.ndarray, text: str) -> np.ndarray:
     return frame
 
 
-def _fit_into(frame: np.ndarray, w: int, h: int) -> np.ndarray:
+def _fit_into(frame: np.ndarray, w: int, h: int,
+              background: tuple[int, int, int] = (0, 0, 0)) -> np.ndarray:
     """Resize `frame` to fill (w, h) while preserving its aspect ratio,
-    letterboxed onto black. Keeps a portrait pane from being squashed
-    into a landscape box (and vice versa)."""
+    letterboxed onto `background`. Keeps a portrait pane from being
+    squashed into a landscape box (and vice versa)."""
     src_h, src_w = frame.shape[:2]
     scale = min(w / src_w, h / src_h)
     new_w, new_h = max(1, int(src_w * scale)), max(1, int(src_h * scale))
     resized = cv2.resize(frame, (new_w, new_h))
-    pane = np.zeros((h, w, 3), dtype=np.uint8)
+    pane = np.empty((h, w, 3), dtype=np.uint8)
+    pane[:] = background
     y0, x0 = (h - new_h) // 2, (w - new_w) // 2
     pane[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return pane
+
+
+_ROTATE = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
+           270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+def _crop_rotate(frame: np.ndarray, options: dict) -> np.ndarray:
+    """A camera tile's crop (`[x, y, w, h]` as fractions of the frame), then
+    its rotation (degrees clockwise)."""
+    crop = options.get("crop")
+    if crop:
+        fh, fw = frame.shape[:2]
+        x0 = min(fw - 1, int(round(crop[0] * fw)))
+        y0 = min(fh - 1, int(round(crop[1] * fh)))
+        x1 = max(x0 + 1, min(fw, int(round((crop[0] + crop[2]) * fw))))
+        y1 = max(y0 + 1, min(fh, int(round((crop[1] + crop[3]) * fh))))
+        frame = frame[y0:y1, x0:x1]
+    rot = _ROTATE.get(options.get("rotate") or 0)
+    return cv2.rotate(frame, rot) if rot is not None else frame
+
+
+def camera_pane(frame: np.ndarray, w: int, h: int, options: dict,
+                background: tuple[int, int, int] = (0, 0, 0)) -> np.ndarray:
+    """One camera tile's pixels: crop, rotate, then `fit`: `contain`
+    (whole frame, letterboxed onto the background), `cover` (fills the
+    tile, edges cut off) or `stretch` (fills the tile, aspect ignored)."""
+    src = _crop_rotate(frame, options)
+    fit = options.get("fit", "contain")
+    if fit == "stretch":
+        return cv2.resize(src, (w, h))
+    if fit == "cover":
+        sh, sw = src.shape[:2]
+        scale = max(w / sw, h / sh)
+        nw, nh = max(w, math.ceil(sw * scale)), max(h, math.ceil(sh * scale))
+        resized = cv2.resize(src, (nw, nh))
+        x0, y0 = (nw - w) // 2, (nh - h) // 2
+        return resized[y0:y0 + h, x0:x0 + w]
+    return _fit_into(src, w, h, background)
+
+
+_PANEL_BG = (0x14, 0x10, 0x10)          # BGR of the old ffmpeg 0x101014 backing
+_PLAYHEAD = (0, 215, 255)               # BGR yellow
+
+
+@dataclass
+class _SpectrogramStrip:
+    """One spectrogram tile's whole-window image, padded by one tile-window
+    each side so the window can run off either end."""
+    padded: np.ndarray
+    pps: float          # strip pixels per second of output time
+    win: int            # strip pixels the tile shows at once
+
+
+def _load_strip(path: str, height: int, pps: float, win: int) -> _SpectrogramStrip:
+    img = cv2.imread(path)
+    if img is None:
+        raise ValueError(f"could not read spectrogram image {path}")
+    if img.shape[0] != height:
+        img = cv2.resize(img, (img.shape[1], height))
+    padded = np.empty((height, img.shape[1] + 2 * win, 3), dtype=np.uint8)
+    padded[:] = _PANEL_BG
+    padded[:, win:win + img.shape[1]] = img
+    return _SpectrogramStrip(padded, pps, win)
+
+
+def _draw_playhead(pane: np.ndarray, playhead: float) -> None:
+    """The dashed 'now' line, `playhead` (0-1) of the way across the tile."""
+    h, w = pane.shape[:2]
+    x = max(0, min(w - 3, int(playhead * (w - 3))))
+    for dy in range(0, h, 23):
+        pane[dy:dy + 14, x:x + 3] = _PLAYHEAD
+
+
+def spectrogram_pane(strip: _SpectrogramStrip, t_s: float, w: int, h: int,
+                     playhead: float = 0.5) -> np.ndarray:
+    """The spectrogram tile at output time `t_s`: the strip column for
+    `t_s` sits `playhead` of the way across, under the dashed line. With
+    playhead 0.5 and a tile-wide window this is the mapping the old
+    full-width panel used (image x = width/2 - pps*t)."""
+    x0 = int(round(strip.pps * t_s - playhead * strip.win)) + strip.win
+    x0 = max(0, min(x0, strip.padded.shape[1] - strip.win))
+    window = strip.padded[:, x0:x0 + strip.win]
+    pane = cv2.resize(window, (w, h)) if window.shape[:2] != (h, w) else window.copy()
+    _draw_playhead(pane, playhead)
+    return pane
+
+
+def _blank_pane(w: int, h: int, colour=_PANEL_BG) -> np.ndarray:
+    pane = np.empty((h, w, 3), dtype=np.uint8)
+    pane[:] = colour
+    return pane
+
+
+def _tile_order(tiles: list[dict]) -> list[dict]:
+    """Bottom to top: by z, then list position (compose_layout.draw_order)."""
+    return [t for _i, t in sorted(enumerate(tiles),
+                                  key=lambda p: (p[1].get("z", 0), p[0]))]
+
+
+def _finish_pane(pane: np.ndarray, tile: dict) -> np.ndarray:
+    if tile.get("options", {}).get("label") and tile.get("label_text"):
+        _label(pane, tile["label_text"])
     return pane
 
 
@@ -363,26 +468,15 @@ def compose_session_video(
     progress=None,
     csv_skip: dict[str, int] | None = None,
     warnings: list[str] | None = None,
-    audio_panels: dict | None = None,
 ) -> str:
-    """Compose the session's cameras into one layout video.
-
-    `audio_panels` = {"mode": "panel"|"strip", "pps": px per second,
-    "images": [(wide_png, label, height), ...]} draws scrolling spectrograms:
-    `panel` stacks one under the cameras per image, `strip` overlays the
-    first on the bottom of the frame. Each wide PNG is loaded once and a
-    canvas-wide window copied per frame (an ffmpeg overlay of the whole
-    image per frame took ~650 MB per panel on the controller).
+    """Compose the session's cameras into one layout video (the CLI path:
+    a camera-only layout, rendered by `render_layout`).
 
     `streams` restricts to those module folder names (order preserved).
-    `regions` + `canvas` supply a pre-planned layout (from
-    compose.plan_regions) and, when given, override `layout`. `progress`
-    is called `progress(done, total, stage)` every ~1 % of frames.
-
-    If `warnings` is a list, one string per stream whose `.ts` frame count
-    disagrees with its CSV row count (a sync-client discard skew) is
-    appended to it — the composite is still produced, with the drops
-    remapped proportionally.
+    `regions` + `canvas` supply a pre-planned layout and, when given,
+    override `layout`. `progress` is called `progress(done, total, stage)`
+    every ~1 % of frames. `warnings` collects frame/CSV mismatch notes
+    (see `render_layout`).
     """
     found = discover_camera_streams(date_dir)
     if streams is not None:
@@ -411,101 +505,111 @@ def compose_session_video(
                 )
             regions, canvas_w, canvas_h = _grid_regions(len(found))
 
+    tiles = [
+        {"kind": "camera", "source": s.name, "label_text": s.name,
+         "rect": list(r), "z": 0, "options": {"fit": "contain", "label": True}}
+        for s, r in zip(ordered, regions, strict=True)
+    ]
+    return render_layout(date_dir, output_path, (canvas_w, canvas_h), tiles, fps,
+                         csv_skip=csv_skip, progress=progress, warnings=warnings)
+
+
+def render_layout(
+    date_dir: str,
+    output_path: str,
+    canvas: tuple[int, int],
+    tiles: list[dict],
+    fps: int = DEFAULT_FPS,
+    background: tuple[int, int, int] = (0, 0, 0),
+    csv_skip: dict[str, int] | None = None,
+    progress=None,
+    warnings: list[str] | None = None,
+) -> str:
+    """Render a resolved layout (compose_layout.py, resolved by compose.py)
+    over the window every camera tile's stream covers.
+
+    Each tile is a dict with `kind`, `rect` [x, y, w, h], `z`, `options`
+    and `label_text`. A camera tile names its module folder in `source`. A
+    spectrogram tile carries `strip` (a wide chrome-free PNG of its aligned
+    audio over the whole window, or None when there's no audio), `pps`
+    (strip pixels per second) and `win` (strip pixels shown at once). Each
+    wide PNG is loaded once and a tile-wide window copied per frame (an
+    ffmpeg overlay of the whole image per frame took ~650 MB per panel on
+    the controller). One decoder per camera however many tiles show it.
+
+    If `warnings` is a list, one string per stream whose `.ts` frame count
+    disagrees with its CSV row count (a sync-client discard skew) is
+    appended to it; the composite is still produced, with the drops
+    remapped proportionally.
+    """
+    found = {s.name: s for s in discover_camera_streams(date_dir)}
+    names: list[str] = []
+    for t in tiles:
+        if t["kind"] == "camera" and t["source"] not in names:
+            names.append(t["source"])
+    missing = [n for n in names if n not in found]
+    if missing:
+        raise ValueError(f"streams not found under {date_dir}: {missing}")
+    if not names:
+        raise ValueError("a layout needs at least one camera tile")
+
     _skip = csv_skip or {}
-    cursors = [_SegmentedCursor(s, _skip.get(s.name, 0)) for s in ordered]
-    t_start = max(c.first_ts for c in cursors)
-    t_end = min(c.last_ts for c in cursors)
-    if t_end <= t_start:
-        raise ValueError(
-            "Camera streams in this session have no overlapping time window"
-        )
-
-    step_ns = int(1e9 / fps)
-    n_out = int((t_end - t_start) / step_ns)
-
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    panels = _load_audio_panels(audio_panels, canvas_w)
-    out_h = canvas_h + (sum(p.height for p in panels)
-                        if audio_panels and audio_panels.get("mode") == "panel" else 0)
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (canvas_w, out_h))
-    if not writer.isOpened():
-        raise RuntimeError("VideoWriter failed to open — codec unavailable")
-
-    report_every = max(1, n_out // 100)
+    cursors = {n: _SegmentedCursor(found[n], _skip.get(n, 0)) for n in names}
     try:
-        for i in range(n_out):
-            t = t_start + i * step_ns
-            frame = np.zeros((out_h, canvas_w, 3), dtype=np.uint8)
-            for cursor, (x, y, w, h) in zip(cursors, regions, strict=True):
-                pane = _label(_fit_into(cursor.sync_to(t), w, h), cursor.name)
-                frame[y : y + h, x : x + w] = pane
-            if panels:
-                _draw_audio_panels(frame, panels, audio_panels, canvas_h, i / fps)
-            writer.write(frame)
-            if progress is not None and (i % report_every == 0 or i == n_out - 1):
-                progress(i + 1, n_out, "rendering")
+        t_start = max(c.first_ts for c in cursors.values())
+        t_end = min(c.last_ts for c in cursors.values())
+        if t_end <= t_start:
+            raise ValueError(
+                "Camera streams in this session have no overlapping time window"
+            )
+        strips = {
+            i: _load_strip(t["strip"], t["rect"][3], t["pps"], t["win"])
+            for i, t in enumerate(tiles)
+            if t["kind"] == "spectrogram" and t.get("strip")
+        }
+        order = [(i, t) for i, t in sorted(
+            enumerate(tiles), key=lambda p: (p[1].get("z", 0), p[0]))]
+
+        step_ns = int(1e9 / fps)
+        n_out = int((t_end - t_start) / step_ns)
+        canvas_w, canvas_h = canvas
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"),
+                                 fps, (canvas_w, canvas_h))
+        if not writer.isOpened():
+            raise RuntimeError("VideoWriter failed to open — codec unavailable")
+        report_every = max(1, n_out // 100)
+        try:
+            for i in range(n_out):
+                t_ns = t_start + i * step_ns
+                frame = np.empty((canvas_h, canvas_w, 3), dtype=np.uint8)
+                frame[:] = background
+                # A camera shown in two tiles is synced once per frame.
+                synced = {n: c.sync_to(t_ns) for n, c in cursors.items()}
+                for idx, tile in order:
+                    x, y, w, h = tile["rect"]
+                    if tile["kind"] == "camera":
+                        pane = camera_pane(synced[tile["source"]], w, h,
+                                           tile["options"], background)
+                    elif idx in strips:
+                        pane = spectrogram_pane(strips[idx], i / fps, w, h,
+                                                tile["options"].get("playhead", 0.5))
+                    else:
+                        pane = _blank_pane(w, h)
+                    frame[y:y + h, x:x + w] = _finish_pane(pane, tile)
+                writer.write(frame)
+                if progress is not None and (i % report_every == 0 or i == n_out - 1):
+                    progress(i + 1, n_out, "rendering")
+        finally:
+            writer.release()
     finally:
-        writer.release()
-        for cursor in cursors:
+        for cursor in cursors.values():
             cursor.release()
         if warnings is not None:
-            for cursor in cursors:
+            for cursor in cursors.values():
                 warnings.extend(m for m in cursor.messages if m not in warnings)
 
     return output_path
-
-
-_PANEL_BG = (0x14, 0x10, 0x10)          # BGR of the old ffmpeg 0x101014 backing
-_PLAYHEAD = (0, 215, 255)               # BGR yellow
-
-
-@dataclass
-class _AudioPanel:
-    padded: np.ndarray      # the wide spectrogram with half a canvas each side
-    label: str
-    height: int
-
-
-def _load_audio_panels(spec: dict | None, canvas_w: int) -> list[_AudioPanel]:
-    if not spec:
-        return []
-    images = spec.get("images") or []
-    if spec.get("mode") == "strip":
-        images = images[:1]
-    panels = []
-    for path, label, height in images:
-        img = cv2.imread(path)
-        if img is None:
-            raise ValueError(f"could not read spectrogram image {path}")
-        if img.shape[0] != height:
-            img = cv2.resize(img, (img.shape[1], height))
-        pad = canvas_w // 2
-        padded = np.empty((height, img.shape[1] + canvas_w, 3), dtype=np.uint8)
-        padded[:] = _PANEL_BG
-        padded[:, pad:pad + img.shape[1]] = img
-        panels.append(_AudioPanel(padded, label or "", height))
-    return panels
-
-
-def _draw_audio_panels(frame: np.ndarray, panels: list[_AudioPanel], spec: dict,
-                       video_h: int, t_s: float) -> None:
-    """Scrolling spectrogram(s) for output time `t_s`: the column for `t_s`
-    at mid-width under a dashed playhead (the same mapping the ffmpeg
-    overlay used: image x = width/2 - pps*t)."""
-    canvas_w = frame.shape[1]
-    x = int(round(spec["pps"] * t_s))
-    y = video_h if spec.get("mode") == "panel" else video_h - panels[0].height
-    for panel in panels:
-        x0 = max(0, min(x, panel.padded.shape[1] - canvas_w))
-        window = panel.padded[:, x0:x0 + canvas_w].copy()
-        mid = (canvas_w - 3) // 2
-        for dy in range(0, panel.height, 23):
-            window[dy:dy + 14, mid:mid + 3] = _PLAYHEAD
-        if panel.label and len(panels) > 1:
-            _label(window, panel.label)
-        frame[y:y + panel.height, 0:canvas_w] = window
-        y += panel.height
 
 
 def _csv_bounds(csv_path: str, skip: int = 0) -> tuple[int, int]:
@@ -582,102 +686,77 @@ def _stream_thumb(
     return _representative_frame(stream, t_ns, skip)
 
 
-def _attach_audio_preview(
-    frame: np.ndarray, audio_png, audio_mode: str,
-    height_px: int | None = None,
-) -> np.ndarray:
-    """`audio_png` is one PNG path, or a list of (path, label, height) -- one
-    stacked, labelled panel per AudioMoth (`panel` mode)."""
-    if isinstance(audio_png, list):
-        if audio_mode != "panel" or len(audio_png) == 1:
-            path, _label_text, h = audio_png[0]
-            return _attach_audio_preview(frame, path, audio_mode, h)
-        out = frame
-        cw = frame.shape[1]
-        for path, label_text, h in audio_png:
-            img = cv2.imread(path)
-            if img is None:
-                continue
-            out = np.vstack([out, _label(cv2.resize(img, (cw, h)), label_text)])
-        return out
-    return _attach_audio_preview_one(frame, audio_png, audio_mode, height_px)
-
-
-def _attach_audio_preview_one(
-    frame: np.ndarray, audio_png: str, audio_mode: str,
-    height_px: int | None = None,
-) -> np.ndarray:
-    """Composite a spectrogram PNG into the preview the same way a real
-    render places it: `panel` stacked below the video, `strip` overlaid on
-    the bottom of the video, `height_px` tall (default 20% of the video)."""
-    spec_img = cv2.imread(audio_png)
-    if spec_img is None:
-        return frame
-    ch, cw = frame.shape[:2]
-    h = height_px or max(2, round(ch * 0.2) // 2 * 2)
-    if audio_mode == "panel":
-        panel = cv2.resize(spec_img, (cw, h))
-        panel = _label(panel, "audio")
-        return np.vstack([frame, panel])
-    # strip
-    strip_h = min(h, ch)
-    strip = cv2.resize(spec_img, (cw, strip_h))
-    out = frame.copy()
-    out[ch - strip_h : ch, 0:cw] = strip
-    return out
-
-
-def compose_preview_frame(
-    date_dir: str, output_png: str,
-    streams: list[str] | None = None,
-    regions: list[tuple[int, int, int, int]] | None = None,
-    canvas: tuple[int, int] | None = None,
-    at_fraction: float = 0.5,
+def preview_layout(
+    date_dir: str,
+    canvas: tuple[int, int],
+    tiles: list[dict],
     cache_dir: str | None = None,
-    audio_png: str | None = None,
-    audio_mode: str | None = None,
     csv_skip: dict[str, int] | None = None,
-    audio_height_px: int | None = None,
-) -> str:
-    """Composite a single frame (at `at_fraction` through the overlap
-    window) to a PNG -- a fast layout preview before a full render.
+    background: tuple[int, int, int] = (0, 0, 0),
+    at_fraction: float = 0.5,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """One composited frame of a resolved layout, at `at_fraction` through
+    the cameras' overlap window, drawn with the same per-tile code as
+    `render_layout`: `(frame, {tile_id: tile_pixels})`. The editor shows
+    each tile's own pixels in its box, so moving one doesn't wait for a
+    re-render.
 
-    `cache_dir`, when given, holds one representative PNG per camera so
-    repeated previews skip video decode entirely. `audio_png` + `audio_mode`
-    ("strip" | "panel") composite a spectrogram into the preview so audio
-    layout modes are visible before rendering, `audio_height_px` tall.
-    """
-    found = discover_camera_streams(date_dir)
-    if streams is not None:
-        by_name = {s.name: s for s in found}
-        found = [by_name[s] for s in streams if s in by_name]
-    if not found:
+    Camera frames come from one cached thumbnail per camera (`cache_dir`),
+    so repeated previews skip video decode. A spectrogram tile carries
+    `image`: a representative spectrogram PNG (or None), stretched to the
+    tile under the playhead."""
+    found = {s.name: s for s in discover_camera_streams(date_dir)}
+    names: list[str] = []
+    for t in tiles:
+        if t["kind"] == "camera" and t["source"] in found and t["source"] not in names:
+            names.append(t["source"])
+    if not names:
         raise ValueError(f"No camera streams found under {date_dir}")
-    if regions is None or canvas is None:
-        regions, cw, ch = _grid_regions(len(found))
-    else:
-        cw, ch = canvas
 
     _skip = csv_skip or {}
-    bounds = [_stream_bounds(s, _skip.get(s.name, 0)) for s in found]
+    bounds = [_stream_bounds(found[n], _skip.get(n, 0)) for n in names]
     t_start = max(b[0] for b in bounds)
     t_end = min(b[1] for b in bounds)
     t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
+    thumbs = {n: _stream_thumb(found[n], t, cache_dir, _skip.get(n, 0)) for n in names}
 
-    frame = np.zeros((ch, cw, 3), dtype=np.uint8)
-    for stream, (x, y, w, h) in zip(found, regions, strict=True):
-        thumb = _stream_thumb(stream, t, cache_dir, _skip.get(stream.name, 0))
-        pane = _label(_fit_into(thumb, w, h), stream.name)
-        frame[y : y + h, x : x + w] = pane
+    cw, ch = canvas
+    frame = np.empty((ch, cw, 3), dtype=np.uint8)
+    frame[:] = background
+    panes: dict[str, np.ndarray] = {}
+    for tile in _tile_order(tiles):
+        x, y, w, h = tile["rect"]
+        if tile["kind"] == "camera":
+            thumb = thumbs.get(tile["source"])
+            pane = (camera_pane(thumb, w, h, tile["options"], background)
+                    if thumb is not None else _blank_pane(w, h, background))
+        else:
+            img = cv2.imread(tile["image"]) if tile.get("image") else None
+            if img is None:
+                pane = _blank_pane(w, h)
+            else:
+                pane = cv2.resize(img, (w, h))
+                _draw_playhead(pane, tile["options"].get("playhead", 0.5))
+        pane = _finish_pane(pane, tile)
+        frame[y:y + h, x:x + w] = pane
+        if "id" in tile:
+            panes[tile["id"]] = pane
+    return frame, panes
 
-    if audio_png and audio_mode in ("strip", "panel"):
-        frame = _attach_audio_preview(
-            frame, audio_png, audio_mode, audio_height_px)
 
-    os.makedirs(os.path.dirname(output_png) or ".", exist_ok=True)
-    if not cv2.imwrite(output_png, frame):
-        raise RuntimeError("cv2.imwrite failed for the preview frame")
-    return output_png
+def encode_preview(frame: np.ndarray, panes: dict[str, np.ndarray],
+                   jpeg_quality: int = 85) -> tuple[bytes, dict[str, bytes]]:
+    """`preview_layout`'s output as bytes: the frame as PNG, each tile as
+    JPEG (smaller over the socket; the editor shows them scaled anyway)."""
+    ok, png = cv2.imencode(".png", frame)
+    if not ok:
+        raise RuntimeError("could not encode the preview frame")
+    tiles = {}
+    for tile_id, pane in panes.items():
+        ok, jpg = cv2.imencode(".jpg", pane, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        if ok:
+            tiles[tile_id] = jpg.tobytes()
+    return png.tobytes(), tiles
 
 
 def main():

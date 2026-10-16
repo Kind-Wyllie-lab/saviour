@@ -110,6 +110,21 @@ export function composeJobDownload(job) {
 /** "2 cameras · grid · 15 fps · audio panel" for a render's settings. */
 export function composeJobSummary(job) {
   const spec = job.spec || {};
+  const doc = spec.layout_doc;
+  if (doc) {
+    const tiles = doc.tiles || [];
+    const cams = new Set(tiles.filter((t) => t.kind === "camera").map((t) => t.source)).size;
+    const specs = tiles.filter((t) => t.kind === "spectrogram").length;
+    const tracks = doc.audio_tracks?.length || 0;
+    return [
+      `${cams} camera${cams !== 1 ? "s" : ""}`,
+      specs ? `${specs} spectrogram${specs !== 1 ? "s" : ""}` : null,
+      tracks ? `${tracks} audio track${tracks !== 1 ? "s" : ""}` : null,
+      doc.canvas ? `${doc.canvas.width}×${doc.canvas.height}` : null,
+      spec.fps ? `${spec.fps} fps` : null,
+      spec.date_dir || null,
+    ].filter(Boolean).join(" · ");
+  }
   const n = spec.streams?.length;
   const parts = [
     n ? `${n} camera${n !== 1 ? "s" : ""}` : "all cameras",

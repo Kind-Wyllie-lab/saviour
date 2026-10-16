@@ -6,7 +6,7 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import {
   formatBytes, groupSessionsByDate, dateGroupLabel,
 } from "../Recording/sessionFormat";
-import ComposeVideoPanel from "../Recording/SessionDetailPage/ComposeVideoPanel";
+import ComposeEditor from "./ComposeEditor";
 import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import useComposeJobs from "/src/hooks/useComposeJobs";
 import EphysAlignPanel from "./EphysAlignPanel";
@@ -109,7 +109,7 @@ export default function PostProcess() {
 
       {selected && fileInfo && fileInfo.files && fileInfo.files.length > 0 && (
         <>
-          <ComposeVideoPanel
+          <ComposeEditor
             sessionName={selected}
             session={sessions?.[selected]}
             files={fileInfo.files}

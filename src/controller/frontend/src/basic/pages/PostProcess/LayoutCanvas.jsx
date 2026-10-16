@@ -12,11 +12,11 @@ export const SOURCE_MIME = "application/x-saviour-source";
  * real frame arrives when the debounced preview comes back.
  *
  * Drag a box to move it, a handle to resize (Shift keeps the aspect), Alt
- * to turn snapping off. Arrow keys nudge the selected tile (Shift: 10 px),
- * Delete removes it. Sources dragged from the palette drop where released.
+ * to turn snapping off. Sources dragged from the palette drop where
+ * released. Keyboard shortcuts live in ComposeEditor (page-wide).
  */
 export default function LayoutCanvas({
-  doc, selectedId, onSelect, onRect, images, labelFor, onDropSource, onDelete,
+  doc, selectedId, onSelect, onRect, images, labelFor, onDropSource,
   maxHeight = 560,
 }) {
   const wrapRef = useRef(null);
@@ -81,23 +81,6 @@ export default function LayoutCanvas({
     document.body.classList.add("layout-canvas-dragging");
   };
 
-  const onKeyDown = (e) => {
-    const tile = doc.tiles.find((t) => t.id === selectedId);
-    if (!tile) return;
-    if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      onDelete(tile.id);
-      return;
-    }
-    const step = e.shiftKey ? 10 : 1;
-    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0],
-      ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
-    if (!d) return;
-    e.preventDefault();
-    const [x, y, w, h] = tile.rect;
-    onRect(tile.id, clampRect([x + d[0], y + d[1], w, h], doc.canvas));
-  };
-
   const onDrop = (e) => {
     const raw = e.dataTransfer.getData(SOURCE_MIME);
     if (!raw) return;
@@ -116,8 +99,6 @@ export default function LayoutCanvas({
       <div
         className="layout-canvas"
         style={{ width: W * scale, height: H * scale, background: doc.canvas.background }}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
         onPointerDown={() => onSelect(null)}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(SOURCE_MIME)) e.preventDefault();

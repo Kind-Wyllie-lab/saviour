@@ -11,6 +11,16 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-16
+
+- [x] **SSH settings as part of device setup** (branch `feat/ssh-setup-flow` → `staging`; phase 5 of `plans/ssh-certificate-auth.md`). Before, a freshly configured device only got the rig's SSH CA and login mode from the SSH access menu, a controller push or `mend`.
+  - **Controller setup:** `configure_device` offers a controller with no CA yet an optional "SSH certificate authority" step (paste the public key or a path; blank skips; junk is re-asked) and the confirmation screen says which CA it will trust or keep. The login mode is never offered during setup, so setup can't lock anyone out.
+  - **Every setup run, both roles:** `run_configuration` applies the SSH settings after writing the config and before restarting the service (`ssh_setup_step`), never fatal.
+  - **Modules sync on every connection** to a controller (`_sync_ssh_access_soon`, one run at a time): a new module, or every module after its controller set a CA during setup and restarted, is in step with no push or mend. An unchanged sync is a few HTTP requests and no sshd reload. It waits 3 s and retries at 15 s and 60 s: on the desk fleet modules reconnected over ZMQ 0.5 s before the restarted controller's web server served, so the first fetch failed.
+  - **Identity refresh** on a cloned controller drops its own SSH key, certificate and `ssh_config.d` drop-in (they name the original's key and address); the CA, revocation list and login mode stay. **View current configuration** shows the SSH status.
+  - **Checked on the desk fleet:** after a deploy all 4 modules re-synced on reconnecting; with microphone_4703's CA files and recorded controller address wiped and its service restarted, it re-recorded `10.0.0.1`, re-applied the SIDB IT CA on its first connection and accepted a certificate login again. Not run on hardware: the controller's interactive CA step (it would reconfigure the desk controller's network); covered by the bash harness.
+  - 11 new tests (setup step with a pasted CA, path/junk input, no-CA no-op, failure survives `set -e`, clone fix keeps the CA, wiring into `run_configuration`/`configure_device`/`run_clone_fix`/`view_config`, on-connect sync, retry and give-up); ruff clean; suite unchanged bar the known Windows-only failures.
+
 ## 2026-10-14
 
 - [x] **SSH: per-rig login mode (passwords off) and the controller's own certificate** (branch `feat/ssh-login-mode` → `staging`; phases 2-3 of `plans/ssh-certificate-auth.md`).

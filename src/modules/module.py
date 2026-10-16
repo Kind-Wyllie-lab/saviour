@@ -106,6 +106,8 @@ def check(name=None):
 
 
 CONTROLLER_IP_FILE = "/var/lib/saviour/controller_ip"
+# Waits before each on-connect SSH settings sync attempt (_sync_ssh_access_soon).
+SSH_SYNC_DELAYS_S = (3, 15, 60)
 
 
 def _remember_controller_ip(ip: str, logger=None) -> None:
@@ -465,8 +467,10 @@ class Module(ABC):
         threading.Thread(target=_do_apply, daemon=True, name="ssh-access").start()
         return {"result": "started", "output": "Fetching SSH CA from the controller."}
 
-    def _run_apply_ssh(self) -> tuple[bool, str]:
-        """`saviour-config --apply-ssh`, one at a time. Returns (ok, output)."""
+    def _run_apply_ssh(self, quiet_failure: bool = False) -> tuple[bool, str]:
+        """`saviour-config --apply-ssh`, one at a time. Returns (ok, output).
+        `quiet_failure` logs a failure at info, for an attempt that will be
+        retried."""
         lock = self.__dict__.setdefault("_ssh_sync_lock", threading.Lock())
         with lock:
             try:
@@ -478,7 +482,8 @@ class Module(ABC):
                 return False, str(e)
         output = (result.stdout or result.stderr or "").strip()[-500:]
         ok = result.returncode == 0
-        (self.logger.info if ok else self.logger.warning)(f"SSH settings: {output}")
+        (self.logger.info if ok or quiet_failure else self.logger.warning)(
+            f"SSH settings: {output}")
         return ok, output
 
     def _sync_ssh_access_soon(self) -> None:
@@ -486,9 +491,20 @@ class Module(ABC):
         mode in the background (plans/ssh-certificate-auth.md phase 5). A new
         module, or one whose controller just set a CA and restarted, is then
         in step without a push or mend. Idempotent and cheap: no change, no
-        sshd reload."""
-        threading.Thread(target=self._run_apply_ssh, daemon=True,
-                         name="ssh-sync").start()
+        sshd reload.
+
+        Waits and retries: the module's ZMQ link can come up before the
+        controller's web server does (desk fleet 2026-10-16: connected 0.5 s
+        before Flask served), and the settings come from the web server."""
+        def _sync():
+            for i, delay in enumerate(SSH_SYNC_DELAYS_S):
+                time.sleep(delay)
+                ok, _out = self._run_apply_ssh(
+                    quiet_failure=i < len(SSH_SYNC_DELAYS_S) - 1)
+                if ok:
+                    return
+
+        threading.Thread(target=_sync, daemon=True, name="ssh-sync").start()
 
     def run_mend(self, reboot: bool = False) -> dict:
         """Run mend.sh to repair/refresh this device's dependencies, config,

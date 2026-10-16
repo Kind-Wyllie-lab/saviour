@@ -1,11 +1,11 @@
 # SSH certificates for fleet login (key-only SSH at scale)
 
-- **Status:** phases 1-3 built (2026-10-14). CA trust, login modes
+- **Status:** phases 1-3 built (2026-10-14), phase 5 (2026-10-16). CA trust, login modes
   (`any`/`keys`/`certs`) and the controller certificate via `saviour-config`,
   controller-served to modules; `tools/ssh_ca.py`. Desk fleet trusts the SIDB
   IT CA, login mode left at `any`. Not done: controller certificate on
-  hardware (needs the CA holder), VNC, other rigs, SSH as a step of device
-  setup (phase 5, planned).
+  hardware (needs the CA holder), VNC, other rigs. Phase 5 (SSH in device
+  setup) built 2026-10-16.
 - **Created:** 2026-10-13
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Security": clones share the OS login
@@ -154,10 +154,11 @@ public key instead of a list of individual keys.
    `@cert-authority` in admins' `known_hosts`: no more "host key changed"
    prompts for re-imaged Pis on reused IPs, and `push_credentials.sh` can
    drop `StrictHostKeyChecking=no`.
-5. **SSH in device setup.** *Planned.* Today SSH is configured only from the
-   SSH access menu, the headless flags, a controller push or `mend`; a
-   freshly configured device doesn't get it as part of setup. Make it part of
-   `saviour-config`'s configure flow (`run_configuration`), for both roles:
+5. **SSH in device setup.** *Built 2026-10-16* (see docs/CHANGELOG.md).
+   Before, SSH was configured only from the SSH access menu, the headless
+   flags, a controller push or `mend`; a freshly configured device didn't get
+   it as part of setup. Now it's part of `saviour-config`'s configure flow
+   (`run_configuration`), for both roles:
    - **Controller, interactive** (`configure_device`): after role/type, an
      optional "SSH certificate authority" step: paste the CA public key, give
      a path, or skip. Shown only when `/etc/saviour/ssh/user_ca.pub` is
@@ -173,18 +174,23 @@ public key instead of a list of individual keys.
      near the end, non-fatal (`|| true` inside its `set -e` bracket, the
      outcome in the summary and the log). On a module the controller may not
      be reachable yet; an unreachable controller leaves trust unchanged.
-   - **Module, first contact:** the module service runs
-     `saviour-config --apply-ssh` in the background when it first connects to
-     a controller, or connects to a different one (the address it records in
-     `/var/lib/saviour/controller_ip` changes). A new module then picks up the
-     rig's CA and login mode on its first connection, with no push or mend.
+   - **Module, on every connection:** the module service runs
+     `saviour-config --apply-ssh` in the background each time it connects to
+     a controller (one run at a time). A new module picks up the rig's CA and
+     login mode on its first connection, and existing modules pick up a CA
+     their controller set during its own setup when they reconnect after its
+     restart, with no push or mend. (Planned as "new or changed controller
+     only"; every connection covers that restart case, and an unchanged sync
+     is a few HTTP requests with no sshd reload.)
    - **Cloned controllers:** `run_clone_fix` ("Refresh identity") deletes
      `/etc/saviour/ssh/controller_key*` and the `ssh_config.d` drop-in. The
      certificate belongs to the old key and is pinned to the old controller's
      address; the clone gets a new key and needs `certify-controller` again.
      The CA, revocation list and login mode are deployment-wide and stay.
-   - **Visibility:** `view_config` ("View current configuration") and the
-     end-of-setup summary include `ssh_status_text`.
+   - **Visibility:** `view_config` ("View current configuration") shows
+     `ssh_status_text`; the controller's confirmation screen shows the CA it
+     will trust or keep; setup's progress output and log carry the SSH
+     step's result.
 
    Tests: the harness in `src/tests/test_ssh_access.py` and
    `test_saviour_config.py` (`run_configuration` calls the SSH step and

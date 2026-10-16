@@ -456,27 +456,39 @@ class Module(ABC):
             _remember_controller_ip(controller_ip, self.logger)
 
         def _do_apply():
+            ok, output = self._run_apply_ssh()
+            self.communication.send_status({
+                "type": "cmd_ack", "command": "apply_ssh_access",
+                "result": "success" if ok else "error", "output": output,
+            })
+
+        threading.Thread(target=_do_apply, daemon=True, name="ssh-access").start()
+        return {"result": "started", "output": "Fetching SSH CA from the controller."}
+
+    def _run_apply_ssh(self) -> tuple[bool, str]:
+        """`saviour-config --apply-ssh`, one at a time. Returns (ok, output)."""
+        lock = self.__dict__.setdefault("_ssh_sync_lock", threading.Lock())
+        with lock:
             try:
                 result = subprocess.run(
                     ["sudo", "/usr/local/bin/saviour-config", "--apply-ssh"],
                     capture_output=True, text=True, timeout=60, check=False)
-                output = (result.stdout or result.stderr or "").strip()[-500:]
-                ok = result.returncode == 0
-                (self.logger.info if ok else self.logger.warning)(
-                    f"apply_ssh_access: {output}")
-                self.communication.send_status({
-                    "type": "cmd_ack", "command": "apply_ssh_access",
-                    "result": "success" if ok else "error", "output": output,
-                })
             except Exception as e:
-                self.logger.error(f"apply_ssh_access failed: {e}")
-                self.communication.send_status({
-                    "type": "cmd_ack", "command": "apply_ssh_access",
-                    "result": "error", "output": str(e),
-                })
+                self.logger.error(f"SSH settings sync failed: {e}")
+                return False, str(e)
+        output = (result.stdout or result.stderr or "").strip()[-500:]
+        ok = result.returncode == 0
+        (self.logger.info if ok else self.logger.warning)(f"SSH settings: {output}")
+        return ok, output
 
-        threading.Thread(target=_do_apply, daemon=True, name="ssh-access").start()
-        return {"result": "started", "output": "Fetching SSH CA from the controller."}
+    def _sync_ssh_access_soon(self) -> None:
+        """On every connection to a controller: fetch its SSH CA and login
+        mode in the background (plans/ssh-certificate-auth.md phase 5). A new
+        module, or one whose controller just set a CA and restarted, is then
+        in step without a push or mend. Idempotent and cheap: no change, no
+        sshd reload."""
+        threading.Thread(target=self._run_apply_ssh, daemon=True,
+                         name="ssh-sync").start()
 
     def run_mend(self, reboot: bool = False) -> dict:
         """Run mend.sh to repair/refresh this device's dependencies, config,
@@ -657,6 +669,7 @@ class Module(ABC):
             self.logger.info("Communication manager connected to controller")
             # For saviour-config --apply-ssh, which fetches the SSH CA from here.
             _remember_controller_ip(controller_ip, self.logger)
+            self._sync_ssh_access_soon()
 
             # 3. Start command listener
             self.logger.info("Requesting communication manager to start command listener")

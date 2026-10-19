@@ -11,6 +11,13 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-19
+
+- [x] **APA dashboard showed a stale shock current (0.5 mA vs 0.2 mA configured)** (branch `fix/apa-serial-resync` → `staging`). Python only, no firmware change.
+  - **Cause:** `Protocol.listen()` framed packets with `buf.index(">", buf.index("<"))`. When a read started mid-packet (`...>\r\n<D:`), that raised `ValueError: substring not found`, and the handler cleared the buffer, partial packet included. Reads are byte-sized, so every later `<` was dropped the same way and the stream never resynced. On the rig the shocker port (`/dev/ttyACM1`) logged ~19 errors/s (its 20 Hz state rate) in every 2026-10-19 session; 2026-10-12 had none.
+  - **Effect:** nothing from the shock Arduino was parsed, so `current_from_arduino`/time on/off on the dashboard were frozen at pre-desync values, `validate_state()` never ran (no re-push of config on mismatch), and shock delivery events (`self_test_in`) would not have been detected or written to `shock_events.csv`. Commands to the Arduino were unaffected, so `C:0.2` was still sent on config change (unconfirmed, since the read side was blind). Today's sessions were habituation, with no shocks.
+  - **Fix:** `_consume_packets()` drops bytes up to a `>` with no `<` before it and keeps a partial `<...` for the next read. Tests: byte-by-byte parse, resync after starting mid-packet, partial packet retained.
+
 ## 2026-10-16
 
 - [x] **Compose editor wording and timeline audio lanes** (branch `fix/compose-editor-wording` → `staging`, from review of the deployed editor). "This session's" for "this day's" (the day selector stays for multi-day sessions); "Start from" → **Template**, its button **Apply template** (tooltip: replaces the layout, Undo restores it); **Add camera** / **Add spectrogram**; **View fullscreen** with an icon. The timeline's lanes are labelled and each AudioMoth in the layout (as a spectrogram or an audio track) gets a lane under the cameras (amber; follow-up fix: mics not in the layout no longer get a lane, matching the cameras), from `streams_info`'s new per-device `segments` (each segment's sidecar fit; an unreadable sidecar leaves the lane empty). Output FPS is now **Output frame rate**, a dropdown led by "Match cameras (N fps)" (the fastest camera's real rate, as before) with 60/50/30/25/24/15/12/10/5/1; the tooltip says why you'd lower it and that compose allows 1-60. Checked in the mock editor in headless Edge; 1 new test.

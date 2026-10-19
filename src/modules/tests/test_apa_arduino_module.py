@@ -247,6 +247,31 @@ class TestProtocolKeepalive:
         assert not first.is_alive()
         assert b"<K:>" in [c.args[0] for c in p.conn.write.call_args_list]
 
+    def test_packets_parsed_byte_by_byte(self):
+        p = self._protocol()
+        p._parse_message = MagicMock()
+        buf = ""
+        for ch in "<D:1,0,>\r\n<D:2,0,>\r\n":
+            buf = p._consume_packets(buf + ch)
+        assert [c.args[0] for c in p._parse_message.call_args_list] == ["D:1,0,", "D:2,0,"]
+        assert buf == ""
+
+    def test_resyncs_after_starting_mid_packet(self):
+        # Reading from the middle of a packet left '...>\r\n<D:' in the buffer;
+        # the old loop raised on it and dropped every packet thereafter.
+        p = self._protocol()
+        p._parse_message = MagicMock()
+        buf = ""
+        for ch in "1,1,1,500,>\r\n<D:0,1,>\r\n<D:1,1,>\r\n":
+            buf = p._consume_packets(buf + ch)
+        assert [c.args[0] for c in p._parse_message.call_args_list] == ["D:0,1,", "D:1,1,"]
+
+    def test_partial_packet_kept_for_next_read(self):
+        p = self._protocol()
+        p._parse_message = MagicMock()
+        assert p._consume_packets("junk>\r\n<D:1,") == "<D:1,"
+        p._parse_message.assert_not_called()
+
     def test_repeated_firmware_error_logged_once(self):
         p = self._protocol()
         for _ in range(3):

@@ -73,13 +73,7 @@ class Protocol:
         while not self.stop_flag.is_set():
             try:
                 data = self.conn.read(self.conn.in_waiting or 1).decode("utf-8", errors="ignore")
-                buf += data
-                while "<" in buf and ">" in buf:
-                    start = buf.index("<")
-                    end = buf.index(">", start)
-                    packet = buf[start+1:end]
-                    buf = buf[end+1:]
-                    self._parse_message(packet)
+                buf = self._consume_packets(buf + data)
             except serial.SerialException as e:
                 self.logger.error("Serial error on %s: %s", self.port, e)
                 buf = ""
@@ -91,6 +85,23 @@ class Protocol:
                 self.logger.error("Unexpected error in listen() on %s: %s", self.port, e)
                 buf = ""
 
+
+    def _consume_packets(self, buf: str) -> str:
+        """Parse every complete <...> packet in buf; return the unparsed tail.
+
+        Bytes up to a '>' with no '<' before it (the tail of a packet whose
+        start was lost, e.g. a read that began mid-packet) are dropped, and a
+        partial '<...' is kept for the next read. The old loop raised on
+        '...>\\r\\n<D:' and cleared the buffer, partial packet included, so
+        with byte-sized reads it never resynced and the shocker state
+        (current, shock delivery) silently stopped updating."""
+        while (end := buf.find(">")) != -1:
+            start = buf.rfind("<", 0, end)
+            if start != -1:
+                self._parse_message(buf[start+1:end])
+            buf = buf[end+1:]
+        start = buf.rfind("<")
+        return buf[start:] if start != -1 else ""
 
     def _parse_message(self, packet: str):
         parts = packet.split(":", 1)

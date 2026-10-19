@@ -11,6 +11,13 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-19
+
+- [x] **APA dashboard showed a stale shock current (0.5 mA vs 0.2 mA configured)** (branch `fix/apa-serial-resync` → `staging`). Python only, no firmware change.
+  - **Cause:** `Protocol.listen()` framed packets with `buf.index(">", buf.index("<"))`. When a read started mid-packet (`...>\r\n<D:`), that raised `ValueError: substring not found`, and the handler cleared the buffer, partial packet included. Reads are byte-sized, so every later `<` was dropped the same way and the stream never resynced. On the rig the shocker port (`/dev/ttyACM1`) logged ~19 errors/s (its 20 Hz state rate) in every 2026-10-19 session; 2026-10-12 had none.
+  - **Effect:** nothing from the shock Arduino was parsed, so `current_from_arduino`/time on/off on the dashboard were frozen at pre-desync values, `validate_state()` never ran (no re-push of config on mismatch), and shock delivery events (`self_test_in`) would not have been detected or written to `shock_events.csv`. Commands to the Arduino were unaffected, so `C:0.2` was still sent on config change (unconfirmed, since the read side was blind). Today's sessions were habituation, with no shocks.
+  - **Fix:** `_consume_packets()` drops bytes up to a `>` with no `<` before it and keeps a partial `<...` for the next read. Tests: byte-by-byte parse, resync after starting mid-packet, partial packet retained.
+
 ## 2026-10-12
 
 - [x] **APA commands panel: safer buttons, clearer hierarchy** (branch `fix/apa-command-buttons` → `staging`). Frontend only.

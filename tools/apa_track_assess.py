@@ -93,8 +93,9 @@ def assess_video(date_dir: str, out_dir: str) -> str:
     bg, _ = apa_track.background(seg.video_path, size)
     yy, xx = np.mgrid[:size[1], :size[0]]
     arena = np.hypot(xx - geom["cx"] * scale, yy - geom["cy"] * scale) <= geom["outer_r"] * scale
-    offline = apa_track.RatTracker(bg, arena, 15, 150, 60.0)
-    causal = apa_track.RatTracker(bg, arena, 15, 150, 60.0)
+    rim = {"centre": (geom["cx"] * scale, geom["cy"] * scale), "radius": geom["outer_r"] * scale}
+    offline = apa_track.RatTracker(bg, arena, 15, 150, 60.0, **rim)
+    causal = apa_track.RatTracker(bg, arena, 15, 150, 60.0, **rim)
     bt_cfg = cfg.get("blob_tracker", {}) or {}
     try:
         legacy = _legacy_tracker_class()(**{k: v for k, v in bt_cfg.items()

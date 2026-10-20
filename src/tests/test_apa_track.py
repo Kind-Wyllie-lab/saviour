@@ -104,3 +104,63 @@ def test_analyse_counts_entries_and_pulses():
     assert s["entries_shocked"] == 1
     assert s["entries_not_shocked"] == 1
     assert s["median_entry_to_shock_s"] == pytest.approx(1.0, abs=0.15)
+
+
+# --------------------------------------------------------------------------- #
+# RatTracker blob selection                                                   #
+# --------------------------------------------------------------------------- #
+
+PROC = 540
+
+
+def _tracker():
+    import cv2  # noqa: F401 -- importorskip above guarantees it
+    bg = np.zeros((PROC, PROC), np.uint8)
+    yy, xx = np.mgrid[:PROC, :PROC]
+    arena = np.hypot(xx - 270, yy - 270) <= 180
+    return apa_track.RatTracker(bg, arena, 15, 150, 60.0, centre=(270, 270), radius=180)
+
+
+def _frame(*blobs):
+    import cv2
+    f = np.zeros((PROC, PROC), np.uint8)
+    for kind, *args in blobs:
+        if kind == "rat":   # compact ellipse, ~2:1
+            (x, y), (a, b) = args
+            cv2.ellipse(f, (x, y), (a, b), 0, 0, 360, 200, -1)
+        elif kind == "arc":  # thin band along the rim
+            a0, a1 = args
+            cv2.ellipse(f, (270, 270), (165, 165), 0, a0, a1, 200, 14)
+    return f
+
+
+def test_rim_arc_loses_to_a_compact_blob():
+    t = _tracker()
+    det = t.detect(_frame(("arc", 60, 120)))
+    assert det is not None   # alone, an arc is still a detection (rat sliver)
+    t = _tracker()
+    det = t.detect(_frame(("arc", 60, 120), ("rat", (300, 200), (30, 15))))
+    assert det is not None and abs(det[0] - 300) < 3 and abs(det[1] - 200) < 3
+
+
+def test_compact_blob_near_rim_is_kept():
+    # A rat hugging the wall is near the rim but not arc-shaped.
+    t = _tracker()
+    det = t.detect(_frame(("rat", (420, 270), (15, 30))))
+    assert det is not None and abs(det[0] - 420) < 3
+
+
+def test_does_not_lock_onto_a_small_nearby_blob():
+    t = _tracker()
+    t.detect(_frame(("rat", (200, 200), (14, 10))))          # small blob seeds `last`
+    det = t.detect(_frame(("rat", (200, 200), (14, 10)),     # still there...
+                          ("rat", (340, 330), (40, 20))))    # ...but the rat is far larger
+    assert abs(det[0] - 340) < 3
+
+
+def test_follows_nearby_blob_when_comparable():
+    t = _tracker()
+    t.detect(_frame(("rat", (200, 200), (30, 15))))
+    det = t.detect(_frame(("rat", (205, 200), (28, 14)),     # the rat, moved a little
+                          ("rat", (340, 330), (34, 17))))    # a slightly larger distractor
+    assert abs(det[0] - 205) < 3

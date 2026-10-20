@@ -50,6 +50,9 @@ BLUR_SIGMA = 3.0         # at PROC_SIZE; wider than the grid bar spacing
 MAX_GAP_S = 1.0          # interpolate missed detections up to this long
 ENTRY_MERGE_S = 0.3      # zone exits shorter than this don't end an entry
 PULSE_ZONE_SLACK_S = 0.5 # a pulse this close to an in-zone frame counts as in-zone
+NEAR_AREA_FRACTION = 0.5 # keep following a nearby blob down to this x the largest
+RIM_FRACTION = 0.8       # blobs centred beyond this x the radius may be rim arcs
+MAX_RIM_ASPECT = 3.5     # ... and are only used when no compact blob is present
 
 
 # ---------------------------------------------------------------------------
@@ -165,16 +168,32 @@ def background(video: str, size: tuple[int, int]) -> tuple[np.ndarray, np.ndarra
 
 class RatTracker:
     def __init__(self, bg: np.ndarray, arena_mask: np.ndarray, threshold: int,
-                 min_area: int, max_jump: float):
+                 min_area: int, max_jump: float, centre: tuple[float, float] | None = None,
+                 radius: float | None = None):
         self.bg = bg
         self.arena = arena_mask
         self.threshold = threshold
         self.min_area = min_area
         self.max_jump = max_jump
+        self.centre = centre      # arena centre and radius at tracking resolution,
+        self.radius = radius      # for the rim-arc filter (None disables it)
         self.last: tuple[float, float] | None = None
         self.areas: list[int] = []
         self.k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
         self.k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+    def _is_rim_arc(self, labels: np.ndarray, k: int, x: float, y: float) -> bool:
+        """A long thin blob near the edge: the grid's rim, which moves when
+        the grid turns off-centre. Rats measured 1.4-2.8 long-to-wide, rim
+        arcs 3.7-5.7, always beyond RIM_FRACTION of the radius."""
+        if self.centre is None or not self.radius:
+            return False
+        if math.hypot(x - self.centre[0], y - self.centre[1]) < RIM_FRACTION * self.radius:
+            return False
+        cnts, _ = cv2.findContours((labels == k).astype(np.uint8), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+        (_, _), (w, h), _ = cv2.minAreaRect(max(cnts, key=cv2.contourArea))
+        return max(w, h) > MAX_RIM_ASPECT * max(1.0, min(w, h))
 
     def detect(self, grey: np.ndarray) -> tuple[float, float, int] | None:
         """(x, y, area) at tracking resolution, or None."""
@@ -182,22 +201,29 @@ class RatTracker:
         m = ((d >= self.threshold) & self.arena).astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self.k_open)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.k_close)
-        n, _, stats, cents = cv2.connectedComponentsWithStats(m, connectivity=8)
-        # Candidate areas, largest first, for callers judging ambiguity.
-        self.areas = sorted((int(a) for a in stats[1:, cv2.CC_STAT_AREA] if a >= self.min_area),
-                            reverse=True)
-        best, best_score = None, 0.0
+        n, labels, stats, cents = cv2.connectedComponentsWithStats(m, connectivity=8)
+        cands, arcs = [], []
         for k in range(1, n):
-            area = int(stats[k, cv2.CC_STAT_AREA])
-            if area < self.min_area:
-                continue
-            x, y = cents[k]
-            score = float(area)
-            if self.last is not None:
-                dist = math.hypot(x - self.last[0], y - self.last[1])
-                score *= math.exp(-dist / self.max_jump)
-            if score > best_score:
-                best, best_score = (float(x), float(y), area), score
+            if stats[k, cv2.CC_STAT_AREA] >= self.min_area:
+                c = (float(cents[k][0]), float(cents[k][1]), int(stats[k, cv2.CC_STAT_AREA]))
+                (arcs if self._is_rim_arc(labels, k, *cents[k]) else cands).append(c)
+        # Arc-shaped blobs are a fallback, not rejected: a dark rat against
+        # the dark grid edge shows only an arc-like sliver, and a rat touching
+        # a rim arc merges with it.
+        cands = cands or arcs
+        # Candidate areas, largest first, for callers judging ambiguity.
+        self.areas = sorted((c[2] for c in cands), reverse=True)
+        best = max(cands, key=lambda c: c[2], default=None)
+        # Stay with the blob near the last position only while it is at least
+        # NEAR_AREA_FRACTION of the largest. Weighting purely by distance let
+        # the tracker sit on a rim arc for 20+ s while the rat, the largest
+        # blob in the frame, was elsewhere (2026-05 APA, rats 146 and 149).
+        if best and self.last is not None:
+            near = [c for c in cands
+                    if math.hypot(c[0] - self.last[0], c[1] - self.last[1]) <= 2 * self.max_jump]
+            near_best = max(near, key=lambda c: c[2], default=None)
+            if near_best and near_best[2] >= NEAR_AREA_FRACTION * best[2]:
+                best = near_best
         if best:
             self.last = best[:2]
         return best
@@ -228,7 +254,9 @@ def track_session(date_dir: str, step: int, threshold: int, min_area: int,
             bg_colour = colour
         yy, xx = np.mgrid[:size[1], :size[0]]
         arena = np.hypot(xx - geom["cx"] * scale, yy - geom["cy"] * scale) <= geom["outer_r"] * scale
-        tracker = RatTracker(bg, arena, threshold, min_area, max_jump=60.0)
+        tracker = RatTracker(bg, arena, threshold, min_area, max_jump=60.0,
+                             centre=(geom["cx"] * scale, geom["cy"] * scale),
+                             radius=geom["outer_r"] * scale)
 
         stamps = read_timestamps(seg.csv_path)
         want_debug = set(np.linspace(0, len(stamps) - 1, debug_frames + 2).astype(int)[1:-1]) \

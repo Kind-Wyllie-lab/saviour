@@ -186,10 +186,16 @@ def write_sheets(picks, out_dir, cols=5, rows=4):
     for p in picks:
         by_video.setdefault(str(p[1]["video"]), []).append(p)
     for video, ps in by_video.items():
+        # Step through in order rather than seek: on recordings whose container
+        # frame rate is wrong (May 2026: 25 fps recorded, 30 advertised) a
+        # frame-number or time seek lands on the wrong frame.
         cap = cv2.VideoCapture(video)
+        pos = 0
         for tid, d, i, flags in sorted(ps, key=lambda p: p[2]):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
+            while pos < i and cap.grab():
+                pos += 1
             ok, frame = cap.read()
+            pos += 1
             if ok:
                 tiles[tid] = draw_tile(frame, d, i, geom_dict(d["geom"]), f"#{tid} {flags}")
         cap.release()

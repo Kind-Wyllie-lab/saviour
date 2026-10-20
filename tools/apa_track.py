@@ -219,7 +219,6 @@ def track_session(date_dir: str, step: int, threshold: int, min_area: int,
     for seg in segments:
         cap = cv2.VideoCapture(seg.video_path)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        n_video = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if geom is None:
             geom = zone_geometry(cfg, w, h)
         scale = PROC_SIZE / max(w, h)
@@ -232,9 +231,6 @@ def track_session(date_dir: str, step: int, threshold: int, min_area: int,
         tracker = RatTracker(bg, arena, threshold, min_area, max_jump=60.0)
 
         stamps = read_timestamps(seg.csv_path)
-        if n_video and abs(len(stamps) - n_video) > 1:
-            print(f"  warning: {os.path.basename(seg.video_path)}: {n_video} frames, "
-                  f"{len(stamps)} CSV rows; pairing by index", file=sys.stderr)
         want_debug = set(np.linspace(0, len(stamps) - 1, debug_frames + 2).astype(int)[1:-1]) \
             if debug_frames else set()
         for i, ts in enumerate(stamps):
@@ -244,6 +240,10 @@ def track_session(date_dir: str, step: int, threshold: int, min_area: int,
                 continue
             ok, frame = cap.read()
             if not ok:
+                # OpenCV's frame-count estimate can be wrong (May 2026 files
+                # advertise 30 fps for 25), so only frames actually read count.
+                print(f"  warning: {os.path.basename(seg.video_path)} ended at frame {i} "
+                      f"of {len(stamps)} CSV rows", file=sys.stderr)
                 break
             det = tracker.detect(_prep(frame, size))
             if det:

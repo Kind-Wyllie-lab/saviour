@@ -58,8 +58,8 @@ function APACommands( {modules} ) {
     const [arduinoState, setArduinoState] = useState(null);
     const [lastStateAt, setLastStateAt] = useState(null);
     const [now, setNow] = useState(() => Date.now());
-    // From the shock_*_being_delivered events; the state message's
-    // shock_being_delivered covers a missed event.
+    // From the shock_*_being_delivered events, reset by each state message's
+    // shock_being_delivered so a missed event can't latch the banner.
     const [deliveringEvent, setDeliveringEvent] = useState(false);
     const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
     const holding = useSyncExternalStore(subscribeHold, getHolding);
@@ -112,7 +112,9 @@ function APACommands( {modules} ) {
         function onArduinoState(data) {
             setArduinoState(data.state);
             setLastStateAt(Date.now());
-            if (!data.state?.shock_activated) setDeliveringEvent(false);
+            // Same PUB socket as the events, so the state is never older
+            // than the last event: it also recovers a missed stop.
+            setDeliveringEvent(!!data.state?.shock_being_delivered);
         }
 
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);

@@ -315,25 +315,21 @@ class Shocker:
         We need to do this as after we activate a shock sequence, the arduino will indepdently turn grid on for time_on and off for time_off.
         """
 
-        if self.shock_activated == True:
-            # Establish whether shock being attempted
-            if self.trigger_out == 0: # Shock started being sent
-                if self.last_trigger_out == 1:
-                    self._on_shock_started_being_attempted(time.time_ns())
+        # Starts are only counted while a sequence is active.
+        if self.shock_activated and self.trigger_out == 0: # Shock being sent
+            if self.last_trigger_out == 1:
+                self._on_shock_started_being_attempted(time.time_ns())
+            if self.self_test_in == 1 and self.last_self_test_in == 0: # A shock just started being delivered
+                self._on_shock_started_being_delivered(time.time_ns())
 
-                # Establish whether shock being delivered
-                if self.self_test_in == 1 and self.last_self_test_in == 0: # Grid is live and a shock just started being delivered
-                    self._on_shock_started_being_delivered(time.time_ns())
-                if self.self_test_in == 0 and self.last_self_test_in == 1: # Grid is live and a shock just stopped being delivered e.g. the rat jumped, pulled finger away from grid
-                    self._on_shock_stopped_being_delivered(time.time_ns())
-
-
-            # If shock is no longer being attempted
-            if self.trigger_out == 1:
-                if self.shock_being_delivered: # Stopped attempted shocks while shock was being delivered
-                    self._on_shock_stopped_being_delivered(time.time_ns())
-                if self.last_trigger_out == 0: # If we just stopped attempting shocks
-                    self._on_shock_stopped_being_attempted(time.time_ns())
+        # Stops are checked whatever shock_activated says: deactivate_shock()
+        # (button released, lease expired, cap reached) clears it before the
+        # Arduino reports the trigger high, and a stop gated on it would leave
+        # shock_being_delivered stuck True.
+        if self.shock_being_delivered and (self.trigger_out == 1 or self.self_test_in == 0): # Trigger off, or e.g. the rat jumped off the grid
+            self._on_shock_stopped_being_delivered(time.time_ns())
+        if self.shock_being_attempted and self.trigger_out == 1: # Just stopped attempting shocks
+            self._on_shock_stopped_being_attempted(time.time_ns())
 
 
         # Update grid is live state - is this necessary?

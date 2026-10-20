@@ -217,6 +217,55 @@ class TestShockLease:
         assert s.arduino.send_command.call_args.args == (shock.MSG_WRITE_PIN_HIGH, shock.TRIGGER_OUT)
 
 
+class TestShockDeliveryEvents:
+    """shock_being_delivered drives the dashboard's red banner."""
+
+    def _shocker(self):
+        import shock
+        config = MagicMock()
+        config.get.return_value = 50
+        with patch.object(shock.Shocker, "configure_shocker"):
+            s = shock.Shocker(MagicMock(), config)
+        s.on_shock_started_being_attempted = MagicMock()
+        s.on_shock_stopped_being_attempted = MagicMock()
+        s.on_shock_started_being_delivered = MagicMock()
+        s.on_shock_stopped_being_delivered = MagicMock()
+        s.last_trigger_out, s.last_self_test_in = 1, 0
+        return s
+
+    def _step(self, s, trigger_out, self_test_in):
+        s.trigger_out, s.self_test_in = trigger_out, self_test_in
+        s.check_shock_events()
+        s.last_trigger_out, s.last_self_test_in = trigger_out, self_test_in
+
+    def test_delivery_clears_when_deactivated_mid_shock(self):
+        s = self._shocker()
+        s.shock_activated = True
+        self._step(s, 0, 1)
+        assert s.shock_being_delivered and s.shock_being_attempted
+        s.shock_activated = False  # deactivate_shock() before the trigger goes high
+        self._step(s, 0, 1)
+        self._step(s, 1, 0)
+        assert not s.shock_being_delivered
+        assert not s.shock_being_attempted
+        s.on_shock_stopped_being_delivered.assert_called_once()
+        s.on_shock_stopped_being_attempted.assert_called_once()
+
+    def test_delivery_clears_when_animal_leaves_grid(self):
+        s = self._shocker()
+        s.shock_activated = True
+        self._step(s, 0, 1)
+        self._step(s, 0, 0)
+        assert not s.shock_being_delivered
+        assert s.shock_being_attempted
+
+    def test_no_start_while_inactive(self):
+        s = self._shocker()
+        self._step(s, 0, 1)
+        assert not s.shock_being_delivered
+        s.on_shock_started_being_delivered.assert_not_called()
+
+
 class TestProtocolKeepalive:
     def _protocol(self):
         from protocol import Protocol

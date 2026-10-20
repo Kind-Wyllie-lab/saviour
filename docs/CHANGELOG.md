@@ -11,6 +11,13 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-20
+
+- [x] **APA "Shock being delivered" banner stayed red after the shock stopped** (branch `fix/apa-shock-banner-stuck` → `staging`).
+  - **Cause:** `Shocker.check_shock_events()` ran every stop check inside `if self.shock_activated`. `deactivate_shock()` (button released, lease expired, cap reached) clears that flag before the Arduino reports the trigger high, so a sequence ending mid-delivery never cleared `shock_being_delivered` (or `shock_being_attempted`). Every later `arduino_state` reported it True, and `SHOCK_STOP_DELIVERY`/`STOPPING_SHOCK` were never written to the shock-event file.
+  - **Fix:** starts are still detected only while active; stops are checked from the current state (`shock_being_delivered` and trigger high or `self_test_in` low; `shock_being_attempted` and trigger high) whatever `shock_activated` says. Frontend (`APACommands.jsx`): each `arduino_state` now sets the delivering flag from its `shock_being_delivered`, so a missed stop event clears within one state period (0.2 s) instead of latching until the sequence ends.
+  - Tests: deactivate mid-delivery, animal leaving the grid, no start while inactive. Not yet checked on the APA rig.
+
 ## 2026-10-19
 
 - [x] **APA dashboard showed a stale shock current (0.5 mA vs 0.2 mA configured)** (branch `fix/apa-serial-resync` → `staging`). Python only, no firmware change.

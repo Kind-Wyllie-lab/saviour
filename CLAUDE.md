@@ -57,6 +57,12 @@ python3 tools/make_aligned_video.py /path/to/session [--output out.mp4] [--layou
 # Compose a layout video from a session's cameras — no PTP sync_mode required,
 # aligns by each camera's own per-frame timestamp; OpenCV only, no ffmpeg dep
 python3 src/controller/video_compose.py /path/to/session/date_dir [--output out.mp4] [--layout auto|loom]
+
+# APA: track the rat offline from the recorded video (main env; numpy + OpenCV),
+# test it against the session's shock-zone config and shock_events.csv →
+# track.csv, summary.json (time in zone, entries, latency, max avoid, pulses
+# in/out of zone), trajectory.png, timeline.png, debug_frames.jpg
+python3 tools/apa_track.py /home/pi/controller_share/<session>/<DATE> [...] [--out DIR] [--skip-s N]
 ```
 
 ```bash

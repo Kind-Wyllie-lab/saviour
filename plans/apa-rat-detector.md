@@ -1,6 +1,6 @@
 # APA rat detector: auto-labelled training set, whole-video evaluation, safe automated shocks
 
-- **Status:** proposed
+- **Status:** in progress (step 1 built; awaiting step 2)
 - **Created:** 2026-10-21
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (APA rat detector / automated shocking)
@@ -23,6 +23,14 @@ the owner on an x86 machine), and `HailoDetector` / `HailoRawDetector` in
 `sidb-workshop/rat-tracker-zh4ex` v2 (587 images) scored mAP50 0.995, but on
 a validation split from the same images. Nobody has measured it on whole
 videos.
+
+What v2 actually holds (downloaded 2026-10-21): 95 distinct source frames,
+augmented (flip, crop, shear, greyscale) to 587 and stretched to 640x640.
+32 of the 37 validation frames and 4 of the 5 test frames also appear in
+train, so the 0.995 is mostly a training score. And the frames are of other
+rigs: a rectangular open-field box (2024) and an older wide-angle APA setup
+where the rat is a few dozen pixels. None are from the current APA camera
+view, and none are empty-arena negatives. It is not a reference for this rig.
 
 The bottleneck is labelled images. This plan generates most of them from the
 offline tracker, and measures any model with the same numbers as the
@@ -83,12 +91,59 @@ Acceptance: 50 random positives checked by eye, at least 48 with the box on
 the body and the tail excluded; every review frame has a visible box; no
 held-out rat appears in train.
 
+**Built** (`tools/apa_autolabel.py`, tests in `src/tests/test_apa_autolabel.py`).
+What the first full run (38 sessions, ~22 min on the controller, 2 jobs)
+taught, and what changed because of it:
+
+- **Clipped boxes.** A rat leaning over the wall is cut off by the arena
+  mask. Boxes are re-found inside a mask 1.25x the arena; a blob that still
+  reaches the edge goes to review (`clipped_<band>`).
+- **Partial blobs.** A dark rat against the dark wall comes out as a
+  fragment. Positives need a blob between the session's 30th and 95th
+  area percentiles; small rim blobs go to review (`small_rim`).
+- **"Empty" frames that weren't.** Before onset the rat is sometimes already
+  in. A negative needs both offline and hood to see nothing bigger than a
+  quarter of the rat; other outside frames go to review as `check_empty`
+  with no box. All 127 negatives checked by eye: empty (a few with only the
+  operator's hand, which is a negative by the convention).
+- **Loose boxes.** The arena rotates, so the median background is a smooth
+  blur with no grid in it; the grid and rim next to the rat differ from it
+  and merge with the rat's blob. 50 random positives: all 50 on the body,
+  no tail visible, but 11 visibly loose, 5 with the centre noticeably off.
+  Tightening by intensity does not work (the grid bars are as bright and
+  dark as the fur). Instead, a blob filling under 37% of its box
+  (`MIN_FILL`) is not a positive: up to 5 per session go to review as
+  `loose_<band>`, the rest are dropped. On the sample this caught 7 of the
+  11 loose boxes and 3 borderline ones.
+- **Split.** Holdout rats 152 (May) and 854 (October) -> `valid/`, about
+  30% of the frames.
+- `DIR/calib/`: 128 train images (10% empty) for `convert_to_hailo.py
+  --calib-dir`.
+
+Run 2 (with `MIN_FILL`), `/home/pi/apa_autolabel_v2` on the controller,
+303 MB: **1,846 positives** (1,215 train / 631 valid), **733 review** (183
+of them `loose_*`), **127 negatives**, 128 calib. Acceptance on 50 new
+random positives: 50/50 on the body, 49/50 with no tail (one curl of tail
+possibly inside), about 6 still loose, 4 of them with the centre off by
+around a sixth of the box. Passes; the remaining loose boxes are label
+noise worth correcting if they turn up while reviewing, and the reason to
+read step 3's numbers against the offline tracker rather than mAP alone.
+
 ## Step 2 — label review and training (owner)
 
-Upload `positives/` and `negatives/` as pre-labelled, correct `review/` in
-Roboflow, merge with v2, export a new version, train with `train.py` on the
-RTX 3060, compile to HEF on the x86 machine. The calibration set for the
-HEF is 64-128 frames taken from the exporter's positives and negatives.
+1. **Baseline, no Roboflow needed:** copy `DIR/dataset/` to the laptop and
+   `python train.py --data dataset/data.yaml` (YOLO11n, 640). `valid/` is
+   the two held-out rats, so its mAP is an honest first number.
+2. **Review:** upload `DIR/review/` to Roboflow as pre-labelled (YOLO
+   format keeps the boxes), fix boxes, delete or empty-label the
+   `check_empty` frames that are empty, and mark the ones with a rat.
+   Category is in the file name and `manifest.csv`.
+3. **Merge and train:** upload `DIR/dataset/` as well, keep the
+   train/valid split from the folders (don't let Roboflow re-split by
+   frame), add no augmentation in Roboflow (Ultralytics augments at train
+   time), export, train. Keep v2 out of `valid/`; adding it to train is
+   optional, it is a different view.
+4. **Compile** to HEF on the x86 machine with `--calib-dir DIR/calib`.
 
 ## Step 3 — whole-video evaluation
 
@@ -148,5 +203,6 @@ Not built until step 3's target is met. Proposed rules:
 
 - Does the APA camera Pi have a Hailo HAT, and which one?
 - Upload to the existing Roboflow project as a new version, or a new project?
+  A new project keeps v2's other-rig frames out of the split by default.
 - The minimum time in zone before a shock is a protocol decision for the
   researchers, not only an engineering one.

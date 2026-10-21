@@ -195,13 +195,18 @@ class RatTracker:
         (_, _), (w, h), _ = cv2.minAreaRect(max(cnts, key=cv2.contourArea))
         return max(w, h) > MAX_RIM_ASPECT * max(1.0, min(w, h))
 
-    def detect(self, grey: np.ndarray) -> tuple[float, float, int] | None:
-        """(x, y, area) at tracking resolution, or None."""
+    def components(self, grey: np.ndarray):
+        """The foreground blobs detect() chooses from: (n, labels, stats,
+        centroids) from cv2.connectedComponentsWithStats, label 0 = background."""
         d = cv2.absdiff(grey, self.bg)
         m = ((d >= self.threshold) & self.arena).astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self.k_open)
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.k_close)
-        n, labels, stats, cents = cv2.connectedComponentsWithStats(m, connectivity=8)
+        return cv2.connectedComponentsWithStats(m, connectivity=8)
+
+    def detect(self, grey: np.ndarray) -> tuple[float, float, int] | None:
+        """(x, y, area) at tracking resolution, or None."""
+        n, labels, stats, cents = self.components(grey)
         cands, arcs = [], []
         for k in range(1, n):
             if stats[k, cv2.CC_STAT_AREA] >= self.min_area:

@@ -202,7 +202,7 @@ class Controller(ABC):
             # (e.g. APA's arduino_state). Its return value says whether anything
             # there handled the message, so the fallback below doesn't call a
             # handled type "unknown". (A single dispatch table replacing these
-            # two match blocks is in plans/pre-v1-codebase-cleanup.md.)
+            # two match blocks is in plans/backlog.md.)
             web_handled = self.web.handle_module_status(module_id, status_data)
             # Any message from a module proves it is reachable — refresh the
             # heartbeat timer so busy modules (e.g. mid-recording) are not

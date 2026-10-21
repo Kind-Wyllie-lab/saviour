@@ -11,6 +11,16 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-21
+
+- [x] **Offline APA rat tracking and tracker assessment** (branch `feat/apa-track` → `staging`), from the 2026-10-20 "rats not reacting to 0.2 mA" report. Tools only; nothing on the rig changes.
+  - **`tools/apa_track.py`**: finds the rat in a finished session's video (blurred median-background subtraction; the turning floor keeps the rat out of the background), tests each position against the session's shock zone (same geometry as the apa_camera overlay, wrap-safe across 0°), and reads `shock_events.csv`. Writes `track.csv`, `summary.json` (time in zone, entries, latency, longest avoidance, path length, pulses in/out of zone, entries shocked, entry-to-shock delay), `trajectory.png`, `timeline.png`, `debug_frames.jpg`.
+  - **Blob selection:** the first version weighted blobs by distance from the last position and sat on the moving grid rim for 20 s or more while the rat, the largest blob, was elsewhere (May videos, rats 146 and 149). Now it stays with a nearby blob only while it is ≥ 0.5 × the largest, and long thin blobs near the wall (aspect > 3.5 beyond 0.8 R; rats measured 1.4-2.8, rim arcs 3.7-5.7) are used only when no compact blob is present. Rejecting them outright lost 7-13% of frames: a dark rat against the dark grid edge shows only an arc-like sliver.
+  - **`tools/apa_track_assess.py` / `apa_track_report.py`**: run four trackers on every frame (offline; a causal version with a rolling 60 s background, i.e. what could run live; an independent dark-hood detector; the module's own BlobTracker), then summarise agreement and write contact sheets of random and flagged frames for checking by eye. Runs on Windows (legacy tracker optional); `--share-root` maps laptop paths back to the share. Sheets decode sequentially: the May videos advertise 30 fps but are 25 fps, and OpenCV frame and time seeks land on the wrong frames.
+  - **Result** (38 sessions, 586,772 frames, 456 frames checked by eye): offline on the rat in 295/299 random frames (98.7%, 95% CI 96.6-99.5) and 142/147 flagged; causal 97.4% random, 99.1% zone agreement with offline, sees 95% of entries within 0.08 s, but about 7 false entries ≥ 1 s per hour, almost all on the wrong blob, so not yet safe to shock from. The module's BlobTracker agrees with offline on position in only 17.5% of frames. Report: https://claude.ai/artifact/M3Qj8gDADCyNZafSnPRfBU.
+  - **Found on the way** (logged in `plans/backlog.md`): exported `config.json` is a stale copy of `active_config.json` (every 1 May session says the zone is at 180°; rats 146 and 147 were shocked near 0°); `_is_in_shock_zone` misses zones that cross 0°; wrong container fps breaks OpenCV seeks.
+  - Tests: zone geometry (including wrap at 0°), NaN positions, entry/pulse analysis on a synthetic track, blob selection (rim arc loses to a compact blob, compact blob by the wall kept, no lock-on to a small nearby blob, follows a comparable one); ruff clean.
+
 ## 2026-10-19
 
 - [x] **APA dashboard showed a stale shock current (0.5 mA vs 0.2 mA configured)** (branch `fix/apa-serial-resync` → `staging`). Python only, no firmware change.

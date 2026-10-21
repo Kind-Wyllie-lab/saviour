@@ -180,7 +180,6 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 
 **v1.0 / data loss**
 - Recording liveness gaps: no severity ramp for sustained silence, RFID has no signal, TTL override not on-device verified (roadmap A1).
-- Gap record: gaps are stamped at detection, not at loss → `plans/metadata-gap-record.md`.
 - No PTP start gate on a `module_back_online` re-arm after a power-loss reboot.
 - Export deletes the local copy with no content check; no per-file hashes → `plans/recording-file-hashing.md`.
 - A file whose export was interrupted (left `PENDING_<name>` in `to_export/`) is re-exported to a `PENDING_<session>` folder on the share; found in the test D fast run → `plans/backlog.md`.
@@ -194,7 +193,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 **Security (closed-LAN caveats; see threat model)**
 - Web UI: one shared plaintext password, no lockout, `cors_allowed_origins="*"` → `plans/remote-access-auth-hardening.md`.
 - Module MJPEG stream (`:8080+`) unauthenticated on `0.0.0.0` → `plans/mjpeg-stream-auth.md`.
-- No SMB3 `seal` on CIFS; clones share the OS login credential; `push_credentials.sh` disables host-key checks; `saviour.service` runs as root unhardened; modules have no firewall.
+- No SMB3 `seal` on CIFS; clones share the OS login credential; `push_credentials.sh` disables host-key checks; `saviour.service` runs as root unhardened; modules have no firewall (module half of `plans/firewall-interface-scoping.md`).
 - SSH: password logins on, one `authorized_keys` copied to every clone → certificate login and per-rig login mode (`any`/`keys`/`certs`) built, set up as part of device configuration (`saviour-config` → SSH access, `tools/ssh_ca.py`); open: controller cert on hardware, VNC still uses the pi password, rollout to other rigs → `plans/ssh-certificate-auth.md`.
 - GitHub settings reminders (secret scanning, deletions on `main`, …): `plans/backlog.md`.
 
@@ -211,7 +210,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - A/V sync residual (~150-200 ms audio): `plans/audio-video-sync-residual-validation.md`; buzzer/LED rig built, hardware pending (`docs/AV_SYNC_TEST.md`).
 
 **Maintenance / architecture**
-- Pre-v1.0 behaviour-neutral cleanup → `plans/pre-v1-codebase-cleanup.md` (in progress).
+- Pre-v1.0 behaviour-neutral cleanup → `plans/pre-v1-codebase-cleanup.md` (done 2026-10-06; step 2 desk checks and the CHANGELOG write-up not confirmed).
 - No ZMQ correlation IDs; `docs/PROTOCOL_V1.md` stale; small latent bugs listed in the backlog.
 - After v1.0: `Module` god object, `web.py` blueprints, Samba → rsync, invariant variant launcher, NWB export, telemetry, habitat-scale UI (design docs in `docs/`).
 - In-flight / unvalidated-on-hardware features (REST API under load, compose/ephys, basler, occupancy trigger, cadence check, ML training pipelines): `plans/backlog.md` → "In-flight".

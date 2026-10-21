@@ -9,7 +9,7 @@ Hailo model zoo. Inference runs on its OWN thread (_inference_worker), NOT the
 libcamera capture callback: that thread also feeds the H264 encoder, and a
 synchronous detect() there stalls capture + the encoder — the sync-client
 frame-drop bug (docs/hailo-inference-sweep-2026-09-08.md,
-plans/hailo-inference-threading.md). The capture thread hands the worker every
+docs/CHANGELOG.md, 2026-09-08). The capture thread hands the worker every
 Nth frame (drop-oldest) and draws the result the worker last published.
 
 Deliberately generic and demo-oriented:
@@ -105,7 +105,7 @@ class HailoCameraModule(CameraBase):
         # feeds the H264 encoder, and a synchronous detect() there stalls
         # capture + the encoder (the sync-client frame-drop bug, quantified in
         # docs/hailo-inference-sweep-2026-09-08.md; design in
-        # plans/hailo-inference-threading.md). The capture thread now only
+        # docs/CHANGELOG.md, 2026-09-08). The capture thread now only
         # copies the frame into _infer_q (drop-oldest, maxsize 1) and draws
         # the last published result; the worker does the detect().
         self._infer_q: queue.Queue = queue.Queue(maxsize=1)
@@ -114,7 +114,7 @@ class HailoCameraModule(CameraBase):
         # detect() wall-time samples (ms). Feeds a ~30 s p50/p95/p99/max log
         # line and the _check_hailo message -- the "how much headroom did the
         # worker thread buy / would a faster HAT help" measurement
-        # (plans/hailo-inference-threading.md; its "Amendments" are in git history).
+        # (docs/CHANGELOG.md, 2026-09-08).
         self._infer_ms: collections.deque = collections.deque(maxlen=600)
         self._infer_ms_logged_at = 0.0
 

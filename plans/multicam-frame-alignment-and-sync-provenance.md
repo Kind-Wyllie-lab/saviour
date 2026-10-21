@@ -28,7 +28,7 @@
 - **Item 3 quantified** — see below. Provisional finding: the deployed ai
   camera runs `infer_every_n=1`, the one setting that costs frames; `≥2` is
   clean. n=5 sweep running to confirm.
-- **`plans/hailo-inference-threading.md` — SHIPPED 2026-09-08.** Preview
+- **Hailo inference worker thread — SHIPPED 2026-09-08** (`docs/CHANGELOG.md`). Preview
   inference moved to a worker thread; the capture thread no longer runs
   `detect()`. This is the structural fix for item 3 below: a new hailo-camera
   recording now has `deficit_vs_csv=0` (validated: 4/4 re-sweep, clap
@@ -73,7 +73,7 @@
    `infer_every_n=1`**, not a gradient → the cost is the `detect()` call, not
    the per-frame draw.
    - **✅ FIXED 2026-09-08** — preview inference moved to a worker thread
-     (`plans/hailo-inference-threading.md`, SHIPPED). Capture thread no longer
+     (shipped 2026-09-08, `docs/CHANGELOG.md`). Capture thread no longer
      runs `detect()`. Re-sweep 4/4 clean at `infer_every_n=1`; clap test
      ai_cam − main_cam = −0.17 fr; both cameras `deficit_vs_csv=0`. So a
      *new* hailo-camera recording no longer feeds `_StreamCursor` a deficit —

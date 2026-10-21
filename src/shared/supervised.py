@@ -1,5 +1,5 @@
 """
-Supervised long-lived threads (v1.0 roadmap A6, plans/supervised-threads.md).
+Supervised long-lived threads (v1.0 roadmap A6; write-up in docs/CHANGELOG.md).
 
 A bare ``threading.Thread(daemon=True)`` loop that hits an unexpected
 exception just dies: the process stays up, the feature silently stops

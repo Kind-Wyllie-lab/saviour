@@ -1946,7 +1946,7 @@ class TestTimedStopSentOnce:
 
 
 # ---------------------------------------------------------------------------
-# Session gap record (roadmap A1, plans/metadata-gap-record.md)
+# Session gap record (roadmap A1)
 # ---------------------------------------------------------------------------
 
 class TestSessionGapRecord:

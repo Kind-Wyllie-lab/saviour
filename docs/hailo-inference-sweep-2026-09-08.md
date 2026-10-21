@@ -5,7 +5,7 @@ Automated sweep with `tools/framesync_sweep.py` to characterise how the
 libcamera sync **client** camera. Motivated by the "ai camera lags the
 frameserver by a few frames" observation in Post-Process compose and on the
 livestream (see `plans/multicam-frame-alignment-and-sync-provenance.md` and
-`plans/hailo-inference-threading.md`).
+the 2026-09-08 hailo entry in `docs/CHANGELOG.md`).
 
 Raw data: `docs/hailo-inference-sweep-2026-09-08.csv` (one row per run).
 
@@ -69,7 +69,7 @@ Sync **server** (`camera_d074`): `deficit = 0`, `dropped_before = 0`, `rate_cv
    client's frames are captured at the right instants; some just never make
    it into the recorded stream.
 
-4. **Mechanism** (from `plans/hailo-inference-threading.md`): `hailo_camera`
+4. **Mechanism** (from the 2026-09-08 hailo entry in `docs/CHANGELOG.md`): `hailo_camera`
    runs `detector.detect()` **synchronously on the libcamera capture-callback
    thread**, which also feeds the H264 encoder. At `infer_every_n = 1` the
    mean inference time sits right at the frame budget, so the tail of the
@@ -85,7 +85,7 @@ Sync **server** (`camera_d074`): `deficit = 0`, `dropped_before = 0`, `rate_cv
   restored to its original `1`.)
 - **Structural fix:** move preview inference to a worker thread so the
   capture/encode thread's per-frame cost is constant regardless of inference
-  time/variance — `plans/hailo-inference-threading.md`. This sweep is the
+  time/variance — the 2026-09-08 hailo entry in `docs/CHANGELOG.md`. This sweep is the
   acceptance test (re-run and confirm `n1` matches `off`).
 - **Not done:** a 60 fps block (would test whether `n2`'s headroom shrinks);
   more `n1` repeats to pin the failure rate; `sync_mode: none` arm.
@@ -96,7 +96,7 @@ Sync **server** (`camera_d074`): `deficit = 0`, `dropped_before = 0`, `rate_cv
 
 ## Addendum — worker thread deployed + validated (later 2026-09-08)
 
-The worker-thread fix (`plans/hailo-inference-threading.md`, PR #374,
+The worker-thread fix (the 2026-09-08 hailo entry in `docs/CHANGELOG.md`, PR #374,
 `d42a5839`) was merged and deployed to the controller and all 4 modules via
 `POST /api/v1/system/update` (first live use of that endpoint; needed the
 `sudo -u pi` git fix, PR #375).

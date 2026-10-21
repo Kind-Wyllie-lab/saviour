@@ -29,9 +29,12 @@ pointer in `CLAUDE.md` — don't make a file for everything.
    `CLAUDE.md` "Open work" heading: `` - **<title>** — see `plans/<slug>.md`. ``
 2. Update the plan as decisions land (it's a living doc, not a spec frozen at
    day one).
-3. When the work ships: move the substance into `docs/CHANGELOG.md`, replace the
-   `CLAUDE.md` line with the usual completed-item note, and either delete the
-   plan file or leave a stub pointing at the changelog entry.
+3. When the work ships: move the substance into `docs/CHANGELOG.md`, move
+   anything left undone to `plans/backlog.md` (or keep the plan if a real
+   phase remains), drop the `CLAUDE.md` line, and **delete the plan file**. A
+   shipped plan has no file, not even a stub; the full text stays in git
+   history. Repoint any code comment or doc that links the file (to the
+   CHANGELOG entry) in the same commit.
 
 ## Frontmatter
 

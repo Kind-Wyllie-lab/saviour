@@ -1,8 +1,8 @@
 # TTL module hardening: dead config/code, liveness signal, API-triggered pulse
 
 - **Status:** in progress — items 1-4 and the follow-ups (6, 7, frontend fix
-  for item 4) implemented on `fix/ttl-module-hardening` (not yet on-device
-  tested); item 5 not started.
+  for item 4) implemented and merged to `staging` (PR #385, `78c881f7`; not yet
+  on-device tested); item 5 not started.
 - **Created:** 2026-09-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (new one-liner); also

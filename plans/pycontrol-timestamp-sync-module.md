@@ -1,7 +1,7 @@
 # PTP-synced non-recording companion module (pyControl clock alignment)
 
-- **Status:** built on `feat/external-host-module`
-  (`src/modules/variants/external_host/`) — not yet on-device tested (no
+- **Status:** built and merged to `staging` (`d6749ab9`,
+  `src/modules/variants/external_host/`) — not yet on-device tested (no
   real pyControl Pi run through it yet).
 - **Created:** 2026-09-14
 - **Owner:** ascottg

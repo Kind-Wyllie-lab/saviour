@@ -1,6 +1,10 @@
 # Firewall: scope every service to the interface it belongs on
 
-- **Status:** proposed
+- **Status:** partly superseded. Since `ea70357a` (2026-09-30) the controller's web UI/REST
+  (:5000) and ZMQ (:5555/:5556) listen on the eth0 address only (`interface.listen_on`), so
+  they no longer answer on `tailscale0`, and the :80 redirect is `-i eth0`. Still open: the
+  module side (MJPEG/`/roi` ports on every interface, modules have no firewall), the optional
+  `FIREWALL_LAN_SUBNET` restriction, and Samba/DHCP rules beyond their own interface binding.
 - **Created:** 2026-09-08
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Security (open)" — the "All network services

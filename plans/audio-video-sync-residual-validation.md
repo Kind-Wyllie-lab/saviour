@@ -8,7 +8,7 @@
 
 ## Background — what's known
 
-- `src/controller/audio_align.py::parse_mic_sidecar` (uncommitted on `staging`)
+- `src/controller/audio_align.py::parse_mic_sidecar` (now committed)
   anchors `sample0_wall_ns` on the recorder's `STARTED` timestamp
   (`microphone_module.py:367-368`, `actual_start = time.time()` right after the
   `soundcard` recorder context manager `__enter__` returns) instead of a

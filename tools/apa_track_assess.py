@@ -30,7 +30,7 @@ import sys
 import time
 import types
 from collections import deque
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cv2
 import numpy as np
@@ -44,6 +44,7 @@ CAUSAL_SAMPLE_S = 2.0    # one background sample every N seconds
 CAUSAL_MIN_SAMPLES = 8   # no causal detections until the window has this many
 HOOD_THRESHOLD = 45      # blurred grey level counted as "hood black"
 HOOD_MIN_AREA = 60       # px at apa_track.PROC_SIZE
+PROGRESS_EVERY = 3000    # frames between progress lines
 
 
 def _legacy_tracker_class():
@@ -90,6 +91,7 @@ def assess_video(date_dir: str, out_dir: str) -> str:
     geom = apa_track.zone_geometry(cfg, w, h)
     scale = apa_track.PROC_SIZE / max(w, h)
     size = (round(w * scale), round(h * scale))
+    print(f"{session}: building background", flush=True)
     bg, _ = apa_track.background(seg.video_path, size)
     yy, xx = np.mgrid[:size[1], :size[0]]
     arena = np.hypot(xx - geom["cx"] * scale, yy - geom["cy"] * scale) <= geom["outer_r"] * scale
@@ -121,6 +123,9 @@ def assess_video(date_dir: str, out_dir: str) -> str:
             n = i
             break
         grey = apa_track._prep(frame, size)
+        if i and i % PROGRESS_EVERY == 0:
+            print(f"{session}: {i}/{n} frames ({i / (time.time() - t_start):.0f} fps)",
+                  flush=True)
 
         t0 = time.perf_counter()
         d = offline.detect(grey)
@@ -178,8 +183,9 @@ def main():
     args.date_dirs = [m for d in dirs for m in (sorted(glob.glob(d)) if glob.has_magic(d) else [d])]
     os.makedirs(args.out, exist_ok=True)
     with ProcessPoolExecutor(args.jobs) as pool:
-        futures = [pool.submit(assess_video, d, args.out) for d in args.date_dirs]
-        for d, f in zip(args.date_dirs, futures):
+        futures = {pool.submit(assess_video, d, args.out): d for d in args.date_dirs}
+        for f in as_completed(futures):
+            d = futures[f]
             try:
                 print(f.result(), flush=True)
             except Exception as e:  # noqa: BLE001 -- report and carry on with the batch

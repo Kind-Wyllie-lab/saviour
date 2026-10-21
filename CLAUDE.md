@@ -179,8 +179,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 ## Open work (index; detail in `plans/backlog.md` unless a plan is named)
 
 **v1.0 / data loss**
-- Recording liveness gaps: no severity ramp for sustained silence, RFID has no signal, TTL override not on-device verified (roadmap A1).
-- No PTP start gate on a `module_back_online` re-arm after a power-loss reboot.
+- Recording liveness (roadmap A1) is code-complete; RFID and TTL liveness are not yet checked on hardware.
 - Export deletes the local copy with no content check; no per-file hashes → `plans/recording-file-hashing.md`.
 - A file whose export was interrupted (left `PENDING_<name>` in `to_export/`) is re-exported to a `PENDING_<session>` folder on the share; found in the test D fast run → `plans/backlog.md`.
 - `_check_ptp_health` restart-loop fix owes a 24 h habitat validation (roadmap A8).
@@ -210,7 +209,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - A/V sync residual (~150-200 ms audio): `plans/audio-video-sync-residual-validation.md`; buzzer/LED rig built, hardware pending (`docs/AV_SYNC_TEST.md`).
 
 **Maintenance / architecture**
-- Pre-v1.0 behaviour-neutral cleanup → `plans/pre-v1-codebase-cleanup.md` (done 2026-10-06; step 2 desk checks and the CHANGELOG write-up not confirmed).
+- One module-status dispatch table (left over from the pre-v1.0 cleanup); the last unsupervised controller threads; gap causes `plan_window`/`ptp_regressed` → `plans/backlog.md`.
 - No ZMQ correlation IDs; `docs/PROTOCOL_V1.md` stale; small latent bugs listed in the backlog.
 - After v1.0: `Module` god object, `web.py` blueprints, Samba → rsync, invariant variant launcher, NWB export, telemetry, habitat-scale UI (design docs in `docs/`).
 - In-flight / unvalidated-on-hardware features (REST API under load, compose/ephys, basler, occupancy trigger, cadence check, ML training pipelines): `plans/backlog.md` → "In-flight".

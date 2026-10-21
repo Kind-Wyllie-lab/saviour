@@ -114,7 +114,7 @@ class HailoCameraModule(CameraBase):
         # detect() wall-time samples (ms). Feeds a ~30 s p50/p95/p99/max log
         # line and the _check_hailo message -- the "how much headroom did the
         # worker thread buy / would a faster HAT help" measurement
-        # (plans/hailo-inference-threading.md, "Amendments").
+        # (plans/hailo-inference-threading.md; its "Amendments" are in git history).
         self._infer_ms: collections.deque = collections.deque(maxlen=600)
         self._infer_ms_logged_at = 0.0
 

@@ -140,7 +140,7 @@ class RecordingSession:
     # session_events.log.
     self_stopped_modules:      dict = field(default_factory=dict)
     # Machine-readable record of when (part of) the session had no data and
-    # why -- roadmap A1, plans/metadata-gap-record.md. Each entry:
+    # why -- roadmap A1; write-up in docs/CHANGELOG.md. Each entry:
     # {id, modules, start_ns, end_ns (None while open), cause, severity,
     #  detail, recovered, source}. Mirrored to <session>/session_gaps.json.
     gaps:                      list = field(default_factory=list)
@@ -3420,7 +3420,7 @@ class Recording:
         except AttributeError:
             return _SHARE_ROOT_DEFAULT
 
-    # ----- Session gap record (roadmap A1, plans/metadata-gap-record.md) -----
+    # ----- Session gap record (roadmap A1) -----
     #
     # Gaps ride along with detection that already exists (offline, not
     # recording, liveness warning, self-stop, pause, controller restart); they

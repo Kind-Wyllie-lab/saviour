@@ -174,7 +174,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 
 **CI:** `python-app.yml` (ruff gate + pytest) and `frontend.yml` (`npm run build` × 5 variants + `npm run lint`) run on push/PR to `main` and `staging`; `build` and `frontend-build` are required checks on `main`.
 
-**Where things live:** completed work → **[docs/CHANGELOG.md](docs/CHANGELOG.md)** (write it up there when done). Plans for features / non-trivial fixes → one file each in **[plans/](plans/)**. Open items without a plan → **[plans/backlog.md](plans/backlog.md)**. Full hardware findings → **[docs/HARDWARE_NOTES.md](docs/HARDWARE_NOTES.md)**.
+**Where things live:** completed work → **[docs/CHANGELOG.md](docs/CHANGELOG.md)** (write it up there when done). Plans for features / non-trivial fixes → one file each in **[plans/](plans/)**; when one ships, its file is deleted (substance → CHANGELOG, leftovers → backlog). Open items without a plan → **[plans/backlog.md](plans/backlog.md)**. Full hardware findings → **[docs/HARDWARE_NOTES.md](docs/HARDWARE_NOTES.md)**.
 
 ## Open work (index; detail in `plans/backlog.md` unless a plan is named)
 

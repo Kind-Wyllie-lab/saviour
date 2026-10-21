@@ -1,5 +1,5 @@
 """Tests for HailoCameraModule -- the hailo.infer_enabled toggle and the
-inference worker thread (plans/hailo-inference-threading.md).
+inference worker thread (docs/CHANGELOG.md, 2026-09-08).
 
 Covered via the __new__ construction pattern (no Hailo device, no camera).
 The inference decoders themselves live in test_hailo_infer.py.

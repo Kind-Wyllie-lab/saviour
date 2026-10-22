@@ -29,7 +29,7 @@ are 25 fps in a container that says 30, and seeks land on the wrong frame.
 
 Writes, in Roboflow's YOLO layout (train/ and valid/, images/ and labels/):
   DIR/dataset/   positives + negatives, data.yaml
-  DIR/review/    the hard cases, pre-labelled
+  DIR/review/    the hard cases, pre-labelled, data.yaml
   DIR/sheets/    contact sheets per category, boxes drawn, for checking
   DIR/calib/     --calib train images for quantising the HEF
   DIR/manifest.csv
@@ -394,8 +394,10 @@ def main():
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    with open(os.path.join(args.out, "dataset", "data.yaml"), "w") as f:
-        f.write("train: train/images\nval: valid/images\nnc: 1\nnames: ['rat']\n")
+    for root in ("dataset", "review"):   # names the class on upload (else Roboflow calls it "0")
+        if os.path.isdir(os.path.join(args.out, root)):
+            with open(os.path.join(args.out, root, "data.yaml"), "w") as f:
+                f.write("train: train/images\nval: valid/images\nnc: 1\nnames: ['rat']\n")
     write_sheets(rows, args.out)
     if args.calib:
         print(f"calib/: {write_calib(rows, args.out, args.calib, args.seed)} images")

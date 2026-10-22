@@ -292,20 +292,27 @@ def export_session(npz_path: str, out: str, share_root: str | None,
 
 
 def write_sheets(rows: list[dict], out: str, per_sheet: int = 30, cols: int = 6) -> None:
+    """Contact sheets per set, each tile numbered; sheets/index.csv maps
+    (sheet, tile) to the image and label files, for finding a bad one."""
     sheet_dir = os.path.join(out, "sheets")
     os.makedirs(sheet_dir, exist_ok=True)
+    index = []
     for kind in ("positive", "review", "negative"):
         sel = [r for r in rows if r["set"] == kind]
         for s in range(0, len(sel), per_sheet):
+            sheet = f"{kind}_{s // per_sheet:03d}.jpg"
             tiles = []
-            for r in sel[s:s + per_sheet]:
+            for n, r in enumerate(sel[s:s + per_sheet]):
+                index.append({"sheet": sheet, "tile": n, "image": r["image"],
+                              "label": label_path(r["image"]), "session": r["session"],
+                              "frame": r["frame"], "category": r["category"]})
                 img = cv2.imread(os.path.join(out, r["image"]))
                 if r["box"]:
                     x0, y0, x1, y1 = (int(v) for v in r["box"].split())
                     cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 0), 3)
                 t = cv2.resize(img, (SHEET_TILE, SHEET_TILE * img.shape[0] // img.shape[1]))
                 cv2.rectangle(t, (0, 0), (SHEET_TILE, 18), (0, 0, 0), -1)
-                cv2.putText(t, f"{r['rat']} f{r['frame']} {r['category']}", (3, 13),
+                cv2.putText(t, f"#{n} {r['rat']} f{r['frame']} {r['category']}", (3, 13),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
                 tiles.append(t)
             th = max(t.shape[0] for t in tiles)
@@ -313,8 +320,18 @@ def write_sheets(rows: list[dict], out: str, per_sheet: int = 30, cols: int = 6)
             while len(tiles) % cols:
                 tiles.append(np.zeros_like(tiles[0]))
             grid = np.vstack([np.hstack(tiles[j:j + cols]) for j in range(0, len(tiles), cols)])
-            cv2.imwrite(os.path.join(sheet_dir, f"{kind}_{s // per_sheet:03d}.jpg"), grid,
-                        [cv2.IMWRITE_JPEG_QUALITY, 80])
+            cv2.imwrite(os.path.join(sheet_dir, sheet), grid, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    with open(os.path.join(sheet_dir, "index.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(index[0]) if index else ["sheet"])
+        w.writeheader()
+        w.writerows(index)
+
+
+def label_path(image: str) -> str:
+    """The YOLO label file next to an exported image (.../images/x.jpg ->
+    .../labels/x.txt)."""
+    head, name = os.path.split(image)
+    return os.path.join(os.path.dirname(head), "labels", os.path.splitext(name)[0] + ".txt")
 
 
 def write_calib(rows: list[dict], out: str, n: int, seed: int) -> int:

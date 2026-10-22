@@ -4,6 +4,7 @@ rat ids from session names, and re-finding the offline blob's box
 (including a blob cut off by the mask edge).
 """
 
+import csv
 import importlib.util
 import itertools
 import math
@@ -102,3 +103,24 @@ def test_write_calib_takes_train_images_only(tmp_path):
 def test_box_fill():
     assert al.box_fill(50.0, (0, 0, 10, 10)) == 0.5
     assert al.box_fill(10.0, (5, 5, 5, 5)) == 10.0   # degenerate box doesn't divide by zero
+
+
+def test_label_path():
+    assert al.label_path("review/train/images/S_f000012.jpg") == "review/train/labels/S_f000012.txt"
+
+
+def test_write_sheets_numbers_tiles_and_indexes_them(tmp_path):
+    rows = []
+    for k in range(4):
+        rel = f"review/train/images/S_f{k:06d}.jpg"
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(tmp_path / rel), np.zeros((60, 80, 3), np.uint8))
+        rows.append({"image": rel, "set": "review", "rat": "1", "frame": k,
+                     "session": "S", "category": "jump", "box": "10 10 30 30" if k else ""})
+    al.write_sheets(rows, str(tmp_path), per_sheet=3)
+    with open(tmp_path / "sheets" / "index.csv") as f:
+        idx = list(csv.DictReader(f))
+    assert [(r["sheet"], r["tile"]) for r in idx] == [
+        ("review_000.jpg", "0"), ("review_000.jpg", "1"), ("review_000.jpg", "2"), ("review_001.jpg", "0")]
+    assert idx[3]["label"] == "review/train/labels/S_f000003.txt"
+    assert (tmp_path / "sheets" / "review_001.jpg").exists()

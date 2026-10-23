@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import APAFullscreenVideo from "../APAFullscreenVideo/APAFullscreenVideo";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
+import GridBadge from "../GridBadge/GridBadge";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./APALivestreamCard.css";
 
@@ -62,6 +63,7 @@ function APALivestreamCard({ module, cameras = [], onSelect, apaPresent, moduleL
                   setStreamKey(Date.now());
                 }}
               />
+              <GridBadge module={module} />
               <SnapshotButton module={module} />
             </div>
           ) : (

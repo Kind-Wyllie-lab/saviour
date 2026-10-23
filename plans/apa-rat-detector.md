@@ -191,35 +191,45 @@ a second copy of the state for no protection. The module stays a plain
 actuator (pulse loop while the 1 s lease is refreshed, per-session cap).
 
 - `src/controller/variants/apa/shock_automation.py` (`ShockAutomation`), owned
-  by `APAController`:
-  - `mode`: `disarmed` | `manual` | `auto` | `dry_run`. Starts disarmed (and
-    after every controller restart: never persisted). It goes back to disarmed
-    when the last recording session ends, and on Stop all.
-  - Manual shocks (the dashboard's `send_command activate_shock`) go through
-    `Web.handle_special_command`. They're allowed only in `manual` mode, and
-    refused (and logged, at most once a second) otherwise. auto and dry_run
-    belong to the automation alone.
+  by `APAController`. Two separate things (reworked 2026-10-23 after the
+  first build mixed them into one four-way "mode"):
+  - **Grid state** (runtime, never persisted, so a controller restart comes
+    back disarmed): **armed** / **disarmed**. The grid arms when a recording
+    session starts and disarms when the last one ends. Stop all disarms
+    (and stops any shock). The operator can also arm (login) or disarm (no
+    login) by hand, e.g. to re-arm after Stop all or to test the grid
+    outside a recording. A controller restart mid-session doesn't arm.
+  - **Shock mode** (`apa.shock_mode`, persisted): **manual** | **auto** |
+    **dry_run**. It says how an armed grid is driven. Dry run means "record
+    without arming": the grid stays disarmed through the recording, and
+    switching to it disarms.
+  - Shocks only while armed. Manual shocks (the dashboard's
+    `send_command activate_shock`, through `Web.handle_special_command`) are
+    allowed only in manual mode, and refused and logged otherwise.
     `deactivate_shock` always passes. `/facade/send_command` is the
     deliberate escape hatch and isn't gated.
-  - auto / dry_run: in zone for `apa.auto_shock.entry_latency_s` (0.5 s)
+  - auto: in zone for `apa.auto_shock.entry_latency_s` (0.5 s)
     → `activate_shock` every 0.25 s while it stays in (the module pulses
     `duration` on / `intershock_latency` off), `deactivate_shock` on
     `zone_exited`, on a zone report older than `zone_state_timeout_s` (0.5 s),
-    on mode change, or when `max_pulses_per_min` (20, from the module's
-    `attempted_shocks`) is reached. Only while a session is recording.
-    dry_run logs `would_shock_start/stop` and sends nothing.
-  - Socket events: `get_apa_shock_state`, `set_shock_mode` (auth),
-    `stop_all_shocks` (no auth: it only makes things safer), and the broadcast
-    `apa_shock_state` (4 Hz armed, 1 Hz disarmed).
-  - Decisions are logged to the journal and to
-    `<share>/<session>/<session>_shock_decisions.csv` (time, mode, event,
-    reason, time in zone, position, confidence, camera, by).
+    on mode change or disarm, or when `max_pulses_per_min` (20, from the
+    module's `attempted_shocks`) is reached. Only while a session is
+    recording.
+  - Tracking is independent: the camera writes it to its timestamps CSV
+    whenever tracking is on, whatever the shock mode.
+  - Socket events: `get_apa_shock_state`, `set_shock_mode` (login),
+    `arm_grid` (login), `disarm_grid` and `stop_all_shocks` (no login: they only
+    make things safer), and the broadcast `apa_shock_state` (4 Hz armed,
+    1 Hz disarmed).
+  - Decisions (armed / disarmed / mode / shock_start / shock_stop / capped /
+    manual_refused / stop_all) go to the journal and to
+    `<share>/<session>/<session>_shock_decisions.csv`.
 - Camera: `zone_state` every 0.2 s while tracking (in_zone, tracking, det_cx,
   det_cy, det_conf, timestamp_ns), plus the existing edge events.
-- Dashboard (`APACommands.jsx`): a mode selector replaces the per-tab Arm
-  toggle, every tab shows the controller's mode, and a Stop all button is
-  added (click only: Esc exits fullscreen). In auto / dry_run a status line shows what the controller sees
-  and the last decision.
+- Dashboard: grid state with an Arm/Disarm button, a Manual / Auto / Dry run
+  selector, Stop all (click only: Esc exits fullscreen), and an auto status
+  line. The APA camera's livestream (card and fullscreen) carries a badge:
+  GRID DISARMED, GRID ARMED · mode, or SHOCKING · mode.
 
 Still open from the first draft: a REST route for Stop all; disarming when the
 camera goes offline (today a stale camera just stops shocks); requiring the
@@ -228,14 +238,16 @@ hood detector to agree; an exactly-one-box rule.
 ### Validation on the rig (dummy Arduino first)
 
 1. Tracking on (Hailo), shown on the livestream. Mode Auto, then start a
-   session. A rat video in front of the camera: shocks start 0.5 s after the dot
-   turns red and stop when it leaves. Check `<session>_shock_decisions.csv`
-   against the camera's `in_zone` column.
-2. The same in Dry run: identical decisions, `attempted_shocks` doesn't move.
+   session: the livestream badge turns GRID ARMED. A rat video in front of
+   the camera: shocks start 0.5 s after the dot turns red and stop when it
+   leaves. Check `<session>_shock_decisions.csv` against the camera's
+   `in_zone` column.
+2. Dry run: start a session and the grid stays disarmed, with no shocks and
+   `attempted_shocks` unchanged. Tracking is still in the camera CSV.
 3. Stop all mid-shock: the shock stops and the mode is
    Disarmed in every open tab.
 4. Kill tracking mid-shock (turn it off): the shock stops within ~0.5 s.
-5. End the session: the mode goes to Disarmed.
+5. End the session: the grid disarms (badge and panel).
 
 ### Open questions (protocol decisions for the researchers)
 

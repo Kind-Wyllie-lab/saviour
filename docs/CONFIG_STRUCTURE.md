@@ -279,14 +279,17 @@ and `lost_timeout_s` (see `_update_track` in `apa_camera_module.py`). Uploaded H
 
 ### APA Controller Configuration (automated shocking)
 
-`apa_controller_config.json`, read by `variants/apa/shock_automation.py`. The
-shock *mode* (disarmed / manual / auto / dry_run) is runtime state on the
-controller, never saved: it starts disarmed. The pulse pattern itself is the
-Arduino module's (`arduino.shocker.duration` on, `intershock_latency` off).
+`apa_controller_config.json`, read by `variants/apa/shock_automation.py`.
+`apa.shock_mode` (manual / auto / dry_run) says how an armed grid is driven;
+dry run means recordings run without arming. Armed / disarmed is runtime
+state, never saved: the grid arms when a recording starts and disarms when it
+ends. The pulse pattern itself is the Arduino module's
+(`arduino.shocker.duration` on, `intershock_latency` off).
 
 ```json
 {
   "apa": {
+    "shock_mode": "manual",         // manual | auto | dry_run
     "auto_shock": {
       "entry_latency_s": 0.5,       // continuous time in zone before the first shock
       "zone_state_timeout_s": 0.5,  // a zone report older than this counts as "not in zone"

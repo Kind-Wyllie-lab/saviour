@@ -1,4 +1,4 @@
-# FrameSync: keep the elected server, restart clients after it
+# FrameSync: keep the elected server, restart clients after it, don't stop a wedged camera
 
 - **Status:** not started
 - **Created:** 2026-10-23
@@ -18,10 +18,10 @@ journals:
 | 09:30:14 | Both cameras restart their streams at once. The client comes up while the server is restarting. |
 | 09:30:16 | 0fcc: `Dequeue timer of 1000000.00us has expired!` / `Camera frontend has timed out!`. Its camera is wedged from here on. |
 | 09:30:27 | An operator saves 3606's settings in the GUI (`sensor_mode_index` among them). `handle_save_module_config` propagates it to the client straight away (`Propagating server fps/sensor_mode_index to sync client camera_0fcc`). The client restarts again, and `picam2.stop()` (`camera_base.py` `_configure_camera`) never returns. |
-| 09:31:13 | The command listener has been stuck for 45 s, so the watchdog keep-alive stops. systemd aborts the process, and it comes back about 13 s later, synced. |
+| 09:31:13 | The whole interpreter froze inside `stop()` at 09:30:28, GIL held. The last keep-alive went out at about 09:30:13 (they're every 20 s), the 09:30:33 one never ran, and there's no "withholding keep-alive" line, so the command-stall gate (300 s) didn't trip. systemd aborts the process at the 60 s `WatchdogSec`, and it comes back at 09:31:26, synced: about 58 s without a camera. |
 
 No session was running, so no data was lost. Two controller behaviours made it
-happen, and both run during normal use:
+happen, and both run during normal use. A module-side one made recovery slow:
 
 1. **The election isn't sticky.** The server is "lowest module_id among online,
    FrameSync-enabled cameras", worked out from scratch on every call. Adding,
@@ -32,6 +32,10 @@ happen, and both run during normal use:
    back before restarting clients. A client that starts while its server is
    down or restarting is exactly the case libcamera 0.5.2 handles badly: it
    wedges, and the next `stop()` freezes.
+3. **The module calls `stop()` on a camera that is already wedged.** That
+   freezes the interpreter, and only the systemd watchdog gets it back (about
+   60 s). Fixes 1 and 2 remove today's trigger, but a client can still wedge in
+   other ways (server lost mid-stream, the `recvfrom()` case in CLAUDE.md).
 
 ## Current code
 
@@ -123,17 +127,51 @@ it all in `reconcile_framesync()` so there's one code path.
   so start with no delay. If a client still times out on the rig, add a short
   `threading.Timer` before the client pushes (open question 2).
 
-### Out of scope here (backlog)
+### 3. Don't call `stop()` on a wedged camera; restart the service instead
 
-- `_configure_camera`: after a libcamera frontend timeout, skip `picam2.stop()`
-  and restart the service right away instead of waiting for the watchdog.
-  That's about 15 s faster to recover, and it only matters once 1 and 2 have
-  removed the usual trigger.
+**Why not a timeout:** the freeze holds the GIL, so a Python timer or worker
+thread around `stop()` never gets to run (that's why the keep-alive thread went
+silent too). The decision has to be made *before* calling `stop()`, from
+information Python already has.
+
+- **Wedge signal:** `_frame_precallback` stamps `_last_frame_wall_time` on every
+  frame, streaming or recording (`camera_base.py`). Add `_stream_started_mono`,
+  set in `start_streaming()` after `picam2.start()`. In `_configure_camera()`,
+  when `picam2.started`, the camera counts as wedged if it started more than
+  `_WEDGE_S` ago and no frame has arrived in the last `_WEDGE_S` (never, or
+  stale). `_WEDGE_S = max(3.0, 10 / fps)` gives slow frame rates room, and stays
+  above libcamera's own 1 s dequeue timeout. The `frontend has timed out`
+  message only goes to libcamera's stderr, and picamera2 has no callback for it,
+  so the frame stamp is the signal. That's fine: it's the observable fact that
+  matters.
+- **Action:** skip `stop()`. Log an error naming the cause ("camera delivered no
+  frames for Xs since its last start (wedged) -- restarting the service instead
+  of stopping it, which would freeze"), call `logging.shutdown()`, then
+  `os._exit(1)`. `Restart=always` / `RestartSec=10` (`saviour-config` unit)
+  bring it back in about 13 s instead of about 58 s. The controller already
+  handles the drop: offline → online → `get_config` → reconcile. The module
+  saved the new config before calling `configure_module()`, so it comes back
+  with the requested settings.
+- Put the exit behind a method (`_restart_service_for_wedged_camera()`) so tests
+  can patch it, the same way `_watchdog_alive` is a seam today.
+- **Recording:** this path can't run mid-recording, because restart keys are
+  deferred while recording (`configure_module_special`). Guard anyway: if
+  `_recording_active()`, log and fall through to `stop()` rather than exit. A
+  module that exits mid-recording loses the open segment. The watchdog path
+  loses it too, but this way is never quietly worse.
+- **Not covered:** a camera that wedges while idle and gets no config change
+  just sits without a preview until something restarts it. Optionally,
+  `_check_picam()` / the readiness check could report "no frames for Ns" so the
+  UI shows it (open question 3). The recording silence check
+  (`recording._health_check_camera_silence_secs`) already covers recording.
+
+### Out of scope here
+
 - `set_target_module_config ... missing top-level keys: {'logging', 'network'}`:
   a warning logged on every reconcile push. It's noise, but it hides real
-  mismatches.
+  mismatches (backlog).
 
-## Tests (`src/controller/tests/test_facade.py`, `test_modules_config_sync.py`, `test_web*.py`)
+## Tests (`src/controller/tests/test_facade.py`, `test_modules_config_sync.py`, `test_web*.py`, a camera_base test with a fake `picam2`)
 
 - Sticky: server `camera_b`, then add `apa_a` → `camera_b` stays server and
   `apa_a` → client. Remembered server goes offline → lowest remaining elected.
@@ -148,6 +186,10 @@ it all in `reconcile_framesync()` so there's one code path.
 - Web save to the server no longer sends to clients directly.
 - Duplicates: two echoes in a row while the target is pending → one push.
 - Recording deferral still holds for clients and for the server.
+- Wedge guard (fake `picam2`, patched clock, patched restart hook):
+  started long ago and no frames → no `stop()`, restart hook called. Frames
+  arriving → `stop()` called. Just started, no frame yet → `stop()` called (not
+  wedged). Recording active → `stop()` called, no restart hook.
 
 ## Validation on hardware (APA rig: `camera_0fcc` + `apa_camera_3606`)
 
@@ -163,6 +205,12 @@ it all in `reconcile_framesync()` so there's one code path.
 4. Restart the controller service while both cameras are synced: no role
    change.
 5. Run a 1 min session afterwards and check `framesync_report.json` as usual.
+6. Wedge guard: get a client wedged on purpose. `kill -STOP` the server's
+   `saviour` process (needs sudo on the module: ask the owner), restart the
+   client's stream (e.g. change its exposure-restart key), wait until its
+   preview is frozen, then change its sensor mode. Expect the "wedged --
+   restarting the service" log line, the module back in about 15 s, and no
+   watchdog abort. Then `kill -CONT` the server.
 
 ## Open questions
 
@@ -172,3 +220,6 @@ it all in `reconcile_framesync()` so there's one code path.
    isn't the lowest ID.
 2. Do we need a settle delay after the server's echo? Measure on the rig first
    (validation step 2).
+3. Should an idle camera that has stopped delivering frames show as "not
+   ready" (readiness check) or restart itself, rather than waiting for the next
+   config change to trip the guard?

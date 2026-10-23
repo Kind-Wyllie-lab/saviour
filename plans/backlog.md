@@ -74,9 +74,8 @@ Account/settings actions on github.com, recorded here so they aren't lost:
 
 ## Low priority — observability / maintenance
 
-- **Camera: skip `picam2.stop()` after a libcamera frontend timeout** — once `Camera frontend has timed out!` has been logged since the last start, the next `_configure_camera()` `stop()` can block forever and recovery waits for the systemd watchdog (~60 s; `camera_0fcc` 2026-10-23). Restart the service straight away instead, with a log line saying why. Low value once `plans/framesync-sticky-election-and-ordered-restarts.md` removes the usual trigger.
 
-
+- **`set_target_module_config ... missing top-level keys: {'logging', 'network'}` on every FrameSync reconcile push** — reconcile sends only the camera section, so this warning fires on every role/pinning change and hides real mismatches. Seen on the APA rig 2026-10-23.
 - **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip.
 - **`docs/PROTOCOL_V1.md` is stale** — documents transport that was never built. Rewrite to the actual DEALER/ROUTER string protocol, or keep as the design target for correlation-ID work and label it clearly. `docs/CONFIG_STRUCTURE.md` likely also needs a pass.
 - **`module.py`: `generate_session_id()` calls `datetime.now()` but only `import datetime` is present** — `AttributeError` on any real caller (latent, only reachable via the broken `arduino_module.py`).

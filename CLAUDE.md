@@ -186,7 +186,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - `pyproject.toml`: `hatchling` in build-requires breaks offline `pip install -e .` on modules; also `requires-python`/mypy say 3.8, `pytest` is a runtime dep.
 - Recorded rotation at 90°/270° is dropped for non-square resolutions (hardware limit); decided: rotate downstream (frontend / `video_compose`), not built.
 - Legacy string command path: `start_recording duration=60` → `TypeError`; `web.py` legacy `send_command start_recording` has a broken `strftime`.
-- FrameSync reconcile moves the server role whenever the lowest camera ID changes (e.g. a camera re-provisioned) and restarts server and clients together; a client started while its server restarts wedges and the watchdog kills it (APA rig, 2026-10-23) → `plans/framesync-sticky-election-and-ordered-restarts.md`.
+- FrameSync reconcile moves the server role whenever the lowest camera ID changes (e.g. a camera re-provisioned) and restarts server and clients together; a client started while its server restarts wedges, and the next `stop()` freezes it until the watchdog kills it (APA rig, 2026-10-23) → `plans/framesync-sticky-election-and-ordered-restarts.md`.
 - Sync-client camera lags the server in compose (CSV rows for discarded pre-`SyncReady` frames) → `plans/multicam-frame-alignment-and-sync-provenance.md`.
 - `habitat_camera`: shipped motion-trigger defaults catch 0/28 real events; a clip mid-trigger at session start exports with the next session.
 

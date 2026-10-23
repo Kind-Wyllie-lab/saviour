@@ -22,7 +22,6 @@ import re
 import sys
 import time
 import urllib.request
-from collections import deque
 
 import cv2
 import numpy as np
@@ -329,14 +328,17 @@ class APACameraModule(CameraBase):
         self._inference_fault: str | None = None
         self._labels: list[str] = ["rat"]
         self.threshold = 0.55
-        # One animal per trial: only the most confident detection is tracked.
-        self.max_detections = 1
-        self._detection_buffer = deque(maxlen=3)
-        self._last_known_det: Detection | None = None
-
-        # ── APA: position tracking ───────────────────────────────────────────
-        self.last_cx = None
-        self.last_cy = None
+        # ── APA: position tracking (one animal per trial) ───────────────────
+        # _update_track() turns each frame's detections into one smoothed
+        # position: the zone test, CSV columns and overlay all use it.
+        self._track_pos: tuple[float, float] | None = None
+        self._track_det: Detection | None = None     # for the overlay's label/conf
+        self._track_seen_t = 0.0                     # monotonic time of last accepted detection
+        self._jump_cand: tuple[float, float, int] | None = None  # far detection: (cx, cy, frames seen)
+        self.smoothing = 0.5
+        self.max_jump_frac = 0.15
+        self.jump_confirm_frames = 3
+        self.lost_timeout_s = 0.5
         self._prev_in_zone: bool = False
 
         # (mask/shock-zone geometry is computed per-frame from the current array shape)
@@ -387,7 +389,10 @@ class APACameraModule(CameraBase):
     def _configure_object_detection(self):
         self._labels = self.config.get("object_detection.labels", ["rat"])
         self.threshold = self.config.get("object_detection.threshold", 0.55)
-        self.max_detections = self.config.get("object_detection.max_detections", 1)
+        self.smoothing = min(0.95, max(0.0, float(self.config.get("object_detection.smoothing", 0.5))))
+        self.max_jump_frac = float(self.config.get("object_detection.max_jump_frac", 0.15))
+        self.jump_confirm_frames = max(1, int(self.config.get("object_detection.jump_confirm_frames", 3)))
+        self.lost_timeout_s = float(self.config.get("object_detection.lost_timeout_s", 0.5))
 
         if not self.config.get("object_detection.enabled", False):
             if self.detector is not None:
@@ -402,7 +407,7 @@ class APACameraModule(CameraBase):
         new_backend = self.config.get("object_detection.backend", "hailo")
         model_path = self.config.get(
             "object_detection.model_path",
-            "/usr/share/hailo-models/yolov8n.hef"
+            "/usr/local/src/saviour/hailo_models/apa_rats_yolov8_nms.hef"
         )
         # Rebuild whenever anything the detector is constructed from changes
         # (not just the backend): a new HEF, blob-tracker tuning, or the
@@ -500,20 +505,24 @@ class APACameraModule(CameraBase):
             # Tracking always looks only inside the arena mask, whether or not
             # the mask is burned into the recording.
             if self.mask_record:
-                self._detect_objects(m.array)
+                dets = self._detect_objects(m.array)
             else:
-                self._detect_objects(self._masked_copy(m.array))
-            if self._last_known_det is not None:
-                x, y, w, h = self._last_known_det.box
-                det_cx = int(x + w / 2)
-                det_cy = int(y + h / 2)
+                dets = self._detect_objects(self._masked_copy(m.array))
+            self._update_track(dets, time.monotonic())
+            if self._track_pos is not None:
+                det_cx, det_cy = (int(v) for v in self._track_pos)
                 in_zone = self._is_in_shock_zone(det_cx, det_cy)
 
-            if det_cx is not None and in_zone != self._prev_in_zone:
-                self.communication.send_status({
+            # Losing the animal counts as leaving the zone, so a stale
+            # "entered" can't stand while nothing is tracked.
+            if in_zone != self._prev_in_zone:
+                event = {
                     "type": "zone_entered" if in_zone else "zone_exited",
                     "timestamp_ns": timing.timestamp_ns,
-                })
+                }
+                if det_cx is None:
+                    event["reason"] = "lost"
+                self.communication.send_status(event)
                 self._prev_in_zone = in_zone
 
         # Recorded overlays go on after detection so they never feed it.
@@ -578,44 +587,94 @@ class APACameraModule(CameraBase):
     # Object detection
     # -----------------------------------------------------------------------
 
-    def _detect_objects(self, frame: np.ndarray):
+    # Candidates considered per frame: the track takes the nearest one, so a
+    # brighter false positive elsewhere doesn't steal it.
+    _MAX_CANDIDATES = 5
+
+    def _detect_objects(self, frame: np.ndarray) -> list[Detection]:
+        """Detections on this frame, most confident first (at most
+        _MAX_CANDIDATES); [] when there's no detector or inference fails."""
         if self.detector is None:
-            return
+            return []
         if frame.dtype != np.uint8:
             frame = frame.astype(np.uint8)
         if frame.ndim != 3 or frame.shape[2] != 3:
-            return
+            return []
         try:
-            dets = self.detector.detect(frame, self._labels)[: self.max_detections]
-            if dets:
-                self._last_known_det = dets[0]
-                self._detection_buffer.append(dets[0])
-            else:
-                self._detection_buffer.append(None)
+            return self.detector.detect(frame, self._labels)[: self._MAX_CANDIDATES]
         except Exception as e:
             self.logger.error(f"Hailo inference error: {e}")
+            return []
+
+    @staticmethod
+    def _centre(det: Detection) -> tuple[float, float]:
+        x, y, w, h = det.box
+        return x + w / 2, y + h / 2
+
+    def _update_track(self, dets: list[Detection], now: float) -> None:
+        """Fold this frame's detections into the single tracked position.
+
+        - With a track: take the nearest detection within the jump gate
+          (max_jump_frac × the frame's short side) and smooth towards it
+          (position = smoothing × old + (1 − smoothing) × new).
+        - Starting a track, or jumping outside the gate, needs the most
+          confident detection to be seen near the same place
+          jump_confirm_frames frames running: a one-frame false positive is
+          ignored, while a real relocation (or the animal reappearing) is
+          picked up.
+        - No accepted detection for lost_timeout_s clears the track, so the
+          position, CSV columns and zone state don't freeze on the last
+          sighting.
+        """
+        if self._track_pos is not None and now - self._track_seen_t > self.lost_timeout_s:
+            self._track_pos = self._track_det = None
+            self._jump_cand = None
+        if not dets:
+            return
+
+        gate = self.max_jump_frac * min(self.width or 1, self.height or 1)
+        if self._track_pos is not None:
+            tx, ty = self._track_pos
+            nearest = min(dets, key=lambda d: np.hypot(self._centre(d)[0] - tx,
+                                                       self._centre(d)[1] - ty))
+            nx, ny = self._centre(nearest)
+            if np.hypot(nx - tx, ny - ty) <= gate:
+                self._jump_cand = None
+                self._accept(nearest, now, reset=False)
+                return
+
+        # No track, or every candidate is a jump: count the top one towards
+        # (re)acquiring.
+        cx, cy = self._centre(dets[0])
+        if self._jump_cand is not None and np.hypot(cx - self._jump_cand[0],
+                                                    cy - self._jump_cand[1]) <= gate:
+            count = self._jump_cand[2] + 1
+        else:
+            count = 1
+        self._jump_cand = (cx, cy, count)
+        if count >= self.jump_confirm_frames:
+            self._jump_cand = None
+            self._accept(dets[0], now, reset=True)
+
+    def _accept(self, det: Detection, now: float, reset: bool) -> None:
+        cx, cy = self._centre(det)
+        if reset or self._track_pos is None:
+            self._track_pos = (cx, cy)
+        else:
+            a = self.smoothing
+            px, py = self._track_pos
+            self._track_pos = (a * px + (1 - a) * cx, a * py + (1 - a) * cy)
+        self._track_det = det
+        self._track_seen_t = now
 
 
     def _draw_detections(self, m: MappedArray) -> None:
         try:
-            if self._last_known_det is None:
+            if self._track_pos is None or self._track_det is None:
                 return
-            det = self._last_known_det
-            x, y, w, h = det.box
-            if w <= 0 or h <= 0:
-                return
-
-            # Zone check and smoothing always in main-stream pixel space
-            cx = int(x + w / 2)
-            cy = int(y + h / 2)
-
-            if self.config.get("object_detection.coordinate_smoothing"):
-                alpha = 0.5
-                if self.last_cx is None: self.last_cx = cx
-                if self.last_cy is None: self.last_cy = cy
-                cx = int(alpha * cx + (1 - alpha) * self.last_cx)
-                cy = int(alpha * cy + (1 - alpha) * self.last_cy)
-            self.last_cx, self.last_cy = cx, cy
+            det = self._track_det
+            # Tracked (smoothed) position, in main-stream pixel space
+            cx, cy = (int(v) for v in self._track_pos)
 
             in_zone = self._is_in_shock_zone(cx, cy)
             color = (0, 0, 255) if in_zone else (0, 255, 0)

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./ModuleActionsMenu.css";
@@ -146,6 +147,11 @@ function ModuleActionsMenu({ id, name, isOnline }) {
         </span>
       )}
 
+      {/* Modals portal to <body>: the System page mounts this menu in a table
+          cell, and an offline row's cell opacity would trap a fixed overlay
+          in its stacking context (half-transparent, later rows painting over
+          it and taking its clicks). */}
+      {createPortal(<>
       {showActions && (
         <div className="modal-overlay" onClick={() => setShowActions(false)}>
           <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
@@ -262,6 +268,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
           </div>
         </div>
       )}
+      </>, document.body)}
     </>
   );
 }

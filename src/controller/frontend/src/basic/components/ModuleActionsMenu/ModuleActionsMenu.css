@@ -25,10 +25,8 @@
   white-space: nowrap;
 }
 
-/* Rendered inline (no portal), so reset wrapping — the System page mounts the
-   menu inside a `.system-table td`, whose `white-space: nowrap` would
-   otherwise push the hint text past the card edge. The follow-on confirm
-   modals mount in the same cell, so they need the same reset. */
+/* The modals portal to <body>, but keep the wrap reset in case a parent's
+   `white-space: nowrap` ever reaches them again. */
 .actions-modal,
 .actions-confirm-modal {
   white-space: normal;

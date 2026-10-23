@@ -542,7 +542,7 @@ class APACameraModule(CameraBase):
                     "tracking": det_cx is not None,
                     "det_cx": det_cx,
                     "det_cy": det_cy,
-                    "det_conf": round(self._track_det.conf, 3)
+                    "det_conf": round(float(self._track_det.conf), 3)
                                 if self._track_det is not None else None,
                     "timestamp_ns": timing.timestamp_ns,
                 })
@@ -827,8 +827,9 @@ class APACameraModule(CameraBase):
         if not (inner_r <= r <= outer_r):
             return False
         # Modulo, so an arc that crosses 0°/360° (e.g. a zone centred on 0°)
-        # works; the raw start/end comparison missed those.
-        return (theta - start_angle) % 360 <= self.shock_zone_angle_span
+        # works; the raw start/end comparison missed those. bool(): numpy's
+        # bool_ isn't JSON serialisable, and zone_state carries this value.
+        return bool((theta - start_angle) % 360 <= self.shock_zone_angle_span)
 
 
     # -----------------------------------------------------------------------

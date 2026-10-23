@@ -314,3 +314,29 @@ class TestZoneState:
         m.config = _Cfg({"object_detection.enabled": False})
         m._process_main_frame(frame, timing)
         assert self._sent(m) == []
+
+    def test_report_is_json_serialisable_in_zone(self):
+        """The real zone test returns numpy types; json.dumps in send_status
+        failed on every in-zone report (2026-10-23), so the controller saw
+        the zone_entered edge and then nothing."""
+        import json
+        from unittest.mock import patch
+
+        import numpy as np
+        m, frame, timing = self._apa()
+        del m._is_in_shock_zone          # use the real geometry
+        m.mask_radius = 0.5
+        m.mask_center_x_offset = m.mask_center_y_offset = 0
+        m.shock_zone_inner_offset = 0.0
+        m.shock_zone_start_angle = -90
+        m.shock_zone_angle_span = 360
+        m._track_det = _det(500, 400, conf=np.float32(0.8))
+        m._detect_objects = lambda frame: [_det(500, 400, conf=np.float32(0.8))]
+        m._track_pos = (500, 400)
+        m._track_seen_t = 5.0
+        with patch("src.modules.variants.apa_camera.apa_camera_module.time.monotonic",
+                   return_value=5.0):
+            m._process_main_frame(frame, timing)
+        states = [s for s in self._sent(m) if s["type"] == "zone_state"]
+        assert states and states[0]["in_zone"] is True
+        json.dumps(states[0])

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import socket from "/src/socket";
 import useModules from "/src/hooks/useModules";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
@@ -10,6 +10,7 @@ import CropEditorModal from "/src/basic/components/CropEditorModal/CropEditorMod
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigFields from "../ConfigFields";
 import ConfigCardShell from "../ConfigCardShell";
+import { filterPrivateKeys } from "../configUtils";
 
 const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",       sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -49,6 +50,14 @@ const HAILO_TABS = [
   { key: "hailo", label: "AI" },
 ];
 
+// Shock Zone holds the zone geometry and the tracking that tests against it.
+const APA_TABS = [
+  { key: "mask",       label: "Mask"       },
+  { key: "shock_zone", label: "Shock Zone" },
+];
+
+const HEF_CHUNK_SIZE = 256 * 1024;
+
 const EXPORT_TAB = { key: "export", label: "Export" };
 
 // Curated stock Hailo model-zoo nets - keep in sync with
@@ -74,7 +83,7 @@ const HAILO_MODELS = [
 // tab carried over from switching device (Settings.jsx) that isn't one of
 // this card's falls back to the default instead of rendering blank.
 const ALL_TAB_KEYS = [
-  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, ...HAILO_TABS, EXPORT_TAB,
+  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, ...HAILO_TABS, ...APA_TABS, EXPORT_TAB,
 ].map(t => t.key);
 
 const TAB_COPY_SECTION = {
@@ -86,6 +95,9 @@ const TAB_COPY_SECTION = {
   stimulus: { key: "loom_stimulus",  label: "Stimulus" },
   motion:   { key: "habitat_motion", label: "Motion"   },
   hailo:    { key: "hailo",          label: "AI"       },
+  mask:       { key: "mask",           label: "Mask"       },
+  // shock_zone: omitted — spans shock_zone + object_detection + blob_tracker,
+  // so only "Copy all" is offered
   export:   { key: "export",         label: "Export"   },
 };
 
@@ -104,6 +116,44 @@ function detectPreset(presetList, width, height, fps) {
   return presetList.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
 
+// APA shock-zone colour is stored as [r, g, b] (base config) or {r, g, b}
+// (after a save); the colour input wants hex.
+function rgbToHex(color) {
+  let r, g, b;
+  if (Array.isArray(color))                      [r, g, b] = color;
+  else if (color && typeof color === "object")   ({ r, g, b } = color);
+  else                                           return "#00ff00";
+  const toHex = v => Math.max(0, Math.min(255, v ?? 0)).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToRgbObj(hex) {
+  return {
+    r: parseInt(hex.slice(1, 3), 16),
+    g: parseInt(hex.slice(3, 5), 16),
+    b: parseInt(hex.slice(5, 7), 16),
+  };
+}
+
+// APA save: send shock_zone_color as an object and keep
+// object_detection.labels, an array filterPrivateKeys would otherwise strip.
+function apaSaveTransform(fd) {
+  const filtered = filterPrivateKeys(fd) ?? {};
+  const rawColor = fd?.shock_zone?.shock_zone_color;
+  if (rawColor) {
+    filtered.shock_zone = filtered.shock_zone ?? {};
+    filtered.shock_zone.shock_zone_color = Array.isArray(rawColor)
+      ? { r: rawColor[0], g: rawColor[1], b: rawColor[2] }
+      : rawColor;
+  }
+  const rawLabels = fd?.object_detection?.labels;
+  if (Array.isArray(rawLabels)) {
+    filtered.object_detection = filtered.object_detection ?? {};
+    filtered.object_detection.labels = rawLabels;
+  }
+  return filtered;
+}
+
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const { moduleList } = useModules();
@@ -116,6 +166,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [roiInfo, setRoiInfo] = useState(null);
   const [showCropEditor, setShowCropEditor] = useState(false);
   const closeCropEditor = useCallback(() => setShowCropEditor(false), []);
+  // APA tracking model picker: list_hefs result + upload progress.
+  const [hefInfo, setHefInfo] = useState(null); // { hailo_present, hefs, current, error }
+  const [hefUpload, setHefUpload] = useState(null); // null | { received, total } | { error } | { done }
+  const hefInputRef = useRef(null);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -155,6 +209,38 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps, presets]);
+
+  useEffect(() => {
+    if (module.type !== "apa_camera") return;
+    socket.emit("send_command", { module_id: module.id, type: "list_hefs", params: {} });
+    const mine = (h) => (data) => { if (data.module_id === module.id) h(data); };
+    const onList = mine((data) => {
+      setHefInfo(data);
+      if (data.error) setHefUpload({ error: data.error });
+      else if (data.fetched) {
+        setHefUpload({ done: true });
+        // Select the new model; it takes effect when the card is saved.
+        setFormData(prev => {
+          const cloned = structuredClone(prev);
+          cloned.object_detection = { ...(cloned.object_detection ?? {}), model_path: data.fetched };
+          return cloned;
+        });
+      }
+    });
+    const onProgress = mine(({ received, total }) => setHefUpload({ received, total }));
+    const onComplete = mine(() => setHefUpload({ received: 1, total: 1, installing: true }));
+    const onError = mine(({ error }) => setHefUpload({ error }));
+    socket.on("hef_list_response", onList);
+    socket.on("hef_upload_progress", onProgress);
+    socket.on("hef_upload_complete", onComplete);
+    socket.on("hef_upload_error", onError);
+    return () => {
+      socket.off("hef_list_response", onList);
+      socket.off("hef_upload_progress", onProgress);
+      socket.off("hef_upload_complete", onComplete);
+      socket.off("hef_upload_error", onError);
+    };
+  }, [module.id, module.type, setFormData]);
 
   // Track what resolution the saved ROI (arena polygon) was drawn at, so a
   // later resolution change can be flagged -- the module rescales the ROI
@@ -264,11 +350,62 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const exposureMismatch = currentSyncMode === "client" && syncServerModule && serverExposureUs != null && clientExposureUs != null && clientExposureUs !== serverExposureUs;
   const hasSyncWarning   = fpsMismatch || exposureMismatch || (currentSyncMode === "client" && !syncServerModule);
 
+  const isApa            = module.type === "apa_camera";
+  const mask             = formData?.mask ?? {};
+  const shockZone        = formData?.shock_zone ?? {};
+  const detection        = formData?.object_detection ?? {};
+  const blobTracker      = formData?.blob_tracker ?? {};
+
+  const trackingMethod = !(detection.enabled ?? false) ? "off"
+    : (detection.backend ?? "blob") === "blob" ? "blob" : "hailo";
+
+  const handleTrackingMethod = (method) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      const od = cloned.object_detection = cloned.object_detection ?? {};
+      od.enabled = method !== "off";
+      if (method === "blob") od.backend = "blob";
+      // Keep hailo_raw if that's what was set; otherwise the on-chip-NMS default.
+      if (method === "hailo" && od.backend !== "hailo_raw") od.backend = "hailo";
+      return cloned;
+    });
+  };
+
+  const handleHefFile = (file) => {
+    if (!file) return;
+    if (!file.name.endsWith(".hef")) {
+      setHefUpload({ error: "Please choose a .hef file." });
+      return;
+    }
+    const totalChunks = Math.ceil(file.size / HEF_CHUNK_SIZE);
+    setHefUpload({ received: 0, total: totalChunks });
+    socket.emit("upload_hef_start", {
+      module_id: module.id, filename: file.name,
+      total_chunks: totalChunks, total_bytes: file.size,
+    });
+    (async () => {
+      for (let i = 0; i < totalChunks; i++) {
+        const bytes = await file.slice(i * HEF_CHUNK_SIZE, (i + 1) * HEF_CHUNK_SIZE).arrayBuffer();
+        socket.emit("upload_hef_chunk", { index: i, data: bytes });
+        await new Promise(r => setTimeout(r, 0));
+      }
+    })();
+  };
+
+  const handleShockZoneColor = (hex) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      cloned.shock_zone.shock_zone_color = hexToRgbObj(hex);
+      return cloned;
+    });
+  };
+
   const tabs = [
     ...BASE_TABS,
     ...(module.type === "loom_camera" ? LOOM_TABS : []),
     ...(module.type === "habitat_camera" ? HABITAT_TABS : []),
     ...(module.type === "hailo_camera" ? HAILO_TABS : []),
+    ...(isApa ? APA_TABS : []),
     EXPORT_TAB,
   ];
 
@@ -285,6 +422,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         tabSectionMap={TAB_COPY_SECTION}
+        saveTransform={isApa ? apaSaveTransform : undefined}
         markSaved={markSaved}
         isDirty={isDirty}
         deviceInfoExtras={[sensorModel]}
@@ -1162,6 +1300,283 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           </>
           );
         })()}
+
+        {/* APA MASK */}
+        {activeTab === "mask" && (
+          <>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              The arena circle. Tracking only looks inside it, and the shock
+              zone is drawn relative to it.
+            </div>
+            <div className="form-field">
+              <label>Radius: {Number(mask.mask_radius ?? 0.65).toFixed(2)}</label>
+              <input type="range" min="0.1" max="1" step="0.01"
+                value={mask.mask_radius ?? 0.65} className="brightness-slider"
+                onChange={e => handleChange(["mask", "mask_radius"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Center X offset (px):</label>
+              <input type="number" step="1"
+                value={mask.mask_center_x_offset ?? 0}
+                onChange={e => handleChange(["mask", "mask_center_x_offset"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Center Y offset (px):</label>
+              <input type="number" step="1"
+                value={mask.mask_center_y_offset ?? 0}
+                onChange={e => handleChange(["mask", "mask_center_y_offset"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Show on livestream:</label>
+              <input type="checkbox"
+                checked={mask.mask_display ?? true}
+                onChange={e => handleChange(["mask", "mask_display"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Save to recording:</label>
+              <input type="checkbox"
+                checked={mask.mask_record ?? true}
+                onChange={e => handleChange(["mask", "mask_record"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Blacks out everything outside the circle.
+            </div>
+          </>
+        )}
+
+        {/* APA SHOCK ZONE + TRACKING */}
+        {activeTab === "shock_zone" && (
+          <>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Shocks are delivered from the APA page. The zone and tracking mark
+              when the animal is in the zone: the in_zone column of the
+              per-frame CSV, and zone entered/exited events.
+            </div>
+            <div className="form-field">
+              <label>Start angle (°):</label>
+              <input type="number" min="0" max="360" step="1"
+                value={shockZone.shock_zone_start_angle_deg ?? 180}
+                onChange={e => handleChange(["shock_zone", "shock_zone_start_angle_deg"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Span (°):</label>
+              <input type="number" min="1" max="360" step="1"
+                value={shockZone.shock_zone_angle_span_deg ?? 60}
+                onChange={e => handleChange(["shock_zone", "shock_zone_angle_span_deg"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Inner offset: {Number(shockZone.shock_zone_inner_offset ?? 0.3).toFixed(2)}</label>
+              <input type="range" min="0" max="0.99" step="0.01"
+                value={shockZone.shock_zone_inner_offset ?? 0.3} className="brightness-slider"
+                onChange={e => handleChange(["shock_zone", "shock_zone_inner_offset"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Colour:</label>
+              <input type="color" value={rgbToHex(shockZone.shock_zone_color)}
+                onChange={e => handleShockZoneColor(e.target.value)} />
+            </div>
+            <div className="form-field">
+              <label>Line thickness (px):</label>
+              <input type="number" min="1" max="20" step="1"
+                value={shockZone.shock_zone_line_thickness ?? 3}
+                onChange={e => handleChange(["shock_zone", "shock_zone_line_thickness"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Show on livestream:</label>
+              <input type="checkbox"
+                checked={shockZone.shock_zone_display ?? true}
+                onChange={e => handleChange(["shock_zone", "shock_zone_display"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Save to recording:</label>
+              <input type="checkbox"
+                checked={shockZone.shock_zone_record ?? false}
+                onChange={e => handleChange(["shock_zone", "shock_zone_record"], e)} />
+            </div>
+
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Tracking</div>
+            <div className="form-field">
+              <label>Method:</label>
+              <select value={trackingMethod} onChange={e => handleTrackingMethod(e.target.value)}>
+                <option value="off">Off</option>
+                <option value="blob">Blob tracker (motion, no model)</option>
+                <option value="hailo" disabled={hefInfo != null && !hefInfo.hailo_present && trackingMethod !== "hailo"}>
+                  Hailo model{hefInfo != null && !hefInfo.hailo_present ? " (no Hailo hardware detected)" : ""}
+                </option>
+              </select>
+            </div>
+            {trackingMethod === "hailo" && hefInfo != null && !hefInfo.hailo_present && (
+              <div className="fov-label fov-cropped">
+                No Hailo accelerator found on this module: tracking won't run.
+              </div>
+            )}
+
+            {trackingMethod === "blob" && (
+              <>
+                <div className="form-field">
+                  <label>Process width (px):</label>
+                  <input type="number" min="64" max="1920" step="16"
+                    value={blobTracker.process_width ?? 256}
+                    onChange={e => handleChange(["blob_tracker", "process_width"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Diff threshold: {Number(blobTracker.thr_hi ?? 5).toFixed(1)}</label>
+                  <input type="range" min="1" max="50" step="0.5"
+                    value={blobTracker.thr_hi ?? 5} className="brightness-slider"
+                    onChange={e => handleChange(["blob_tracker", "thr_hi"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>H gap fill (px):</label>
+                  <input type="number" min="0" max="100" step="1"
+                    value={blobTracker.gap_h_px ?? 15}
+                    onChange={e => handleChange(["blob_tracker", "gap_h_px"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>V gap fill (px):</label>
+                  <input type="number" min="0" max="100" step="1"
+                    value={blobTracker.gap_v_px ?? 15}
+                    onChange={e => handleChange(["blob_tracker", "gap_v_px"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Close kernel (px):</label>
+                  <input type="number" min="0" max="50" step="1"
+                    value={blobTracker.close_px ?? 7}
+                    onChange={e => handleChange(["blob_tracker", "close_px"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Open kernel (px):</label>
+                  <input type="number" min="0" max="50" step="1"
+                    value={blobTracker.open_px ?? 5}
+                    onChange={e => handleChange(["blob_tracker", "open_px"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Min blob area (px²):</label>
+                  <input type="number" min="1" max="10000" step="10"
+                    value={blobTracker.min_area_px ?? 50}
+                    onChange={e => handleChange(["blob_tracker", "min_area_px"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Patience (frames):</label>
+                  <input type="number" min="0" max="120" step="1"
+                    value={blobTracker.patience_frames ?? 10}
+                    onChange={e => handleChange(["blob_tracker", "patience_frames"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Smoothing: {Number(blobTracker.smoothing_alpha ?? 0.3).toFixed(2)}</label>
+                  <input type="range" min="0" max="1" step="0.05"
+                    value={blobTracker.smoothing_alpha ?? 0.3} className="brightness-slider"
+                    onChange={e => handleChange(["blob_tracker", "smoothing_alpha"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Track box size (px):</label>
+                  <input type="number" min="20" max="600" step="10"
+                    value={blobTracker.track_square_size ?? 150}
+                    onChange={e => handleChange(["blob_tracker", "track_square_size"], e)} />
+                </div>
+              </>
+            )}
+
+            {trackingMethod === "hailo" && (() => {
+              const hefs = hefInfo?.hefs ?? [];
+              const current = detection.model_path ?? "";
+              const known = hefs.some(h => h.path === current);
+              const uploading = hefUpload && hefUpload.total != null && !hefUpload.error;
+              return (
+              <>
+                <div className="form-field">
+                  <label>Model:</label>
+                  <select value={current}
+                    onChange={e => handleChange(["object_detection", "model_path"], e)}>
+                    {!known && (
+                      <option value={current}>
+                        {current ? `${current.split("/").pop()} (not on this module)` : "Choose a model…"}
+                      </option>
+                    )}
+                    {["uploaded", "bundled"].map(src => {
+                      const group = hefs.filter(h => h.source === src);
+                      return group.length > 0 && (
+                        <optgroup key={src} label={src === "uploaded" ? "Uploaded" : "On device"}>
+                          {group.map(h => (
+                            <option key={h.path} value={h.path}>
+                              {h.name} ({(h.size_bytes / 1048576).toFixed(1)} MB)
+                            </option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label></label>
+                  <div>
+                    <button type="button" className="copy-btn" disabled={!!uploading && !hefUpload.done}
+                      onClick={() => hefInputRef.current?.click()}>
+                      Upload .hef…
+                    </button>
+                    <input ref={hefInputRef} type="file" accept=".hef" style={{ display: "none" }}
+                      onChange={e => { handleHefFile(e.target.files[0]); e.target.value = ""; }} />
+                  </div>
+                </div>
+                {hefUpload && (
+                  <div className={hefUpload.error ? "fov-label fov-cropped" : "sensor-mode-info"}>
+                    {hefUpload.error
+                      ? `Upload failed: ${hefUpload.error}`
+                      : hefUpload.done
+                        ? "Uploaded and selected. Save to start using it."
+                        : hefUpload.installing
+                          ? "Copying to the module…"
+                          : `Uploading… ${hefUpload.received} / ${hefUpload.total} chunks`}
+                  </div>
+                )}
+                <div className="form-field">
+                  <label title="Most HEFs (including ones built with tools/convert_to_hailo.py) have NMS compiled in. Pick raw only for a model that outputs raw YOLOv8 tensors.">
+                    Model output:
+                  </label>
+                  <select value={detection.backend === "hailo_raw" ? "hailo_raw" : "hailo"}
+                    onChange={e => handleChange(["object_detection", "backend"], e)}>
+                    <option value="hailo">Detections (NMS in the model, usual)</option>
+                    <option value="hailo_raw">Raw YOLOv8 tensors</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Confidence threshold: {Number(detection.threshold ?? 0.55).toFixed(2)}</label>
+                  <input type="range" min="0.05" max="1" step="0.01"
+                    value={detection.threshold ?? 0.55} className="brightness-slider"
+                    onChange={e => handleChange(["object_detection", "threshold"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Coordinate smoothing:</label>
+                  <input type="checkbox"
+                    checked={detection.coordinate_smoothing ?? false}
+                    onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
+                </div>
+              </>
+              );
+            })()}
+
+            {trackingMethod !== "off" && (
+              <>
+                <div className="form-field">
+                  <label>Show tracking on livestream:</label>
+                  <input type="checkbox"
+                    checked={detection.overlay_display ?? true}
+                    onChange={e => handleChange(["object_detection", "overlay_display"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Save tracking to recording:</label>
+                  <input type="checkbox"
+                    checked={detection.overlay_record ?? true}
+                    onChange={e => handleChange(["object_detection", "overlay_record"], e)} />
+                </div>
+                <div className="sensor-mode-info sensor-mode-info--muted">
+                  The position dot, label and "IN SHOCK ZONE" text.
+                </div>
+              </>
+            )}
+          </>
+        )}
 
         {/* EXPORT */}
         {activeTab === "export" && (

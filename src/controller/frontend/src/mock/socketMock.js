@@ -269,7 +269,12 @@ const ROUTER = {
     this._fire("update_info", {
       running_version: "v0.6.1-mock", latest_version: "v0.6.1-mock",
       update_available: false, staged_version: null,
+      git: { available: true, branch: "staging", remote: "git@github.com:mock/saviour.git" },
     });
+  },
+  // Mock rigs are "offline": exercises the disabled Git pull option.
+  check_git_remote() {
+    this._fire("git_remote_status", { reachable: false, reason: "mock: no network" });
   },
   get_data_rate_history() { this._fire("data_rate_history", { samples: [] }); },
   get_nas_history() { this._fire("nas_history", { samples: [] }); },

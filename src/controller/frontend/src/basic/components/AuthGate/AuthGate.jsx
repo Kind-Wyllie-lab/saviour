@@ -71,8 +71,8 @@ function AuthGate() {
       <div className="login-modal">
         <h2>SAVIOUR Login</h2>
         <p className="login-modal-subtext">
-          Log in to change configuration, deploy code, or control power.
-          Guests can view status read-only.
+          Sign in to enable controls: change configuration, record, deploy
+          code, or control power. Without signing in you can view status only.
         </p>
         <div className="login-form">
           <label htmlFor="auth-gate-password">Password</label>
@@ -88,7 +88,7 @@ function AuthGate() {
         {error && <p className="login-error">{error}</p>}
         <div className="login-buttons">
           <button onClick={handleGuest} className="login-guest-btn">
-            Continue as Guest
+            Continue without controls
           </button>
           <button onClick={handleLogin} disabled={submitting || !password}>
             {submitting ? "Logging in…" : "Log In"}

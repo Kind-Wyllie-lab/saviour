@@ -233,12 +233,6 @@ export default function System() {
     setControllerActionTarget(null);
   };
 
-  const handleUpdateController = () => {
-    setDeviceStatuses(prev => ({ ...prev, controller: "updating" }));
-    setShowControllerActions(false);
-    socket.emit("deploy_update_to_controller");
-  };
-
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
@@ -292,10 +286,9 @@ export default function System() {
     };
     const onDeployStatus = (data) => {
       if (data.stage === "modules_notified") {
-        // Sidebar's "Deploy to All Modules" targets modules only — the
-        // controller is updated via its own deliberate action
-        // (handleUpdateController → deploy_update_to_controller), so it is
-        // not swept into this broadcast and gets no row here.
+        // The update modal's "Deploy to modules" targets modules only — the
+        // controller is updated by its own step ("Update controller"), so it
+        // is not swept into this broadcast and gets no row here.
         setDeviceStatuses(prev => {
           const next = { ...prev };
           moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
@@ -633,14 +626,6 @@ export default function System() {
                 <span>Set Time</span>
                 <span className="actions-modal__hint">Manually set the controller clock</span>
               </button>
-              {stagedMeta && (
-                <button type="button" className="actions-modal__item" disabled={!loggedIn}
-                  title={loggedIn ? undefined : "Login required for this action"}
-                  onClick={handleUpdateController}>
-                  <span>Update</span>
-                  <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to the controller only</span>
-                </button>
-              )}
               {controllerBackups.length > 0 && (
                 <button type="button" className="actions-modal__item" disabled={!loggedIn}
                   title={loggedIn ? undefined : "Login required for this action"}

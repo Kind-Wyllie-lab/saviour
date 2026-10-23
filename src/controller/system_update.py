@@ -145,6 +145,32 @@ def git_checkout_info(src_root: str = SRC_ROOT) -> dict:
         return {"available": False, "reason": str(e)}
 
 
+def origin_reachable(src_root: str = SRC_ROOT, timeout: float = 10) -> dict:
+    """Whether `origin` answers right now: `{"reachable": bool, "reason"?}`.
+
+    `git ls-remote` rather than a generic internet probe, since it exercises
+    exactly what a pull needs (DNS, route, and the SSH key / credentials the
+    remote takes); offline rigs fail it fast. BatchMode + ConnectTimeout so SSH
+    never prompts or hangs; the subprocess timeout bounds everything else."""
+    try:
+        r = subprocess.run(
+            _as_owner(src_root, [
+                "git", "-C", src_root,
+                "-c", "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=5",
+                "ls-remote", "--exit-code", "origin", "HEAD"]),
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"reachable": False, "reason": "Timed out reaching origin"}
+    except Exception as e:                                  # noqa: BLE001
+        return {"reachable": False, "reason": str(e)}
+    if r.returncode == 0:
+        return {"reachable": True}
+    err = (r.stderr or "").strip().splitlines()
+    return {"reachable": False,
+            "reason": err[-1] if err else "Could not reach origin"}
+
+
 def fetch(branch: str, src_root: str = SRC_ROOT) -> None:
     """`git fetch --prune origin <branch>`; raises `CalledProcessError`."""
     subprocess.run(

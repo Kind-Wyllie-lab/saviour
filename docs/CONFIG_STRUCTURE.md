@@ -236,7 +236,9 @@ Each overlay has a `*_display` (livestream) and a `*_record` (burned into the
 recorded video) switch: `mask.mask_display`/`mask_record`,
 `shock_zone.shock_zone_display`/`shock_zone_record`, and the tracking marker's
 `object_detection.overlay_display`/`overlay_record`. Tracking always looks only
-inside the mask, whether or not the mask is recorded. Uploaded HEFs live in
+inside the mask, whether or not the mask is recorded. Tracking filters detections into one
+position: `object_detection.smoothing`, `max_jump_frac`, `jump_confirm_frames`
+and `lost_timeout_s` (see `_update_track` in `apa_camera_module.py`). Uploaded HEFs live in
 `/var/lib/saviour/hailo_models/` on the module (`fetch_hef`); bundled ones in
 `/usr/local/src/saviour/hailo_models/`.
 

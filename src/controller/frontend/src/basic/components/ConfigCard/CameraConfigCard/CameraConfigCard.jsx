@@ -1546,18 +1546,49 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     value={detection.threshold ?? 0.55} className="brightness-slider"
                     onChange={e => handleChange(["object_detection", "threshold"], e)} />
                 </div>
-                <div className="form-field">
-                  <label>Coordinate smoothing:</label>
-                  <input type="checkbox"
-                    checked={detection.coordinate_smoothing ?? false}
-                    onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
-                </div>
               </>
               );
             })()}
 
             {trackingMethod !== "off" && (
               <>
+                <div className="config-section-divider" />
+                <div className="sensor-mode-info sensor-mode-info--muted">
+                  Position filtering: the zone test, CSV and overlay all use the
+                  filtered position.
+                </div>
+                <div className="form-field">
+                  <label title="Weight on the previous position each frame: 0 follows every detection, higher is steadier but lags more.">
+                    Smoothing: {Number(detection.smoothing ?? 0.5).toFixed(2)}
+                  </label>
+                  <input type="range" min="0" max="0.95" step="0.05"
+                    value={detection.smoothing ?? 0.5} className="brightness-slider"
+                    onChange={e => handleChange(["object_detection", "smoothing"], e)} />
+                </div>
+                <div className="form-field">
+                  <label title="A detection further than this (fraction of the frame's short side) from the tracked position is treated as a jump.">
+                    Max jump per frame: {Number(detection.max_jump_frac ?? 0.15).toFixed(2)}
+                  </label>
+                  <input type="range" min="0.02" max="1" step="0.01"
+                    value={detection.max_jump_frac ?? 0.15} className="brightness-slider"
+                    onChange={e => handleChange(["object_detection", "max_jump_frac"], e)} />
+                </div>
+                <div className="form-field">
+                  <label title="A jump is only followed once the far detection has been seen this many frames in a row; shorter false positives are ignored.">
+                    Frames to confirm a jump:
+                  </label>
+                  <input type="number" min="1" max="30" step="1"
+                    value={detection.jump_confirm_frames ?? 3}
+                    onChange={e => handleChange(["object_detection", "jump_confirm_frames"], e)} />
+                </div>
+                <div className="form-field">
+                  <label title="With no accepted detection for this long the position is cleared: the overlay disappears and the CSV position/in_zone go blank.">
+                    Lost after (s):
+                  </label>
+                  <input type="number" min="0.05" max="10" step="0.05"
+                    value={detection.lost_timeout_s ?? 0.5}
+                    onChange={e => handleChange(["object_detection", "lost_timeout_s"], e)} />
+                </div>
                 <div className="form-field">
                   <label>Show tracking on livestream:</label>
                   <input type="checkbox"

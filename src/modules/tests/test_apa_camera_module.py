@@ -189,3 +189,75 @@ class TestHefs:
         for bad in ("../x.hef", "x.txt", "", ".hidden.hef"):
             assert "error" in m.fetch_hef("http://c:5000", bad)
         assert not (tmp_path / "u").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Tracking: smoothing, jump rejection, lost timeout
+# --------------------------------------------------------------------------- #
+
+def _det(cx, cy, conf=0.9):
+    from src.modules.hailo_infer import Detection
+    return Detection(0, conf, (cx - 10, cy - 10, 20, 20))
+
+
+def _tracker(at=(100, 100), seen=1.0, **attrs):
+    """A 1000x1000 camera (jump gate 150 px at max_jump_frac 0.15) already
+    tracking at `at`, last seen at `seen`; at=None for no track yet."""
+    base = dict(width=1000, height=1000, _track_pos=at,
+                _track_det=_det(*at) if at else None, _track_seen_t=seen,
+                _jump_cand=None, smoothing=0.5, max_jump_frac=0.15,
+                jump_confirm_frames=3, lost_timeout_s=0.5)
+    base.update(attrs)
+    return _make_apa(**base)
+
+
+class TestTracking:
+    def test_track_starts_once_confirmed(self):
+        m = _tracker(at=None)
+        m._update_track([_det(100, 100)], now=1.0)
+        m._update_track([_det(102, 100)], now=1.03)
+        assert m._track_pos is None             # 2 of 3 frames
+        m._update_track([_det(104, 100)], now=1.06)
+        assert m._track_pos == (104, 100)
+
+    def test_smooths_towards_nearby_detection(self):
+        m = _tracker()
+        m._update_track([_det(140, 100)], now=1.03)
+        assert m._track_pos == (120, 100)
+
+    def test_single_frame_jump_is_ignored(self):
+        m = _tracker()
+        m._update_track([_det(900, 900)], now=1.03)   # false positive, one frame
+        m._update_track([_det(105, 100)], now=1.06)
+        assert m._track_pos == (102.5, 100)
+        assert m._jump_cand is None
+
+    def test_jump_followed_once_confirmed(self):
+        m = _tracker()
+        for i in range(3):
+            m._update_track([_det(900, 900)], now=1.03 + i * 0.03)
+        assert m._track_pos == (900, 900)
+
+    def test_prefers_nearest_candidate_over_most_confident(self):
+        m = _tracker(smoothing=0.0)
+        m._update_track([_det(900, 900, conf=0.95), _det(110, 100, conf=0.6)], now=1.03)
+        assert m._track_pos == (110, 100)
+
+    def test_track_cleared_after_lost_timeout(self):
+        m = _tracker()
+        m._update_track([], now=1.4)
+        assert m._track_pos == (100, 100)       # within the timeout: held
+        m._update_track([], now=1.6)
+        assert m._track_pos is None             # gone, not frozen
+
+    def test_rejected_jumps_dont_keep_the_track_alive(self):
+        m = _tracker(jump_confirm_frames=100)
+        m._update_track([_det(900, 900)], now=1.3)
+        m._update_track([_det(900, 900)], now=1.6)
+        assert m._track_pos is None
+
+    def test_one_frame_false_positive_after_loss_starts_nothing(self):
+        m = _tracker()
+        m._update_track([_det(900, 900)], now=1.6)   # lost, then a blip
+        m._update_track([], now=1.63)
+        assert m._track_pos is None

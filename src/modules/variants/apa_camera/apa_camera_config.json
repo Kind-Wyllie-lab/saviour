@@ -47,12 +47,14 @@
     },
     "object_detection": {
         "enabled": false,
-        "backend": "blob",
-        "model_path": "/usr/share/hailo-models/yolov8n.hef",
+        "backend": "hailo",
+        "model_path": "/usr/local/src/saviour/hailo_models/apa_rats_yolov8_nms.hef",
         "labels": ["rat"],
         "threshold": 0.55,
-        "max_detections": 1,
-        "coordinate_smoothing": false,
+        "smoothing": 0.5,
+        "max_jump_frac": 0.15,
+        "jump_confirm_frames": 3,
+        "lost_timeout_s": 0.5,
         "overlay_display": true,
         "overlay_record": true
     },

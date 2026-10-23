@@ -1,6 +1,6 @@
 # FrameSync: keep the elected server, restart clients after it, don't stop a wedged camera
 
-- **Status:** not started
+- **Status:** built 2026-10-23 (branch `fix/framesync-reconcile`); hardware validation pending
 - **Created:** 2026-10-23
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Hardware gotchas → Camera framesync" (the libcamera client/`stop()` freeze this keeps us away from)
@@ -212,14 +212,36 @@ information Python already has.
    restarting the service" log line, the module back in about 15 s, and no
    watchdog abort. Then `kill -CONT` the server.
 
+## Decisions taken when building it
+
+- Open question 1: yes. With no remembered transmitter, a camera already
+  reporting `server` is kept (the lowest, if several). To stop a client that
+  happens to report first from being elected on a controller start, reconcile
+  waits until every online camera has reported its config, for the first
+  60 s after the controller starts (`_FRAMESYNC_COLD_START_S`). After that, a
+  camera that never reports no longer blocks the others.
+- Open question 2: no settle delay. Validation step 2 decides whether one is
+  needed.
+- Gate is "server's echoed `sync_mode` is `server` and its status isn't
+  `PENDING`", not `SYNCED`. A `FAILED` status can come from an unrelated diff
+  (3606 showed `export.share_password` at 09:30:24).
+- A PENDING config that times out to `FAILED` now re-runs reconcile
+  (`modules.py`), so clients aren't held back by a server that never echoed.
+- Cameras that haven't reported any config are skipped (no push based on an
+  empty config). A missing `sync_mode` counts as `none`.
+- Moving the role means a few seconds with two servers: the new one restarts
+  as server while the old one is still a server, until the old one is demoted
+  to client after the new one confirms. No camera has to start as a client
+  without a server, which is the case that wedges. Role moves are rare now
+  that the election is sticky, and never happen to a recording camera.
+- A client's own fps/sensor-mode edits are now pushed back to the server's
+  values on the next reconcile (before, they were only pinned at a role
+  change).
+
 ## Open questions
 
-1. Is trusting a single self-reported server on cold start acceptable? The
-   alternative keeps the controller fully stateless across restarts, at the
-   cost of one swap whenever the controller restarts on a rig whose server
-   isn't the lowest ID.
-2. Do we need a settle delay after the server's echo? Measure on the rig first
-   (validation step 2).
+1. (Decided above.)
+2. (Decided above; confirm on the rig.)
 3. Should an idle camera that has stopped delivering frames show as "not
    ready" (readiness check) or restart itself, rather than waiting for the next
    config change to trip the guard?

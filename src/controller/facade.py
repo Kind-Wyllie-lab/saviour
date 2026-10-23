@@ -12,12 +12,19 @@ import logging
 import time
 from dataclasses import asdict
 
+from src.controller.modules import ConfigSyncStatus
+
 
 class ControllerFacade:
     def __init__(self, controller):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ControllerAPI...")
         self.controller = controller
+        # FrameSync transmitter this controller elected (sticky; see
+        # reconcile_framesync), and the clients last logged as waiting on it.
+        self._framesync_transmitter: str | None = None
+        self._framesync_waiting: list[str] = []
+        self._started_mono = time.monotonic()
 
 
     """Getter Methods"""
@@ -315,28 +322,43 @@ class ControllerFacade:
             if (module := modules._modules.get(mid)) and "camera" in module.type
         }
 
+    # Before this long after start, reconcile waits for every online camera's
+    # first config: they arrive one by one, and electing on a partial view
+    # could pick a client before the rig's actual server has reported.
+    _FRAMESYNC_COLD_START_S = 60.0
+
     def reconcile_framesync(self) -> dict:
         """Ensure exactly one online, FrameSync-enabled camera is the sync
         transmitter ('server'), every other online enabled camera is a
-        'client' pinned to its fps/sensor_mode_index, and any camera that is
-        no longer enabled (or has gone offline) is corrected to 'none' once
-        reachable.
+        'client' pinned to the transmitter's fps/sensor_mode_index, and any
+        camera that is no longer enabled (or has gone offline) is corrected
+        to 'none' once reachable.
 
-        Deterministic and stateless by design: the elected transmitter is
-        always the lowest module_id among currently online+enabled cameras,
-        recomputed fresh on every call — it never trusts a camera's own
-        self-reported `sync_mode` as an input, only `framesync_enabled`
-        (user intent, stable across reconnects) and liveness. This is what
-        prevents a module that reconnects still locally believing it's the
-        transmitter from ever being treated as one: its stale `sync_mode`
-        is only ever compared against, never read as a vote.
+        Election is sticky: the transmitter this controller elected stays
+        elected while it is online and enabled, so adding, renaming or
+        re-typing a camera never moves the role off a healthy server (on
+        2026-10-23 a re-provisioned camera's new ID sorted first and the swap
+        wedged the other camera). Only when there is no such transmitter
+        (controller start, or it dropped/was disabled) is one elected: the
+        camera already reporting 'server' (the lowest, if several claim it
+        after a reconnect, so there is never a second server), else the
+        lowest module_id.
 
-        Called whenever a camera's config is confirmed (so a toggled
-        checkbox or a reconnecting module's fresh config gets picked up)
-        and whenever any module's online status changes (so a dropped
-        transmitter is replaced promptly rather than waiting on an
-        unrelated config echo). Safe to call redundantly — a no-op once
-        every online camera's sync_mode already matches its target role.
+        Clients are only touched once the transmitter has confirmed
+        'server' (its echoed true_config, not PENDING). A module echoes
+        set_config after its camera restart returns, so this restarts the
+        server first and its clients after; a client that starts while its
+        server is restarting wedges in libcamera 0.5.2. Clients are pinned
+        to the transmitter's *confirmed* fps/sensor_mode_index, so they
+        follow what it actually runs; that also covers a transmitter
+        settings change from the web UI or PATCH /api/v1, which re-enters
+        here on the transmitter's config echo.
+
+        Called whenever a camera's config is confirmed, whenever any module's
+        online status changes, after recording_stopped, and when a camera's
+        config sync times out. Safe to call redundantly: a no-op once every
+        online camera matches its target, and a camera whose PENDING target
+        already holds the wanted values isn't pushed again.
         """
         modules = self.controller.modules
         states = self._camera_config_states()
@@ -348,51 +370,77 @@ class ControllerFacade:
         def camera_cfg(mid: str) -> dict:
             return (states[mid].true_config or {}).get("camera", {})
 
+        if time.monotonic() - self._started_mono < self._FRAMESYNC_COLD_START_S:
+            waiting = sorted(
+                mid for mid, module in modules._modules.items()
+                if "camera" in module.type and module.online
+                and not (mid in states and states[mid].true_config)
+            )
+            if waiting:
+                self.logger.debug(
+                    f"FrameSync reconcile: waiting for first config from {waiting}")
+                return {}
+
         candidates = sorted(
             mid for mid in states
             if online(mid) and camera_cfg(mid).get("framesync_enabled")
         )
-        transmitter_id = candidates[0] if candidates else None
+        claims = [m for m in candidates if camera_cfg(m).get("sync_mode") == "server"]
+        if self._framesync_transmitter in candidates:
+            transmitter_id = self._framesync_transmitter
+        elif claims:
+            transmitter_id = claims[0]
+        else:
+            transmitter_id = candidates[0] if candidates else None
+        if transmitter_id != self._framesync_transmitter:
+            self.logger.info(
+                f"FrameSync transmitter: {self._framesync_transmitter} -> {transmitter_id}")
+            self._framesync_transmitter = transmitter_id
 
-        transmitter_params = None
+        pin = None
         if transmitter_id:
             tcam = camera_cfg(transmitter_id)
-            transmitter_params = {
-                "fps": tcam.get("fps"),
-                "sensor_mode_index": tcam.get("sensor_mode_index"),
-            }
+            if (tcam.get("sync_mode") == "server"
+                    and states[transmitter_id].status != ConfigSyncStatus.PENDING):
+                pin = {k: tcam.get(k) for k in ("fps", "sensor_mode_index")
+                       if tcam.get(k) is not None}
 
         roles = {}
+        waiting_clients = []
         for mid, state in states.items():
-            if not online(mid):
-                continue
+            if not online(mid) or not state.true_config:
+                continue  # nothing to base a push on until it reports
             target_role = (
                 "server" if mid == transmitter_id
                 else "client" if mid in candidates
                 else "none"
             )
             roles[mid] = target_role
-            if camera_cfg(mid).get("sync_mode", "none") == target_role:
+            wanted = {"sync_mode": target_role}
+            if target_role == "client":
+                if pin is None:
+                    if camera_cfg(mid).get("sync_mode") != "client":
+                        waiting_clients.append(mid)
+                    continue
+                wanted.update(pin)
+            current = {"sync_mode": "none", **camera_cfg(mid)}
+            if all(current.get(k) == v for k, v in wanted.items()):
                 continue
+            target_camera = (state.target_config or {}).get("camera", {})
+            if (state.status == ConfigSyncStatus.PENDING
+                    and all(target_camera.get(k) == v for k, v in wanted.items())):
+                continue  # already sent; waiting on the echo
             # A role change restarts the camera, which must never happen
             # mid-recording (it orphans the running encoder).
             # Re-run on recording_stopped (Controller.handle_status_update).
             if self.is_module_recording(mid):
                 self.logger.info(
-                    f"FrameSync reconcile: {mid} should be {target_role} but is "
+                    f"FrameSync reconcile: {mid} should be {wanted} but is "
                     f"recording -- deferred until it stops")
                 continue
 
-            new_camera = dict(camera_cfg(mid))
-            new_camera["sync_mode"] = target_role
-            if target_role == "client" and transmitter_params:
-                if transmitter_params["fps"] is not None:
-                    new_camera["fps"] = transmitter_params["fps"]
-                if transmitter_params["sensor_mode_index"] is not None:
-                    new_camera["sensor_mode_index"] = (
-                        transmitter_params["sensor_mode_index"]
-                    )
-
+            new_camera = dict(current)
+            new_camera.update(wanted)
             new_config = dict(state.true_config or {})
             new_config["camera"] = new_camera
             # true_config carries the module's internal/private (_-prefixed) keys
@@ -402,7 +450,7 @@ class ControllerFacade:
             # unfiltered target_config here would show as a spurious mismatch on
             # every single reconcile push.
             new_config = modules._filter_private_keys(new_config)
-            self.logger.info(f"FrameSync reconcile: {mid} -> sync_mode={target_role}")
+            self.logger.info(f"FrameSync reconcile: {mid} -> {wanted}")
             self.set_target_module_config(mid, new_config)
             # Only send the camera section over the wire, not the full merged
             # new_config: state.true_config is a cache that can go stale for
@@ -414,6 +462,11 @@ class ControllerFacade:
             # share_password on restart).
             self.send_command(mid, "set_config", {"camera": new_config["camera"]})
 
+        if waiting_clients and waiting_clients != self._framesync_waiting:
+            self.logger.info(
+                f"FrameSync reconcile: {waiting_clients} wait for {transmitter_id} "
+                f"to confirm sync_mode=server")
+        self._framesync_waiting = waiting_clients
         return roles
 
     def sync_export_to_module(self, module_id: str) -> dict:

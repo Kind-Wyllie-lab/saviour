@@ -431,7 +431,7 @@ class HabitatCameraModule(CameraBase):
             self._end_crop_editing(restore=True)
 
         if not self.picam2.started:
-            self.picam2.start()
+            self._start_picam()
             time.sleep(0.1)
 
         fps = self.fps or self.config.get("camera.fps", 25)

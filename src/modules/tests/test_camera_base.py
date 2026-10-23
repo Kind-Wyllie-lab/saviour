@@ -1041,3 +1041,72 @@ class TestTimestampPosition:
         b = np.zeros((480, 640, 3), dtype=np.uint8)
         cam._apply_timestamp(b, self.TS)
         assert self._ink(b)[0] > 240
+
+
+# ---------------------------------------------------------------------------
+# Wedged-camera guard: never picam2.stop() a camera that stopped delivering
+# frames (libcamera freezes the interpreter); restart the service instead.
+# ---------------------------------------------------------------------------
+
+class TestWedgedCameraGuard:
+    def _cam(self, started_ago, frame_ago, fps=30, recording=False):
+        now = 1000.0
+        picam2 = MagicMock(started=True)
+        cam = _make_camera(
+            picam2=picam2, fps=fps,
+            _camera_started_mono=None if started_ago is None else now - started_ago,
+            _last_frame_mono=None if frame_ago is None else now - frame_ago,
+            recording=MagicMock(is_recording=recording),
+            monitor_stream=MagicMock(),
+            config=MagicMock(get=lambda k, d=None: d),
+        )
+        # Stop _configure_camera right after the stop/guard step.
+        cam.monitor_stream.clear_frame.side_effect = RuntimeError("past stop")
+        cam._restart_service_for_wedged_camera = MagicMock()
+        return cam, now
+
+    @pytest.mark.parametrize("started_ago, frame_ago, wedged", [
+        (None, None, False),   # never started
+        (1.0, None, False),    # just started, first frame not due yet
+        (10.0, None, True),    # started long ago, no frame ever
+        (10.0, 0.1, False),    # frames flowing
+        (10.0, 5.0, True),     # frames stopped
+        (10.0, 20.0, True),    # last frame is from before this start
+    ])
+    def test_camera_wedged(self, started_ago, frame_ago, wedged):
+        cam, now = self._cam(started_ago, frame_ago)
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            assert cam._camera_wedged() is wedged
+
+    def test_slow_fps_gets_a_longer_window(self):
+        cam, now = self._cam(started_ago=10.0, frame_ago=5.0, fps=1)
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            assert cam._camera_wedged() is False  # 10 s window at 1 fps
+
+    def test_wedged_camera_restarts_service_instead_of_stop(self):
+        cam, now = self._cam(started_ago=10.0, frame_ago=None)
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            cam._configure_camera()
+        cam.picam2.stop.assert_not_called()
+        cam._restart_service_for_wedged_camera.assert_called_once()
+
+    def test_healthy_camera_is_stopped(self):
+        cam, now = self._cam(started_ago=10.0, frame_ago=0.1)
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            cam._configure_camera()
+        cam.picam2.stop.assert_called_once()
+        cam._restart_service_for_wedged_camera.assert_not_called()
+
+    def test_recording_camera_is_never_exited(self):
+        cam, now = self._cam(started_ago=10.0, frame_ago=None, recording=True)
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            cam._configure_camera()
+        cam.picam2.stop.assert_called_once()
+        cam._restart_service_for_wedged_camera.assert_not_called()
+
+    def test_start_picam_stamps_start_time(self):
+        cam = _make_camera(picam2=MagicMock())
+        with patch("src.modules.camera_base.time.monotonic", return_value=42.0):
+            cam._start_picam()
+        cam.picam2.start.assert_called_once()
+        assert cam._camera_started_mono == 42.0

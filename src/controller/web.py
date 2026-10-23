@@ -2218,41 +2218,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 f"with data {config}"
             )
 
-            # FrameSync role (sync_mode) is no longer set directly by the operator —
-            # it's derived by facade.reconcile_framesync() from every camera's
-            # framesync_enabled flag once this save is confirmed (modules.py calls
-            # it from received_module_config()). If this module currently *is* the
-            # elected transmitter, still propagate any fps/sensor_mode_index change
-            # in this save to its clients immediately, so they stay pinned even when
-            # the transmitter's own settings change after election, not just at it.
-            camera_section = config.get("camera", {})
-            module_configs = self.facade.get_module_configs()
-            current_state = module_configs.get(module_id) or {}
-            current_true = current_state.get("true_config") or {}
-            if current_true.get("camera", {}).get("sync_mode") == "server":
-                fps = camera_section.get("fps")
-                sensor_mode_index = camera_section.get("sensor_mode_index")
-                if fps is not None or sensor_mode_index is not None:
-                    all_configs = self.facade.get_module_configs()
-                    for client_id, client_cfg in all_configs.items():
-                        if client_id == module_id:
-                            continue
-                        client_true = dict((client_cfg or {}).get("true_config") or {})
-                        if client_true.get("camera", {}).get("sync_mode") != "client":
-                            continue
-                        client_camera = dict(client_true.get("camera", {}))
-                        if fps is not None:
-                            client_camera["fps"] = fps
-                        if sensor_mode_index is not None:
-                            client_camera["sensor_mode_index"] = sensor_mode_index
-                        client_true["camera"] = client_camera
-                        self.logger.info(
-                            "Propagating server fps/sensor_mode_index to "
-                            f"sync client {client_id}"
-                        )
-                        self.facade.set_target_module_config(client_id, client_true)
-                        self.facade.send_command(client_id, "set_config", client_true)
-
+            # FrameSync role (sync_mode) is not set by the operator: it's derived
+            # by facade.reconcile_framesync() from every camera's
+            # framesync_enabled flag once this save is confirmed (modules.py
+            # calls it from received_module_config()). That is also where a
+            # transmitter's fps/sensor_mode_index change reaches its clients:
+            # after the transmitter's echo, so the server restarts before them.
             # Record intent on controller before sending - this sets status to PENDING
             # and stores the target so we can verify the round-trip when the module responds
             self.facade.set_target_module_config(module_id, config)

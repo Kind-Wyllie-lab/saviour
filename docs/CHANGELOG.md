@@ -11,6 +11,14 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-23
+
+- [x] **FrameSync: sticky server election, server-before-client restarts, no `stop()` on a wedged camera** (branch `fix/framesync-reconcile` → `staging`; plan `plans/framesync-sticky-election-and-ordered-restarts.md`). From the APA rig's `camera_0fcc` watchdog restart at 09:31:13.
+  - **Cause:** `3606` was re-provisioned as `apa_camera_3606`. `reconcile_framesync()` elected the lowest module_id from scratch, and the new ID sorted before `camera_0fcc`, so the role moved: 3606 became server and 0fcc client, with both restarting in the same second. 0fcc started as a client while its server was restarting and wedged (`Camera frontend has timed out!`). An operator then saved 3606's settings, and `web.py` copied the sensor mode to 0fcc immediately. 0fcc's `picam2.stop()` froze the interpreter with the GIL held (no keep-alive after 09:30:13), so only the watchdog got it back (~58 s without a camera). Not recording, so no data lost.
+  - **Controller (`facade.py`):** the elected transmitter is remembered and kept while it's online and enabled. Otherwise reconcile elects the camera already reporting `server` (lowest of several), else the lowest ID. On a controller start it waits up to 60 s for every online camera's first config. Clients are changed only after the transmitter's echo says `server` and it isn't `PENDING`, and they're pinned to its echoed fps/sensor mode, re-checked on every echo, not only at a role change. A `PENDING` push with the same values isn't re-sent. `web.py` no longer pushes server settings to clients itself (that also sent a client's whole cached config). REST `PATCH` on the server now reaches clients the same way. A camera config timing out to `FAILED` re-runs reconcile.
+  - **Module (`camera_base.py`):** `_start_picam()` stamps the start time (all three start sites, habitat included), and frames stamp a monotonic time. `_configure_camera()` skips `stop()` on a camera that has delivered no frame for `max(3 s, 10 frames)` since its start, logs why and exits, and systemd restarts it in ~13 s. Never while recording.
+  - Tests: 13 new reconcile tests (sticky, cold start, ordering, pinning, dedupe, recording), 3 updated; web save test now asserts the save goes to the transmitter alone; 11 wedge-guard tests. Not yet validated on hardware: see the plan's validation steps.
+
 ## 2026-10-21
 
 - [x] **Offline APA rat tracking and tracker assessment** (branch `feat/apa-track` → `staging`), from the 2026-10-20 "rats not reacting to 0.2 mA" report. Tools only; nothing on the rig changes.

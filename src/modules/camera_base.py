@@ -20,6 +20,7 @@ import collections
 import csv
 import datetime
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -177,6 +178,10 @@ class CameraBase(Module):
         # hooks), so this is a reliable proxy for "is libcamera still
         # delivering frames at all" for every camera variant.
         self._last_frame_wall_time = None
+        # Monotonic twins for _camera_wedged(): PTP can step the wall clock
+        # at startup, which would fake a long silence.
+        self._last_frame_mono = None
+        self._camera_started_mono = None
 
         # Rolling capture-cadence window: (monotonic_s, delta_ms, dropped_before)
         # appended every frame with a numeric inter-frame delta by
@@ -752,12 +757,53 @@ class CameraBase(Module):
         except Exception as e:
             self.logger.warning(f"CSV flush error: {e}")
 
+    def _start_picam(self) -> None:
+        """picam2.start(), stamping the time for _camera_wedged()."""
+        self.picam2.start()
+        self._camera_started_mono = time.monotonic()
+
+    def _camera_wedged(self) -> bool:
+        """True when the started camera has delivered no frame for _WEDGE_S
+        (or none at all since a start at least that long ago).
+
+        libcamera 0.5.2 wedges a FrameSync client that starts while its server
+        is down or restarting (`Camera frontend has timed out!`), and a later
+        picam2.stop() then freezes the interpreter with the GIL held, so
+        nothing but the systemd watchdog gets it back (camera_0fcc,
+        2026-10-23). The timeout message only reaches libcamera's stderr, so
+        missing frames are the signal."""
+        started = getattr(self, "_camera_started_mono", None)
+        if started is None:
+            return False
+        now = time.monotonic()
+        wedge_s = max(3.0, 10.0 / max(float(self.fps or 1), 0.1))
+        if now - started < wedge_s:
+            return False
+        last = getattr(self, "_last_frame_mono", None)
+        return last is None or last < started or now - last > wedge_s
+
+    def _restart_service_for_wedged_camera(self) -> None:
+        """Exit so systemd (Restart=always, RestartSec=10) restarts the
+        service: ~13 s back, against ~60 s for the watchdog after a frozen
+        stop(). The new config was saved before configure_module() ran, so
+        the module comes back with it."""
+        self.logger.error(
+            "Camera has delivered no frames since its last start (libcamera "
+            "wedged, e.g. a FrameSync client whose server was restarting) -- "
+            "restarting the service instead of stopping the camera, which "
+            "would freeze")
+        logging.shutdown()
+        os._exit(1)
+
     def _configure_camera(self):
         """Configure the camera with current settings — shared by every camera variant."""
         try:
             self.logger.info("Configure camera called")
 
             if self.picam2.started:
+                if self._camera_wedged() and not self._recording_active():
+                    self._restart_service_for_wedged_camera()
+                    return
                 self.picam2.stop()
 
             # Clear stale frame so reconnecting clients wait for fresh data
@@ -1099,7 +1145,7 @@ class CameraBase(Module):
             self.facade.add_session_file(filename)
 
             if not self.picam2.started:
-                self.picam2.start()
+                self._start_picam()
                 time.sleep(0.1)
 
             self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts"))
@@ -1540,6 +1586,7 @@ class CameraBase(Module):
     def _frame_precallback(self, req) -> None:
         try:
             self._last_frame_wall_time = time.time()
+            self._last_frame_mono = time.monotonic()
 
             # Single metadata fetch — reused for timestamp, CSV fields, and overlays.
             meta = req.get_metadata()
@@ -1846,7 +1893,7 @@ class CameraBase(Module):
             self.logger.info(f"Starting streaming from {self.network.ip}:{port}")
 
             if not self.picam2.started:
-                self.picam2.start()
+                self._start_picam()
                 time.sleep(0.1)
 
             self.is_streaming = self.monitor_stream.start(port)

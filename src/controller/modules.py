@@ -772,6 +772,12 @@ class Modules:
                         timed_out.append(module_id)
             if timed_out:
                 self.broadcast_updated_modules()
+                # A timed-out FrameSync transmitter no longer holds its
+                # clients back (they pin to what it last confirmed).
+                if self.facade and any(
+                        "camera" in getattr(self._modules.get(m), "type", "")
+                        for m in timed_out):
+                    self.facade.reconcile_framesync()
             time.sleep(5)
 
 

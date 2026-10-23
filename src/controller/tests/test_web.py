@@ -942,8 +942,8 @@ class TestCheckReady:
 
 class TestSaveModuleConfig:
     """save_module_config: blocked while the target module is recording,
-    and propagates the transmitter's fps/sensor_mode_index to its FrameSync
-    clients when saving the currently-elected transmitter's own config."""
+    and sent to the saved module only (FrameSync clients follow via
+    reconcile_framesync)."""
 
     def test_blocked_while_module_is_recording(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -981,14 +981,16 @@ class TestSaveModuleConfig:
                 "camera_a", "set_config", {"camera": {"framesync_enabled": True}}
             )
 
-    def test_saving_current_transmitter_propagates_fps_to_clients(self):
+    def test_saving_current_transmitter_goes_to_it_alone(self):
+        """Clients follow a transmitter's fps/sensor_mode_index change via
+        reconcile_framesync() after its echo, never straight from the save
+        (that restarted both at once, 2026-10-23)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             web, facade = _make_web_with_facade()
             facade.is_module_recording.return_value = False
             facade.get_module_configs.return_value = {
                 "camera_a": {"true_config": {"camera": {"sync_mode": "server", "fps": 30}}},
                 "camera_b": {"true_config": {"camera": {"sync_mode": "client", "fps": 30}}},
-                "camera_c": {"true_config": {"camera": {"sync_mode": "none", "fps": 30}}},
             }
             client = _connected_client(web)
             _login(web, client, tmpdir)
@@ -997,15 +999,7 @@ class TestSaveModuleConfig:
                 "id": "camera_a", "config": {"camera": {"fps": 60, "sensor_mode_index": 3}}
             })
 
-            propagate_calls = [
-                c for c in facade.send_command.call_args_list if c.args[0] == "camera_b"
-            ]
-            assert len(propagate_calls) == 1
-            pushed_config = propagate_calls[0].args[2]
-            assert pushed_config["camera"]["fps"] == 60
-            assert pushed_config["camera"]["sensor_mode_index"] == 3
-            # camera_c is not a client -- must not receive a propagated push
-            assert not any(c.args[0] == "camera_c" for c in facade.send_command.call_args_list)
+            assert [c.args[0] for c in facade.send_command.call_args_list] == ["camera_a"]
 
     def test_saving_a_non_transmitter_does_not_propagate(self):
         with tempfile.TemporaryDirectory() as tmpdir:

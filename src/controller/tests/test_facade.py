@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from src.controller.facade import ControllerFacade
 from src.controller.models import Module
-from src.controller.modules import ModuleConfigState, Modules
+from src.controller.modules import ConfigSyncStatus, ModuleConfigState, Modules
 
 MockController = {}
 
@@ -80,6 +80,21 @@ def _add_camera(
     })
 
 
+def _pushed(controller) -> dict:
+    """{module_id: pushed sync_mode} from every set_config sent."""
+    return {
+        call.args[0]: call.args[2]["camera"]["sync_mode"]
+        for call in controller.communication.send_command.call_args_list
+    }
+
+
+def _confirm(modules, module_id, **camera):
+    """Simulate the module echoing an applied camera config."""
+    state = modules._config_states[module_id]
+    state.true_config["camera"].update(camera)
+    state.status = ConfigSyncStatus.SYNCED
+
+
 class TestReconcileFramesync:
     def test_no_enabled_cameras_is_a_no_op(self):
         facade, modules, controller = _make_facade_with_modules()
@@ -100,28 +115,27 @@ class TestReconcileFramesync:
         roles = facade.reconcile_framesync()
 
         assert roles == {"camera_a": "server", "camera_b": "client", "camera_c": "client"}
-        assert controller.communication.send_command.call_count == 3
-        pushed = {
-            call.args[0]: call.args[2]
-            for call in controller.communication.send_command.call_args_list
-        }
-        assert pushed["camera_a"]["camera"]["sync_mode"] == "server"
-        assert pushed["camera_b"]["camera"]["sync_mode"] == "client"
-        assert pushed["camera_c"]["camera"]["sync_mode"] == "client"
+        # Server first; the clients wait for its echo.
+        assert _pushed(controller) == {"camera_a": "server"}
+
+        _confirm(modules, "camera_a", sync_mode="server")
+        controller.communication.send_command.reset_mock()
+        facade.reconcile_framesync()
+
+        assert _pushed(controller) == {"camera_b": "client", "camera_c": "client"}
 
     def test_clients_pinned_to_transmitter_fps_and_sensor_mode(self):
         facade, modules, controller = _make_facade_with_modules()
-        _add_camera(modules, "camera_a", framesync_enabled=True, fps=60, sensor_mode_index=3)
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server",
+                    fps=60, sensor_mode_index=3)
         _add_camera(modules, "camera_b", framesync_enabled=True, fps=25, sensor_mode_index=0)
 
         facade.reconcile_framesync()
 
-        pushed = {
-            call.args[0]: call.args[2]
-            for call in controller.communication.send_command.call_args_list
-        }
-        assert pushed["camera_b"]["camera"]["fps"] == 60
-        assert pushed["camera_b"]["camera"]["sensor_mode_index"] == 3
+        pushed = controller.communication.send_command.call_args.args
+        assert pushed[0] == "camera_b"
+        assert pushed[2]["camera"]["fps"] == 60
+        assert pushed[2]["camera"]["sensor_mode_index"] == 3
 
     def test_disabled_camera_with_stale_server_role_is_corrected_to_none(self):
         """A camera that was previously the transmitter but has since been
@@ -146,32 +160,17 @@ class TestReconcileFramesync:
         controller.communication.send_command.assert_not_called()
 
     def test_reconnecting_module_with_stale_self_reported_server_is_demoted(self):
-        """The core dual-transmitter-avoidance property: a camera that still
-        locally believes it's the transmitter (stale sync_mode='server' from
-        before it dropped) must never be trusted as a vote — a legitimately
-        lower-ID candidate is elected instead, and the stale one gets
-        corrected to 'client', not left as a second 'server'."""
+        """Never two servers: when two cameras both report 'server' (one
+        stale from before it dropped) and there's no remembered transmitter,
+        the lowest keeps the role and the other is corrected to 'client'."""
         facade, modules, controller = _make_facade_with_modules()
-        # camera_a is back online and *should* be elected (lowest ID), but
-        # hasn't been told yet -- its own config still says "none".
-        _add_camera(modules, "camera_a", online=True, framesync_enabled=True, sync_mode="none")
-        # camera_z never went through reconciliation and still self-reports
-        # as the transmitter from a previous election.
+        _add_camera(modules, "camera_a", online=True, framesync_enabled=True, sync_mode="server")
         _add_camera(modules, "camera_z", online=True, framesync_enabled=True, sync_mode="server")
 
         roles = facade.reconcile_framesync()
 
-        assert roles["camera_a"] == "server"
-        assert roles["camera_z"] == "client"
-        pushed = {
-            call.args[0]: call.args[2]
-            for call in controller.communication.send_command.call_args_list
-        }
-        assert pushed["camera_z"]["camera"]["sync_mode"] == "client"
-        assert "camera_a" not in pushed or pushed["camera_a"]["camera"]["sync_mode"] == "server"
-        # Never both "server" at once.
-        pushed_roles = [cfg["camera"]["sync_mode"] for cfg in pushed.values()]
-        assert pushed_roles.count("server") <= 1
+        assert roles == {"camera_a": "server", "camera_z": "client"}
+        assert _pushed(controller) == {"camera_z": "client"}
 
     def test_pushed_config_strips_private_keys(self):
         """A module's true_config carries its internal/private (_-prefixed)
@@ -258,3 +257,152 @@ class TestReconcileSkipsRecordingCameras:
                     sync_mode="server")
         facade.reconcile_framesync()
         controller.communication.send_command.assert_called_once()
+
+
+class TestFramesyncStickyElection:
+    """2026-10-23: a re-provisioned camera's new ID sorted first, the role
+    moved, both cameras restarted at once and the client wedged."""
+
+    def test_new_lower_id_camera_does_not_take_the_role(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_0fcc", framesync_enabled=True, sync_mode="server")
+        facade.reconcile_framesync()
+        _add_camera(modules, "apa_camera_3606", framesync_enabled=True, sync_mode="none")
+
+        roles = facade.reconcile_framesync()
+
+        assert roles == {"camera_0fcc": "server", "apa_camera_3606": "client"}
+        assert _pushed(controller) == {"apa_camera_3606": "client"}
+
+    def test_remembered_transmitter_kept_over_lowest_id(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_b", framesync_enabled=True)
+        facade.reconcile_framesync()           # camera_b elected (only one)
+        _add_camera(modules, "camera_a", framesync_enabled=True)
+
+        roles = facade.reconcile_framesync()
+
+        assert roles["camera_b"] == "server"
+        assert roles["camera_a"] == "client"
+
+    def test_transmitter_offline_reelects(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server")
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
+        _add_camera(modules, "camera_c", framesync_enabled=True, sync_mode="client")
+        facade.reconcile_framesync()
+        modules._modules["camera_a"].online = False
+
+        roles = facade.reconcile_framesync()
+
+        assert roles == {"camera_b": "server", "camera_c": "client"}
+        assert _pushed(controller) == {"camera_b": "server"}
+
+    def test_transmitter_disabled_reelects(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server")
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
+        facade.reconcile_framesync()
+        modules._config_states["camera_a"].true_config["camera"]["framesync_enabled"] = False
+
+        roles = facade.reconcile_framesync()
+
+        assert roles == {"camera_a": "none", "camera_b": "server"}
+
+    def test_cold_start_keeps_single_claim_over_lowest_id(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="client")
+        _add_camera(modules, "camera_z", framesync_enabled=True, sync_mode="server")
+
+        roles = facade.reconcile_framesync()
+
+        assert roles == {"camera_a": "client", "camera_z": "server"}
+        controller.communication.send_command.assert_not_called()
+
+    def test_cold_start_waits_for_every_online_camera_config(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="client")
+        modules.add_module(Module(id="camera_z", name="camera_z", type="camera",
+                                  version="1.0", ip="10.0.0.3", online=True))
+
+        assert facade.reconcile_framesync() == {}
+        controller.communication.send_command.assert_not_called()
+
+    def test_after_cold_start_window_a_silent_camera_no_longer_blocks(self):
+        facade, modules, controller = _make_facade_with_modules()
+        facade._started_mono -= facade._FRAMESYNC_COLD_START_S + 1
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="none")
+        modules.add_module(Module(id="camera_z", name="camera_z", type="camera",
+                                  version="1.0", ip="10.0.0.3", online=True))
+
+        assert facade.reconcile_framesync() == {"camera_a": "server"}
+
+
+class TestFramesyncOrderedRestarts:
+    def test_clients_wait_while_server_pending(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server")
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="none")
+        modules._config_states["camera_a"].status = ConfigSyncStatus.PENDING
+
+        facade.reconcile_framesync()
+
+        controller.communication.send_command.assert_not_called()
+
+    def test_failed_server_still_releases_clients(self):
+        """FAILED can be an unrelated diff (export.share_password on the
+        APA rig): what matters is the echoed sync_mode."""
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server")
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="none")
+        modules._config_states["camera_a"].status = ConfigSyncStatus.FAILED
+
+        facade.reconcile_framesync()
+
+        assert _pushed(controller) == {"camera_b": "client"}
+
+    def test_server_fps_change_repins_client_after_echo(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server", fps=30)
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client", fps=30)
+        facade.reconcile_framesync()
+        controller.communication.send_command.assert_not_called()
+
+        _confirm(modules, "camera_a", fps=60, sensor_mode_index=2)
+        facade.reconcile_framesync()
+
+        args = controller.communication.send_command.call_args.args
+        assert args[0] == "camera_b"
+        assert args[2]["camera"]["fps"] == 60
+        assert args[2]["camera"]["sensor_mode_index"] == 2
+        assert args[2]["camera"]["sync_mode"] == "client"
+
+    def test_matching_client_not_pushed(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server",
+                    fps=30, sensor_mode_index=1)
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client",
+                    fps=30, sensor_mode_index=1)
+
+        facade.reconcile_framesync()
+
+        controller.communication.send_command.assert_not_called()
+
+    def test_pending_push_not_resent(self):
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="none")
+        facade.reconcile_framesync()
+        facade.reconcile_framesync()   # another echo arrives before camera_a's
+
+        assert controller.communication.send_command.call_count == 1
+
+    def test_recording_client_deferred(self):
+        from src.controller.modules import ModuleStatus
+        facade, modules, controller = _make_facade_with_modules()
+        _add_camera(modules, "camera_a", framesync_enabled=True, sync_mode="server", fps=60)
+        _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client", fps=30)
+        modules._modules["camera_b"].status = ModuleStatus.RECORDING
+
+        facade.reconcile_framesync()
+
+        controller.communication.send_command.assert_not_called()

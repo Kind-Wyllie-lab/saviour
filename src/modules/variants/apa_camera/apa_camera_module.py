@@ -718,8 +718,13 @@ class APACameraModule(CameraBase):
             cv2.circle(m.array, (draw_cx, draw_cy), 5, color, -1)
 
             if in_zone:
-                cv2.putText(m.array, "IN SHOCK ZONE", (50, 100),
-                            cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 0, 255), 4, cv2.LINE_AA)
+                # Scaled to the frame (a fixed 2.0 filled the 640 px preview),
+                # bottom-left: the other overlays use the top and bottom-centre.
+                scale = max(0.4, fh * 0.001)
+                margin = max(6, int(fh * 0.02))
+                cv2.putText(m.array, "IN SHOCK ZONE", (margin, fh - margin),
+                            cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 255),
+                            max(1, round(scale * 2)), cv2.LINE_AA)
 
             lbl = (f"{self._labels[det.category]}" if det.category < len(self._labels)
                    else f"cls{det.category}")

@@ -27,13 +27,18 @@
 
 /* Rendered inline (no portal), so reset wrapping — the System page mounts the
    menu inside a `.system-table td`, whose `white-space: nowrap` would
-   otherwise push the hint text past the card edge. */
-.actions-modal {
-  min-width: 300px;
-  max-width: 380px;
+   otherwise push the hint text past the card edge. The follow-on confirm
+   modals mount in the same cell, so they need the same reset. */
+.actions-modal,
+.actions-confirm-modal {
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: left;
+}
+
+.actions-modal {
+  min-width: 300px;
+  max-width: 380px;
 }
 
 .actions-modal__title {

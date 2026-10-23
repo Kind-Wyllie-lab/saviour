@@ -196,7 +196,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
       {mendTarget && (
         <div className="modal-overlay" onClick={() => setMendTarget(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Run mend on <strong>{name}</strong>?</p>
             <p className="modal-subtext">Rebuilds dependencies, regenerates the service file, and restarts the service. Takes a few minutes; the module will briefly go offline then reconnect automatically.</p>
             <div className="modal-buttons">
@@ -209,7 +209,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
       {restartTarget && (
         <div className="modal-overlay" onClick={() => setRestartTarget(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Restart service on <strong>{name}</strong>?</p>
             <p className="modal-subtext">The saviour service will restart. The module will briefly go offline then reconnect automatically.</p>
             <div className="modal-buttons">
@@ -222,7 +222,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
       {rebootTarget && (
         <div className="modal-overlay" onClick={() => setRebootTarget(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Reboot <strong>{name}</strong>?</p>
             <p className="modal-subtext">The module will reboot and reconnect automatically. Any active recording will be interrupted.</p>
             <div className="modal-buttons">
@@ -235,7 +235,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
       {shutdownTarget && (
         <div className="modal-overlay" onClick={() => setShutdownTarget(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Shut down <strong>{name}</strong>?</p>
             <p className="modal-subtext">
               The module will power off. It will be re-added automatically when it comes back online.
@@ -250,7 +250,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
       {removeTarget && (
         <div className="modal-overlay" onClick={() => setRemoveTarget(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Remove <strong>{name}</strong> from tracking?</p>
             <p className="modal-subtext">
               This module is offline and will be removed from the system. If it comes back online it will be re-added automatically.

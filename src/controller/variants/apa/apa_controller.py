@@ -66,7 +66,7 @@ class APAController(Controller):
             auto.stop_all()
 
     def handle_special_command(self, module_id, command, params) -> bool:
-        """Manual shocks from the dashboard pass the mode gate. Stops always go through."""
+        """Manual shocks from the dashboard only in manual mode. Stops always go through."""
         if command == "activate_shock" and not self.shock_automation.manual_allowed():
             self.shock_automation.refuse_manual()
             return True

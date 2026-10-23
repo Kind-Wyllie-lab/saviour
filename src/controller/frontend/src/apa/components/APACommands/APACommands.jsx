@@ -10,8 +10,8 @@ import "./APACommands.css";
 // arrives as apa_shock_state, so every tab and both mounted copies (the
 // fullscreen overlay mounts a second one) show the same mode. It's mirrored
 // in this module-level store because the spacebar listeners are bound once.
-// The controller also refuses manual shocks while disarmed, so this copy is
-// only for the UI.
+// The controller also refuses manual shocks outside manual mode, so this copy
+// is only for the UI.
 const MODES = [
     { id: "disarmed", label: "Disarmed" },
     { id: "manual",   label: "Manual" },
@@ -22,7 +22,8 @@ let sharedMode = "disarmed";
 const modeSubscribers = new Set();
 const subscribeMode = (fn) => { modeSubscribers.add(fn); return () => modeSubscribers.delete(fn); };
 const getMode = () => sharedMode;
-const getArmed = () => sharedMode !== "disarmed";
+// Spacebar / hold-to-shock: manual mode only (the controller enforces it too).
+const getManual = () => sharedMode === "manual";
 function setSharedMode(next) {
     if (sharedMode === next) return;
     sharedMode = next;
@@ -93,7 +94,7 @@ function APACommands( {modules} ) {
     const notAllowed = !loggedIn ? "Login required for this action"
         : !moduleOnline ? "APA Arduino module offline" : null;
     const holdReason = notAllowed
-        ?? (!shockerArmed ? "Select a shock mode first"
+        ?? (mode !== "manual" ? "Manual shocks only in Manual mode"
             : capReached ? "Shock limit reached: reset the counter between sessions" : null);
     const startReason = notAllowed ?? (live?.rotating ? "Table already rotating" : null);
     const resetReason = notAllowed
@@ -124,8 +125,8 @@ function APACommands( {modules} ) {
         function onShockState(data) {
             setShockState(data);
             setSharedMode(data.mode);
-            // Disarmed elsewhere (another tab, Stop all, session end): end a hold.
-            if (data.mode === "disarmed") releaseShock();
+            // Left manual elsewhere (another tab, Stop all, session end): end a hold.
+            if (data.mode !== "manual") releaseShock();
         }
         function requestShockState() { socket.emit("get_apa_shock_state"); }
 
@@ -173,7 +174,7 @@ function APACommands( {modules} ) {
 
     const pressShock = () => {
         // Same rule as the button: no new hold once the cap is reached.
-        if (shockHold.holding || !getArmed() || capReachedRef.current) return;
+        if (shockHold.holding || !getManual() || capReachedRef.current) return;
         setHolding(true);
         activateShock();
         shockHold.refresh = setInterval(activateShock, SHOCK_REFRESH_MS);
@@ -190,7 +191,7 @@ function APACommands( {modules} ) {
     };
 
     const setMode = (next) => {
-        if (next === "disarmed") releaseShock();
+        if (next !== "manual") releaseShock();
         socket.emit("set_shock_mode", { mode: next });
     };
 
@@ -203,7 +204,7 @@ function APACommands( {modules} ) {
     useEffect(() => {
         const handleKeyDown = (event) => {
             if (event.code === "Escape") { stopAll(); return; }
-            if (event.code !== "Space" || !getArmed() || isTextEntry(event.target)) return;
+            if (event.code !== "Space" || !getManual() || isTextEntry(event.target)) return;
             // Stop space scrolling the page or clicking a focused button
             // (e.g. toggling Disarm, or Start Motor) while it is the shock key.
             event.preventDefault();
@@ -247,8 +248,8 @@ function APACommands( {modules} ) {
             {shockerArmed && (
                 <div className="apa-armed-notice" role="status">
                     {mode === "manual" && "ARMED (manual): Spacebar delivers shock"}
-                    {mode === "auto" && "ARMED (auto): shocks the rat in the zone; Spacebar also shocks"}
-                    {mode === "dry_run" && "DRY RUN: logs would-be shocks, delivers none; Spacebar still shocks"}
+                    {mode === "auto" && "ARMED (auto): shocks the rat in the zone"}
+                    {mode === "dry_run" && "DRY RUN: logs would-be shocks, delivers none"}
                 </div>
             )}
             {(mode === "auto" || mode === "dry_run") && shockState && (

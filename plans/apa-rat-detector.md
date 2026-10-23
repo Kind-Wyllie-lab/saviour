@@ -196,8 +196,9 @@ actuator (pulse loop while the 1 s lease is refreshed, per-session cap).
     after every controller restart: never persisted). It goes back to disarmed
     when the last recording session ends, and on Stop all.
   - Manual shocks (the dashboard's `send_command activate_shock`) go through
-    `Web.handle_special_command`. They're refused (and logged, at most once a
-    second) while disarmed, and allowed in every other mode, auto included.
+    `Web.handle_special_command`. They're allowed only in `manual` mode, and
+    refused (and logged, at most once a second) otherwise. auto and dry_run
+    belong to the automation alone.
     `deactivate_shock` always passes. `/facade/send_command` is the
     deliberate escape hatch and isn't gated.
   - auto / dry_run: in zone for `apa.auto_shock.entry_latency_s` (0.5 s)
@@ -238,7 +239,8 @@ hood detector to agree; an exactly-one-box rule.
 
 ### Open questions (protocol decisions for the researchers)
 
-- Spacebar in `auto`: built as allowed (placeholder).
+- Spacebar in `auto` / `dry_run`: refused, manual shocks only in `manual`
+  (decided 2026-10-23).
 - Minimum time in zone (0.5 s), shock on/off (the module's 0.5 s / 1 s), and
   per-minute / per-session caps (20 / 50): placeholders until the
   researchers decide.

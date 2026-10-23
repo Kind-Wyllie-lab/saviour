@@ -11,6 +11,12 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-23
+
+- [x] **`ERROR: Failed to build 'file:///usr/local/src/saviour' when installing build dependencies` on every module update** (branch `fix/offline-update-dep-check` → `staging`). Seen in every update in a camera module's journal since 2026-10-12.
+  - **Cause:** both update paths (`Module` `update_saviour`, controller `system_update.build_and_restart`) ran `pip install --no-index <src>/`. pip's build isolation has to download the build requirements (`hatchling`, `setuptools>=80`, `setuptools_scm`), and `--no-index` forbids that, so the install failed every time. It couldn't have helped anyway: with no index pip can't install a new dependency. Had it succeeded, a non-editable install would also have replaced the editable one.
+  - **Fix:** `src/shared/dep_check.py` reads `[project].dependencies` and checks them against installed metadata (versions too when `packaging` is importable). Both paths log the exact missing packages instead of a generic pip failure. No build, network or git needed. Also removed `hatchling` and the dead `[tool.hatch.*]` sections from `pyproject.toml`. `mend.sh`'s offline `pip install -e .` still fails (backlog). Tests: `src/tests/test_dep_check.py` (6). Not yet run on hardware.
+
 ## 2026-10-21
 
 - [x] **Offline APA rat tracking and tracker assessment** (branch `feat/apa-track` → `staging`), from the 2026-10-20 "rats not reacting to 0.2 mA" report. Tools only; nothing on the rig changes.

@@ -61,6 +61,7 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.recording import Recording
 from src.shared import sd_watchdog
+from src.shared.dep_check import missing_dependencies
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -412,16 +413,17 @@ class Module(ABC):
                     f"{INSTALL_DIR}/",
                 ], check=True)
 
-                # pip install is best-effort — modules are offline.
-                pip_result = subprocess.run([
-                    f"{INSTALL_DIR}/env/bin/pip", "install", "-q",
-                    "--no-index",
-                    f"{INSTALL_DIR}/",
-                ])
-                if pip_result.returncode != 0:
+                # Modules are offline, so new deps can't be installed here;
+                # name any the update needs for a manual online install.
+                try:
+                    missing = missing_dependencies(INSTALL_DIR)
+                except Exception as e:
+                    self.logger.warning(f"Dependency check failed: {e}")
+                    missing = []
+                if missing:
                     self.logger.warning(
-                        "pip install --no-index failed; new dependencies (if any) "
-                        "will need a manual install with internet access"
+                        "Update needs Python packages that aren't installed "
+                        f"(install with internet access): {', '.join(missing)}"
                     )
 
                 self.logger.info("Update applied — restarting module service")

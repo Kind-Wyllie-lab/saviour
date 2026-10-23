@@ -183,7 +183,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Export deletes the local copy with no content check; no per-file hashes → `plans/recording-file-hashing.md`.
 - A file whose export was interrupted (left `PENDING_<name>` in `to_export/`) is re-exported to a `PENDING_<session>` folder on the share; found in the test D fast run → `plans/backlog.md`.
 - `_check_ptp_health` restart-loop fix owes a 24 h habitat validation (roadmap A8).
-- `pyproject.toml`: `hatchling` in build-requires breaks offline `pip install -e .` on modules; also `requires-python`/mypy say 3.8, `pytest` is a runtime dep.
+- `pyproject.toml`: build isolation still breaks offline `pip install -e .` in `mend.sh` (the update paths no longer run pip); also `requires-python`/mypy say 3.8, `pytest` is a runtime dep.
 - Recorded rotation at 90°/270° is dropped for non-square resolutions (hardware limit); decided: rotate downstream (frontend / `video_compose`), not built.
 - Legacy string command path: `start_recording duration=60` → `TypeError`; `web.py` legacy `send_command start_recording` has a broken `strftime`.
 - Sync-client camera lags the server in compose (CSV rows for discarded pre-`SyncReady` frames) → `plans/multicam-frame-alignment-and-sync-provenance.md`.

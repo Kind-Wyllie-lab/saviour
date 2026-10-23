@@ -261,12 +261,37 @@
   -webkit-touch-callout: none;
 }
 
-/* Shock mode: a 2x2 segmented control. Off modes are outlined; the selected
-   one is filled (orange when it can shock, plain when disarmed). */
+/* Grid armed/disarmed, with its Arm/Disarm button. */
+.apa-grid-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.apa-grid-state {
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.apa-grid-state--armed {
+  color: #d4820a;
+  opacity: 1;
+}
+
+.apa-commands .apa-arm-btn {
+  padding: 5px 14px;
+}
+
+/* Shock mode: a segmented control; the selected one is filled. */
 .apa-mode-select {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
+}
+
+.apa-mode-hint {
+  margin: 0;
 }
 
 .apa-commands .apa-mode-btn {
@@ -278,13 +303,9 @@
 }
 
 .apa-commands .apa-mode-btn--on {
-  background-color: #d4820a;
+  background-color: var(--accent-color);
   color: white;
   box-shadow: none;
-}
-
-.apa-commands .apa-mode-btn--disarmed.apa-mode-btn--on {
-  background-color: var(--accent-color);
 }
 
 /* Always enabled and always the same: the one control that must be findable. */

@@ -1,30 +1,35 @@
 """
-APA shock mode and automated shocking, run on the controller.
+APA shock grid: armed state, shock mode and automated shocking, run on the
+controller.
 
 The apa_arduino module stays a plain actuator: activate_shock starts its
 pulse loop (duration on / intershock_latency off) for as long as the lease
 (SHOCK_LEASE_S, 1 s) keeps being refreshed, and deactivate_shock stops it.
-Everything about *when* to shock lives here:
+Everything about *whether* and *when* to shock lives here:
 
-- Shock mode: disarmed | manual | auto | dry_run. Starts disarmed (also
-  after a controller restart: never persisted) and returns to disarmed when
-  the last recording session ends, or on Stop all.
-- Manual shocks (the dashboard's spacebar / hold button) are allowed only
-  in manual mode: auto and dry_run are the automation's alone.
-- auto / dry_run: the APA camera reports zone_entered / zone_exited the
-  frame the tracked position crosses the zone edge, and zone_state at ~5 Hz
-  while tracking. Once the rat has been in the zone for entry_latency_s,
-  auto holds the shock on (refreshing the lease) until it leaves; dry_run
-  logs the same decisions and sends nothing. Zone reports older than
+- Shock mode (`apa.shock_mode`, a setting that persists): manual | auto |
+  dry_run. It says how an armed grid is driven, and dry_run means "record
+  without arming".
+- Armed / disarmed (runtime only; a controller restart comes back disarmed):
+  the grid arms itself when a recording session starts, unless the mode is
+  dry_run, and disarms when the last session ends. Stop all disarms (and
+  stops any shock); the operator can re-arm or disarm by hand.
+- Shocks only while armed: in manual mode from the dashboard's spacebar /
+  hold button (any other source is refused), in auto mode from this class.
+- auto: the APA camera reports zone_entered / zone_exited the frame the
+  tracked position crosses the zone edge, and zone_state at ~5 Hz while
+  tracking. Once the rat has been in the zone for entry_latency_s, the shock
+  is held on (lease refreshed) until it leaves. Zone reports older than
   zone_state_timeout_s count as "not in zone", so a camera that crashes or
-  stops tracking ends the shock within that time (and the module's lease
-  backs that up). Automated shocks only happen while a session is
-  recording, so every decision lands in its log; pulses are capped per
+  stops tracking ends the shock within that time (the module's lease backs
+  that up). Automated shocks need a session recording; pulses are capped per
   minute (all sources, from the module's attempted_shocks count) on top of
   the module's per-session cap.
 
-Every decision is logged to the controller journal and to
-<share>/<session>/<session>_shock_decisions.csv for each active session.
+Tracking itself is independent of all this: the camera saves it to its
+timestamps CSV whenever tracking is on. Decisions are logged to the
+controller journal and to <share>/<session>/<session>_shock_decisions.csv
+for each active session.
 """
 
 import csv
@@ -36,7 +41,8 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-MODES = ("disarmed", "manual", "auto", "dry_run")
+MODES = ("manual", "auto", "dry_run")
+DEFAULT_MODE = "manual"
 
 DEFAULTS = {
     "entry_latency_s": 0.5,
@@ -48,7 +54,7 @@ _TICK_S = 0.05
 _REFRESH_S = 0.25       # well inside the module's 1 s lease
 _EMIT_ARMED_S = 0.25
 _EMIT_IDLE_S = 1.0
-_LOG_FIELDS = ["time_utc", "mode", "event", "reason", "in_zone_s",
+_LOG_FIELDS = ["time_utc", "mode", "armed", "event", "reason", "in_zone_s",
                "det_cx", "det_cy", "det_conf", "camera", "by"]
 
 
@@ -59,6 +65,8 @@ class ShockAutomation:
         get_modules: Callable[[], dict],
         get_active_sessions: Callable[[], list[str]],
         get_settings: Callable[[], dict],
+        get_mode: Callable[[], str],
+        save_mode: Callable[[str], None],
         get_share_path: Callable[[], str],
         emit: Callable[[dict], None],
         logger: logging.Logger | None = None,
@@ -68,24 +76,28 @@ class ShockAutomation:
         self._get_modules = get_modules
         self._get_active_sessions = get_active_sessions
         self._get_settings = get_settings
+        self._get_mode = get_mode
+        self._save_mode = save_mode
         self._get_share_path = get_share_path
         self._emit = emit
         self.logger = logger or logging.getLogger(__name__)
         self._clock = clock
         self._lock = threading.RLock()
 
-        self.mode = "disarmed"
+        self.armed = False
         # Latest zone report (any APA camera; the rig has one).
         self._zone_camera: str | None = None
         self._in_zone = False
         self._entered_at: float | None = None
         self._last_zone_at: float | None = None
         self._pos: dict = {}
-        # Auto shock currently held on (dry_run: would be).
+        # Auto shock currently held on.
         self.shocking = False
         self._last_refresh = 0.0
         self._capped = False
-        self._had_session = False
+        # None until the first tick: a controller (re)start mid-session must
+        # not arm the grid on its own.
+        self._had_session: bool | None = None
         self._sessions: list[str] = []
         # (time, attempted_shocks) from arduino_state, for the per-minute cap.
         self._attempted: deque[tuple[float, int]] = deque()
@@ -109,9 +121,9 @@ class ShockAutomation:
     def stop(self) -> None:
         self._stop.set()
         with self._lock:
-            if self.shocking and self.mode == "auto":
+            if self.armed:
                 self._deactivate_all()
-            self.shocking = False
+            self.armed = self.shocking = False
 
     def _run(self) -> None:
         while not self._stop.wait(_TICK_S):
@@ -120,51 +132,75 @@ class ShockAutomation:
             except Exception as e:  # keep deciding; a crash here would strand nothing
                 self.logger.error(f"Shock automation tick failed: {e}")
 
-    # ── inputs ─────────────────────────────────────────────────────────────
+    # ── settings / operator actions ────────────────────────────────────────
+
+    @property
+    def mode(self) -> str:
+        mode = self._get_mode()
+        return mode if mode in MODES else DEFAULT_MODE
 
     def settings(self) -> dict:
         got = self._get_settings() or {}
         return {k: got.get(k, v) for k, v in DEFAULTS.items()}
 
-    def set_mode(self, mode: str, by: str = "operator", reason: str = "") -> bool:
+    def set_mode(self, mode: str, by: str = "operator") -> bool:
         if mode not in MODES:
             return False
         with self._lock:
-            if mode == self.mode:
+            old = self.mode
+            if mode == old:
                 return True
-            old, self.mode = self.mode, mode
-            if self.shocking:
-                if old == "auto":
-                    self._deactivate_all()
-                self.shocking = False
-            if old == "manual":
-                # Also ends a manual hold the frontend may still be refreshing
-                # (its refreshes are refused from here on).
-                self._deactivate_all()
-            self._capped = False
-            self._log("mode", reason or f"{old} -> {mode}", by=by)
+            self._save_mode(mode)
+            self._log("mode", f"{old} -> {mode}", by=by)
+            if old == "manual" and self.armed:
+                self._deactivate_all()  # ends a manual hold
+            self.tick()  # leaving auto ends its shock; dry_run disarms
             self._emit_state(force=True)
         return True
 
+    def arm(self, by: str = "operator", reason: str = "") -> bool:
+        with self._lock:
+            if self.mode == "dry_run":
+                return False
+            if not self.armed:
+                self.armed = True
+                self._capped = False
+                self._log("armed", reason, by=by)
+            self._emit_state(force=True)
+        return True
+
+    def disarm(self, by: str = "operator", reason: str = "") -> None:
+        with self._lock:
+            was = self.armed
+            self.armed = self.shocking = False
+            # Also ends a manual hold the frontend may still be refreshing
+            # (its refreshes are refused from here on).
+            self._deactivate_all()
+            if was:
+                self._log("disarmed", reason, by=by)
+            self._emit_state(force=True)
+
     def stop_all(self, by: str = "operator") -> None:
         with self._lock:
+            self.armed = self.shocking = False
             self._deactivate_all()
-            self.shocking = False
-            old, self.mode = self.mode, "disarmed"
-            self._log("stop_all", f"was {old}", by=by)
+            self._log("stop_all", "", by=by)
             self._emit_state(force=True)
 
     def manual_allowed(self) -> bool:
-        return self.mode == "manual"
+        return self.armed and self.mode == "manual"
 
     def refuse_manual(self, by: str = "operator") -> None:
         with self._lock:
             # A held button re-sends every 250 ms: log the first, not each.
             now = self._clock()
             if now - self._last_refused >= 1.0:
-                self._log("manual_refused", f"mode is {self.mode}", by=by)
+                why = "grid disarmed" if not self.armed else f"mode is {self.mode}"
+                self._log("manual_refused", why, by=by)
                 self._emit_state(force=True)
             self._last_refused = now
+
+    # ── inputs from modules ────────────────────────────────────────────────
 
     def on_zone_status(self, camera_id: str, status: dict) -> None:
         now = self._clock()
@@ -210,13 +246,23 @@ class ShockAutomation:
         with self._lock:
             now = self._clock()
             s = self.settings()
-            self._sessions = list(self._get_active_sessions())
-            session = bool(self._sessions)
-            if self._had_session and not session and self.mode != "disarmed":
-                self._had_session = False
-                self.set_mode("disarmed", by="controller", reason="session ended")
-                return
+            mode = self.mode
+            sessions = list(self._get_active_sessions())
+            session = bool(sessions)
+            if session:
+                self._sessions = sessions
+
+            # Arm at recording start, disarm at the end (logged to the
+            # session that just ended, so _sessions is cleared after).
+            if self._had_session is not None and session != self._had_session:
+                if session and mode != "dry_run":
+                    self.arm(by="controller", reason="recording started")
+                elif not session and self.armed:
+                    self.disarm(by="controller", reason="recording ended")
             self._had_session = session
+            self._sessions = sessions
+            if self.armed and mode == "dry_run":
+                self.disarm(by="controller", reason="mode set to dry run")
 
             fresh = (self._last_zone_at is not None
                      and now - self._last_zone_at <= s["zone_state_timeout_s"])
@@ -226,7 +272,9 @@ class ShockAutomation:
             capped = bool(cap) and self.pulses_last_min() >= cap
 
             reason = None
-            if self.mode not in ("auto", "dry_run"):
+            if not self.armed:
+                reason = "disarmed"
+            elif mode != "auto":
                 reason = "mode"
             elif not session:
                 reason = "no session recording"
@@ -240,29 +288,24 @@ class ShockAutomation:
                 reason = "per-minute cap"
             want = reason is None
 
-            if capped and not self._capped and self.mode in ("auto", "dry_run"):
+            if capped and not self._capped and self.armed and mode == "auto":
                 self._log("capped", f"{self.pulses_last_min()} pulses in the last minute",
                           in_zone_s=in_zone_s)
             self._capped = capped
 
-            dry = self.mode == "dry_run"
             if want and not self.shocking:
                 self.shocking = True
                 self._last_refresh = now
-                if not dry:
-                    self._activate_all()
-                self._log("would_shock_start" if dry else "shock_start", "",
-                          in_zone_s=in_zone_s)
+                self._activate_all()
+                self._log("shock_start", "", in_zone_s=in_zone_s)
                 self._emit_state(force=True)
-            elif want and not dry and now - self._last_refresh >= _REFRESH_S:
+            elif want and now - self._last_refresh >= _REFRESH_S:
                 self._last_refresh = now
                 self._activate_all()
             elif not want and self.shocking:
                 self.shocking = False
-                if not dry and self.mode == "auto":
-                    self._deactivate_all()
-                self._log("would_shock_stop" if dry else "shock_stop", reason,
-                          in_zone_s=in_zone_s)
+                self._deactivate_all()
+                self._log("shock_stop", reason, in_zone_s=in_zone_s)
                 self._emit_state(force=True)
             self._emit_state()
 
@@ -287,6 +330,7 @@ class ShockAutomation:
                  and now - self._last_zone_at <= s["zone_state_timeout_s"])
         return {
             "mode": self.mode,
+            "armed": self.armed,
             "shocking": self.shocking,
             "in_zone": self._in_zone and fresh,
             "zone_report_fresh": fresh,
@@ -302,7 +346,7 @@ class ShockAutomation:
 
     def _emit_state(self, force: bool = False) -> None:
         now = self._clock()
-        period = _EMIT_IDLE_S if self.mode == "disarmed" else _EMIT_ARMED_S
+        period = _EMIT_ARMED_S if self.armed else _EMIT_IDLE_S
         if not force and now - self._last_emit < period:
             return
         self._last_emit = now
@@ -316,6 +360,7 @@ class ShockAutomation:
         row = {
             "time_utc": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "mode": self.mode,
+            "armed": int(self.armed),
             "event": event,
             "reason": reason,
             "in_zone_s": "" if in_zone_s is None else round(in_zone_s, 3),
@@ -326,7 +371,9 @@ class ShockAutomation:
             "by": by,
         }
         self.last_event = {k: row[k] for k in ("time_utc", "event", "reason", "by")}
-        self.logger.info(f"Shock {event} ({self.mode}){': ' + reason if reason else ''}")
+        self.logger.info(f"Shock {event} ({self.mode}, "
+                         f"{'armed' if self.armed else 'disarmed'})"
+                         f"{': ' + reason if reason else ''}")
         for session in self._sessions or self._get_active_sessions():
             self._append_csv(session, row)
 

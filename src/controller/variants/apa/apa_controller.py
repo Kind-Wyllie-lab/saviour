@@ -15,7 +15,7 @@ import sys
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from shock_automation import DEFAULTS, ShockAutomation
+from shock_automation import DEFAULT_MODE, DEFAULTS, ShockAutomation
 
 from controller.controller import Controller
 
@@ -27,14 +27,17 @@ class APAController(Controller):
         self.web.handle_special_module_status = self.handle_special_module_status
         self.web.handle_special_command = self.handle_special_command
 
-        # Shock mode + automated shocking (shock_automation.py). The
-        # apa_arduino module only pulses while told to; when lives here.
+        # Grid arming, shock mode and automated shocking
+        # (shock_automation.py). The apa_arduino module only pulses while
+        # told to; whether and when lives here.
         self.shock_automation = ShockAutomation(
             send_command=self.facade.send_command,
             get_modules=self.facade.get_modules,
             get_active_sessions=self._active_session_names,
             get_settings=lambda: {
                 k: self.config.get(f"apa.auto_shock.{k}", v) for k, v in DEFAULTS.items()},
+            get_mode=lambda: self.config.get("apa.shock_mode", DEFAULT_MODE),
+            save_mode=lambda mode: self.config.set("apa.shock_mode", mode),
             get_share_path=self.facade.get_share_path,
             emit=lambda state: self.web.socketio.emit("apa_shock_state", state),
             logger=self.logger,
@@ -60,13 +63,25 @@ class APAController(Controller):
             if not auto.set_mode(mode):
                 self.web.socketio.emit("apa_shock_error", {"error": f"Unknown shock mode: {mode}"})
 
-        # Not auth-gated: it can only make the rig safer.
+        @sio.on("arm_grid")
+        def handle_arm_grid(data=None):
+            if not self.web._require_auth("auth_required"):
+                return
+            if not auto.arm(reason="by hand"):
+                self.web.socketio.emit("apa_shock_error", {"error": "Dry run: the grid isn't armed"})
+
+        # Not auth-gated: these can only make the rig safer.
+        @sio.on("disarm_grid")
+        def handle_disarm_grid(data=None):
+            auto.disarm(reason="by hand")
+
         @sio.on("stop_all_shocks")
         def handle_stop_all_shocks(data=None):
             auto.stop_all()
 
     def handle_special_command(self, module_id, command, params) -> bool:
-        """Manual shocks from the dashboard only in manual mode. Stops always go through."""
+        """Manual shocks from the dashboard only while armed in manual mode.
+        Stops always go through."""
         if command == "activate_shock" and not self.shock_automation.manual_allowed():
             self.shock_automation.refuse_manual()
             return True

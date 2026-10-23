@@ -202,7 +202,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Rapid single-delete 404 race (root cause unknown) and a bulk `DELETE /api/v1/sessions` route; multi-select delete itself is done → `plans/session-list-multi-select-delete.md`.
 - TTL: edge timestamps on the Python callback path → `plans/ttl-kernel-timestamping.md`; hardening work → `plans/ttl-module-hardening.md`.
 - pyControl visibility → `plans/pycontrol-live-event-bridge.md`.
-- APA automated shocking: shock modes (disarmed/manual/auto/dry_run) live on the controller (`variants/apa/shock_automation.py`), the `apa_arduino` module only pulses while told to. Built, not yet run on the rig; detector accuracy work and protocol placeholders → `plans/apa-rat-detector.md`.
+- APA automated shocking: the grid's armed/disarmed state (arms at recording start) and the shock mode (manual/auto/dry_run) live on the controller (`variants/apa/shock_automation.py`), the `apa_arduino` module only pulses while told to. Built, not yet run on the rig; detector accuracy work and protocol placeholders → `plans/apa-rat-detector.md`.
 - APA shock current: a free number field; values off the 0.02 mA grid are floored and values over the 1.0 mA firmware cap keep the old setpoint, all silently → `plans/apa-shock-setpoint-validation.md`.
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
 - Field install feedback (slow compose preview, crop stretching/clear, timestamp position, session list by date + bulk download, live mic spectrogram blip) → `plans/field-install-feedback-2026-10.md`.

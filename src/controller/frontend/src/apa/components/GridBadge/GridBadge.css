@@ -1,0 +1,44 @@
+/* Over the top-left of the stream image; the stream's parent is positioned. */
+.apa-grid-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  color: white;
+}
+
+.apa-grid-badge--disarmed {
+  background-color: rgba(0, 0, 0, 0.55);
+  font-weight: 600;
+}
+
+.apa-grid-badge--armed {
+  background-color: #d4820a;
+}
+
+.apa-grid-badge--shocking {
+  background-color: #c0392b;
+  animation: apa-grid-badge-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes apa-grid-badge-pulse {
+  from { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.7); }
+  to   { box-shadow: 0 0 0 6px rgba(192, 57, 43, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apa-grid-badge--shocking { animation: none; }
+}
+
+.apa-grid-badge.apa-grid-badge--large {
+  top: 20px;
+  left: 20px;
+  font-size: 1.1em;
+  padding: 6px 14px;
+}

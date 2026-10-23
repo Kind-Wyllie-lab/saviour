@@ -203,7 +203,6 @@ function APACommands( {modules} ) {
 
     useEffect(() => {
         const handleKeyDown = (event) => {
-            if (event.code === "Escape") { stopAll(); return; }
             if (event.code !== "Space" || !getManual() || isTextEntry(event.target)) return;
             // Stop space scrolling the page or clicking a focused button
             // (e.g. toggling Disarm, or Start Motor) while it is the shock key.
@@ -333,8 +332,8 @@ function APACommands( {modules} ) {
                         ))}
                     </div>
                     <button type="button" className="apa-stop-all" onClick={stopAll}
-                        title="Stop any shock and disarm (Esc)">
-                        Stop all shocks (Esc)
+                        title="Stop any shock and disarm">
+                        Stop all shocks
                     </button>
                     {/* Pointer events cover mouse, touch and pen; touch-action
                         (CSS) stops a held finger scrolling the page instead. */}

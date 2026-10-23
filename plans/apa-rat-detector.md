@@ -217,8 +217,8 @@ actuator (pulse loop while the 1 s lease is refreshed, per-session cap).
 - Camera: `zone_state` every 0.2 s while tracking (in_zone, tracking, det_cx,
   det_cy, det_conf, timestamp_ns), plus the existing edge events.
 - Dashboard (`APACommands.jsx`): a mode selector replaces the per-tab Arm
-  toggle, every tab shows the controller's mode, and a Stop all button (also
-  Esc) is added. In auto / dry_run a status line shows what the controller sees
+  toggle, every tab shows the controller's mode, and a Stop all button is
+  added (click only: Esc exits fullscreen). In auto / dry_run a status line shows what the controller sees
   and the last decision.
 
 Still open from the first draft: a REST route for Stop all; disarming when the
@@ -232,7 +232,7 @@ hood detector to agree; an exactly-one-box rule.
    turns red and stop when it leaves. Check `<session>_shock_decisions.csv`
    against the camera's `in_zone` column.
 2. The same in Dry run: identical decisions, `attempted_shocks` doesn't move.
-3. Stop all mid-shock (button and Esc): the shock stops and the mode is
+3. Stop all mid-shock: the shock stops and the mode is
    Disarmed in every open tab.
 4. Kill tracking mid-shock (turn it off): the shock stops within ~0.5 s.
 5. End the session: the mode goes to Disarmed.

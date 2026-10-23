@@ -15,7 +15,8 @@ import sys
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Import habitat controller
+from shock_automation import DEFAULTS, ShockAutomation
+
 from controller.controller import Controller
 
 
@@ -24,6 +25,60 @@ class APAController(Controller):
         super().__init__()
         self.config.load_controller_config("apa_controller_config.json")
         self.web.handle_special_module_status = self.handle_special_module_status
+        self.web.handle_special_command = self.handle_special_command
+
+        # Shock mode + automated shocking (shock_automation.py). The
+        # apa_arduino module only pulses while told to; when lives here.
+        self.shock_automation = ShockAutomation(
+            send_command=self.facade.send_command,
+            get_modules=self.facade.get_modules,
+            get_active_sessions=self._active_session_names,
+            get_settings=lambda: {
+                k: self.config.get(f"apa.auto_shock.{k}", v) for k, v in DEFAULTS.items()},
+            get_share_path=self.facade.get_share_path,
+            emit=lambda state: self.web.socketio.emit("apa_shock_state", state),
+            logger=self.logger,
+        )
+        self._register_shock_handlers()
+
+    def _active_session_names(self) -> list[str]:
+        return [name for name, s in self.facade.get_recording_sessions().items()
+                if str(getattr(s, "state", "")) in ("active", "error")]
+
+    def _register_shock_handlers(self):
+        sio, auto = self.web.socketio, self.shock_automation
+
+        @sio.on("get_apa_shock_state")
+        def handle_get_apa_shock_state(data=None):
+            auto._emit_state(force=True)
+
+        @sio.on("set_shock_mode")
+        def handle_set_shock_mode(data=None):
+            if not self.web._require_auth("auth_required"):
+                return
+            mode = (data or {}).get("mode")
+            if not auto.set_mode(mode):
+                self.web.socketio.emit("apa_shock_error", {"error": f"Unknown shock mode: {mode}"})
+
+        # Not auth-gated: it can only make the rig safer.
+        @sio.on("stop_all_shocks")
+        def handle_stop_all_shocks(data=None):
+            auto.stop_all()
+
+    def handle_special_command(self, module_id, command, params) -> bool:
+        """Manual shocks from the dashboard pass the mode gate. Stops always go through."""
+        if command == "activate_shock" and not self.shock_automation.manual_allowed():
+            self.shock_automation.refuse_manual()
+            return True
+        return False
+
+    def start(self) -> bool:
+        self.shock_automation.start()
+        return super().start()
+
+    def stop(self) -> bool:
+        self.shock_automation.stop()
+        return super().stop()
 
     def configure_controller(self, updated_keys: list[str] | None):
         pass
@@ -31,6 +86,7 @@ class APAController(Controller):
     def handle_special_module_status(self, module_id: str, status: dict):
         match status.get('type'):
             case "arduino_state":
+                self.shock_automation.on_arduino_state(status.get("state") or {})
                 self.web.socketio.emit("arduino_state", status)
                 return True
             case "shock_started_being_delivered":
@@ -39,11 +95,8 @@ class APAController(Controller):
             case "shock_stopped_being_delivered":
                 self.web.socketio.emit("shock_stopped_being_delivered", status)
                 return True
-            case "zone_entered":
-                self.web.socketio.emit("zone_entered", status)
-                return True
-            case "zone_exited":
-                self.web.socketio.emit("zone_exited", status)
+            case "zone_entered" | "zone_exited" | "zone_state":
+                self.shock_automation.on_zone_status(module_id, status)
                 return True
             case _:
                 return False

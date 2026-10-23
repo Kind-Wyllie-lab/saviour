@@ -344,6 +344,7 @@ class APACameraModule(CameraBase):
         self.jump_confirm_frames = 3
         self.lost_timeout_s = 0.5
         self._prev_in_zone: bool = False
+        self._last_zone_state_t = 0.0
 
         # (mask/shock-zone geometry is computed per-frame from the current array shape)
         # Each overlay has independent *_display (livestream) and *_record
@@ -529,6 +530,23 @@ class APACameraModule(CameraBase):
                 self.communication.send_status(event)
                 self._prev_in_zone = in_zone
 
+            # Periodic report on top of the edges: the controller holds an
+            # automated shock on only while these keep arriving, so a camera
+            # that crashes mid-zone can't leave it running.
+            now = time.monotonic()
+            if now - self._last_zone_state_t >= self._ZONE_STATE_PERIOD_S:
+                self._last_zone_state_t = now
+                self.communication.send_status({
+                    "type": "zone_state",
+                    "in_zone": in_zone,
+                    "tracking": det_cx is not None,
+                    "det_cx": det_cx,
+                    "det_cy": det_cy,
+                    "det_conf": round(self._track_det.conf, 3)
+                                if self._track_det is not None else None,
+                    "timestamp_ns": timing.timestamp_ns,
+                })
+
         # Recorded overlays go on after detection so they never feed it.
         if self.shock_zone_record:
             self._apply_shock_zone(m)
@@ -596,6 +614,9 @@ class APACameraModule(CameraBase):
     # Candidates considered per frame: the track takes the nearest one, so a
     # brighter false positive elsewhere doesn't steal it.
     _MAX_CANDIDATES = 5
+    # zone_state report rate while tracking (the controller's auto shocking
+    # treats a report older than apa.auto_shock.zone_state_timeout_s as stale).
+    _ZONE_STATE_PERIOD_S = 0.2
 
     def _detect_objects(self, frame: np.ndarray) -> list[Detection]:
         """Detections on this frame, most confident first (at most

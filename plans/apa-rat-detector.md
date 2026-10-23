@@ -182,91 +182,70 @@ Not enabled for real shocks until step 3's target is met; the dry-run mode
 below can be built and run on the rig before that, and is how step 3 gets
 measured live.
 
-### Today (2026-10-23)
+### Built (2026-10-23): steps 1 and 2 below, plus `auto` (not yet run on the rig)
 
-- The camera sends `zone_entered` / `zone_exited` (edge events only) to the
-  controller; `apa_controller.py` just forwards them to browsers.
-- "Armed" exists only in the browser (`sharedArmed` in `APACommands.jsx`,
-  one per tab). `apa_arduino`'s `_activate_shock` runs for any caller; the
-  module and controller have no arm state. Safeguards that do exist on the
-  module: the 1 s shock lease (`SHOCK_LEASE_S`, the caller must re-send
-  `activate_shock`) and the per-session cap (`_max_shocks`, 50).
+Design changed from the first draft: the gate is on the **controller**, not
+the `apa_arduino` module. Every shock command already goes through the
+controller, and LAN access is the trust boundary, so a module-side gate added
+a second copy of the state for no protection. The module stays a plain
+actuator (pulse loop while the 1 s lease is refreshed, per-session cap).
 
-### Tracking is independent of shock mode
+- `src/controller/variants/apa/shock_automation.py` (`ShockAutomation`), owned
+  by `APAController`:
+  - `mode`: `disarmed` | `manual` | `auto` | `dry_run`. Starts disarmed (and
+    after every controller restart: never persisted). It goes back to disarmed
+    when the last recording session ends, and on Stop all.
+  - Manual shocks (the dashboard's `send_command activate_shock`) go through
+    `Web.handle_special_command`. They're refused (and logged, at most once a
+    second) while disarmed, and allowed in every other mode, auto included.
+    `deactivate_shock` always passes. `/facade/send_command` is the
+    deliberate escape hatch and isn't gated.
+  - auto / dry_run: in zone for `apa.auto_shock.entry_latency_s` (0.5 s)
+    → `activate_shock` every 0.25 s while it stays in (the module pulses
+    `duration` on / `intershock_latency` off), `deactivate_shock` on
+    `zone_exited`, on a zone report older than `zone_state_timeout_s` (0.5 s),
+    on mode change, or when `max_pulses_per_min` (20, from the module's
+    `attempted_shocks`) is reached. Only while a session is recording.
+    dry_run logs `would_shock_start/stop` and sends nothing.
+  - Socket events: `get_apa_shock_state`, `set_shock_mode` (auth),
+    `stop_all_shocks` (no auth: it only makes things safer), and the broadcast
+    `apa_shock_state` (4 Hz armed, 1 Hz disarmed).
+  - Decisions are logged to the journal and to
+    `<share>/<session>/<session>_shock_decisions.csv` (time, mode, event,
+    reason, time in zone, position, confidence, camera, by).
+- Camera: `zone_state` every 0.2 s while tracking (in_zone, tracking, det_cx,
+  det_cy, det_conf, timestamp_ns), plus the existing edge events.
+- Dashboard (`APACommands.jsx`): a mode selector replaces the per-tab Arm
+  toggle, every tab shows the controller's mode, and a Stop all button (also
+  Esc) is added. In auto / dry_run a status line shows what the controller sees
+  and the last decision.
 
-Tracking (camera config) runs whatever the shock mode: manual shocking with
-tracking on, shown on the livestream or not, and logged per frame
-(`det_cx`, `det_cy`, `det_conf`, `in_zone` in the timestamps CSV) is a
-supported setup in its own right, not only a step towards automation.
+Still open from the first draft: a REST route for Stop all; disarming when the
+camera goes offline (today a stale camera just stops shocks); requiring the
+hood detector to agree; an exactly-one-box rule.
 
-### Shock mode and arming: one gate, on the Arduino module
+### Validation on the rig (dummy Arduino first)
 
-The gate sits on `apa_arduino`, the last hop before the hardware, so a
-controller or frontend bug can't bypass it.
-
-- `shock_mode`: `disarmed` | `manual` | `auto` | `dry_run` (auto decisions
-  logged, never delivered). `activate_shock` carries a `source` (`manual` or
-  `auto`) and is refused unless the mode allows that source; refusals are
-  logged.
-- Always starts `disarmed`: at module start, after an Arduino reconnect, and
-  never persisted to config. Arming is an explicit operator action
-  (`set_shock_mode`, auth-gated), broadcast in `arduino_state` so every
-  browser shows the same state.
-- **Stop all** (`stop_all_shocks`): deactivate immediately, set `disarmed`,
-  and tell the controller to drop any auto state. Reachable from every APA
-  page (a fixed button, plus a key, e.g. Escape), from the REST API, and
-  always allowed, even for a lapsed login? (open question below). Never
-  throttled.
-- Also disarm automatically on: session stop, camera module offline,
-  tracking lost for longer than a limit while in `auto`, controller restart
-  (it re-sends `disarmed` on reconnect).
-
-### Zone state: periodic, not edge-only
-
-The controller can only keep a shock going by re-sending `activate_shock`
-inside the 1 s lease. With edge events alone, a camera that crashes mid-zone
-never sends `zone_exited` and the controller would keep refreshing. So the
-camera also sends `zone_state` at ~5 Hz while tracking: in zone or not,
-position, confidence, number of boxes above threshold, time in zone, frame
-timestamp. The controller refreshes the lease only while the latest
-`zone_state` is younger than ~0.4 s and passes the rules below; anything
-stale stops the refreshes, and the Arduino ends the shock within the lease.
-
-### Auto decision (controller), rules
-
-- in zone continuously for a minimum time (start at 0.5 s; tune from the
-  evaluation's entry durations)
-- confidence threshold, and exactly one box above it
-- optionally require the hood detector to agree (cheap, independent)
-- caps per minute and per session, on top of the module's 50-pulse cap and
-  the lease
-- the operator can always stop it (Stop all above)
-- every decision (deliver, dry-run, refused, capped) logged to
-  `shock_events.csv` with position, confidence, time in zone and source, so
-  a session can be audited
-- a supervised trial on the rig (operator watching, ready to stop) before
-  any unattended run
-
-### Build order
-
-1. `zone_state` from the camera; `shock_mode` + `stop_all_shocks` on the
-   module, with the frontend's arm control and a Stop all button replaced
-   by the module's state (manual shocking keeps working, now behind a real
-   gate).
-2. Controller auto logic in `dry_run` only; run sessions on the rig and
-   count would-be shocks against the video (this is step 3 measured live).
-3. `auto` with real shocks, supervised, once the false-entry target is met.
+1. Tracking on (Hailo), shown on the livestream. Mode Auto, then start a
+   session. A rat video in front of the camera: shocks start 0.5 s after the dot
+   turns red and stop when it leaves. Check `<session>_shock_decisions.csv`
+   against the camera's `in_zone` column.
+2. The same in Dry run: identical decisions, `attempted_shocks` doesn't move.
+3. Stop all mid-shock (button and Esc): the shock stops and the mode is
+   Disarmed in every open tab.
+4. Kill tracking mid-shock (turn it off): the shock stops within ~0.5 s.
+5. End the session: the mode goes to Disarmed.
 
 ### Open questions (protocol decisions for the researchers)
 
-- In `auto`, does the spacebar still deliver manual shocks, or only in
-  `manual`?
-- Minimum time in zone, shock duration per entry, re-shock interval while
-  the rat stays in, and per-minute / per-session caps.
+- Spacebar in `auto`: built as allowed (placeholder).
+- Minimum time in zone (0.5 s), shock on/off (the module's 0.5 s / 1 s), and
+  per-minute / per-session caps (20 / 50): placeholders until the
+  researchers decide.
 - Is there a hardware way to power the grid down (relay / enable line the
   Arduino can drive), or is "arm" a software gate on the trigger only? A
   hardware disarm would make Stop all independent of the software.
-- Should Stop all work without a login (it only ever makes things safer)?
+- Stop all works without a login: built that way (placeholder).
 
 ## Not doing
 

@@ -1420,6 +1420,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 module_id = data.get('module_id')
                 params = data.get('params', {})
 
+                # A rig variant may gate or take over a command (APA: manual
+                # shocks are refused while the rig is disarmed).
+                if self.handle_special_command(module_id, command, params):
+                    return
+
                 if command == "start_recording":
                     params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
 
@@ -4356,6 +4361,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     def handle_special_module_status(self, module_id, status):  # noqa: B027
         """To be overriden by rig specific functionality"""
         pass
+
+    def handle_special_command(self, module_id, command, params) -> bool:
+        """Rig variants override this to gate a frontend send_command:
+        return True if it was handled (and must not be sent on)."""
+        return False
 
 
     def handle_module_status(self, module_id, status) -> bool:

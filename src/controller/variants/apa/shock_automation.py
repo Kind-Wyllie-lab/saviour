@@ -9,8 +9,8 @@ Everything about *when* to shock lives here:
 - Shock mode: disarmed | manual | auto | dry_run. Starts disarmed (also
   after a controller restart: never persisted) and returns to disarmed when
   the last recording session ends, or on Stop all.
-- Manual shocks (the dashboard's spacebar / hold button) are refused while
-  disarmed and allowed in every other mode.
+- Manual shocks (the dashboard's spacebar / hold button) are allowed only
+  in manual mode: auto and dry_run are the automation's alone.
 - auto / dry_run: the APA camera reports zone_entered / zone_exited the
   frame the tracked position crosses the zone edge, and zone_state at ~5 Hz
   while tracking. Once the rat has been in the zone for entry_latency_s,
@@ -137,7 +137,7 @@ class ShockAutomation:
                 if old == "auto":
                     self._deactivate_all()
                 self.shocking = False
-            if mode == "disarmed":
+            if old == "manual":
                 # Also ends a manual hold the frontend may still be refreshing
                 # (its refreshes are refused from here on).
                 self._deactivate_all()
@@ -155,14 +155,14 @@ class ShockAutomation:
             self._emit_state(force=True)
 
     def manual_allowed(self) -> bool:
-        return self.mode != "disarmed"
+        return self.mode == "manual"
 
     def refuse_manual(self, by: str = "operator") -> None:
         with self._lock:
             # A held button re-sends every 250 ms: log the first, not each.
             now = self._clock()
             if now - self._last_refused >= 1.0:
-                self._log("manual_refused", "disarmed", by=by)
+                self._log("manual_refused", f"mode is {self.mode}", by=by)
                 self._emit_state(force=True)
             self._last_refused = now
 

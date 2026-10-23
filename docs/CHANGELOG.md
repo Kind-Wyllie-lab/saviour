@@ -14,7 +14,7 @@ future condensing pass, the same way this batch was moved.
 ## 2026-10-23
 
 - [x] **APA shock modes and automated shocking** (branch `feat/apa-auto-shock` → `staging`; design in `plans/apa-rat-detector.md` step 5). Not yet run on the rig.
-  - **Controller:** `variants/apa/shock_automation.py` holds the shock mode (`disarmed` / `manual` / `auto` / `dry_run`). It starts disarmed, isn't persisted, and goes back to disarmed at session end and on Stop all. Manual `activate_shock` from the dashboard is refused while disarmed (new `Web.handle_special_command` hook).
+  - **Controller:** `variants/apa/shock_automation.py` holds the shock mode (`disarmed` / `manual` / `auto` / `dry_run`). It starts disarmed, isn't persisted, and goes back to disarmed at session end and on Stop all. Manual `activate_shock` from the dashboard is allowed only in manual mode (new `Web.handle_special_command` hook; the spacebar and hold button are disabled in auto and dry run, a decision taken after the first build allowed them).
   - **Auto:** after `entry_latency_s` (0.5 s) in the zone, the controller holds the module's pulse loop on (lease refreshed every 0.25 s). It stops on exit, on a stale zone report (`zone_state_timeout_s` 0.5 s), on a mode change, or at `max_pulses_per_min` (20). Only while a session is recording. Dry run logs `would_shock_*` and sends nothing. Every decision goes to `<share>/<session>/<session>_shock_decisions.csv`.
   - **Camera:** `zone_state` every 0.2 s while tracking.
   - **Dashboard:** a mode selector replaces the per-tab Arm toggle; Stop all button (and Esc), no login needed; auto status line.

@@ -68,10 +68,17 @@ class TestModeGate:
         assert rig.auto.mode == "disarmed"
         assert rig.auto.manual_allowed() is False
 
-    @pytest.mark.parametrize("mode", ["manual", "auto", "dry_run"])
-    def test_manual_allowed_when_armed(self, rig, mode):
+    @pytest.mark.parametrize("mode, allowed", [
+        ("manual", True), ("auto", False), ("dry_run", False), ("disarmed", False)])
+    def test_manual_only_in_manual_mode(self, rig, mode, allowed):
         rig.auto.set_mode(mode)
-        assert rig.auto.manual_allowed() is True
+        assert rig.auto.manual_allowed() is allowed
+
+    def test_leaving_manual_ends_a_hold(self, rig):
+        rig.auto.set_mode("manual")
+        rig.sent.clear()
+        rig.auto.set_mode("auto")
+        assert rig.cmds() == ["deactivate_shock"]
 
     def test_unknown_mode_rejected(self, rig):
         assert rig.auto.set_mode("on") is False

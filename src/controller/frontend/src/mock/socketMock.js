@@ -363,7 +363,7 @@ const ROUTER = {
     switch (payload?.type) {
       case "activate_shock":
         // The controller's mode gate (variants/apa/shock_automation.py).
-        if ((r.mode ?? "disarmed") === "disarmed") break;
+        if (r.mode !== "manual") break;
         if (r.attempted >= r.maxShocks) break;
         if (!r.shockActivated) { r.shockActivated = true; r.nextPulseAt = t; }
         r.holdUntil = t + APA_LEASE_MS;

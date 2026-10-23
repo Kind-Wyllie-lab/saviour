@@ -1,6 +1,6 @@
 import os
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from src.controller.facade import ControllerFacade
@@ -241,6 +241,7 @@ class TestReconcileSkipsRecordingCameras:
     def test_recording_camera_is_not_reroled(self):
         from src.controller.modules import ModuleStatus
         facade, modules, controller = _make_facade_with_modules()
+        facade._started_mono -= facade._FRAMESYNC_COLD_START_S + 1  # mid-run
         _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
         modules._modules["camera_b"].status = ModuleStatus.RECORDING
         # camera_a (would-be server) is offline -> camera_b should become server
@@ -252,6 +253,7 @@ class TestReconcileSkipsRecordingCameras:
 
     def test_idle_camera_is_reroled(self):
         facade, modules, controller = _make_facade_with_modules()
+        facade._started_mono -= facade._FRAMESYNC_COLD_START_S + 1  # mid-run
         _add_camera(modules, "camera_b", framesync_enabled=True, sync_mode="client")
         _add_camera(modules, "camera_a", framesync_enabled=True, online=False,
                     sync_mode="server")
@@ -336,6 +338,42 @@ class TestFramesyncStickyElection:
                                   version="1.0", ip="10.0.0.3", online=True))
 
         assert facade.reconcile_framesync() == {"camera_a": "server"}
+
+
+    def test_cold_start_holds_election_while_server_missing(self):
+        """Fleet update, APA rig 2026-10-23: the old client re-reported before
+        the real server re-registered and was elected over it."""
+        facade, modules, controller = _make_facade_with_modules()
+        facade._schedule_framesync_retry = MagicMock()
+        _add_camera(modules, "camera_z", framesync_enabled=True, sync_mode="client")
+
+        assert facade.reconcile_framesync() == {}
+        controller.communication.send_command.assert_not_called()
+        facade._schedule_framesync_retry.assert_called_once()
+
+        _add_camera(modules, "apa_camera_a", framesync_enabled=True, sync_mode="server")
+        roles = facade.reconcile_framesync()
+
+        assert roles == {"apa_camera_a": "server", "camera_z": "client"}
+        controller.communication.send_command.assert_not_called()
+
+    def test_after_cold_start_window_lone_client_is_elected(self):
+        facade, modules, controller = _make_facade_with_modules()
+        facade._started_mono -= facade._FRAMESYNC_COLD_START_S + 1
+        _add_camera(modules, "camera_z", framesync_enabled=True, sync_mode="client")
+
+        assert facade.reconcile_framesync() == {"camera_z": "server"}
+
+    def test_cold_start_retry_reruns_reconcile(self):
+        facade, _, _ = _make_facade_with_modules()
+        facade.reconcile_framesync = MagicMock()
+        with patch("src.controller.facade.threading.Timer") as timer:
+            facade._schedule_framesync_retry(30.0)
+            facade._schedule_framesync_retry(30.0)  # one timer at a time
+        timer.assert_called_once()
+        timer.call_args.args[1]()
+        facade.reconcile_framesync.assert_called_once()
+        assert facade._framesync_retry is None
 
 
 class TestFramesyncOrderedRestarts:

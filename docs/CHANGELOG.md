@@ -13,6 +13,7 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-23
 
+- [x] **APA tracking confidence in the timestamps CSV** (branch `feat/apa-track-confidence-csv` → `staging`). New last column `det_conf`: confidence of the detection accepted on that frame, blank when the position is held over within `lost_timeout_s` (so held vs fresh positions are distinguishable). Columns are appended, nothing reads them by position. Card notes that tracking is independent of shocking and what the CSV records. Test: conf only on frames with an accepted detection.
 - [x] **APA tracking: default rat HEF in the repo; smoothing, jump rejection and a lost timeout** (branch `feat/apa-tracker-filter` → `staging`).
   - **Model:** `hailo_models/apa_rats_yolov8_nms.hef` (YOLOv8, NMS in the HEF, 1 class; was `best.hef`, sha256 `ba6e24b6…`) is now the `apa_camera` default `object_detection.model_path`, backend `hailo` (tracking stays off by default). Tested on `apa_camera_3606`'s accelerator only; a HEF runs only on the Hailo arch it was compiled for.
   - **Cause of the frozen dot:** `_last_known_det` was only ever replaced, never cleared, so with no detection the overlay, `det_cx`/`det_cy`/`in_zone` and zone state held the last sighting forever. The old `coordinate_smoothing` only smoothed the drawn dot; the zone test and CSV used raw positions.

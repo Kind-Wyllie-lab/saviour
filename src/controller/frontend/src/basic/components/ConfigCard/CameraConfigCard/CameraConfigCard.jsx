@@ -1554,6 +1554,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <>
                 <div className="config-section-divider" />
                 <div className="sensor-mode-info sensor-mode-info--muted">
+                  While recording, each frame's row in the timestamps CSV gets the
+                  tracked centroid (det_cx, det_cy, in pixels), det_conf (blank when
+                  the position is held over from an earlier frame) and in_zone.
+                  Tracking is independent of shocking.
+                </div>
+                <div className="sensor-mode-info sensor-mode-info--muted">
                   Position filtering: the zone test, CSV and overlay all use the
                   filtered position.
                 </div>

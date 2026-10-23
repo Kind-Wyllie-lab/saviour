@@ -261,3 +261,14 @@ class TestTracking:
         m._update_track([_det(900, 900)], now=1.6)   # lost, then a blip
         m._update_track([], now=1.63)
         assert m._track_pos is None
+
+
+class TestFrameConfidence:
+    def test_conf_only_on_frames_with_an_accepted_detection(self):
+        m = _tracker()
+        m._update_track([_det(110, 100, conf=0.81)], now=1.03)
+        assert m._frame_conf == 0.81
+        m._update_track([], now=1.06)            # position held, nothing new
+        assert m._track_pos is not None and m._frame_conf is None
+        m._update_track([_det(900, 900, conf=0.9)], now=1.09)   # rejected jump
+        assert m._frame_conf is None

@@ -310,7 +310,10 @@ class BlobTracker:
 
 class APACameraModule(CameraBase):
     CONFIG_FILENAME = "apa_camera_config.json"
-    CSV_EXTRA_COLUMNS = ["det_cx", "det_cy", "in_zone"]
+    # det_cx/det_cy: tracked (filtered) centroid, main-stream px; det_conf:
+    # confidence of the detection accepted on this frame, blank when the
+    # position is held over from an earlier frame (within lost_timeout_s).
+    CSV_EXTRA_COLUMNS = ["det_cx", "det_cy", "in_zone", "det_conf"]
     _DEFAULT_BITRATE_MB = 2
 
     def __init__(self, module_type="apa_camera"):
@@ -335,6 +338,7 @@ class APACameraModule(CameraBase):
         self._track_det: Detection | None = None     # for the overlay's label/conf
         self._track_seen_t = 0.0                     # monotonic time of last accepted detection
         self._jump_cand: tuple[float, float, int] | None = None  # far detection: (cx, cy, frames seen)
+        self._frame_conf: float | None = None        # detection accepted on the current frame
         self.smoothing = 0.5
         self.max_jump_frac = 0.15
         self.jump_confirm_frames = 3
@@ -535,6 +539,8 @@ class APACameraModule(CameraBase):
             "det_cx": det_cx if det_cx is not None else "",
             "det_cy": det_cy if det_cy is not None else "",
             "in_zone": int(in_zone) if det_cx is not None else "",
+            "det_conf": round(self._frame_conf, 3)
+                        if tracking and self._frame_conf is not None else "",
         }
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
@@ -626,6 +632,7 @@ class APACameraModule(CameraBase):
           position, CSV columns and zone state don't freeze on the last
           sighting.
         """
+        self._frame_conf = None
         if self._track_pos is not None and now - self._track_seen_t > self.lost_timeout_s:
             self._track_pos = self._track_det = None
             self._jump_cand = None
@@ -666,6 +673,7 @@ class APACameraModule(CameraBase):
             self._track_pos = (a * px + (1 - a) * cx, a * py + (1 - a) * cy)
         self._track_det = det
         self._track_seen_t = now
+        self._frame_conf = det.conf
 
 
     def _draw_detections(self, m: MappedArray) -> None:

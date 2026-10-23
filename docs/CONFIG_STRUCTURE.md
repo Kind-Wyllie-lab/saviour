@@ -232,18 +232,27 @@ Modules can specify readiness validation parameters:
 
 ### APA Camera Configuration
 
+Each overlay has a `*_display` (livestream) and a `*_record` (burned into the
+recorded video) switch: `mask.mask_display`/`mask_record`,
+`shock_zone.shock_zone_display`/`shock_zone_record`, and the tracking marker's
+`object_detection.overlay_display`/`overlay_record`. Tracking always looks only
+inside the mask, whether or not the mask is recorded. Uploaded HEFs live in
+`/var/lib/saviour/hailo_models/` on the module (`fetch_hef`); bundled ones in
+`/usr/local/src/saviour/hailo_models/`.
+
 ```json
 {
   "editable": {
     "mask": {
       "mask_radius": 0.55,
-      "mask_enabled": true,
+      "mask_display": true,
+      "mask_record": true,
       "mask_center_x_offset": 0,
       "mask_center_y_offset": 0
     },
     "shock_zone": {
       "shock_zone_display": true,
-      "shock_zone_enabled": true,
+      "shock_zone_record": false,
       "shock_zone_angle_span_deg": 90,
       "shock_zone_start_angle_deg": 45,
       "shock_zone_inner_offset": 0.5,

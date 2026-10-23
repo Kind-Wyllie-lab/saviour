@@ -78,6 +78,29 @@ class TestGitCheckoutInfo:
         assert "origin" in info["reason"]
 
 
+class TestOriginReachable:
+    def test_reachable(self):
+        with patch.object(su.subprocess, "run",
+                          return_value=MagicMock(returncode=0, stderr="")) as run:
+            assert su.origin_reachable("/x") == {"reachable": True}
+        cmd = run.call_args.args[0]
+        assert "ls-remote" in cmd and "origin" in cmd
+
+    def test_unreachable_reports_last_stderr_line(self):
+        err = "ssh: Could not resolve hostname github.com\nfatal: Could not read"
+        with patch.object(su.subprocess, "run",
+                          return_value=MagicMock(returncode=128, stderr=err)):
+            assert su.origin_reachable("/x") == {
+                "reachable": False, "reason": "fatal: Could not read"}
+
+    def test_timeout(self):
+        with patch.object(su.subprocess, "run",
+                          side_effect=subprocess.TimeoutExpired("git", 10)):
+            info = su.origin_reachable("/x")
+        assert info["reachable"] is False
+        assert "Timed out" in info["reason"]
+
+
 # --------------------------------------------------------------------------- #
 # pull_and_reset
 # --------------------------------------------------------------------------- #

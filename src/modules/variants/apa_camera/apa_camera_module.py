@@ -16,9 +16,12 @@ Author: Andrew SG
 """
 
 import contextlib
+import json
 import os
+import re
 import sys
 import time
+import urllib.request
 from collections import deque
 
 import cv2
@@ -29,8 +32,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
 
 # Detection + the on-chip-NMS picamera2 wrapper are shared with hailo_camera.
-from modules.hailo_infer import Detection, HailoDetector
-from modules.module import check
+from modules.hailo_infer import MODEL_DIR, Detection, HailoDetector
+from modules.module import check, command
+
+# HEFs uploaded from the web UI (fetch_hef). Outside the source tree so a
+# code update never touches them; MODEL_DIR holds the bundled/zoo HEFs.
+USER_HEF_DIR = "/var/lib/saviour/hailo_models"
+HAILO_DEVICE = "/dev/hailo0"
+_HEF_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.hef$")
+MAX_HEF_BYTES = 256 * 1024 * 1024
 
 __all__ = ["Detection", "HailoDetector"]  # re-exported for existing importers
 
@@ -319,7 +329,8 @@ class APACameraModule(CameraBase):
         self._inference_fault: str | None = None
         self._labels: list[str] = ["rat"]
         self.threshold = 0.55
-        self.max_detections = 2
+        # One animal per trial: only the most confident detection is tracked.
+        self.max_detections = 1
         self._detection_buffer = deque(maxlen=3)
         self._last_known_det: Detection | None = None
 
@@ -329,12 +340,19 @@ class APACameraModule(CameraBase):
         self._prev_in_zone: bool = False
 
         # (mask/shock-zone geometry is computed per-frame from the current array shape)
+        # Each overlay has independent *_display (livestream) and *_record
+        # (burned into the recorded main stream) switches.
         self.mask_radius = None
         self.mask_center_x_offset = 0
         self.mask_center_y_offset = 0
-        self.mask_enabled = False
-        self.shock_zone_enabled = False
-        self.shock_zone_display = False
+        self.mask_display = True
+        self.mask_record = True
+        self._mask_cache: tuple | None = None   # (key, uint8 mask image)
+        self.shock_zone_display = True
+        self.shock_zone_record = False
+        self.track_display = True
+        self.track_record = True
+        self._detector_sig: tuple | None = None
         self.shock_zone_angle_span = 0
         self.shock_zone_start_angle = 0
         self.shock_zone_inner_offset = 0
@@ -369,26 +387,43 @@ class APACameraModule(CameraBase):
     def _configure_object_detection(self):
         self._labels = self.config.get("object_detection.labels", ["rat"])
         self.threshold = self.config.get("object_detection.threshold", 0.55)
-        self.max_detections = self.config.get("object_detection.max_detections", 2)
+        self.max_detections = self.config.get("object_detection.max_detections", 1)
 
         if not self.config.get("object_detection.enabled", False):
             if self.detector is not None:
                 self.detector.close()
                 self.detector = None
                 self._detector_backend = None
+            self._detector_sig = None
             self._inference_fault = None  # nothing expected
             self._sync_hardware_fault()
             return
 
         new_backend = self.config.get("object_detection.backend", "hailo")
-        if self.detector is not None and self._detector_backend == new_backend:
-            return  # same backend already running
+        model_path = self.config.get(
+            "object_detection.model_path",
+            "/usr/share/hailo-models/yolov8n.hef"
+        )
+        # Rebuild whenever anything the detector is constructed from changes
+        # (not just the backend): a new HEF, blob-tracker tuning, or the
+        # raw backend's threshold, which it only takes at init.
+        if new_backend == "blob":
+            sig = (new_backend, json.dumps(self.config.get("blob_tracker", {}), sort_keys=True))
+        elif new_backend == "hailo_raw":
+            sig = (new_backend, model_path, self.threshold)
+        else:
+            sig = (new_backend, model_path)
+        if self.detector is not None and self._detector_sig == sig:
+            if hasattr(self.detector, "set_threshold"):
+                self.detector.set_threshold(self.threshold)
+            return  # same detector already running
 
         if self.detector is not None:
             self.detector.close()
             self.detector = None
 
         self._detector_backend = new_backend
+        self._detector_sig = sig
 
         if new_backend == "blob":
             bt = self.config.get("blob_tracker", {})
@@ -409,10 +444,6 @@ class APACameraModule(CameraBase):
             self._sync_hardware_fault()
             return
 
-        model_path = self.config.get(
-            "object_detection.model_path",
-            "/usr/share/hailo-models/yolov8n.hef"
-        )
         try:
             if new_backend == "hailo_raw":
                 self.detector = HailoRawDetector(model_path, threshold=self.threshold)
@@ -425,6 +456,7 @@ class APACameraModule(CameraBase):
             self.logger.error(f"Failed to initialise Hailo detector: {e}")
             self.detector = None
             self._detector_backend = None
+            self._detector_sig = None
             self._inference_fault = (
                 f"Hailo AI HAT unavailable for object detection: {e}"
             )
@@ -457,19 +489,25 @@ class APACameraModule(CameraBase):
     # -----------------------------------------------------------------------
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
-        self._apply_mask(m)
+        if self.mask_record:
+            self._apply_mask(m)
 
         det_cx = det_cy = None
         in_zone = False
+        tracking = self.config.get("object_detection.enabled", False)
 
-        if self.config.get("object_detection.enabled", False):
-            self._detect_objects(m)
+        if tracking:
+            # Tracking always looks only inside the arena mask, whether or not
+            # the mask is burned into the recording.
+            if self.mask_record:
+                self._detect_objects(m.array)
+            else:
+                self._detect_objects(self._masked_copy(m.array))
             if self._last_known_det is not None:
                 x, y, w, h = self._last_known_det.box
                 det_cx = int(x + w / 2)
                 det_cy = int(y + h / 2)
                 in_zone = self._is_in_shock_zone(det_cx, det_cy)
-            self._draw_detections(m)
 
             if det_cx is not None and in_zone != self._prev_in_zone:
                 self.communication.send_status({
@@ -478,6 +516,12 @@ class APACameraModule(CameraBase):
                 })
                 self._prev_in_zone = in_zone
 
+        # Recorded overlays go on after detection so they never feed it.
+        if self.shock_zone_record:
+            self._apply_shock_zone(m)
+        if tracking and self.track_record:
+            self._draw_detections(m)
+
         return {
             "det_cx": det_cx if det_cx is not None else "",
             "det_cy": det_cy if det_cy is not None else "",
@@ -485,9 +529,23 @@ class APACameraModule(CameraBase):
         }
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
-        self._apply_mask(m)
-        self._apply_shock_zone(m)
-        if self.config.get("object_detection.enabled", False):
+        if self.mask_display:
+            self._apply_mask(m)
+        if self.shock_zone_display:
+            self._apply_shock_zone(m)
+        if self.track_display and self.config.get("object_detection.enabled", False):
+            self._draw_detections(m)
+
+    def _process_main_preview_frame(self, m, timing) -> None:
+        """High-quality livestream: a copy of the recorded frame, so it already
+        carries every *_record overlay. Add only the display-only ones (a
+        recorded overlay can't be taken back off the preview)."""
+        if self.mask_display and not self.mask_record:
+            self._apply_mask(m)
+        if self.shock_zone_display and not self.shock_zone_record:
+            self._apply_shock_zone(m)
+        if (self.track_display and not self.track_record
+                and self.config.get("object_detection.enabled", False)):
             self._draw_detections(m)
 
     def _apply_framerate(self, arr, framerate: str, stream: str = "main") -> None:
@@ -520,10 +578,9 @@ class APACameraModule(CameraBase):
     # Object detection
     # -----------------------------------------------------------------------
 
-    def _detect_objects(self, m: MappedArray):
+    def _detect_objects(self, frame: np.ndarray):
         if self.detector is None:
             return
-        frame = m.array
         if frame.dtype != np.uint8:
             frame = frame.astype(np.uint8)
         if frame.ndim != 3 or frame.shape[2] != 3:
@@ -593,10 +650,14 @@ class APACameraModule(CameraBase):
             self.mask_radius          = self.config.get("mask.mask_radius")
             self.mask_center_x_offset = self.config.get("mask.mask_center_x_offset") or 0
             self.mask_center_y_offset = self.config.get("mask.mask_center_y_offset") or 0
-            self.mask_enabled         = self.config.get("mask.mask_enabled")
+            self.mask_display         = bool(self.config.get("mask.mask_display", True))
+            self.mask_record          = bool(self.config.get("mask.mask_record", True))
+            self._mask_cache          = None
 
-            self.shock_zone_enabled      = self.config.get("shock_zone.shock_zone_enabled")
-            self.shock_zone_display      = self.config.get("shock_zone.shock_zone_display")
+            self.shock_zone_display      = bool(self.config.get("shock_zone.shock_zone_display", True))
+            self.shock_zone_record       = bool(self.config.get("shock_zone.shock_zone_record", False))
+            self.track_display = bool(self.config.get("object_detection.overlay_display", True))
+            self.track_record  = bool(self.config.get("object_detection.overlay_record", True))
             self.shock_zone_angle_span   = self.config.get("shock_zone.shock_zone_angle_span_deg")
             self.shock_zone_start_angle  = self.config.get("shock_zone.shock_zone_start_angle_deg") - 90
             self.shock_zone_inner_offset = self.config.get("shock_zone.shock_zone_inner_offset")
@@ -607,21 +668,37 @@ class APACameraModule(CameraBase):
             self.logger.error(f"Error configuring mask/shock zone: {e}")
 
 
+    def _mask_image(self, h: int, w: int) -> np.ndarray | None:
+        """The arena-circle mask for an h×w frame, cached per size and
+        geometry (lores and main differ, so the last one built is kept)."""
+        if self.mask_radius is None:
+            return None
+        key = (h, w, self.mask_radius, self.mask_center_x_offset, self.mask_center_y_offset)
+        if self._mask_cache is not None and self._mask_cache[0] == key:
+            return self._mask_cache[1]
+        r = int(0.5 * self.mask_radius * min(h, w))
+        if r <= 0:
+            return None
+        img = np.zeros((h, w), dtype="uint8")
+        cv2.circle(img, (w // 2 + self.mask_center_x_offset,
+                         h // 2 + self.mask_center_y_offset), r, 255, -1)
+        self._mask_cache = (key, img)
+        return img
+
     def _apply_mask(self, m: MappedArray) -> None:
-        if not self.mask_enabled or self.mask_radius is None:
-            return
-        h, w = m.array.shape[:2]
-        cx = w // 2 + self.mask_center_x_offset
-        cy = h // 2 + self.mask_center_y_offset
-        r  = int(0.5 * self.mask_radius * min(h, w))
-        if r > 0:
-            mask_img = np.zeros((h, w), dtype="uint8")
-            cv2.circle(mask_img, (cx, cy), r, 255, -1)
+        mask_img = self._mask_image(*m.array.shape[:2])
+        if mask_img is not None:
             m.array[:] = cv2.bitwise_and(m.array, m.array, mask=mask_img)
+
+    def _masked_copy(self, frame: np.ndarray) -> np.ndarray:
+        mask_img = self._mask_image(*frame.shape[:2])
+        if mask_img is None:
+            return frame
+        return cv2.bitwise_and(frame, frame, mask=mask_img)
 
 
     def _apply_shock_zone(self, m: MappedArray) -> None:
-        if not self.shock_zone_display or self.mask_radius is None:
+        if self.mask_radius is None:
             return
         h, w    = m.array.shape[:2]
         cx      = w // 2 + self.mask_center_x_offset
@@ -654,17 +731,73 @@ class APACameraModule(CameraBase):
         outer_r     = int(0.5 * self.mask_radius * min(self.height, self.width))
         inner_r     = max(0, int(self.shock_zone_inner_offset * outer_r))
         start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5)
-        end_angle   = start_angle + self.shock_zone_angle_span
 
         dx, dy = cx - frame_cx, cy - frame_cy
         r      = np.hypot(dx, dy)
-        theta  = (np.degrees(np.arctan2(dy, dx)) + 360) % 360
+        theta  = np.degrees(np.arctan2(dy, dx)) % 360
 
         if not (inner_r <= r <= outer_r):
             return False
-        if start_angle < end_angle:
-            return start_angle <= theta <= end_angle
-        return theta >= start_angle or theta <= end_angle
+        # Modulo, so an arc that crosses 0°/360° (e.g. a zone centred on 0°)
+        # works; the raw start/end comparison missed those.
+        return (theta - start_angle) % 360 <= self.shock_zone_angle_span
+
+
+    # -----------------------------------------------------------------------
+    # HEF models — pick an on-device file or fetch an uploaded one
+    # -----------------------------------------------------------------------
+
+    @command()
+    def list_hefs(self) -> dict:
+        """On-device HEFs for the config card's model picker: the bundled /
+        model-zoo ones in MODEL_DIR plus uploads in USER_HEF_DIR, and whether
+        a Hailo accelerator is fitted at all."""
+        hefs = []
+        for source, folder in (("bundled", MODEL_DIR), ("uploaded", USER_HEF_DIR)):
+            try:
+                names = sorted(os.listdir(folder))
+            except OSError:
+                continue
+            for name in names:
+                path = os.path.join(folder, name)
+                if name.endswith(".hef") and os.path.isfile(path):
+                    hefs.append({"name": name, "path": path, "source": source,
+                                 "size_bytes": os.path.getsize(path)})
+        return {
+            "hailo_present": os.path.exists(HAILO_DEVICE),
+            "hefs": hefs,
+            "current": self.config.get("object_detection.model_path", ""),
+        }
+
+    @command()
+    def fetch_hef(self, controller_url: str = "", filename: str = "") -> dict:
+        """Download an uploaded HEF from the controller (GET
+        /hailo_models/<filename>, staged there by the web UI's upload) into
+        USER_HEF_DIR. Returns the refreshed list_hefs() plus `fetched`."""
+        if not _HEF_NAME_RE.match(filename or ""):
+            return {**self.list_hefs(), "error": f"Invalid HEF filename: {filename!r}"}
+        if not controller_url:
+            return {**self.list_hefs(), "error": "controller_url is required"}
+        url = f"{controller_url.rstrip('/')}/hailo_models/{filename}"
+        dest = os.path.join(USER_HEF_DIR, filename)
+        tmp = dest + ".part"
+        try:
+            os.makedirs(USER_HEF_DIR, exist_ok=True)
+            with urllib.request.urlopen(url, timeout=30) as resp, open(tmp, "wb") as f:
+                total = 0
+                while chunk := resp.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_HEF_BYTES:
+                        raise ValueError("HEF larger than 256 MB")
+                    f.write(chunk)
+            os.replace(tmp, dest)
+        except Exception as e:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            self.logger.error(f"fetch_hef {filename} failed: {e}")
+            return {**self.list_hefs(), "error": f"Download failed: {e}"}
+        self.logger.info(f"Fetched HEF {filename} ({total // 1024} KiB) to {dest}")
+        return {**self.list_hefs(), "fetched": dest}
 
 
     # -----------------------------------------------------------------------

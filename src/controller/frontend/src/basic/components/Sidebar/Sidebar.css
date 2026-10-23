@@ -259,21 +259,27 @@
         height: 100%;
     }
 
-    .footer-version-btn {
+    /* Version, directly under the wordmark; links to the System page. */
+    .sidebar-version-btn {
+        align-self: center;
         border: none;
         background: transparent;
         cursor: pointer;
         color: var(--text-color);
-        opacity: 0.65;
+        opacity: 0.55;
+        font-family: ui-monospace, "Cascadia Mono", "Roboto Mono",
+            "DejaVu Sans Mono", "Courier New", monospace;
         font-size: 11px;
-        font-weight: 600;
         letter-spacing: 0.02em;
-        padding: 4px 8px;
-        border-radius: 8px;
+        padding: 1px 6px;
+        margin-bottom: 2px;
+        border-radius: 6px;
+        max-width: 100%;
+        overflow-wrap: anywhere;
         transition: opacity 0.15s, background 0.15s;
     }
 
-    .footer-version-btn:hover {
+    .sidebar-version-btn:hover {
         opacity: 1;
         background: color-mix(in srgb, var(--text-color) 10%, transparent);
     }
@@ -284,31 +290,47 @@
 
     .footer-role-wrap {
         position: relative;
-        margin-bottom: 8px;
+        display: flex;
+        justify-content: center;
     }
 
+    /* Neutral chip (text-colour tints, no accent) so it reads in both
+       themes without competing with the nav; the dot carries the state —
+       filled = controls enabled, hollow = disabled. */
     .footer-role-btn {
-        border: none;
-        background: transparent;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid color-mix(in srgb, var(--text-color) 22%, transparent);
+        background: color-mix(in srgb, var(--text-color) 6%, transparent);
+        color: var(--text-color);
         cursor: pointer;
         font-size: 11px;
         font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        padding: 3px 10px;
-        border-radius: 10px;
-        transition: filter 0.15s;
+        letter-spacing: 0.02em;
+        padding: 3px 8px;
+        border-radius: 4px;
+        transition: background 0.15s, border-color 0.15s;
+    }
+
+    .footer-role-btn::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        border: 1.5px solid currentColor;
+        box-sizing: border-box;
+        flex-shrink: 0;
     }
 
     .footer-role-menu {
         position: absolute;
-        /* Opens downward now that the role badge lives near the top of the
-           sidebar (below the title), not the footer — bottom:100% would
-           push it off the top of the screen. */
-        top: 100%;
+        /* Opens upward: the mode text sits in the footer, so top:100% would
+           push the menu off the bottom of the screen. */
+        bottom: 100%;
         left: 50%;
         transform: translateX(-50%);
-        margin-top: 6px;
+        margin-bottom: 6px;
         background: var(--card-bg-color);
         border: 1px solid color-mix(in srgb, var(--text-color) 20%, transparent);
         border-radius: 8px;
@@ -336,17 +358,37 @@
     }
 
     .footer-role-btn:hover {
-        filter: brightness(1.15);
+        background: color-mix(in srgb, var(--text-color) 12%, transparent);
+        border-color: color-mix(in srgb, var(--text-color) 35%, transparent);
+    }
+
+    .footer-role-text {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        line-height: 1.25;
+    }
+
+    /* "Sign in" under "Controls disabled": one line is ~150px, wider than the
+       112px sidebar floor. */
+    .footer-role-sub {
+        font-size: 10px;
+        font-weight: 500;
+        opacity: 0.8;
+        text-decoration: underline;
+        text-underline-offset: 2px;
     }
 
     .footer-role-btn--guest {
-        color: var(--text-color);
-        background: color-mix(in srgb, var(--text-color) 12%, transparent);
+        opacity: 0.65;
     }
 
-    .footer-role-btn--admin {
-        color: #fff;
-        background: var(--accent-color, #3b82f6);
+    .footer-role-btn--guest:hover {
+        opacity: 1;
+    }
+
+    .footer-role-btn--admin::before {
+        background: currentColor;
     }
 
     .footer-icon-btn:hover:not(:disabled) {
@@ -433,41 +475,10 @@
     color: var(--accent-color, #3b82f6);
 }
 
-.update-stage-btn {
-    margin-left: auto;
-    padding: 2px 8px;
-    border-radius: 4px;
-    border: 1px solid color-mix(in srgb, var(--text-color) 30%, transparent);
-    background: transparent;
-    color: var(--text-color);
-    cursor: pointer;
-    font-size: 11px;
-    opacity: 0.75;
-    white-space: nowrap;
-}
 
-.update-stage-btn:hover:not(:disabled) {
-    border-color: var(--accent-color, #3b82f6);
-    color: var(--accent-color, #3b82f6);
-    opacity: 1;
-}
 
-.update-stage-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
 
-.update-stage-btns {
-    margin-left: auto;
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-}
 
-.update-stage-btns .update-stage-btn {
-    margin-left: 0;
-}
 
 .update-dropzone {
     border: 1.5px dashed color-mix(in srgb, var(--text-color) 30%, transparent);
@@ -530,12 +541,6 @@
     word-break: break-word;
 }
 
-.update-deploy-status {
-    font-size: 12px;
-    opacity: 0.7;
-    margin: 8px 0 0;
-    text-align: center;
-}
 
 .update-mode-picker {
     display: flex;
@@ -573,6 +578,27 @@
     font-weight: 600;
 }
 
+.update-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 7px;
+    border-radius: 50%;
+    font-size: 11px;
+    background: color-mix(in srgb, var(--accent-color, #3b82f6) 18%, transparent);
+    color: var(--accent-color, #3b82f6);
+}
+
+.update-done {
+    font-size: 12px;
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: color-mix(in srgb, #2e9d4f 14%, transparent);
+}
+
 .update-mode-btn-hint {
     font-size: 11px;
     opacity: 0.65;
@@ -593,25 +619,8 @@
     margin: 4px 0 8px;
 }
 
-.update-git-modules-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    font-size: 12px;
-    opacity: 0.8;
-    margin: 6px 0;
-    cursor: pointer;
-}
 
-.save-button--secondary {
-    opacity: 0.7;
-    font-weight: normal;
-}
 
-.save-button--secondary:hover:not(:disabled) {
-    opacity: 1;
-}
 
 .update-git-info {
     font-size: 12px;

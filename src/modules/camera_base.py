@@ -1517,6 +1517,13 @@ class CameraBase(Module):
         interval. Default: no-op."""
         pass
 
+    def _process_main_preview_frame(self, m: "_FrameShim", timing: FrameTiming) -> None:
+        """Hook: overlays for the high-quality livestream, which is a copy of
+        the recorded main frame (so it already carries whatever
+        _process_main_frame burned in). Only add preview-only overlays here.
+        Default: no-op."""
+        pass
+
     def _after_frame_hook(self, timing: FrameTiming) -> None:
         """Hook: runs once per frame after all main/lores processing and the
         CSV write. For anything that needs to happen every frame but isn't
@@ -1979,6 +1986,10 @@ class CameraBase(Module):
                     actual_fps = getattr(self, "_preview_actual_fps", None)
                     if actual_fps:
                         self._apply_framerate(frame, str(actual_fps), "lores")
+            else:
+                timing = getattr(self, "_preview_timing", None)
+                if timing is not None:
+                    self._process_main_preview_frame(_FrameShim(frame), timing)
 
             # Exposure-clipping warning, top-left (timestamp is top-center, fps
             # top-right, subclass overlays bottom-left). Shown on either stream.

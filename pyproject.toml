@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "setuptools>=80", "setuptools_scm>=8"]
+requires = ["setuptools>=80", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -44,20 +44,6 @@ dependencies = [
     # /api/v1/openapi.json renders docs/openapi.yaml (rest_api.py)
     "PyYAML>=6.0"
 ]
-
-[tool.hatch.build]
-exclude = [
-    "src/controller/frontend/node_modules",
-    "src/controller/frontend/.next",
-    "src/controller/frontend/dist",
-    "src/controller/frontend/build",
-]
-
-[tool.hatch.version]
-path = "src/__version__.py"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
 
 [project.optional-dependencies]
 dev = [

@@ -28,6 +28,8 @@ import subprocess
 import zipfile
 from datetime import UTC, datetime
 
+from src.shared.dep_check import missing_dependencies
+
 try:
     import pwd  # POSIX only; the controller is Linux, dev/CI may not be
 except ImportError:  # pragma: no cover
@@ -72,7 +74,6 @@ UPDATE_META = os.path.join(UPDATE_STORE, "update_meta.json")
 # Dirs never shipped in the module package.
 STAGE_SKIP_DIRS = {".git", "env", "__pycache__", ".pytest_cache", "dist",
                    ".eggs", "node_modules"}
-_ENV_PIP = "/usr/local/src/saviour/env/bin/pip"
 
 # Same location + layout web.py's revert-from-UI (revert_controller_update)
 # reads, so a snapshot taken here is revertible from the web UI unchanged.
@@ -267,11 +268,14 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True,
     import time
 
     try:
-        pip = subprocess.run([_ENV_PIP, "install", "-q", "--no-index", src_root + "/"],
-                             capture_output=True, text=True)
-        if pip.returncode != 0:
-            _LOG.warning("build_and_restart: pip --no-index failed "
-                         "(new deps need a manual online `pip install .`)")
+        try:
+            missing = missing_dependencies(src_root)
+        except Exception as e:
+            _LOG.warning("build_and_restart: dependency check failed: %s", e)
+            missing = []
+        if missing:
+            _LOG.warning("build_and_restart: missing Python packages (install "
+                         "with internet access): %s", ", ".join(missing))
         if rebuild_frontend:
             frontend_dir = os.path.join(src_root, "src/controller/frontend")
             npm, npm_env = find_npm()

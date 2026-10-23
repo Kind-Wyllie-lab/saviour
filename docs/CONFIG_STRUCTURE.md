@@ -128,9 +128,7 @@ Modules can specify readiness validation parameters:
           "name": "weak_shock",
           "current": 0.2,
           "duration": 0.5,
-          "intershock_latency": 1,
-          "entrance_latency": 1.5,
-          "outside_latency": 0.1
+          "intershock_latency": 1
         }
       }
     }
@@ -275,6 +273,25 @@ and `lost_timeout_s` (see `_update_track` in `apa_camera_module.py`). Uploaded H
   "module": {
     "required_disk_space_mb": 1024.0,
     "ptp_offset_threshold_us": 500.0
+  }
+}
+```
+
+### APA Controller Configuration (automated shocking)
+
+`apa_controller_config.json`, read by `variants/apa/shock_automation.py`. The
+shock *mode* (disarmed / manual / auto / dry_run) is runtime state on the
+controller, never saved: it starts disarmed. The pulse pattern itself is the
+Arduino module's (`arduino.shocker.duration` on, `intershock_latency` off).
+
+```json
+{
+  "apa": {
+    "auto_shock": {
+      "entry_latency_s": 0.5,       // continuous time in zone before the first shock
+      "zone_state_timeout_s": 0.5,  // a zone report older than this counts as "not in zone"
+      "max_pulses_per_min": 20      // 0 = no per-minute cap (the module's per-session cap still applies)
+    }
   }
 }
 ```

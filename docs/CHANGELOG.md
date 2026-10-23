@@ -13,6 +13,13 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-23
 
+- [x] **APA shock modes and automated shocking** (branch `feat/apa-auto-shock` → `staging`; design in `plans/apa-rat-detector.md` step 5). Not yet run on the rig.
+  - **Controller:** `variants/apa/shock_automation.py` holds the shock mode (`disarmed` / `manual` / `auto` / `dry_run`). It starts disarmed, isn't persisted, and goes back to disarmed at session end and on Stop all. Manual `activate_shock` from the dashboard is refused while disarmed (new `Web.handle_special_command` hook).
+  - **Auto:** after `entry_latency_s` (0.5 s) in the zone, the controller holds the module's pulse loop on (lease refreshed every 0.25 s). It stops on exit, on a stale zone report (`zone_state_timeout_s` 0.5 s), on a mode change, or at `max_pulses_per_min` (20). Only while a session is recording. Dry run logs `would_shock_*` and sends nothing. Every decision goes to `<share>/<session>/<session>_shock_decisions.csv`.
+  - **Camera:** `zone_state` every 0.2 s while tracking.
+  - **Dashboard:** a mode selector replaces the per-tab Arm toggle; Stop all button (and Esc), no login needed; auto status line.
+  - **Arduino module:** unchanged. The unused `entrance_latency` / `outside_latency` keys were dropped.
+  - Tests: 17 for `ShockAutomation` (gate, entry latency, brief entries, lease refresh, stale camera, no session, session-end disarm, cap, dry run, mode change mid-shock), 2 camera `zone_state` tests.
 - [x] **FrameSync: no livestream for 3.5 min after a fleet update** (follow-up in `plans/framesync-sticky-election-and-ordered-restarts.md`). After the 11:58 update `apa_camera_3606` was a client of `camera_0fcc` and wedged.
   - **Cause:** the controller restart lost the remembered transmitter. 0fcc's old process re-reported (as `client`) before 3606 re-registered, so 0fcc was elected and confirmed. 0fcc then restarted for its own update under 3606. The wedge guard only ran on a config change, and one arrived 3.5 min later.
   - **Controller:** during the 60 s cold start, enabled `client`s with no `server` claim hold the election until the server re-registers, with a one-shot timer re-running reconcile at the window's end.

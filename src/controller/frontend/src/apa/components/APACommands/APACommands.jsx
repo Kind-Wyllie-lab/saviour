@@ -6,20 +6,27 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 // Styling and components
 import "./APACommands.css";
 
-// Shock arm/hold state is shared by every mounted APACommands: the fullscreen
-// overlay mounts a second copy while the dashboard's stays mounted beneath it,
-// and both listen for the spacebar. Per-instance state let a disarm in one
-// leave the other armed, and one keypress send two activates.
-// Deliberately not persisted: a reload (often a different operator) starts
-// disarmed.
-let sharedArmed = false;
-const armedSubscribers = new Set();
-const subscribeArmed = (fn) => { armedSubscribers.add(fn); return () => armedSubscribers.delete(fn); };
-const getArmed = () => sharedArmed;
-function setSharedArmed(next) {
-    if (sharedArmed === next) return;
-    sharedArmed = next;
-    armedSubscribers.forEach((fn) => fn());
+// Shock mode lives on the controller (variants/apa/shock_automation.py) and
+// arrives as apa_shock_state, so every tab and both mounted copies (the
+// fullscreen overlay mounts a second one) show the same mode. It's mirrored
+// in this module-level store because the spacebar listeners are bound once.
+// The controller also refuses manual shocks while disarmed, so this copy is
+// only for the UI.
+const MODES = [
+    { id: "disarmed", label: "Disarmed" },
+    { id: "manual",   label: "Manual" },
+    { id: "auto",     label: "Auto" },
+    { id: "dry_run",  label: "Dry run" },
+];
+let sharedMode = "disarmed";
+const modeSubscribers = new Set();
+const subscribeMode = (fn) => { modeSubscribers.add(fn); return () => modeSubscribers.delete(fn); };
+const getMode = () => sharedMode;
+const getArmed = () => sharedMode !== "disarmed";
+function setSharedMode(next) {
+    if (sharedMode === next) return;
+    sharedMode = next;
+    modeSubscribers.forEach((fn) => fn());
 }
 // True while a spacebar or hold-button press is holding the shock on.
 // `refresh` re-sends activate_shock while held: the module stops the shock
@@ -61,7 +68,9 @@ function APACommands( {modules} ) {
     // From the shock_*_being_delivered events, reset by each state message's
     // shock_being_delivered so a missed event can't latch the banner.
     const [deliveringEvent, setDeliveringEvent] = useState(false);
-    const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
+    const mode = useSyncExternalStore(subscribeMode, getMode);
+    const shockerArmed = mode !== "disarmed";
+    const [shockState, setShockState] = useState(null);
     const holding = useSyncExternalStore(subscribeHold, getHolding);
     const loggedIn = useIsLoggedIn();
     // Throttle rapid command emissions — 200 ms minimum between same command type
@@ -84,17 +93,12 @@ function APACommands( {modules} ) {
     const notAllowed = !loggedIn ? "Login required for this action"
         : !moduleOnline ? "APA Arduino module offline" : null;
     const holdReason = notAllowed
-        ?? (!shockerArmed ? "Arm the shocker first"
+        ?? (!shockerArmed ? "Select a shock mode first"
             : capReached ? "Shock limit reached: reset the counter between sessions" : null);
     const startReason = notAllowed ?? (live?.rotating ? "Table already rotating" : null);
     const resetReason = notAllowed
         ?? (sessionRunning ? "Can't reset the counter during a session"
             : live?.shock_activated ? "Can't reset the counter while a shock sequence is active" : null);
-
-    // Logged out or module gone: nothing to shock with, so don't stay armed.
-    useEffect(() => {
-        if (!canControl) setSharedArmed(false);
-    }, [canControl]);
 
     // A confirm left open must not outlive the conditions that allowed it.
     useEffect(() => {
@@ -117,15 +121,30 @@ function APACommands( {modules} ) {
             setDeliveringEvent(!!data.state?.shock_being_delivered);
         }
 
+        function onShockState(data) {
+            setShockState(data);
+            setSharedMode(data.mode);
+            // Disarmed elsewhere (another tab, Stop all, session end): end a hold.
+            if (data.mode === "disarmed") releaseShock();
+        }
+        function requestShockState() { socket.emit("get_apa_shock_state"); }
+
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);
         socket.on('shock_stopped_being_delivered', onShockStopBeingDelivered);
         socket.on('arduino_state', onArduinoState);
+        socket.on('apa_shock_state', onShockState);
+        socket.on('connect', requestShockState);
+        requestShockState();
 
         return () => {
+            socket.off('apa_shock_state', onShockState);
+            socket.off('connect', requestShockState);
             socket.off('shock_started_being_delivered', onShockStartBeingDelivered);
             socket.off('shock_stopped_being_delivered', onShockStopBeingDelivered);
             socket.off('arduino_state', onArduinoState);
         };
+    // releaseShock only touches the shared hold store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Latest module id for the window listeners, which are bound once (see
@@ -170,14 +189,20 @@ function APACommands( {modules} ) {
         deactivateShock();
     };
 
-    const toggleShockerArmed = () => {
-        const next = !getArmed();
-        setSharedArmed(next);
-        if (!next) releaseShock();
+    const setMode = (next) => {
+        if (next === "disarmed") releaseShock();
+        socket.emit("set_shock_mode", { mode: next });
+    };
+
+    // Never disabled: it can only make things safer.
+    const stopAll = () => {
+        releaseShock();
+        socket.emit("stop_all_shocks");
     };
 
     useEffect(() => {
         const handleKeyDown = (event) => {
+            if (event.code === "Escape") { stopAll(); return; }
             if (event.code !== "Space" || !getArmed() || isTextEntry(event.target)) return;
             // Stop space scrolling the page or clicking a focused button
             // (e.g. toggling Disarm, or Start Motor) while it is the shock key.
@@ -221,8 +246,13 @@ function APACommands( {modules} ) {
                 disarming is the safe action, so that button stays plain. */}
             {shockerArmed && (
                 <div className="apa-armed-notice" role="status">
-                    ARMED: Spacebar delivers shock
+                    {mode === "manual" && "ARMED (manual): Spacebar delivers shock"}
+                    {mode === "auto" && "ARMED (auto): shocks the rat in the zone; Spacebar also shocks"}
+                    {mode === "dry_run" && "DRY RUN: logs would-be shocks, delivers none; Spacebar still shocks"}
                 </div>
+            )}
+            {(mode === "auto" || mode === "dry_run") && shockState && (
+                <AutoStatus state={shockState} dry={mode === "dry_run"} />
             )}
             <div className="apa-state">
                 {!apaModule ? (
@@ -284,13 +314,26 @@ function APACommands( {modules} ) {
             <div className="apa-command-buttons">
                 <div className="apa-command-group" role="group" aria-labelledby="apa-group-shocker">
                     <span className="apa-command-group-label" id="apa-group-shocker">Shocker</span>
-                    <button
-                        className={`toggle-shocker${shockerArmed ? " toggle-shocker--armed" : ""}`}
-                        onClick={toggleShockerArmed}
-                        disabled={!canControl && !shockerArmed}
-                        title={!canControl && !shockerArmed ? notAllowed : undefined}
-                    >
-                        {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
+                    <div className="apa-mode-select" role="radiogroup" aria-label="Shock mode">
+                        {MODES.map((m) => (
+                            <button
+                                key={m.id}
+                                type="button"
+                                role="radio"
+                                aria-checked={mode === m.id}
+                                className={`apa-mode-btn${mode === m.id ? ` apa-mode-btn--on apa-mode-btn--${m.id}` : ""}`}
+                                onClick={() => setMode(m.id)}
+                                // Disarming is always allowed; arming needs a login.
+                                disabled={m.id !== "disarmed" && !canControl}
+                                title={m.id !== "disarmed" && !canControl ? notAllowed : undefined}
+                            >
+                                {m.label}
+                            </button>
+                        ))}
+                    </div>
+                    <button type="button" className="apa-stop-all" onClick={stopAll}
+                        title="Stop any shock and disarm (Esc)">
+                        Stop all shocks (Esc)
                     </button>
                     {/* Pointer events cover mouse, touch and pen; touch-action
                         (CSS) stops a held finger scrolling the page instead. */}
@@ -401,6 +444,31 @@ function APACommands( {modules} ) {
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+// Live view of the controller's auto decision: what it sees and why it is or
+// isn't shocking.
+function AutoStatus({ state, dry }) {
+    const { settings = {} } = state;
+    let line;
+    if (!state.session_recording) line = "Waiting for a recording session: no automated shocks until one starts";
+    else if (!state.zone_report_fresh) line = "No zone report from the APA camera: is tracking on?";
+    else if (state.capped) line = `Per-minute limit reached (${state.pulses_last_min}/${settings.max_pulses_per_min} pulses)`;
+    else if (state.shocking) line = dry ? "Would be shocking: rat in zone" : "Shocking: rat in zone";
+    else if (state.in_zone) line = `Rat in zone ${state.in_zone_s.toFixed(1)} s (shock after ${settings.entry_latency_s} s)`;
+    else line = "Rat outside the zone";
+    const ev = state.last_event;
+    return (
+        <div className={`apa-auto-status${state.shocking ? " apa-auto-status--shocking" : ""}`} role="status">
+            <div>{line}</div>
+            {ev && (
+                <div className="apa-auto-status__last">
+                    Last: {ev.event.replaceAll("_", " ")}{ev.reason ? ` (${ev.reason})` : ""}
+                    {" "}at {new Date(ev.time_utc).toLocaleTimeString()}
+                </div>
+            )}
         </div>
     );
 }

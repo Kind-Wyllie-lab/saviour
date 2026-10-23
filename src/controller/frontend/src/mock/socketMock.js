@@ -115,6 +115,16 @@ class MockSocket {
     this._fire("system_state", clone(state.systemState));
   }
 
+  _fireShockState() {
+    const r = state.apa;
+    this._fire("apa_shock_state", {
+      mode: r.mode ?? "disarmed", shocking: false, in_zone: false, zone_report_fresh: false,
+      in_zone_s: 0, camera: null, session_recording: false, pulses_last_min: 0, capped: false,
+      settings: { entry_latency_s: 0.5, zone_state_timeout_s: 0.5, max_pulses_per_min: 20 },
+      last_event: r.lastEvent ?? null,
+    });
+  }
+
   // Simulated APA rig: the shock pulses on/off while activate_shock keeps
   // renewing its lease (as shock.py does), and the table eases to its RPM.
   _tickApa() {
@@ -272,6 +282,19 @@ const ROUTER = {
       git: { available: true, branch: "staging", remote: "git@github.com:mock/saviour.git" },
     });
   },
+  // APA shock mode (controller-side in the real system; no auto decisions here).
+  get_apa_shock_state() { this._fireShockState(); },
+  set_shock_mode(payload) {
+    state.apa.mode = payload?.mode ?? "disarmed";
+    state.apa.lastEvent = { time_utc: new Date().toISOString(), event: "mode", reason: state.apa.mode, by: "operator" };
+    this._fireShockState();
+  },
+  stop_all_shocks() {
+    state.apa.mode = "disarmed";
+    state.apa.shockActivated = false;
+    state.apa.lastEvent = { time_utc: new Date().toISOString(), event: "stop_all", reason: "", by: "operator" };
+    this._fireShockState();
+  },
   // Mock rigs are "offline": exercises the disabled Git pull option.
   check_git_remote() {
     this._fire("git_remote_status", { reachable: false, reason: "mock: no network" });
@@ -339,6 +362,8 @@ const ROUTER = {
     const t = Date.now();
     switch (payload?.type) {
       case "activate_shock":
+        // The controller's mode gate (variants/apa/shock_automation.py).
+        if ((r.mode ?? "disarmed") === "disarmed") break;
         if (r.attempted >= r.maxShocks) break;
         if (!r.shockActivated) { r.shockActivated = true; r.nextPulseAt = t; }
         r.holdUntil = t + APA_LEASE_MS;

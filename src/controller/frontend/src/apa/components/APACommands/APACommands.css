@@ -260,3 +260,61 @@
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* Shock mode: a 2x2 segmented control. Off modes are outlined; the selected
+   one is filled (orange when it can shock, plain when disarmed). */
+.apa-mode-select {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.apa-commands .apa-mode-btn {
+  background-color: transparent;
+  color: var(--text-color);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+  font-weight: 600;
+  padding: 6px 8px;
+}
+
+.apa-commands .apa-mode-btn--on {
+  background-color: #d4820a;
+  color: white;
+  box-shadow: none;
+}
+
+.apa-commands .apa-mode-btn--disarmed.apa-mode-btn--on {
+  background-color: var(--accent-color);
+}
+
+/* Always enabled and always the same: the one control that must be findable. */
+.apa-commands .apa-stop-all {
+  background-color: transparent;
+  color: #c0392b;
+  box-shadow: inset 0 0 0 2px #c0392b;
+}
+
+.apa-commands .apa-stop-all:hover {
+  background-color: color-mix(in srgb, #c0392b 12%, transparent);
+}
+
+.apa-auto-status {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  font-size: 0.88em;
+}
+
+.apa-auto-status--shocking {
+  border-color: #c0392b;
+  background-color: color-mix(in srgb, #c0392b 12%, transparent);
+  font-weight: 600;
+}
+
+.apa-auto-status__last {
+  margin-top: 3px;
+  opacity: 0.65;
+  font-size: 0.9em;
+  font-weight: normal;
+}

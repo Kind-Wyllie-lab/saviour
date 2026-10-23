@@ -272,3 +272,45 @@ class TestFrameConfidence:
         assert m._track_pos is not None and m._frame_conf is None
         m._update_track([_det(900, 900, conf=0.9)], now=1.09)   # rejected jump
         assert m._frame_conf is None
+
+
+class TestZoneState:
+    """zone_state at ~5 Hz while tracking: the controller's auto shocking
+    holds a shock only while these keep arriving."""
+
+    def _apa(self):
+        from unittest.mock import MagicMock
+
+        import numpy as np
+        m = _tracker(at=(500, 500), _prev_in_zone=False, _last_zone_state_t=0.0,
+                     mask_record=True, shock_zone_record=False, track_record=False,
+                     mask_radius=None, _frame_conf=None,
+                     config=_Cfg({"object_detection.enabled": True}),
+                     communication=MagicMock())
+        m._apply_mask = lambda arr: None
+        m._detect_objects = lambda frame: [_det(500, 500, conf=0.8)]
+        m._is_in_shock_zone = lambda cx, cy: True
+        timing = MagicMock(timestamp_ns=123)
+        return m, _Arr(np.zeros((10, 10, 3), dtype=np.uint8)), timing
+
+    def _sent(self, m):
+        return [c.args[0] for c in m.communication.send_status.call_args_list]
+
+    def test_reports_throttled_to_period(self):
+        from unittest.mock import patch
+        m, frame, timing = self._apa()
+        with patch("src.modules.variants.apa_camera.apa_camera_module.time.monotonic") as mono:
+            for t in (1.0, 1.03, 1.06, 1.1, 1.21):
+                mono.return_value = t
+                m._process_main_frame(frame, timing)
+        states = [s for s in self._sent(m) if s["type"] == "zone_state"]
+        assert len(states) == 2                    # at 1.0 and 1.21
+        assert states[0]["in_zone"] is True and states[0]["tracking"] is True
+        assert states[0]["det_conf"] == 0.8
+        assert self._sent(m)[0]["type"] == "zone_entered"   # the edge goes first
+
+    def test_no_reports_when_tracking_off(self):
+        m, frame, timing = self._apa()
+        m.config = _Cfg({"object_detection.enabled": False})
+        m._process_main_frame(frame, timing)
+        assert self._sent(m) == []

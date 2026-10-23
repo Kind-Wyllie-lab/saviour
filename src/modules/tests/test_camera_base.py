@@ -1104,6 +1104,20 @@ class TestWedgedCameraGuard:
         cam.picam2.stop.assert_called_once()
         cam._restart_service_for_wedged_camera.assert_not_called()
 
+    @pytest.mark.parametrize("frame_ago, recording, started, exits", [
+        (None, False, True, True),    # wedged, idle: restart without waiting for a config
+        (0.1, False, True, False),    # frames flowing
+        (None, True, True, False),    # never mid-recording
+        (None, False, False, False),  # camera stopped (e.g. mid-reconfigure)
+    ])
+    def test_watchdog_poll_restarts_wedged_camera(
+            self, frame_ago, recording, started, exits):
+        cam, now = self._cam(started_ago=10.0, frame_ago=frame_ago, recording=recording)
+        cam.picam2.started = started
+        with patch("src.modules.camera_base.time.monotonic", return_value=now):
+            assert cam._watchdog_alive()[0] is True
+        assert cam._restart_service_for_wedged_camera.called is exits
+
     def test_start_picam_stamps_start_time(self):
         cam = _make_camera(picam2=MagicMock())
         with patch("src.modules.camera_base.time.monotonic", return_value=42.0):

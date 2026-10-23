@@ -782,13 +782,24 @@ class CameraBase(Module):
         last = getattr(self, "_last_frame_mono", None)
         return last is None or last < started or now - last > wedge_s
 
+    def _watchdog_alive(self) -> tuple[bool, str | None]:
+        """Also catch a camera that wedges with no config change to notice it
+        (a FrameSync client whose server restarted under it -- APA rig fleet
+        update, 2026-10-23: no livestream for 3.5 min until a set_config
+        happened to arrive). Polled by the keep-alive thread every ~20 s."""
+        picam2 = getattr(self, "picam2", None)
+        if (picam2 is not None and getattr(picam2, "started", False)
+                and self._camera_wedged() and not self._recording_active()):
+            self._restart_service_for_wedged_camera()
+        return super()._watchdog_alive()
+
     def _restart_service_for_wedged_camera(self) -> None:
         """Exit so systemd (Restart=always, RestartSec=10) restarts the
         service: ~13 s back, against ~60 s for the watchdog after a frozen
         stop(). The new config was saved before configure_module() ran, so
         the module comes back with it."""
         self.logger.error(
-            "Camera has delivered no frames since its last start (libcamera "
+            "Camera has stopped delivering frames (libcamera "
             "wedged, e.g. a FrameSync client whose server was restarting) -- "
             "restarting the service instead of stopping the camera, which "
             "would freeze")

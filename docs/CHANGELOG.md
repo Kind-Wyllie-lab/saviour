@@ -13,6 +13,11 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-10-23
 
+- [x] **FrameSync: no livestream for 3.5 min after a fleet update** (follow-up in `plans/framesync-sticky-election-and-ordered-restarts.md`). After the 11:58 update `apa_camera_3606` was a client of `camera_0fcc` and wedged.
+  - **Cause:** the controller restart lost the remembered transmitter. 0fcc's old process re-reported (as `client`) before 3606 re-registered, so 0fcc was elected and confirmed. 0fcc then restarted for its own update under 3606. The wedge guard only ran on a config change, and one arrived 3.5 min later.
+  - **Controller:** during the 60 s cold start, enabled `client`s with no `server` claim hold the election until the server re-registers, with a one-shot timer re-running reconcile at the window's end.
+  - **Module:** `CameraBase._watchdog_alive()` checks `_camera_wedged()` on every keep-alive poll (~20 s) and exits for a systemd restart when idle.
+  - Tests: 3 reconcile, 4 watchdog-poll; 2 recording-deferral tests moved past the cold-start window (they model a server going offline mid-run). Not yet validated on hardware.
 - [x] **APA tracking confidence in the timestamps CSV** (branch `feat/apa-track-confidence-csv` → `staging`). New last column `det_conf`: confidence of the detection accepted on that frame, blank when the position is held over within `lost_timeout_s` (so held vs fresh positions are distinguishable). Columns are appended, nothing reads them by position. Card notes that tracking is independent of shocking and what the CSV records. Test: conf only on frames with an accepted detection.
 - [x] **APA tracking: default rat HEF in the repo; smoothing, jump rejection and a lost timeout** (branch `feat/apa-tracker-filter` → `staging`).
   - **Model:** `hailo_models/apa_rats_yolov8_nms.hef` (YOLOv8, NMS in the HEF, 1 class; was `best.hef`, sha256 `ba6e24b6…`) is now the `apa_camera` default `object_detection.model_path`, backend `hailo` (tracking stays off by default). Tested on `apa_camera_3606`'s accelerator only; a HEF runs only on the Hailo arch it was compiled for.

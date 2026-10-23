@@ -1,6 +1,6 @@
 # APA rat detector: auto-labelled training set, whole-video evaluation, safe automated shocks
 
-- **Status:** in progress (step 1 built; awaiting step 2)
+- **Status:** in progress (step 1 built; awaiting step 2; step 5 designed 2026-10-23)
 - **Created:** 2026-10-21
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (APA rat detector / automated shocking)
@@ -176,21 +176,97 @@ that `HailoDetector` loads the model. Measure inference rate and latency on
 the lores stream at the recording frame rate, and that recording frames are
 not dropped (`framesync`-style check on `_recording.json`).
 
-## Step 5 — automated shocking, safety rules
+## Step 5 — automated shocking: modes, arming, safety rules
 
-Not built until step 3's target is met. Proposed rules:
+Not enabled for real shocks until step 3's target is met; the dry-run mode
+below can be built and run on the rig before that, and is how step 3 gets
+measured live.
 
-- shock only after the box centre has been in the zone for a minimum time
-  (start at 0.5 s; tune from the evaluation's entry durations)
-- confidence threshold, and no shock when more than one box is above it
+### Today (2026-10-23)
+
+- The camera sends `zone_entered` / `zone_exited` (edge events only) to the
+  controller; `apa_controller.py` just forwards them to browsers.
+- "Armed" exists only in the browser (`sharedArmed` in `APACommands.jsx`,
+  one per tab). `apa_arduino`'s `_activate_shock` runs for any caller; the
+  module and controller have no arm state. Safeguards that do exist on the
+  module: the 1 s shock lease (`SHOCK_LEASE_S`, the caller must re-send
+  `activate_shock`) and the per-session cap (`_max_shocks`, 50).
+
+### Tracking is independent of shock mode
+
+Tracking (camera config) runs whatever the shock mode: manual shocking with
+tracking on, shown on the livestream or not, and logged per frame
+(`det_cx`, `det_cy`, `det_conf`, `in_zone` in the timestamps CSV) is a
+supported setup in its own right, not only a step towards automation.
+
+### Shock mode and arming: one gate, on the Arduino module
+
+The gate sits on `apa_arduino`, the last hop before the hardware, so a
+controller or frontend bug can't bypass it.
+
+- `shock_mode`: `disarmed` | `manual` | `auto` | `dry_run` (auto decisions
+  logged, never delivered). `activate_shock` carries a `source` (`manual` or
+  `auto`) and is refused unless the mode allows that source; refusals are
+  logged.
+- Always starts `disarmed`: at module start, after an Arduino reconnect, and
+  never persisted to config. Arming is an explicit operator action
+  (`set_shock_mode`, auth-gated), broadcast in `arduino_state` so every
+  browser shows the same state.
+- **Stop all** (`stop_all_shocks`): deactivate immediately, set `disarmed`,
+  and tell the controller to drop any auto state. Reachable from every APA
+  page (a fixed button, plus a key, e.g. Escape), from the REST API, and
+  always allowed, even for a lapsed login? (open question below). Never
+  throttled.
+- Also disarm automatically on: session stop, camera module offline,
+  tracking lost for longer than a limit while in `auto`, controller restart
+  (it re-sends `disarmed` on reconnect).
+
+### Zone state: periodic, not edge-only
+
+The controller can only keep a shock going by re-sending `activate_shock`
+inside the 1 s lease. With edge events alone, a camera that crashes mid-zone
+never sends `zone_exited` and the controller would keep refreshing. So the
+camera also sends `zone_state` at ~5 Hz while tracking: in zone or not,
+position, confidence, number of boxes above threshold, time in zone, frame
+timestamp. The controller refreshes the lease only while the latest
+`zone_state` is younger than ~0.4 s and passes the rules below; anything
+stale stops the refreshes, and the Arduino ends the shock within the lease.
+
+### Auto decision (controller), rules
+
+- in zone continuously for a minimum time (start at 0.5 s; tune from the
+  evaluation's entry durations)
+- confidence threshold, and exactly one box above it
 - optionally require the hood detector to agree (cheap, independent)
-- a hard cap on shocks per minute and per session, on top of the existing
-  50-pulse cap and shock lease
-- the operator can always stop it, and the spacebar control still works
-- every automated decision logged to `shock_events.csv` with the box,
-  confidence and time in zone, so a session can be audited afterwards
+- caps per minute and per session, on top of the module's 50-pulse cap and
+  the lease
+- the operator can always stop it (Stop all above)
+- every decision (deliver, dry-run, refused, capped) logged to
+  `shock_events.csv` with position, confidence, time in zone and source, so
+  a session can be audited
 - a supervised trial on the rig (operator watching, ready to stop) before
   any unattended run
+
+### Build order
+
+1. `zone_state` from the camera; `shock_mode` + `stop_all_shocks` on the
+   module, with the frontend's arm control and a Stop all button replaced
+   by the module's state (manual shocking keeps working, now behind a real
+   gate).
+2. Controller auto logic in `dry_run` only; run sessions on the rig and
+   count would-be shocks against the video (this is step 3 measured live).
+3. `auto` with real shocks, supervised, once the false-entry target is met.
+
+### Open questions (protocol decisions for the researchers)
+
+- In `auto`, does the spacebar still deliver manual shocks, or only in
+  `manual`?
+- Minimum time in zone, shock duration per entry, re-shock interval while
+  the rat stays in, and per-minute / per-session caps.
+- Is there a hardware way to power the grid down (relay / enable line the
+  Arduino can drive), or is "arm" a software gate on the trigger only? A
+  hardware disarm would make Stop all independent of the software.
+- Should Stop all work without a login (it only ever makes things safer)?
 
 ## Not doing
 

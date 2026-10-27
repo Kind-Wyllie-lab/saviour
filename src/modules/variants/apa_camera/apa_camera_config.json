@@ -4,6 +4,8 @@
     },
     "camera": {
         "monochrome": false,
+        "hflip": false,
+        "vflip": false,
         "rotation": 0,
         "crop_rect": null,
         "sensor_mode_index": 0,
@@ -36,18 +38,25 @@
         "lens_position": 0.0,
         "sync_mode": "none",
         "framesync_enabled": true,
+        "sync_lock_exposure": false,
+        "sync_lock_awb": false,
+        "livestream_quality": "normal",
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2
     },
     "object_detection": {
         "enabled": false,
-        "backend": "blob",
-        "model_path": "/usr/share/hailo-models/yolov8n.hef",
+        "backend": "hailo",
+        "model_path": "/usr/local/src/saviour/hailo_models/apa_rats_yolov8_nms.hef",
         "labels": ["rat"],
         "threshold": 0.55,
-        "max_detections": 2,
-        "coordinate_smoothing": false
+        "smoothing": 0.5,
+        "max_jump_frac": 0.15,
+        "jump_confirm_frames": 3,
+        "lost_timeout_s": 0.5,
+        "overlay_display": true,
+        "overlay_record": true
     },
     "blob_tracker": {
         "process_width": 256,
@@ -63,13 +72,14 @@
     },
     "mask": {
         "mask_radius": 0.65,
-        "mask_enabled": true,
+        "mask_display": true,
+        "mask_record": true,
         "mask_center_x_offset": 0,
         "mask_center_y_offset": 0
     },
     "shock_zone": {
         "shock_zone_display": true,
-        "shock_zone_enabled": true,
+        "shock_zone_record": false,
         "shock_zone_angle_span_deg": 60,
         "shock_zone_start_angle_deg": 180,
         "shock_zone_inner_offset": 0.3,

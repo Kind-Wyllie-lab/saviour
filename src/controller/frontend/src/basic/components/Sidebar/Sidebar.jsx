@@ -21,15 +21,21 @@ function Sidebar({ navItems }) {
 
   // Update modal state
   const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged, git }
-  const [updateMode, setUpdateMode]           = useState(null); // null | "zip" | "git" -- null shows the picker
+  // null = the two steps (Update controller / Deploy to modules);
+  // "controller" = pick a source; "zip" | "git" = that source's panel.
+  const [updateMode, setUpdateMode]           = useState(null);
   const [uploadProgress, setUploadProgress]   = useState(null); // { received, total }
   const [uploadError, setUploadError]         = useState(null);
   const [stagedMeta, setStagedMeta]           = useState(null); // completed upload metadata
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
-  const [stagingCurrent, setStagingCurrent]   = useState(false);
+  const [stagingCurrent, setStagingCurrent]   = useState(false); // Deploy to modules: packaging running code
   const [gitPullStatus, setGitPullStatus]     = useState(null); // null | { stage, branch, commit }
-  const [gitDeployModules, setGitDeployModules] = useState(false); // "also push to modules" checkbox
+  const [gitRemote, setGitRemote]             = useState(null); // null (checking) | { reachable, reason }
+  // Controller self-update in flight: null | "installing" | "building" |
+  // "restarting" | "done". "done" is set when the socket reconnects after the
+  // service restart, which is the only signal the new code is running.
+  const [ctrlPhase, setCtrlPhase]             = useState(null);
   const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
@@ -102,10 +108,31 @@ function Sidebar({ navItems }) {
   useEffect(() => {
     if (!showUpdateModal) return;
     socket.emit("get_update_info");
+    socket.emit("check_git_remote");
     const handler = (data) => setUpdateInfo(data);
+    const onRemote = (data) => setGitRemote(data);
     socket.on("update_info", handler);
-    return () => socket.off("update_info", handler);
+    socket.on("git_remote_status", onRemote);
+    return () => {
+      socket.off("update_info", handler);
+      socket.off("git_remote_status", onRemote);
+    };
   }, [showUpdateModal]);
+
+  // The controller restart drops the socket; reconnecting is the signal the
+  // update landed. Refresh the versions so step 2 shows what modules will get.
+  useEffect(() => {
+    if (!ctrlPhase || ctrlPhase === "done") return;
+    const onConnect = () => {
+      setCtrlPhase("done");
+      setUpdateMode(null);
+      setGitPullStatus(null);
+      setStagedMeta(null);
+      socket.emit("get_update_info");
+    };
+    socket.on("connect", onConnect);
+    return () => socket.off("connect", onConnect);
+  }, [ctrlPhase]);
 
   // Upload socket listeners
   useEffect(() => {
@@ -120,6 +147,8 @@ function Sidebar({ navItems }) {
       setUploadError(error);
       setUploadProgress(null);
       setStagingCurrent(false);
+      setGitPullStatus(null);
+      setCtrlPhase(null);
     };
     socket.on("upload_update_progress", onProgress);
     socket.on("upload_update_complete", onComplete);
@@ -133,7 +162,10 @@ function Sidebar({ navItems }) {
 
   // Git pull socket listener
   useEffect(() => {
-    const onGitStatus = (data) => setGitPullStatus(data);
+    const onGitStatus = (data) => {
+      setGitPullStatus(data);
+      if (data.stage === "applying") setCtrlPhase("building");
+    };
     socket.on("git_pull_status", onGitStatus);
     return () => socket.off("git_pull_status", onGitStatus);
   }, []);
@@ -141,6 +173,7 @@ function Sidebar({ navItems }) {
   // Deploy socket listeners
   useEffect(() => {
     const onStatus = ({ stage }) => {
+      if (stage === "building_frontend") setCtrlPhase("building");
       if (stage === "modules_notified") {
         // The System page takes over from here with a per-module progress
         // modal (deviceStatuses / UpdateProgressModal) as soon as this same
@@ -151,6 +184,8 @@ function Sidebar({ navItems }) {
     const onError = ({ error }) => {
       setDeployStatus("error");
       setDeployError(error);
+      setStagingCurrent(false);
+      setCtrlPhase(null);
     };
     socket.on("deploy_update_status", onStatus);
     socket.on("deploy_update_error",  onError);
@@ -173,14 +208,17 @@ function Sidebar({ navItems }) {
         setStagingCurrent(false);
         setUploadError("Login required — please log in and retry");
       }
-      if (deployStatus !== null && deployStatus !== "error") {
+      if ((deployStatus !== null && deployStatus !== "error")
+          || (ctrlPhase && ctrlPhase !== "done") || gitPullStatus) {
         setDeployStatus("error");
         setDeployError("Login required — please log in and retry");
+        setCtrlPhase(null);
+        setGitPullStatus(null);
       }
     };
     socket.on("auth_required", onAuthRequired);
     return () => socket.off("auth_required", onAuthRequired);
-  }, [uploadProgress, stagingCurrent, deployStatus]);
+  }, [uploadProgress, stagingCurrent, deployStatus, ctrlPhase, gitPullStatus]);
 
   const handleRebootAll = () => {
     socket.emit("reboot_saviour");
@@ -205,6 +243,9 @@ function Sidebar({ navItems }) {
     setDeployStatus(null);
     setDeployError(null);
     setGitPullStatus(null);
+    setGitRemote(null);
+    setStagingCurrent(false);
+    setCtrlPhase(null);
     setShowUpdateModal(true);
   };
 
@@ -243,41 +284,57 @@ function Sidebar({ navItems }) {
     handleFileSelect(e.dataTransfer.files[0]);
   };
 
-  const handleDeploy = () => {
-    setDeployStatus("deploying");
-    socket.emit("deploy_update");
-  };
-
-  const handleStageCurrent = (alsoDeployModules = false) => {
-    setStagingCurrent(true);
-    setUploadError(null);
-    setStagedMeta(null);
+  // Step 1 (zip): apply the uploaded package to this controller — snapshot,
+  // rsync over the checkout, pip + frontend rebuild, restart.
+  const handleInstallZip = () => {
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit(alsoDeployModules ? "stage_and_deploy_modules" : "stage_current_version");
+    setCtrlPhase("installing");
+    socket.emit("deploy_update_to_controller");
   };
 
-  const handleGitPull = (opts = {}) => {
+  // Step 1 (git): fetch + hard-reset to origin/<branch>, then rebuild and
+  // restart. Modules are step 2, so deploy_modules stays off here.
+  const handleGitPull = () => {
     setGitPullStatus({ stage: "fetching" });
     setUploadError(null);
-    setStagedMeta(null);
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit("git_pull_update", {
-      apply_controller: !!opts.applyController,
-      deploy_modules: gitDeployModules,
-    });
+    socket.emit("git_pull_update", { apply_controller: true, deploy_modules: false });
   };
 
-  const staged = stagedMeta || updateInfo?.staged;
+  // Step 2: package exactly what the controller is running and push it to
+  // every module, so modules always end up matching the controller.
+  const handleDeployModules = () => {
+    setStagingCurrent(true);
+    setUploadError(null);
+    setDeployStatus(null);
+    setDeployError(null);
+    socket.emit("stage_and_deploy_modules");
+  };
+
   const gitInfo = updateInfo?.git;
-  const gitApplying = gitPullStatus?.stage === "applying";
-  const gitPullInProgress = !!gitPullStatus && !uploadError && (!staged || gitApplying);
+  const gitUsable = !!gitInfo?.available && !!gitRemote?.reachable;
+  const gitHint = !gitInfo
+    ? "Checking…"
+    : !gitInfo.available
+      ? (gitInfo.reason || "Not available on this device")
+      : gitRemote === null
+        ? `Checking connection to origin/${gitInfo.branch}…`
+        : gitRemote.reachable
+          ? `Pull the latest origin/${gitInfo.branch}`
+          : `Needs internet access: can't reach origin (${gitRemote.reason || "offline"})`;
+  const ctrlBusy = (!!ctrlPhase && ctrlPhase !== "done") || !!gitPullStatus;
+  const busy = ctrlBusy || stagingCurrent || !!uploadProgress;
   const GIT_STAGE_LABEL = {
     fetching:  "Fetching from origin…",
     resetting: "Resetting to latest commit…",
     staging:   "Packaging update…",
     applying:  "Rebuilding & restarting controller…",
+  };
+  const CTRL_PHASE_LABEL = {
+    installing: "Backing up and installing package…",
+    building:   "Rebuilding & restarting controller…",
   };
 
   return (
@@ -319,39 +376,26 @@ function Sidebar({ navItems }) {
           <span className="sidebar-wordmark__text">SAVIOUR</span>
           <span className="sidebar-wordmark__bracket" aria-hidden="true">]</span>
         </div>
-        {hostname && <p className="sidebar-hostname">{hostname}</p>}
-
-        {/* Admin/Guest badge — lives here (below the title) rather than in
-            .footer below; class names keep the "footer-" prefix since the
-            styling itself is unchanged, only its position moved. */}
-        <div className="footer-role-wrap">
+        {version && (
           <button
-            className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
-            title={loggedIn ? "Account options" : "Log in as admin"}
+            type="button"
+            className="sidebar-version-btn"
+            title="Go to System page to deploy updates"
             onClick={() => {
-              if (loggedIn) {
-                setShowAccountMenu(v => !v);
-              } else {
-                window.dispatchEvent(new Event("saviour:open-login"));
+              if ("/system" === location.pathname) return;
+              if (configDirty && !window.confirm(
+                "You have unsaved config changes that will be lost if you leave this page. Continue?"
+              )) {
+                return;
               }
+              setConfigDirty(false);
+              navigate("/system");
             }}
           >
-            {loggedIn ? "Admin" : "Guest"}
+            {version}
           </button>
-          {showAccountMenu && (
-            <div className="footer-role-menu">
-              <button onClick={() => {
-                setShowAccountMenu(false);
-                window.dispatchEvent(new Event("saviour:open-change-password"));
-              }}>
-                Change Password
-              </button>
-              <button onClick={() => { setShowAccountMenu(false); logOut(); }}>
-                Log Out
-              </button>
-            </div>
-          )}
-        </div>
+        )}
+        {hostname && <p className="sidebar-hostname">{hostname}</p>}
 
         <nav className="main-nav">
           {navItems.map(({ label, path, disabled }) =>
@@ -365,23 +409,42 @@ function Sidebar({ navItems }) {
       </div>
 
       <div className="footer">
-        <button
-          className="footer-version-btn"
-          title="Go to System page to deploy updates"
-          onClick={() => {
-            if ("/system" === location.pathname) return;
-            if (configDirty && !window.confirm(
-              "You have unsaved config changes that will be lost if you leave this page. Continue?"
-            )) {
-              return;
-            }
-            setConfigDirty(false);
-            navigate("/system");
-          }}
-        >
-          SAVIOUR {version ? `${version}` : ""}
-        </button>
-
+        {/* Access mode chip above the power button it gates. Named for what
+            this browser can do, not who the user is: there's one shared
+            password, not per-user accounts. */}
+        <div className="footer-role-wrap">
+          <button
+            className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
+            title={loggedIn
+              ? "Controls enabled: you can change config, record and deploy. Click for options"
+              : "Controls disabled: sign in to change config, record and deploy"}
+            onClick={() => {
+              if (loggedIn) {
+                setShowAccountMenu(v => !v);
+              } else {
+                window.dispatchEvent(new Event("saviour:open-login"));
+              }
+            }}
+          >
+            <span className="footer-role-text">
+              {loggedIn ? "Controls enabled" : "Controls disabled"}
+              {!loggedIn && <span className="footer-role-sub">Sign in</span>}
+            </span>
+          </button>
+          {showAccountMenu && (
+            <div className="footer-role-menu">
+              <button onClick={() => {
+                setShowAccountMenu(false);
+                window.dispatchEvent(new Event("saviour:open-change-password"));
+              }}>
+                Change Password
+              </button>
+              <button onClick={() => { setShowAccountMenu(false); logOut(); }}>
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
         <div className="footer-actions">
           <button
             className="footer-icon-btn footer-icon-btn--power"
@@ -425,70 +488,75 @@ function Sidebar({ navItems }) {
                 {updateInfo ? updateInfo.running_version : "…"}
               </code>
             </div>
-            {staged && (
-              <div className="update-version-row">
-                <span className="update-version-label">Staged</span>
-                <code className="update-version-value update-version-staged">
-                  {staged.version}
-                </code>
-              </div>
-            )}
 
-            {/* ── Picker: choose how to get the update onto this controller ── */}
-            {updateMode === null && (
+            {/* ── Home: controller first, then modules ── */}
+            {updateMode === null && (<>
+              {ctrlPhase === "done" && (
+                <p className="update-done">
+                  Controller updated. Deploy to modules to bring them onto the same version.
+                </p>
+              )}
               <div className="update-mode-picker">
                 <button
                   type="button"
                   className="update-mode-btn"
-                  onClick={() => { setUploadError(null); setUpdateMode("zip"); }}
+                  disabled={busy}
+                  onClick={() => { setUploadError(null); setUpdateMode("controller"); }}
                 >
-                  <span className="update-mode-btn-title">Zip Upload</span>
+                  <span className="update-mode-btn-title">
+                    <span className="update-step-num">1</span>Update controller
+                  </span>
                   <span className="update-mode-btn-hint">
-                    Upload a package, or stage the code currently running here
+                    Install new code on this controller from a zip file or git, then rebuild and restart
                   </span>
                 </button>
                 <button
                   type="button"
                   className="update-mode-btn"
-                  disabled={!gitInfo?.available}
-                  title={gitInfo?.available ? undefined : (gitInfo?.reason || "Not available on this device")}
+                  disabled={busy}
+                  onClick={handleDeployModules}
+                >
+                  <span className="update-mode-btn-title">
+                    <span className="update-step-num">2</span>
+                    {stagingCurrent ? "Packaging…" : "Deploy to modules"}
+                  </span>
+                  <span className="update-mode-btn-hint">
+                    Push the code this controller is running
+                    {updateInfo ? ` (${updateInfo.running_version})` : ""} to every module
+                  </span>
+                </button>
+              </div>
+            </>)}
+
+            {/* ── Step 1: choose a source ── */}
+            {updateMode === "controller" && (
+              <div className="update-mode-picker">
+                <button
+                  type="button"
+                  className="update-mode-btn"
+                  onClick={() => { setUploadError(null); setStagedMeta(null); setUpdateMode("zip"); }}
+                >
+                  <span className="update-mode-btn-title">Zip upload</span>
+                  <span className="update-mode-btn-hint">
+                    Upload a release package — works on offline rigs
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="update-mode-btn"
+                  disabled={!gitUsable}
+                  title={gitUsable ? undefined : gitHint}
                   onClick={() => { setUploadError(null); setGitPullStatus(null); setUpdateMode("git"); }}
                 >
-                  <span className="update-mode-btn-title">Git Pull</span>
-                  <span className="update-mode-btn-hint">
-                    {gitInfo?.available
-                      ? `Pull latest from origin/${gitInfo.branch} and stage it`
-                      : (gitInfo?.reason || "Not available on this device")}
-                  </span>
+                  <span className="update-mode-btn-title">Git pull</span>
+                  <span className="update-mode-btn-hint">{gitHint}</span>
                 </button>
               </div>
             )}
 
-            {/* ── Zip Upload ── */}
+            {/* ── Step 1: zip ── */}
             {updateMode === "zip" && (<>
-              <div className="update-version-row">
-                <span className="update-version-label">Current</span>
-                <div className="update-stage-btns">
-                  <button
-                    className="update-stage-btn"
-                    onClick={() => handleStageCurrent(false)}
-                    disabled={stagingCurrent || !!uploadProgress}
-                    title="Package the currently-running code as the staged update"
-                  >
-                    {stagingCurrent ? "Staging…" : "Stage running code"}
-                  </button>
-                  <button
-                    className="update-stage-btn"
-                    onClick={() => handleStageCurrent(true)}
-                    disabled={stagingCurrent || !!uploadProgress}
-                    title="Stage the running code and push it to every module in one action"
-                  >
-                    Stage &amp; deploy to modules
-                  </button>
-                </div>
-              </div>
-
-              {!uploadProgress && (
+              {!uploadProgress && !stagedMeta && (
                 <div
                   className="update-dropzone"
                   onDragOver={e => e.preventDefault()}
@@ -530,9 +598,26 @@ function Sidebar({ navItems }) {
                   </span>
                 </div>
               )}
+
+              {stagedMeta && (<>
+                <div className="update-version-row">
+                  <span className="update-version-label">Package</span>
+                  <code className="update-version-value update-version-staged">{stagedMeta.version}</code>
+                </div>
+                <p className="update-git-warning">
+                  Installs this package over the controller's code (a snapshot is
+                  taken first, so it can be reverted from the System page), then
+                  rebuilds the frontend and restarts. This page reconnects on its own.
+                </p>
+                <div className="update-git-pull-row">
+                  <button className="save-button" type="button" onClick={handleInstallZip} disabled={ctrlBusy}>
+                    {ctrlBusy ? (CTRL_PHASE_LABEL[ctrlPhase] || "Installing…") : "Install on controller"}
+                  </button>
+                </div>
+              </>)}
             </>)}
 
-            {/* ── Git Pull ── */}
+            {/* ── Step 1: git ── */}
             {updateMode === "git" && (<>
               <div className="update-version-row">
                 <span className="update-version-label">Branch</span>
@@ -540,47 +625,18 @@ function Sidebar({ navItems }) {
               </div>
               <p className="update-git-warning">
                 Fetches <code>origin/{gitInfo?.branch}</code> and hard-resets this
-                controller's checkout to match it — any local changes on the
-                controller are discarded — then stages the result.
-                <strong> Update controller</strong> also rebuilds the frontend
-                and restarts the service (this page reconnects on its own).
+                controller's checkout to match it (any local changes on the
+                controller are discarded), then rebuilds the frontend and
+                restarts. This page reconnects on its own.
               </p>
-              <label className="update-git-modules-toggle">
-                <input
-                  type="checkbox"
-                  checked={gitDeployModules}
-                  onChange={e => setGitDeployModules(e.target.checked)}
-                  disabled={gitPullInProgress}
-                />
-                also deploy to all modules
-              </label>
               <div className="update-git-pull-row">
-                <button
-                  className="save-button"
-                  type="button"
-                  onClick={() => handleGitPull({ applyController: true })}
-                  disabled={gitPullInProgress}
-                >
-                  {gitPullInProgress
-                    ? (GIT_STAGE_LABEL[gitPullStatus.stage] || "Pulling…")
-                    : (gitDeployModules ? "Pull & update everything" : "Pull & update controller")}
-                </button>
-                <button
-                  className="save-button save-button--secondary"
-                  type="button"
-                  onClick={() => handleGitPull({ applyController: false })}
-                  disabled={gitPullInProgress}
-                  title="Pull and stage only — don't rebuild/restart the controller"
-                >
-                  Stage only
+                <button className="save-button" type="button" onClick={handleGitPull} disabled={ctrlBusy}>
+                  {ctrlBusy
+                    ? (GIT_STAGE_LABEL[gitPullStatus?.stage] || CTRL_PHASE_LABEL[ctrlPhase] || "Pulling…")
+                    : "Pull & update controller"}
                 </button>
               </div>
-              {gitApplying && (
-                <p className="update-git-info">
-                  Controller is rebuilding and will restart — this page reconnects shortly.
-                </p>
-              )}
-              {gitPullStatus?.commit && !gitApplying && (
+              {gitPullStatus?.commit && (
                 <p className="update-git-info">
                   Now at <code>{gitPullStatus.commit}</code> ({gitPullStatus.branch})
                 </p>
@@ -590,23 +646,14 @@ function Sidebar({ navItems }) {
             {uploadError && (
               <p className="update-error">{uploadError}</p>
             )}
-
-            {deployStatus && deployStatus !== "error" && (
-              <p className="update-deploy-status">{deployStatus === "deploying" ? "Deploying…" : deployStatus}</p>
-            )}
             {deployStatus === "error" && (
-              <p className="update-error">{deployError || "Deploy failed."}</p>
+              <p className="update-error">{deployError || "Update failed."}</p>
             )}
 
             <div className="modal-buttons">
-              {staged && !deployStatus && (
-                <button className="save-button" type="button" onClick={handleDeploy}
-                  title="Deploys to every module -- not the controller itself; update the controller from its own Actions menu on the System page">
-                  Deploy to All Modules
-                </button>
-              )}
-              {updateMode !== null && !deployStatus && (
-                <button className="save-button" type="button" onClick={() => setUpdateMode(null)}>
+              {updateMode !== null && !ctrlBusy && (
+                <button className="save-button" type="button"
+                  onClick={() => setUpdateMode(updateMode === "controller" ? null : "controller")}>
                   ← Back
                 </button>
               )}
@@ -615,7 +662,7 @@ function Sidebar({ navItems }) {
                 type="button"
                 onClick={() => setShowUpdateModal(false)}
               >
-                {deployStatus ? "Close" : "Cancel"}
+                {ctrlPhase === "done" ? "Close" : "Cancel"}
               </button>
             </div>
           </div>

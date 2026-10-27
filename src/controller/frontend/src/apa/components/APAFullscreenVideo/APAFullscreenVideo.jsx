@@ -4,6 +4,7 @@ import APACommands from "../APACommands/APACommands";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import { NotApaCameraFlag } from "../APALivestreamCard/APALivestreamCard";
+import GridBadge from "../GridBadge/GridBadge";
 
 function APAFullscreenVideo({ module, apaPresent, moduleList, onClose }) {
   const ip = module?.ip;
@@ -25,6 +26,7 @@ function APAFullscreenVideo({ module, apaPresent, moduleList, onClose }) {
           <div className="fullscreen-flag">
             <NotApaCameraFlag module={module} apaPresent={apaPresent} />
           </div>
+          <GridBadge module={module} className="apa-grid-badge--large" />
           <img
             src={videoFeedUrl(module ?? ip)}
             alt="Fullscreen camera stream"

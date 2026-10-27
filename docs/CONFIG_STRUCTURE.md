@@ -128,9 +128,7 @@ Modules can specify readiness validation parameters:
           "name": "weak_shock",
           "current": 0.2,
           "duration": 0.5,
-          "intershock_latency": 1,
-          "entrance_latency": 1.5,
-          "outside_latency": 0.1
+          "intershock_latency": 1
         }
       }
     }
@@ -232,18 +230,29 @@ Modules can specify readiness validation parameters:
 
 ### APA Camera Configuration
 
+Each overlay has a `*_display` (livestream) and a `*_record` (burned into the
+recorded video) switch: `mask.mask_display`/`mask_record`,
+`shock_zone.shock_zone_display`/`shock_zone_record`, and the tracking marker's
+`object_detection.overlay_display`/`overlay_record`. Tracking always looks only
+inside the mask, whether or not the mask is recorded. Tracking filters detections into one
+position: `object_detection.smoothing`, `max_jump_frac`, `jump_confirm_frames`
+and `lost_timeout_s` (see `_update_track` in `apa_camera_module.py`). Uploaded HEFs live in
+`/var/lib/saviour/hailo_models/` on the module (`fetch_hef`); bundled ones in
+`/usr/local/src/saviour/hailo_models/`.
+
 ```json
 {
   "editable": {
     "mask": {
       "mask_radius": 0.55,
-      "mask_enabled": true,
+      "mask_display": true,
+      "mask_record": true,
       "mask_center_x_offset": 0,
       "mask_center_y_offset": 0
     },
     "shock_zone": {
       "shock_zone_display": true,
-      "shock_zone_enabled": true,
+      "shock_zone_record": false,
       "shock_zone_angle_span_deg": 90,
       "shock_zone_start_angle_deg": 45,
       "shock_zone_inner_offset": 0.5,
@@ -264,6 +273,28 @@ Modules can specify readiness validation parameters:
   "module": {
     "required_disk_space_mb": 1024.0,
     "ptp_offset_threshold_us": 500.0
+  }
+}
+```
+
+### APA Controller Configuration (automated shocking)
+
+`apa_controller_config.json`, read by `variants/apa/shock_automation.py`.
+`apa.shock_mode` (manual / auto / dry_run) says how an armed grid is driven;
+dry run means recordings run without arming. Armed / disarmed is runtime
+state, never saved: the grid arms when a recording starts and disarms when it
+ends. The pulse pattern itself is the Arduino module's
+(`arduino.shocker.duration` on, `intershock_latency` off).
+
+```json
+{
+  "apa": {
+    "shock_mode": "manual",         // manual | auto | dry_run
+    "auto_shock": {
+      "entry_latency_s": 0.5,       // continuous time in zone before the first shock
+      "zone_state_timeout_s": 0.5,  // a zone report older than this counts as "not in zone"
+      "max_pulses_per_min": 20      // 0 = no per-minute cap (the module's per-session cap still applies)
+    }
   }
 }
 ```

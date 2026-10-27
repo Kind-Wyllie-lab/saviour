@@ -12,6 +12,7 @@ Created: ?
 """
 
 
+import contextlib
 import csv
 import hashlib
 import hmac
@@ -19,6 +20,7 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -344,6 +346,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         self._upload_chunks: dict = {}
         self._upload_meta: dict = {}
         self._upload_lock = threading.Lock()
+        # Chunked HEF upload for one module (apa_camera's tracking model);
+        # shares _upload_lock with the update upload.
+        self._hef_upload: dict = {}
 
         # Bug report state
         self._diag_pending: dict = {}   # module_id → {'event': Event, 'data': None}
@@ -1417,6 +1422,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 command = data.get('type')
                 module_id = data.get('module_id')
                 params = data.get('params', {})
+
+                # A rig variant may gate or take over a command (APA: manual
+                # shocks are refused while the rig is disarmed).
+                if self.handle_special_command(module_id, command, params):
+                    return
 
                 if command == "start_recording":
                     params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -2801,6 +2811,23 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 "git": _git_checkout_info(),
             })
 
+        @self.socketio.on("check_git_remote")
+        def handle_check_git_remote(data=None):
+            """Separate from get_update_info (which several components emit on
+            mount) because ls-remote can take seconds offline — only the
+            update modal asks, and the answer comes back off a worker thread
+            to the requesting client."""
+            sid = request.sid
+
+            def _check():
+                info = _git_checkout_info()
+                result = (su.origin_reachable(_SRC_ROOT) if info.get("available")
+                          else {"reachable": False, "reason": info.get("reason")})
+                self.socketio.emit("git_remote_status", result, room=sid)
+
+            threading.Thread(target=_check, daemon=True,
+                             name="saviour-git-remote-check").start()
+
         @self.socketio.on("upload_update_start")
         def handle_upload_update_start(data):
             from flask_socketio import emit as _emit
@@ -2890,6 +2917,95 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             except Exception as e:
                 self.logger.error(f"Upload assembly failed: {e}")
                 _emit("upload_update_error", {"error": str(e)})
+
+        # ── HEF model upload (apa_camera tracking) ────────────────────────────
+        # Browser -> controller (authenticated chunked upload, like the update
+        # package) -> staged in _HEF_UPLOAD_DIR and served at
+        # /hailo_models/<name> -> the module's fetch_hef command downloads it.
+        _HEF_UPLOAD_DIR = "/var/lib/saviour/hailo_uploads"
+        _HEF_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.hef$")
+        _HEF_MAX_BYTES = 256 * 1024 * 1024
+
+        @self.app.route("/hailo_models/<name>")
+        def serve_hailo_model(name):
+            """Unauthenticated like /update/package: modules fetch from here
+            on the closed LAN (see the threat model in CLAUDE.md)."""
+            path = os.path.join(_HEF_UPLOAD_DIR, name)
+            if not _HEF_NAME_RE.match(name) or not os.path.isfile(path):
+                return "Not found", 404
+            return send_file(path, as_attachment=True, download_name=name,
+                             mimetype="application/octet-stream")
+
+        @self.socketio.on("upload_hef_start")
+        def handle_upload_hef_start(data):
+            from flask_socketio import emit as _emit
+            if not self._require_auth("auth_required"):
+                return
+            data = data or {}
+            module_id = data.get("module_id")
+            filename = os.path.basename(str(data.get("filename", "")))
+            total_bytes = int(data.get("total_bytes", 0))
+            if module_id not in self.facade.get_modules():
+                _emit("hef_upload_error", {"module_id": module_id, "error": "Unknown module"})
+                return
+            if not _HEF_NAME_RE.match(filename):
+                _emit("hef_upload_error", {"module_id": module_id, "error":
+                      "Filename must end in .hef and use only letters, digits, . _ -"})
+                return
+            if total_bytes <= 0 or total_bytes > _HEF_MAX_BYTES:
+                _emit("hef_upload_error", {"module_id": module_id,
+                      "error": "HEF must be between 1 byte and 256 MB"})
+                return
+            with self._upload_lock:
+                self._hef_upload = {
+                    "module_id": module_id, "filename": filename,
+                    "total_chunks": int(data.get("total_chunks", 0)),
+                    "total_bytes": total_bytes, "chunks": {},
+                }
+
+        @self.socketio.on("upload_hef_chunk")
+        def handle_upload_hef_chunk(data):
+            from flask_socketio import emit as _emit
+            if not self._require_auth("auth_required"):
+                return
+            index, chunk = (data or {}).get("index"), (data or {}).get("data")
+            if index is None or chunk is None:
+                return
+            with self._upload_lock:
+                up = self._hef_upload
+                if not up:
+                    return
+                up["chunks"][index] = bytes(chunk)
+                received, total = len(up["chunks"]), up["total_chunks"]
+                module_id, filename = up["module_id"], up["filename"]
+            _emit("hef_upload_progress", {"module_id": module_id,
+                                          "received": received, "total": total})
+            if received < total:
+                return
+            with self._upload_lock:
+                assembled = b"".join(up["chunks"][i] for i in range(total))
+                self._hef_upload = {}
+            try:
+                if len(assembled) != up["total_bytes"]:
+                    raise ValueError("Upload incomplete: size mismatch")
+                os.makedirs(_HEF_UPLOAD_DIR, exist_ok=True)
+                dest = os.path.join(_HEF_UPLOAD_DIR, filename)
+                with open(dest + ".tmp", "wb") as f:
+                    f.write(assembled)
+                os.replace(dest + ".tmp", dest)
+                controller_ip = "localhost"
+                with contextlib.suppress(Exception):
+                    controller_ip = self.facade.controller.network.ip
+                self.facade.send_command(module_id, "fetch_hef", {
+                    "controller_url": f"http://{controller_ip}:5000",
+                    "filename": filename,
+                })
+                self.logger.info(f"HEF {filename} staged for {module_id} "
+                                 f"({len(assembled) // 1024} KiB)")
+                _emit("hef_upload_complete", {"module_id": module_id, "filename": filename})
+            except Exception as e:
+                self.logger.error(f"HEF upload failed: {e}")
+                _emit("hef_upload_error", {"module_id": module_id, "error": str(e)})
 
         @self.socketio.on("deploy_update")
         def handle_deploy_update(data=None):
@@ -4250,6 +4366,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         """To be overriden by rig specific functionality"""
         pass
 
+    def handle_special_command(self, module_id, command, params) -> bool:
+        """Rig variants override this to gate a frontend send_command:
+        return True if it was handled (and must not be sent on)."""
+        return False
+
 
     def handle_module_status(self, module_id, status) -> bool:
         """Handle status update from a module and emit to frontend.
@@ -4386,6 +4507,15 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "sensor_modes": status.get("sensor_modes", []),
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
+                        })
+                    elif command in ("list_hefs", "fetch_hef"):
+                        self.socketio.emit("hef_list_response", {
+                            "module_id": module_id,
+                            "hailo_present": status.get("hailo_present", False),
+                            "hefs": status.get("hefs", []),
+                            "current": status.get("current", ""),
+                            "fetched": status.get("fetched"),
+                            "error": status.get("error"),
                         })
                     elif command == "list_audiomoths":
                         self.socketio.emit("audiomoth_list_response", {

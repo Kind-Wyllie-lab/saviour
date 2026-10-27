@@ -242,6 +242,32 @@ information Python already has.
 
 1. (Decided above.)
 2. (Decided above; confirm on the rig.)
-3. Should an idle camera that has stopped delivering frames show as "not
-   ready" (readiness check) or restart itself, rather than waiting for the next
-   config change to trip the guard?
+3. (Decided: it restarts itself. See the follow-up below.)
+
+## Follow-up: fleet update, 2026-10-23 11:58
+
+After a `POST /api/v1/system/update` (controller and all modules), `apa_camera_3606`
+had no livestream for about 3.5 min.
+
+1. The controller restarted, so it no longer remembered a transmitter, and
+   `camera_0fcc`'s old process re-reported first (as `client`). `apa_camera_3606`
+   hadn't re-registered yet, so the cold-start gate (which only waits for
+   *online* cameras) let 0fcc be elected.
+2. 0fcc's echo confirmed `server` 1.5 s later, and 3606 was made a client. 0fcc
+   then restarted for its own update, and 3606 wedged (`Camera frontend has
+   timed out!`).
+3. Nothing noticed until a `set_config` reached 3606 at 12:01:51 and tripped
+   the guard.
+
+Built (not yet on hardware):
+
+- **Controller:** within the cold-start window, with no remembered
+  transmitter and no camera claiming `server`, an enabled camera still
+  reporting `client` holds the election (`reconcile_framesync` returns `{}`). A
+  one-shot timer re-runs reconcile when the window ends. A rig where every
+  camera is `none` elects at once, as before.
+- **Module:** `CameraBase._watchdog_alive()` also runs `_camera_wedged()` on every
+  keep-alive poll (~20 s), so an idle wedged camera exits for a systemd restart
+  without waiting for a config change. Never while recording.
+- **Validation:** deploy to the fleet again, then expect no role change, or
+  that 3606 is back streaming within ~45 s.

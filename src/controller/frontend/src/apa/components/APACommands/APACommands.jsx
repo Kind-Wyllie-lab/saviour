@@ -2,25 +2,20 @@ import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import socket from "../../../socket";
 import useSessions from "/src/hooks/useSessions";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import useShockState, { getShockState, subscribeShockState, MODE_LABELS } from "../../shockState";
 
 // Styling and components
 import "./APACommands.css";
 
-// Shock arm/hold state is shared by every mounted APACommands: the fullscreen
-// overlay mounts a second copy while the dashboard's stays mounted beneath it,
-// and both listen for the spacebar. Per-instance state let a disarm in one
-// leave the other armed, and one keypress send two activates.
-// Deliberately not persisted: a reload (often a different operator) starts
-// disarmed.
-let sharedArmed = false;
-const armedSubscribers = new Set();
-const subscribeArmed = (fn) => { armedSubscribers.add(fn); return () => armedSubscribers.delete(fn); };
-const getArmed = () => sharedArmed;
-function setSharedArmed(next) {
-    if (sharedArmed === next) return;
-    sharedArmed = next;
-    armedSubscribers.forEach((fn) => fn());
-}
+// Grid state and shock mode live on the controller
+// (variants/apa/shock_automation.py; ../../shockState.js keeps one copy for
+// the page). The controller also refuses manual shocks unless the grid is
+// armed in manual mode, so this check is only for the UI.
+const MODES = ["manual", "auto", "dry_run"];
+const getManual = () => {
+    const st = getShockState();
+    return !!st && st.armed && st.mode === "manual";
+};
 // True while a spacebar or hold-button press is holding the shock on.
 // `refresh` re-sends activate_shock while held: the module stops the shock
 // when the refreshes stop (SHOCK_LEASE_S in shock.py), so a socket drop
@@ -61,7 +56,9 @@ function APACommands( {modules} ) {
     // From the shock_*_being_delivered events, reset by each state message's
     // shock_being_delivered so a missed event can't latch the banner.
     const [deliveringEvent, setDeliveringEvent] = useState(false);
-    const shockerArmed = useSyncExternalStore(subscribeArmed, getArmed);
+    const shockState = useShockState();
+    const mode = shockState?.mode ?? "manual";
+    const shockerArmed = !!shockState?.armed;
     const holding = useSyncExternalStore(subscribeHold, getHolding);
     const loggedIn = useIsLoggedIn();
     // Throttle rapid command emissions — 200 ms minimum between same command type
@@ -84,17 +81,13 @@ function APACommands( {modules} ) {
     const notAllowed = !loggedIn ? "Login required for this action"
         : !moduleOnline ? "APA Arduino module offline" : null;
     const holdReason = notAllowed
-        ?? (!shockerArmed ? "Arm the shocker first"
+        ?? (!shockerArmed ? "Grid disarmed"
+            : mode !== "manual" ? "Manual shocks only in Manual mode"
             : capReached ? "Shock limit reached: reset the counter between sessions" : null);
     const startReason = notAllowed ?? (live?.rotating ? "Table already rotating" : null);
     const resetReason = notAllowed
         ?? (sessionRunning ? "Can't reset the counter during a session"
             : live?.shock_activated ? "Can't reset the counter while a shock sequence is active" : null);
-
-    // Logged out or module gone: nothing to shock with, so don't stay armed.
-    useEffect(() => {
-        if (!canControl) setSharedArmed(false);
-    }, [canControl]);
 
     // A confirm left open must not outlive the conditions that allowed it.
     useEffect(() => {
@@ -120,12 +113,18 @@ function APACommands( {modules} ) {
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);
         socket.on('shock_stopped_being_delivered', onShockStopBeingDelivered);
         socket.on('arduino_state', onArduinoState);
+        // Disarmed or left manual elsewhere (another tab, Stop all, end of
+        // recording): end a hold.
+        const unsubscribe = subscribeShockState(() => { if (!getManual()) releaseShock(); });
 
         return () => {
+            unsubscribe();
             socket.off('shock_started_being_delivered', onShockStartBeingDelivered);
             socket.off('shock_stopped_being_delivered', onShockStopBeingDelivered);
             socket.off('arduino_state', onArduinoState);
         };
+    // releaseShock only touches the shared hold store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Latest module id for the window listeners, which are bound once (see
@@ -154,7 +153,7 @@ function APACommands( {modules} ) {
 
     const pressShock = () => {
         // Same rule as the button: no new hold once the cap is reached.
-        if (shockHold.holding || !getArmed() || capReachedRef.current) return;
+        if (shockHold.holding || !getManual() || capReachedRef.current) return;
         setHolding(true);
         activateShock();
         shockHold.refresh = setInterval(activateShock, SHOCK_REFRESH_MS);
@@ -170,15 +169,33 @@ function APACommands( {modules} ) {
         deactivateShock();
     };
 
-    const toggleShockerArmed = () => {
-        const next = !getArmed();
-        setSharedArmed(next);
-        if (!next) releaseShock();
+    const setMode = (next) => {
+        if (next !== "manual") releaseShock();
+        socket.emit("set_shock_mode", { mode: next });
+    };
+
+    const toggleArmed = () => {
+        if (shockerArmed) {
+            releaseShock();
+            socket.emit("disarm_grid");
+        } else {
+            socket.emit("arm_grid");
+        }
+    };
+    // Disarming is always allowed (no login); arming needs a login and isn't
+    // possible in dry run.
+    const armReason = shockerArmed ? null
+        : notAllowed ?? (mode === "dry_run" ? "Dry run: recordings run with the grid disarmed" : null);
+
+    // Never disabled: it can only make things safer.
+    const stopAll = () => {
+        releaseShock();
+        socket.emit("stop_all_shocks");
     };
 
     useEffect(() => {
         const handleKeyDown = (event) => {
-            if (event.code !== "Space" || !getArmed() || isTextEntry(event.target)) return;
+            if (event.code !== "Space" || !getManual() || isTextEntry(event.target)) return;
             // Stop space scrolling the page or clicking a focused button
             // (e.g. toggling Disarm, or Start Motor) while it is the shock key.
             event.preventDefault();
@@ -221,9 +238,11 @@ function APACommands( {modules} ) {
                 disarming is the safe action, so that button stays plain. */}
             {shockerArmed && (
                 <div className="apa-armed-notice" role="status">
-                    ARMED: Spacebar delivers shock
+                    {mode === "manual" ? "GRID ARMED (manual): Spacebar delivers shock"
+                        : "GRID ARMED (auto): shocks the rat in the zone"}
                 </div>
             )}
+            {mode === "auto" && shockState && <AutoStatus state={shockState} />}
             <div className="apa-state">
                 {!apaModule ? (
                     <p className="apa-state-alert">No APA Arduino module connected</p>
@@ -284,13 +303,39 @@ function APACommands( {modules} ) {
             <div className="apa-command-buttons">
                 <div className="apa-command-group" role="group" aria-labelledby="apa-group-shocker">
                     <span className="apa-command-group-label" id="apa-group-shocker">Shocker</span>
-                    <button
-                        className={`toggle-shocker${shockerArmed ? " toggle-shocker--armed" : ""}`}
-                        onClick={toggleShockerArmed}
-                        disabled={!canControl && !shockerArmed}
-                        title={!canControl && !shockerArmed ? notAllowed : undefined}
-                    >
-                        {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
+                    <div className="apa-grid-row">
+                        <span className={`apa-grid-state${shockerArmed ? " apa-grid-state--armed" : ""}`}>
+                            Grid {shockerArmed ? "armed" : "disarmed"}
+                        </span>
+                        <button type="button" className="apa-btn-secondary apa-arm-btn"
+                            onClick={toggleArmed} disabled={!!armReason} title={armReason ?? undefined}>
+                            {shockerArmed ? "Disarm" : "Arm"}
+                        </button>
+                    </div>
+                    <div className="apa-mode-select" role="radiogroup" aria-label="Shock mode">
+                        {MODES.map((m) => (
+                            <button
+                                key={m}
+                                type="button"
+                                role="radio"
+                                aria-checked={mode === m}
+                                className={`apa-mode-btn${mode === m ? " apa-mode-btn--on" : ""}`}
+                                onClick={() => setMode(m)}
+                                disabled={!loggedIn}
+                                title={!loggedIn ? "Login required for this action" : undefined}
+                            >
+                                {MODE_LABELS[m]}
+                            </button>
+                        ))}
+                    </div>
+                    <p className="apa-state-hint apa-mode-hint">
+                        {mode === "dry_run"
+                            ? "Recordings run with the grid disarmed."
+                            : "The grid arms when a recording starts and disarms when it ends."}
+                    </p>
+                    <button type="button" className="apa-stop-all" onClick={stopAll}
+                        title="Stop any shock and disarm">
+                        Stop all shocks
                     </button>
                     {/* Pointer events cover mouse, touch and pen; touch-action
                         (CSS) stops a held finger scrolling the page instead. */}
@@ -401,6 +446,32 @@ function APACommands( {modules} ) {
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+// Live view of the controller's auto decision: what it sees and why it is or
+// isn't shocking.
+function AutoStatus({ state }) {
+    const { settings = {} } = state;
+    let line;
+    if (!state.armed) line = "Grid disarmed: arms when a recording starts";
+    else if (!state.session_recording) line = "Armed, but no recording: no automated shocks";
+    else if (!state.zone_report_fresh) line = "No zone report from the APA camera: is tracking on?";
+    else if (state.capped) line = `Per-minute limit reached (${state.pulses_last_min}/${settings.max_pulses_per_min} pulses)`;
+    else if (state.shocking) line = "Shocking: rat in zone";
+    else if (state.in_zone) line = `Rat in zone ${state.in_zone_s.toFixed(1)} s (shock after ${settings.entry_latency_s} s)`;
+    else line = "Rat outside the zone";
+    const ev = state.last_event;
+    return (
+        <div className={`apa-auto-status${state.shocking ? " apa-auto-status--shocking" : ""}`} role="status">
+            <div>{line}</div>
+            {ev && (
+                <div className="apa-auto-status__last">
+                    Last: {ev.event.replaceAll("_", " ")}{ev.reason ? ` (${ev.reason})` : ""}
+                    {" "}at {new Date(ev.time_utc).toLocaleTimeString()}
+                </div>
+            )}
         </div>
     );
 }

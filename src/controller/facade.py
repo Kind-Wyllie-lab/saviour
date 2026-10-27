@@ -9,6 +9,7 @@ Created: 20/01/2026
 """
 
 import logging
+import threading
 import time
 from dataclasses import asdict
 
@@ -24,6 +25,7 @@ class ControllerFacade:
         # reconcile_framesync), and the clients last logged as waiting on it.
         self._framesync_transmitter: str | None = None
         self._framesync_waiting: list[str] = []
+        self._framesync_retry: threading.Timer | None = None
         self._started_mono = time.monotonic()
 
 
@@ -342,7 +344,9 @@ class ControllerFacade:
         (controller start, or it dropped/was disabled) is one elected: the
         camera already reporting 'server' (the lowest, if several claim it
         after a reconnect, so there is never a second server), else the
-        lowest module_id.
+        lowest module_id. Within the cold-start window, cameras still
+        reporting 'client' with no server claim hold the election until the
+        server re-registers (or the window ends).
 
         Clients are only touched once the transmitter has confirmed
         'server' (its echoed true_config, not PENDING). A module echoes
@@ -386,6 +390,19 @@ class ControllerFacade:
             if online(mid) and camera_cfg(mid).get("framesync_enabled")
         )
         claims = [m for m in candidates if camera_cfg(m).get("sync_mode") == "server"]
+        cold_left = (self._FRAMESYNC_COLD_START_S
+                     - (time.monotonic() - self._started_mono))
+        if (cold_left > 0 and self._framesync_transmitter is None and not claims
+                and any(camera_cfg(m).get("sync_mode") == "client"
+                        for m in candidates)):
+            # A client with no server online: the rig had a server that hasn't
+            # re-registered yet (a fleet update restarts everything at once).
+            # Electing now hands the role to whoever reported first and makes
+            # the real server a client of a camera that may be about to
+            # restart itself, wedging it (APA rig, 2026-10-23). Wait for it to
+            # claim, or for the window to end.
+            self._schedule_framesync_retry(cold_left)
+            return {}
         if self._framesync_transmitter in candidates:
             transmitter_id = self._framesync_transmitter
         elif claims:
@@ -468,6 +485,23 @@ class ControllerFacade:
                 f"to confirm sync_mode=server")
         self._framesync_waiting = waiting_clients
         return roles
+
+    def _schedule_framesync_retry(self, delay_s: float) -> None:
+        """Re-run reconcile_framesync once the cold-start window ends, in case
+        no module event arrives then to trigger it."""
+        if self._framesync_retry is not None:
+            return
+        self.logger.info(
+            f"FrameSync reconcile: clients but no server yet -- holding the "
+            f"election for up to {delay_s:.0f}s")
+
+        def _retry():
+            self._framesync_retry = None
+            self.reconcile_framesync()
+
+        self._framesync_retry = threading.Timer(delay_s + 0.5, _retry)
+        self._framesync_retry.daemon = True
+        self._framesync_retry.start()
 
     def sync_export_to_module(self, module_id: str) -> dict:
         """Push this controller's saved export credentials to a single module."""

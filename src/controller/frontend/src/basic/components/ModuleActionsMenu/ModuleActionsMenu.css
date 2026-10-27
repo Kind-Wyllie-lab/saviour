@@ -25,6 +25,15 @@
   white-space: nowrap;
 }
 
+/* The modals portal to <body>, but keep the wrap reset in case a parent's
+   `white-space: nowrap` ever reaches them again. */
+.actions-modal,
+.actions-confirm-modal {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
 .actions-modal {
   min-width: 300px;
   max-width: 380px;

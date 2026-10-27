@@ -115,6 +115,21 @@ class MockSocket {
     this._fire("system_state", clone(state.systemState));
   }
 
+  _shockEvent(event, reason) {
+    state.apa.lastEvent = { time_utc: new Date().toISOString(), event, reason, by: "operator" };
+    this._fireShockState();
+  }
+
+  _fireShockState() {
+    const r = state.apa;
+    this._fire("apa_shock_state", {
+      mode: r.mode ?? "manual", armed: !!r.armed, shocking: false, in_zone: false, zone_report_fresh: false,
+      in_zone_s: 0, camera: null, session_recording: false, pulses_last_min: 0, capped: false,
+      settings: { entry_latency_s: 0.5, zone_state_timeout_s: 0.5, max_pulses_per_min: 20 },
+      last_event: r.lastEvent ?? null,
+    });
+  }
+
   // Simulated APA rig: the shock pulses on/off while activate_shock keeps
   // renewing its lease (as shock.py does), and the table eases to its RPM.
   _tickApa() {
@@ -269,7 +284,36 @@ const ROUTER = {
     this._fire("update_info", {
       running_version: "v0.6.1-mock", latest_version: "v0.6.1-mock",
       update_available: false, staged_version: null,
+      git: { available: true, branch: "staging", remote: "git@github.com:mock/saviour.git" },
     });
+  },
+  // APA grid state and shock mode (controller-side in the real system; no
+  // auto decisions or recording-start arming here: use Arm by hand).
+  get_apa_shock_state() { this._fireShockState(); },
+  set_shock_mode(payload) {
+    const r = state.apa;
+    r.mode = payload?.mode ?? "manual";
+    if (r.mode === "dry_run") r.armed = false;
+    if (r.mode !== "manual") r.shockActivated = false;
+    this._shockEvent("mode", r.mode);
+  },
+  arm_grid() {
+    if ((state.apa.mode ?? "manual") !== "dry_run") state.apa.armed = true;
+    this._shockEvent("armed", "by hand");
+  },
+  disarm_grid() {
+    state.apa.armed = false;
+    state.apa.shockActivated = false;
+    this._shockEvent("disarmed", "by hand");
+  },
+  stop_all_shocks() {
+    state.apa.armed = false;
+    state.apa.shockActivated = false;
+    this._shockEvent("stop_all", "");
+  },
+  // Mock rigs are "offline": exercises the disabled Git pull option.
+  check_git_remote() {
+    this._fire("git_remote_status", { reachable: false, reason: "mock: no network" });
   },
   get_data_rate_history() { this._fire("data_rate_history", { samples: [] }); },
   get_nas_history() { this._fire("nas_history", { samples: [] }); },
@@ -334,6 +378,8 @@ const ROUTER = {
     const t = Date.now();
     switch (payload?.type) {
       case "activate_shock":
+        // The controller's mode gate (variants/apa/shock_automation.py).
+        if (!r.armed || (r.mode ?? "manual") !== "manual") break;
         if (r.attempted >= r.maxShocks) break;
         if (!r.shockActivated) { r.shockActivated = true; r.nextPulseAt = t; }
         r.holdUntil = t + APA_LEASE_MS;

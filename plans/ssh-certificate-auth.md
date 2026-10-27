@@ -1,11 +1,11 @@
 # SSH certificates for fleet login (key-only SSH at scale)
 
 - **Status:** phases 1-3 built (2026-10-14), phase 5 (2026-10-16). CA trust, login modes
-  (`any`/`keys`/`certs`) and the controller certificate via `saviour-config`,
-  controller-served to modules; `tools/ssh_ca.py`. Desk fleet trusts the SIDB
-  IT CA, login mode left at `any`. Not done: controller certificate on
-  hardware (needs the CA holder), VNC, other rigs. Phase 5 (SSH in device
-  setup) built 2026-10-16.
+  (`any`/`keys`/`certs`) via `saviour-config`, controller-served to modules;
+  `tools/ssh_ca.py`. Desk fleet trusts the SIDB IT CA, login mode left at
+  `any`. Phase 2 redone 2026-10-27: the controller's SSH to its modules uses
+  its own per-rig key, no longer a CA certificate (see "Controllers" below).
+  Not done: per-rig controller key on hardware, VNC, other rigs.
 - **Created:** 2026-10-13
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Security": clones share the OS login
@@ -39,7 +39,7 @@ public key instead of a list of individual keys.
 - **Trust on every Pi** (written by `saviour-config --apply-ssh`):
   - `/etc/ssh/saviour_user_ca.pub`: the CA public key;
   - `/etc/ssh/saviour_revoked_keys.krl`: the revocation list (empty = none);
-  - `/etc/ssh/auth_principals/pi`: `saviour-admin`, `saviour-controller`;
+  - `/etc/ssh/auth_principals/pi`: `saviour-admin`;
   - `/etc/ssh/sshd_config.d/50-saviour-ca.conf`:
     ```
     TrustedUserCAKeys /etc/ssh/saviour_user_ca.pub
@@ -53,10 +53,22 @@ public key instead of a list of individual keys.
 - **People:** each person keeps their own key pair (passphrase, `ssh-agent`)
   and gets a certificate for principal `saviour-admin`, valid 30 days by
   default (`tools/ssh_ca.py sign --id <person> <key>.pub`).
-- **Controllers:** each controller's own key gets a longer certificate for
-  principal `saviour-controller`, restricted to its LAN address
-  (`--source-address 10.0.0.1/32`), for `push_credentials.sh`,
-  `tools/framesync_sweep.py` and any controller-run SSH to modules.
+- **Controllers: their own key, not a certificate** (changed 2026-10-27).
+  Every rig's controller is `10.0.0.1` on its own LAN, so a CA certificate
+  for a controller, even pinned to `source-address=10.0.0.1/32`, was valid
+  on every rig's modules: one stolen controller key opened every rig. Now
+  each controller makes its own key (`/etc/saviour/ssh/controller_key`, on
+  the first `--apply-ssh`), serves the public half at
+  `GET /ssh/controller_key.pub`, and its modules install it as
+  `/etc/ssh/saviour_controller_keys/pi` with `from="<controller ip>"`. The
+  login-mode drop-in adds that file to `AuthorizedKeysFile` in every mode
+  (alone in `certs`), so certificates-only never cuts the controller off. It
+  works with or without a CA, needs no CA holder and doesn't expire.
+  `saviour-controller` is no longer an accepted principal, so the CA can't
+  grant controller access at all. Rotate with `--rotate-controller-key` (or
+  the SSH access menu); a cloned controller's identity refresh drops the key
+  and makes a new one. Used by `push_credentials.sh` and any controller-run
+  SSH to modules.
 - **Removing access:** certificates expire; for someone leaving, stop issuing.
   Before expiry (lost laptop, compromised controller):
   `tools/ssh_ca.py revoke --serial <n>` then `install` (below).
@@ -113,15 +125,17 @@ public key instead of a list of individual keys.
    the certificate accepted), an expired certificate is refused, a revoked
    serial is refused, a certificate without the principal is refused, the
    controller certificate is refused from any address but 10.0.0.1.
-2. **Controller certificate.** *Built 2026-10-14.* Key at
-   `/etc/saviour/ssh/controller_key`; `tools/ssh_ca.py certify-controller
-   --ca <ca> --host pi@<controller>` fetches it (`--controller-key`), signs it
-   (`saviour-controller`, `source-address=<controller ip>/32`, 52 weeks) and
-   installs it (`--set-controller-cert`, which refuses a certificate for any
-   other key) with an `ssh_config.d` drop-in for `pi` and `root`.
-   `tools/framesync_sweep.py` runs on the admin PC, so it uses the person's
-   certificate. Accept (outstanding, needs the CA holder):
-   `push_credentials.sh` reaches a module in `certs` mode.
+2. **Controller key.** *Built 2026-10-14 as a CA certificate; replaced
+   2026-10-27 by a per-rig key* (see "Controllers" under Design; the
+   certificate round trip, `certify-controller` and `--set-controller-cert`
+   are gone). `ssh_config.d/50-saviour-controller.conf` points `pi`'s and
+   `root`'s ssh at the key. `tools/framesync_sweep.py` runs on the admin PC,
+   so it uses the person's certificate. Accept (outstanding): on the desk
+   fleet, after `sudo saviour-config --apply-ssh && sudo saviour-config
+   --push-ssh` on the controller, `ssh pi@<module>` from the controller works
+   in `any` and `certs` mode; the same key from the dev PC is refused
+   ("from" restriction); after `--rotate-controller-key` the old key is
+   refused and the new one works.
 3. **Passwords off, old keys out.** *Built and accepted on the desk fleet
    2026-10-14.* The rig's **login mode**, set on the controller
    (`--set-ssh-login-mode any|keys|certs`, SSH access menu), served at
@@ -183,10 +197,10 @@ public key instead of a list of individual keys.
      only"; every connection covers that restart case, and an unchanged sync
      is a few HTTP requests with no sshd reload.)
    - **Cloned controllers:** `run_clone_fix` ("Refresh identity") deletes
-     `/etc/saviour/ssh/controller_key*` and the `ssh_config.d` drop-in. The
-     certificate belongs to the old key and is pinned to the old controller's
-     address; the clone gets a new key and needs `certify-controller` again.
-     The CA, revocation list and login mode are deployment-wide and stay.
+     `/etc/saviour/ssh/controller_key*` and the `ssh_config.d` drop-in; the
+     clone makes its own key on its next `--apply-ssh`, so it never shares
+     the original's (which the original's modules trust). The CA,
+     revocation list and login mode are deployment-wide and stay.
    - **Visibility:** `view_config` ("View current configuration") shows
      `ssh_status_text`; the controller's confirmation screen shows the CA it
      will trust or keep; setup's progress output and log carry the SSH

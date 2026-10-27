@@ -209,12 +209,15 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
     # via the config-sync socket events, and a credential has no business
     # sitting somewhere "get_controller_config" could ever echo back.
     _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
-    # The deployment's SSH CA public key + revocation list, set with
+    # The deployment's SSH CA public key + revocation list, and this
+    # controller's own SSH public key (for its SSH to its modules), set with
     # saviour-config on the controller; modules fetch them from /ssh/<file>.
+    # Only these names: the controller's private key sits in the same dir.
     _SSH_TRUST_DIR = "/etc/saviour/ssh"
     _SSH_TRUST_FILES = {"user_ca.pub": "text/plain",
                         "revoked_keys.krl": "application/octet-stream",
-                        "login_mode": "text/plain"}
+                        "login_mode": "text/plain",
+                        "controller_key.pub": "text/plain"}
 
     # Named API tokens for external programs (pyControl etc.) hitting
     # /api/v1 -- an alternative to handing out the web-UI admin password,
@@ -2737,12 +2740,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
         @self.app.route("/ssh/<name>")
         def serve_ssh_trust(name):
-            """The SSH CA public key, revocation list and login mode, for
-            modules' `saviour-config --apply-ssh`
-            (plans/ssh-certificate-auth.md). Unauthenticated like
-            /update/package: all three are public by design (a key, revoked
-            serials, "keys"/"certs"). 404 on the CA = none configured, which
-            makes modules drop their certificate trust and login mode."""
+            """The SSH CA public key, revocation list, login mode and this
+            controller's own public key, for modules' `saviour-config
+            --apply-ssh` (plans/ssh-certificate-auth.md). Unauthenticated
+            like /update/package: all four are public by design (two public
+            keys, revoked serials, "keys"/"certs"). 404 on the CA = none
+            configured, which makes modules drop their certificate trust and
+            login mode."""
             mimetype = self._SSH_TRUST_FILES.get(name)
             path = os.path.join(self._SSH_TRUST_DIR, name)
             if mimetype is None or not os.path.isfile(path):

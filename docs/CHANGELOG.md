@@ -11,6 +11,14 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-27
+
+- [x] **Controller SSH to modules: a per-rig key instead of a CA certificate** (plan `plans/ssh-certificate-auth.md`, phase 2 redone).
+  - **Why:** every rig's controller is `10.0.0.1` on its own LAN, so the phase 2 controller certificate (principal `saviour-controller`, `source-address=10.0.0.1/32`, signed by the shared CA) was valid on every rig's modules. One stolen controller key opened every rig. Its controller access also hung on the CA holder (SIDB IT on the desk fleet) and expired yearly.
+  - **Now:** the controller makes its own key (`/etc/saviour/ssh/controller_key`) on the first `saviour-config --apply-ssh` and serves the public half at `GET /ssh/controller_key.pub`. Modules install it as `/etc/ssh/saviour_controller_keys/pi` with `from="<controller ip>"`. `01-saviour-auth.conf` adds that file to `AuthorizedKeysFile` in every login mode (alone in `certs`), so certificates-only keeps the controller working. Works with no CA. `--rotate-controller-key` (and an SSH access menu item) replaces it and pushes; clone refresh drops it.
+  - **Removed:** the `saviour-controller` principal from every Pi's `auth_principals/pi` (modules drop it on their next sync), `tools/ssh_ca.py certify-controller` and `--principal saviour-controller`, `saviour-config --set-controller-cert`. The status screen shows the controller key fingerprint instead of a certificate expiry.
+  - Tests: 7 new in `test_ssh_access.py` (key creation without a CA, module trust with `from=`, `certs` mode keeps the controller key, removal, rotation, invalid key), 1 route test (serves the `.pub`, never the private key); the controller-certificate tests removed. Not yet on hardware: the plan's phase 2 acceptance.
+
 ## 2026-10-23
 
 - [x] **FrameSync: sticky server election, server-before-client restarts, no `stop()` on a wedged camera** (branch `fix/framesync-reconcile` → `staging`; plan `plans/framesync-sticky-election-and-ordered-restarts.md`). From the APA rig's `camera_0fcc` watchdog restart at 09:31:13.

@@ -24,7 +24,8 @@ FUNCS = ("log", "get_current_config", "_ssh_targets", "_ssh_valid_ca",
          "_ssh_effective_passwords", "apply_ssh_access", "push_ssh_access",
          "_ssh_require_controller", "_ssh_set_source", "_ssh_cert_logins",
          "_ssh_set_login_mode", "_ssh_controller_ip", "ssh_controller_key",
-         "ssh_set_controller_cert", "_ssh_stage_pending_ca", "ssh_setup_step",
+         "_ssh_trust_summary", "_ssh_ensure_controller_key",
+         "ssh_rotate_controller_key", "_ssh_stage_pending_ca", "ssh_setup_step",
          "_ssh_forget_controller_key")
 
 BASH = shutil.which("bash")
@@ -106,7 +107,8 @@ LOG='{p("log")}'
 SSH_SRC_DIR='{p("src")}'
 SSHD_DIR='{p("etc_ssh")}'
 SSHD_BIN='{p("bin/sshd")}'
-SSH_PRINCIPALS="saviour-admin saviour-controller"
+SSH_PRINCIPALS="saviour-admin"
+SSH_CTL_TRUST_DIR='{p("etc_ssh")}/saviour_controller_keys'
 CONTROLLER_IP_FILE='{p("controller_ip")}'
 SSH_CTL_KEY='{p("src")}/controller_key'
 SSH_CLIENT_DIR='{p("ssh_client")}'
@@ -132,6 +134,7 @@ def _installed(rig: Path) -> dict:
     return {k: (e / v) for k, v in {
         "ca": "saviour_user_ca.pub", "krl": "saviour_revoked_keys.krl",
         "principals": "auth_principals/pi",
+        "ctlkey": "saviour_controller_keys/pi",
         "dropin": "sshd_config.d/50-saviour-ca.conf"}.items()}
 
 
@@ -151,7 +154,9 @@ def test_controller_installs_its_ca_then_is_idempotent(rig):
     f = _installed(rig)
     assert f["ca"].read_bytes() == (rig / "ca.pub").read_bytes()
     assert f["krl"].read_bytes() == b""                 # nothing revoked yet
-    assert f["principals"].read_text().split() == ["saviour-admin", "saviour-controller"]
+    # No saviour-controller: a CA-signed controller certificate would work on
+    # every rig (every controller is 10.0.0.1), so none is accepted.
+    assert f["principals"].read_text().split() == ["saviour-admin"]
     dropin = f["dropin"].read_text()
     assert f"TrustedUserCAKeys {f['ca'].as_posix()}" in dropin
     assert f"RevokedKeys {f['krl'].as_posix()}" in dropin
@@ -205,10 +210,10 @@ def test_module_fetches_from_the_recorded_controller(rig):
 def test_module_with_controller_unreachable_keeps_what_it_has(rig):
     shutil.copy(rig / "ca.pub", rig / "served" / "user_ca.pub")
     _run(rig, "module", "apply_ssh_access")
-    before = {k: p.read_bytes() for k, p in _installed(rig).items()}
+    before = {k: p.read_bytes() for k, p in _installed(rig).items() if p.exists()}
     r = _run(rig, "module", "apply_ssh_access; echo rc=$?", CURL_DOWN="1")
     assert "rc=1" in r.stdout and "left unchanged" in r.stdout
-    assert {k: p.read_bytes() for k, p in _installed(rig).items()} == before
+    assert {k: p.read_bytes() for k, p in _installed(rig).items() if p.exists()} == before
     assert "10.0.0.1" in (rig / "curl").read_text()      # default with no IP file
 
 
@@ -272,7 +277,7 @@ def test_ca_tool_signs_logs_and_revokes(tmp_path):
     info = _keygen_out("-L", "-f", str(cert)).stdout
     assert "saviour-admin" in info and "Serial: 1" in info and "alice-" in info
 
-    r = _tool("sign", "--ca", str(ca), "--id", "desk", "--principal", "saviour-controller",
+    r = _tool("sign", "--ca", str(ca), "--id", "desk",
               "--source-address", "10.0.0.1/32", "--valid", "+52w", str(user) + ".pub")
     assert r.returncode == 0, r.stderr
     info = _keygen_out("-L", "-f", str(cert)).stdout
@@ -389,40 +394,97 @@ def test_unknown_mode_changes_nothing(rig):
 
 
 # --------------------------------------------------------------------------- #
-# controller certificate (phase 2)                                            #
+# the controller's own key (its SSH to its modules; not CA-signed)            #
 # --------------------------------------------------------------------------- #
 
-def test_controller_key_and_certificate_round_trip(rig):
-    r = _run(rig, "controller", "ssh_controller_key; echo rc=$?")
-    assert "rc=0" in r.stdout, r.stdout + r.stderr
-    pub = next(ln[7:] for ln in r.stdout.splitlines() if ln.startswith("PUBKEY "))
-    assert pub.startswith("ssh-ed25519 ") and "IP " in r.stdout
-    # Same key on a second call.
-    again = _run(rig, "controller", "ssh_controller_key").stdout
-    assert pub in again
+def _ctl_key(rig):
+    """A controller key pair at rig/ctl, its public half served to modules."""
+    subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", "saviour-controller@t",
+                    "-f", str(rig / "ctl")], check=True)
+    shutil.copy(rig / "ctl.pub", rig / "served" / "controller_key.pub")
+    return (rig / "ctl.pub").read_text().strip()
 
-    (rig / "ctl.pub").write_text(pub + "\n")
-    subprocess.run([KEYGEN, "-q", "-s", str(rig / "ca"), "-I", "controller-test",
-                    "-n", "saviour-controller", "-O", "source-address=10.0.0.1/32",
-                    "-V", "+1d", str(rig / "ctl.pub")], check=True)
-    r = _run(rig, "controller",
-             f"ssh_set_controller_cert '{(rig / 'ctl-cert.pub').as_posix()}'; echo rc=$?")
+
+def test_controller_makes_its_own_key_without_a_ca(rig):
+    r = _run(rig, "controller", "apply_ssh_access; echo rc=$?; ssh_controller_key")
     assert "rc=0" in r.stdout, r.stdout + r.stderr
-    assert (rig / "src" / "controller_key-cert.pub").exists()
+    pub = (rig / "src" / "controller_key.pub").read_text().strip()
+    assert pub.startswith("ssh-ed25519 ") and pub in r.stdout
     conf = (rig / "ssh_client" / "50-saviour-controller.conf").read_text()
-    assert "Match localuser pi,root" in conf and "controller_key-cert.pub" in conf
+    assert "Match localuser pi,root" in conf and "IdentityFile" in conf
+    assert "CertificateFile" not in conf
+    # Same key on a second run.
+    _run(rig, "controller", "apply_ssh_access")
+    assert (rig / "src" / "controller_key.pub").read_text().strip() == pub
+    # A controller doesn't trust a controller key itself.
+    assert not _installed(rig)["ctlkey"].exists()
 
 
-def test_controller_cert_for_another_key_is_refused(rig):
-    _run(rig, "controller", "ssh_controller_key")
-    subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-f", str(rig / "other")],
-                   check=True)
-    subprocess.run([KEYGEN, "-q", "-s", str(rig / "ca"), "-I", "x", "-n",
-                    "saviour-controller", str(rig / "other.pub")], check=True)
-    r = _run(rig, "controller",
-             f"ssh_set_controller_cert '{(rig / 'other-cert.pub').as_posix()}'; echo rc=$?")
-    assert "rc=1" in r.stdout and "not for this controller" in r.stderr
-    assert not (rig / "ssh_client" / "50-saviour-controller.conf").exists()
+def test_module_trusts_its_controllers_key_from_its_address_only(rig):
+    (rig / "controller_ip").write_text("10.0.5.1\n")
+    pub = _ctl_key(rig)                                   # no CA served
+    r = _run(rig, "module", "apply_ssh_access; echo rc=$?")
+    assert "rc=0" in r.stdout and "applied" in r.stdout, r.stdout + r.stderr
+    f = _installed(rig)
+    assert f["ctlkey"].read_text().strip() == f'from="10.0.5.1" {pub}'
+    assert not f["ca"].exists() and not f["krl"].exists() and not f["dropin"].exists()
+    auth = _auth(rig).read_text()
+    assert "PasswordAuthentication" not in auth          # mode any: passwords untouched
+    assert ".ssh/authorized_keys" in auth and "saviour_controller_keys/%u" in auth
+    assert "CA none" in r.stdout and "controller key SHA256:" in r.stdout
+
+
+def test_certs_mode_still_lets_the_controller_in(rig):
+    _ctl_key(rig)
+    shutil.copy(rig / "ca.pub", rig / "served" / "user_ca.pub")
+    (rig / "served" / "login_mode").write_text("certs\n")
+    r = _run(rig, "module", "apply_ssh_access; echo rc=$?")
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    auth = _auth(rig).read_text()
+    assert "PasswordAuthentication no" in auth
+    keyfile = [ln for ln in auth.splitlines() if ln.startswith("AuthorizedKeysFile")]
+    assert keyfile == [f"AuthorizedKeysFile {(rig / 'etc_ssh').as_posix()}"
+                       "/saviour_controller_keys/%u"]     # not "none", no authorized_keys
+
+
+def test_module_drops_the_key_when_the_controller_stops_serving_it(rig):
+    _ctl_key(rig)
+    _run(rig, "module", "apply_ssh_access")
+    (rig / "served" / "controller_key.pub").unlink()
+    r = _run(rig, "module", "apply_ssh_access; echo rc=$?")
+    assert "rc=0" in r.stdout and "removed" in r.stdout
+    assert not _installed(rig)["ctlkey"].exists() and not _auth(rig).exists()
+
+
+def test_module_swaps_in_a_rotated_key(rig):
+    _ctl_key(rig)
+    _run(rig, "module", "apply_ssh_access")
+    for f in ("ctl", "ctl.pub"):
+        (rig / f).unlink()
+    new = _ctl_key(rig)
+    r = _run(rig, "module", "apply_ssh_access; echo rc=$?")
+    assert "rc=0" in r.stdout and "applied" in r.stdout
+    assert _installed(rig)["ctlkey"].read_text().strip().endswith(new)
+
+
+def test_invalid_controller_key_changes_nothing(rig):
+    _ctl_key(rig)
+    _run(rig, "module", "apply_ssh_access")
+    before = _installed(rig)["ctlkey"].read_bytes()
+    (rig / "served" / "controller_key.pub").write_text("not a key\n")
+    r = _run(rig, "module", "apply_ssh_access; echo rc=$?")
+    assert "rc=1" in r.stdout and "left unchanged" in r.stdout
+    assert _installed(rig)["ctlkey"].read_bytes() == before
+
+
+def test_rotate_makes_a_new_key_and_pushes(rig):
+    _run(rig, "controller", "apply_ssh_access")
+    old = (rig / "src" / "controller_key.pub").read_text()
+    r = _run(rig, "controller", "ssh_rotate_controller_key; echo rc=$?")
+    assert "rc=0" in r.stdout and "New controller key" in r.stdout and "PUSHED" in r.stdout
+    assert (rig / "src" / "controller_key.pub").read_text() != old
+    r = _run(rig, "module", "ssh_rotate_controller_key; echo rc=$?")
+    assert "rc=1" in r.stdout and "Only a controller" in r.stderr
 
 
 # --------------------------------------------------------------------------- #

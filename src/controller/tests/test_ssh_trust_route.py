@@ -43,3 +43,12 @@ def test_serves_the_login_mode(tmp_path):
     (tmp_path / "login_mode").write_bytes(b"certs\n")
     resp = _client(tmp_path).get("/ssh/login_mode")
     assert resp.status_code == 200 and resp.data == b"certs\n"
+
+
+def test_serves_the_controller_public_key_but_never_the_private(tmp_path):
+    (tmp_path / "controller_key.pub").write_bytes(b"ssh-ed25519 AAAA ctl\n")
+    (tmp_path / "controller_key").write_bytes(b"PRIVATE")
+    c = _client(tmp_path)
+    resp = c.get("/ssh/controller_key.pub")
+    assert resp.status_code == 200 and resp.data == b"ssh-ed25519 AAAA ctl\n"
+    assert c.get("/ssh/controller_key").status_code == 404

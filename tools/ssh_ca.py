@@ -9,7 +9,6 @@ Windows (PowerShell, built-in OpenSSH), macOS and Linux; it only wraps
     python tools/ssh_ca.py sign   --ca D:/saviour-ca/saviour_ca --id andrew ~/.ssh/id_ed25519.pub
     python tools/ssh_ca.py revoke --ca D:/saviour-ca/saviour_ca --serial 3
     python tools/ssh_ca.py install --ca D:/saviour-ca/saviour_ca --host pi@10.0.0.1
-    python tools/ssh_ca.py certify-controller --ca D:/saviour-ca/saviour_ca --host pi@10.0.0.1
     python tools/ssh_ca.py show   ~/.ssh/id_ed25519-cert.pub
 
 Files kept next to the CA key (`<ca>`), none of which belong in git:
@@ -18,9 +17,10 @@ Files kept next to the CA key (`<ca>`), none of which belong in git:
     <ca>.log.csv     every certificate issued: serial, id, principals, expiry, key
     <ca>.krl         the revocation list (`revoke`), shipped by `install`
 
-Principals: `saviour-admin` (people) and `saviour-controller` (a controller's
-own key, for its scripts; sign with --source-address <controller ip>/32).
-Every Pi lets either log in as `pi`.
+Principal: `saviour-admin` (people); every Pi lets it log in as `pi`.
+Controllers are deliberately NOT certified: a controller's SSH to its own
+modules uses a key it makes itself, trusted only by that rig's modules
+(saviour-config), so one stolen controller key can't open every rig.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-PRINCIPALS = ("saviour-admin", "saviour-controller")
+PRINCIPALS = ("saviour-admin",)
 
 
 def _keygen() -> str:
@@ -115,30 +115,6 @@ def cmd_sign(a) -> None:
     print("Keep it next to the key; ssh uses it automatically.")
 
 
-def cmd_certify_controller(a) -> None:
-    """Fetch a controller's own SSH public key, certify it for principal
-    saviour-controller from that controller's address only, and install the
-    certificate there. The controller's scripts then SSH to modules with it."""
-    for exe in ("scp", "ssh"):
-        if not shutil.which(exe):
-            sys.exit(f"{exe} not found.")
-    out = subprocess.run(["ssh", a.host, "sudo saviour-config --controller-key"],
-                         capture_output=True, text=True, check=True).stdout
-    fields = dict(ln.split(" ", 1) for ln in out.splitlines() if " " in ln)
-    if not fields.get("PUBKEY", "").startswith("ssh-"):
-        sys.exit(f"Unexpected reply from {a.host}:\n{out}")
-    with tempfile.TemporaryDirectory() as d:
-        pub = Path(d) / "controller_key.pub"
-        pub.write_text(fields["PUBKEY"].strip() + "\n")
-        cert, info = _sign(Path(a.ca), pub, f"controller-{fields.get('HOST', 'unknown')}",
-                           "saviour-controller", a.valid, f"{fields['IP'].strip()}/32")
-        remote = "/tmp/saviour_controller_key-cert.pub"
-        subprocess.run(["scp", str(cert), f"{a.host}:{remote}"], check=True)
-        subprocess.run(["ssh", a.host, f"sudo saviour-config --set-controller-cert {remote}"
-                        f"; rc=$?; rm -f {remote}; exit $rc"], check=True)
-    print(info)
-
-
 def cmd_revoke(a) -> None:
     ca = Path(a.ca)
     krl = ca.with_name(ca.name + ".krl")
@@ -191,9 +167,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="no passphrase on the CA key (tests and throwaway CAs only)")
     s.set_defaults(fn=cmd_init)
 
-    s = sub.add_parser("sign", help="certify a person's or a controller's public key")
+    s = sub.add_parser("sign", help="certify a person's public key")
     s.add_argument("--ca", required=True)
-    s.add_argument("--id", required=True, help="who this is for, e.g. andrew or controller-desk")
+    s.add_argument("--id", required=True, help="who this is for, e.g. andrew")
     s.add_argument("--principal", default="saviour-admin", choices=PRINCIPALS)
     s.add_argument("--valid", default="+30d", help="ssh-keygen -V, e.g. +30d, +52w (default +30d)")
     s.add_argument("--source-address", help="only usable from these addresses, e.g. 10.0.0.1/32")
@@ -211,13 +187,6 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--ca", required=True)
     s.add_argument("--host", required=True, help="e.g. pi@10.0.0.1")
     s.set_defaults(fn=cmd_install)
-
-    s = sub.add_parser("certify-controller",
-                       help="certify a controller's own key (for its SSH to modules) and install it")
-    s.add_argument("--ca", required=True)
-    s.add_argument("--host", required=True, help="e.g. pi@10.0.0.1")
-    s.add_argument("--valid", default="+52w", help="ssh-keygen -V (default +52w)")
-    s.set_defaults(fn=cmd_certify_controller)
 
     s = sub.add_parser("show", help="print a certificate's contents")
     s.add_argument("cert")

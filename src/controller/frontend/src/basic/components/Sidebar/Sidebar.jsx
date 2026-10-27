@@ -624,24 +624,61 @@ function Sidebar({ navItems }) {
 
       {(showPowerModal || shutdownState) && (
         <div className="modal-overlay" onClick={() => { if (!shutdownState) setShowPowerModal(false); }}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            {shutdownState ? (<>
-              <p>{shutdownState === "acked" ? "Powering off…" : "Shutting down…"}</p>
-              <p className="modal-subtext">
-                {shutdownState === "acked"
-                  ? "Shutdown command acknowledged. All devices are powering off."
-                  : "Sending shutdown command to all devices…"}
-              </p>
-            </>) : (<>
-              <p>Power action for <strong>all modules and controller</strong></p>
-              <p className="modal-subtext">
-                Reboot will restart all devices and reconnect automatically.<br />
-                Shutdown will power off all devices - manual restart required.
-              </p>
+          <div className="modal power-modal" onClick={e => e.stopPropagation()}>
+            {shutdownState ? (
+              <div className="power-status">
+                {shutdownState === "acked" ? (
+                  <svg className="power-status-icon power-status-icon--done" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                    <line x1="12" y1="2" x2="12" y2="12" />
+                  </svg>
+                ) : (
+                  <span className="power-spinner" aria-hidden="true" />
+                )}
+                <h3 className="modal-title">
+                  {shutdownState === "acked" ? "Powering off" : "Shutting down…"}
+                </h3>
+                <p className="power-status-text">
+                  {shutdownState === "acked"
+                    ? "Shutdown acknowledged. All devices are powering off."
+                    : "Sending the shutdown command to all devices…"}
+                </p>
+              </div>
+            ) : (<>
+              <div className="power-header">
+                <svg className="power-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                  <line x1="12" y1="2" x2="12" y2="12" />
+                </svg>
+                <div>
+                  <h3 className="modal-title">Power</h3>
+                  <p className="power-scope">Applies to <strong>all modules and the controller</strong></p>
+                </div>
+              </div>
+              <div className="power-options">
+                <button className="power-option" type="button" onClick={handleRebootAll}>
+                  <svg className="power-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  <span className="power-option-text">
+                    <span className="power-option-title">Reboot all</span>
+                    <span className="power-option-hint">Restarts every device. They reconnect automatically.</span>
+                  </span>
+                </button>
+                <button className="power-option power-option--danger" type="button" onClick={handleShutdownAll}>
+                  <svg className="power-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                    <line x1="12" y1="2" x2="12" y2="12" />
+                  </svg>
+                  <span className="power-option-text">
+                    <span className="power-option-title">Shut down all</span>
+                    <span className="power-option-hint">Powers every device off. Restarting needs someone on site.</span>
+                  </span>
+                </button>
+              </div>
               <div className="modal-buttons">
-                <button className="save-button" type="button" onClick={handleRebootAll}>Reboot All</button>
-                <button className="reset-button" type="button" onClick={handleShutdownAll}>Shutdown All</button>
-                <button className="save-button" type="button" onClick={() => setShowPowerModal(false)}>Cancel</button>
+                <button className="power-cancel" type="button" onClick={() => setShowPowerModal(false)}>Cancel</button>
               </div>
             </>)}
           </div>

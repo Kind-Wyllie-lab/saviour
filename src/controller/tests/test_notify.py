@@ -341,3 +341,139 @@ class TestSendInternal:
              patch("src.controller.notify.urlopen", side_effect=RuntimeError("boom")):
             notifier._send("https://example.invalid/hook", "T", "M", "error")
         notifier.logger.error.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# ntfy channel
+# ---------------------------------------------------------------------------
+
+def _ntfy_request(mock_urlopen):
+    request = mock_urlopen.call_args[0][0]
+    return request, json.loads(request.data.decode())
+
+
+def _ok_response(status=200):
+    resp = MagicMock()
+    resp.getcode.return_value = status
+    resp.__enter__.return_value = resp
+    return resp
+
+
+class TestSendAlertChannels:
+    def test_ntfy_only_dispatches_the_ntfy_sender(self):
+        notifier = _make_notifier(**{"ntfy.url": "https://ntfy.sh/t", "ntfy.token": "tk"})
+        with patch("src.controller.notify.threading.Thread") as mock_thread:
+            notifier.send_alert("k", "title", "message", severity="warning")
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args.kwargs
+        assert kwargs["target"] == notifier._send_ntfy
+        assert kwargs["args"] == ("https://ntfy.sh/t", "tk", "title", "message", "warning")
+
+    def test_both_channels_each_get_a_thread_under_one_cooldown(self):
+        notifier = _make_notifier(**{
+            "teams.webhook_url": "https://example.invalid/webhook",
+            "ntfy.url": "https://ntfy.sh/t",
+            "teams.alert_cooldown_secs": 600,
+        })
+        with patch("src.controller.notify.threading.Thread") as mock_thread:
+            notifier.send_alert("k", "title", "message")
+            notifier.send_alert("k", "title", "message")  # within cooldown
+        targets = [c.kwargs["target"] for c in mock_thread.call_args_list]
+        assert targets == [notifier._send, notifier._send_ntfy]
+
+    def test_blank_ntfy_url_is_ignored(self):
+        notifier = _make_notifier(**{"ntfy.url": "   "})
+        with patch("src.controller.notify.threading.Thread") as mock_thread:
+            notifier.send_alert("k", "title", "message")
+        mock_thread.assert_not_called()
+
+
+class TestSplitNtfyUrl:
+    def test_plain_topic(self):
+        assert Notifier._split_ntfy_url("https://ntfy.sh/abc") == ("https://ntfy.sh", "abc")
+
+    def test_trailing_slash_and_path_prefix(self):
+        assert Notifier._split_ntfy_url("http://10.0.0.5:8080/ntfy/lab/") == (
+            "http://10.0.0.5:8080/ntfy", "lab")
+
+    def test_rejects_missing_topic_or_scheme(self):
+        import pytest
+        for bad in ("https://ntfy.sh", "https://ntfy.sh/", "ntfy.sh/abc", "", "ftp://x/y"):
+            with pytest.raises(ValueError):
+                Notifier._split_ntfy_url(bad)
+
+
+class TestNtfyPublish:
+    def test_posts_json_to_server_root_with_priority_tag_and_footer(self):
+        notifier = _make_notifier(**{"controller.name": "rig-a"})
+        with patch("src.controller.notify.urlopen", return_value=_ok_response()) as uo:
+            status = notifier._ntfy_publish(
+                "https://ntfy.sh/lab", "", "Module offline — cam µ", "cam gone", "error")
+        assert status == 200
+        req, body = _ntfy_request(uo)
+        assert req.full_url == "https://ntfy.sh"
+        assert req.get_header("Authorization") is None
+        assert body["topic"] == "lab"
+        assert body["title"] == "Module offline — cam µ"   # UTF-8 survives (JSON body)
+        assert body["priority"] == 4
+        assert body["tags"] == ["rotating_light"]
+        assert body["message"].startswith("cam gone\n\n")
+        assert "rig-a" in body["message"]
+
+    def test_token_is_sent_as_bearer(self):
+        notifier = _make_notifier()
+        with patch("src.controller.notify.urlopen", return_value=_ok_response()) as uo:
+            notifier._ntfy_publish("https://ntfy.sh/lab", " tk_abc ", "t", "m", "info")
+        req, body = _ntfy_request(uo)
+        assert req.get_header("Authorization") == "Bearer tk_abc"
+        assert body["priority"] == 2
+
+    def test_send_ntfy_never_checks_internet_and_logs_failures(self):
+        notifier = _make_notifier()
+        notifier.check_internet = MagicMock(return_value=False)
+        notifier.logger = MagicMock()
+        with patch("src.controller.notify.urlopen",
+                   side_effect=URLError("refused")) as uo:
+            notifier._send_ntfy("http://10.0.0.5/lab", "", "t", "m", "warning")
+        uo.assert_called_once()                # attempted even with "no internet"
+        notifier.check_internet.assert_not_called()
+        notifier.logger.warning.assert_called_once()
+
+
+class TestSendNtfyTest:
+    def test_no_url_configured(self):
+        ok, detail = _make_notifier().send_ntfy_test()
+        assert not ok and "ntfy.url" in detail
+
+    def test_typed_url_and_token_override_saved_values(self):
+        notifier = _make_notifier(**{"ntfy.url": "https://ntfy.sh/saved", "ntfy.token": "old"})
+        with patch("src.controller.notify.urlopen", return_value=_ok_response()) as uo:
+            ok, _ = notifier.send_ntfy_test(url="https://ntfy.sh/typed", token="new")
+        assert ok
+        req, body = _ntfy_request(uo)
+        assert body["topic"] == "typed"
+        assert req.get_header("Authorization") == "Bearer new"
+
+    def test_falls_back_to_saved_values(self):
+        notifier = _make_notifier(**{"ntfy.url": "https://ntfy.sh/saved", "ntfy.token": "old"})
+        with patch("src.controller.notify.urlopen", return_value=_ok_response()) as uo:
+            ok, _ = notifier.send_ntfy_test(url="  ")
+        assert ok
+        req, body = _ntfy_request(uo)
+        assert body["topic"] == "saved"
+        assert req.get_header("Authorization") == "Bearer old"
+
+    def test_auth_failure_hints_at_the_token(self):
+        from urllib.error import HTTPError
+        notifier = _make_notifier()
+        err = HTTPError("https://ntfy.sh", 403, "Forbidden", {}, None)
+        with patch("src.controller.notify.urlopen", side_effect=err):
+            ok, detail = notifier.send_ntfy_test(url="https://ntfy.sh/x")
+        assert not ok and "403" in detail and "token" in detail
+
+    def test_bad_url_is_reported_without_a_request(self):
+        notifier = _make_notifier()
+        with patch("src.controller.notify.urlopen") as uo:
+            ok, detail = notifier.send_ntfy_test(url="https://ntfy.sh/")
+        assert not ok and "topic" in detail
+        uo.assert_not_called()

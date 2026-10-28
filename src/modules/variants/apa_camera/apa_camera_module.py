@@ -358,7 +358,7 @@ class APACameraModule(CameraBase):
         self.shock_zone_display = True
         self.shock_zone_record = False
         self.track_display = True
-        self.track_record = True
+        self.track_record = False
         self._detector_sig: tuple | None = None
         self.shock_zone_angle_span = 0
         self.shock_zone_start_angle = 0
@@ -750,7 +750,7 @@ class APACameraModule(CameraBase):
             self.shock_zone_display      = bool(self.config.get("shock_zone.shock_zone_display", True))
             self.shock_zone_record       = bool(self.config.get("shock_zone.shock_zone_record", False))
             self.track_display = bool(self.config.get("object_detection.overlay_display", True))
-            self.track_record  = bool(self.config.get("object_detection.overlay_record", True))
+            self.track_record  = bool(self.config.get("object_detection.overlay_record", False))
             self.shock_zone_angle_span   = self.config.get("shock_zone.shock_zone_angle_span_deg")
             self.shock_zone_start_angle  = self.config.get("shock_zone.shock_zone_start_angle_deg") - 90
             self.shock_zone_inner_offset = self.config.get("shock_zone.shock_zone_inner_offset")

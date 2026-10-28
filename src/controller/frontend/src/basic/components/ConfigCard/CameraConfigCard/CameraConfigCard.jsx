@@ -1713,7 +1713,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 <div className="form-field">
                   <label>Save tracking to recording:</label>
                   <input type="checkbox"
-                    checked={detection.overlay_record ?? true}
+                    checked={detection.overlay_record ?? false}
                     onChange={e => handleChange(["object_detection", "overlay_record"], e)} />
                 </div>
                 <div className="sensor-mode-info sensor-mode-info--muted">

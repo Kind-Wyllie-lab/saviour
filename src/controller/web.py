@@ -2918,7 +2918,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 self.logger.error(f"Upload assembly failed: {e}")
                 _emit("upload_update_error", {"error": str(e)})
 
-        # ── HEF model upload (apa_camera tracking) ────────────────────────────
+        # ── HEF model upload (apa_camera tracking, hailo_camera AI tab) ───────
         # Browser -> controller (authenticated chunked upload, like the update
         # package) -> staged in _HEF_UPLOAD_DIR and served at
         # /hailo_models/<name> -> the module's fetch_hef command downloads it.
@@ -4508,7 +4508,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
                         })
-                    elif command in ("list_hefs", "fetch_hef"):
+                    elif command in ("list_hefs", "fetch_hef", "delete_hef"):
                         self.socketio.emit("hef_list_response", {
                             "module_id": module_id,
                             "hailo_present": status.get("hailo_present", False),

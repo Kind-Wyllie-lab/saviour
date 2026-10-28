@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-10-28
+
+- [x] **hailo_camera: upload your own .hef, with a class-names form** (branch `feat/hailo-hef-upload` → `staging`; tests + lint + all 5 frontend builds green, not yet run on hardware). The AI tab gets the APA camera's **Upload .hef…** button. The browser sends the file to the controller (`upload_hef_*`, unchanged), and the module's new `fetch_hef` downloads it to `/var/lib/saviour/hailo_models/`, which code updates don't touch. The model dropdown gains an **Uploaded** group. For an uploaded model, a **Class names** form (index-ordered rows, + Add class) edits `hailo.custom_labels` (`[{hef, labels}]`; a list, since config keys are dotted and filenames contain dots). Name edits apply without reloading the HEF. A **Delete this .hef** button (`delete_hef`) is refused for the model the camera is running. Uploads are always loaded as detectors with NMS compiled in. A missing upload now says "upload it again", not "run download_hefs.sh". Shared: `download_hef` / `USER_HEF_DIR` / `HEF_NAME_RE` moved into `hailo_infer.py` (apa_camera keeps its own copy for now). `HailoDetector._decode` keeps class indexes past the end of `labels` instead of folding them into class 0, so an upload with unnamed classes still tells them apart. The upload button and status line are a shared `HefUploadControls` in `CameraConfigCard.jsx`.
+
 ## 2026-10-27
 
 - [x] **Controller SSH to modules: a per-rig key instead of a CA certificate** (plan `plans/ssh-certificate-auth.md`, phase 2 redone).

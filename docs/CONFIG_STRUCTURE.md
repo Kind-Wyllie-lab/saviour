@@ -226,6 +226,27 @@ Modules can specify readiness validation parameters:
 }
 ```
 
+## Hailo Camera Configuration
+
+`hailo.model` is a key from `CURATED_MODELS` (`src/modules/hailo_infer.py`), or the
+filename of a HEF uploaded from the AI tab. Uploads live in
+`/var/lib/saviour/hailo_models/` on the module (`fetch_hef`, `delete_hef`). They're
+always treated as detection models with NMS compiled in. Their class names, in
+class-index order, are in `hailo.custom_labels`. That's a list, not a dict keyed
+by filename, because config keys are dot-separated and every filename contains a
+dot. An unnamed class is drawn as its index.
+
+```json
+{
+  "hailo": {
+    "model": "yolov8n_rubberducks_640_h8l_nms.hef",
+    "custom_labels": [
+      { "hef": "yolov8n_rubberducks_640_h8l_nms.hef", "labels": ["rubber duck"] }
+    ]
+  }
+}
+```
+
 ## APA-Specific Configurations
 
 ### APA Camera Configuration

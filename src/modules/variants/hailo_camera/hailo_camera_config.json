@@ -48,7 +48,8 @@
         "threshold": 0.4,
         "max_labels": 40,
         "infer_every_n": 2,
-        "max_detections": 12
+        "max_detections": 12,
+        "custom_labels": []
     },
     "recording": {
         "_recording_filetype": "ts"

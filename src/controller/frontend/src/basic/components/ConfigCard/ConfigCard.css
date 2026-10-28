@@ -764,3 +764,50 @@ min-width: 300px;
 .config-action-pill--push:hover {
   opacity: 1;
 }
+/* hailo_camera AI tab: class names for an uploaded HEF */
+.hef-class-names {
+  align-items: flex-start;
+}
+
+.hef-class-names__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hef-class-names__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hef-class-names__row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.hef-class-names__index {
+  width: 1.6em;
+  text-align: right;
+  font-family: monospace;
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+.hef-class-names__remove {
+  border: none;
+  background: none;
+  color: var(--secondary-text-color);
+  font-size: 1.1em;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.hef-class-names__remove:hover {
+  color: var(--recording-color);
+}
+
+.hef-class-names__add {
+  align-self: flex-start;
+}

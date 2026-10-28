@@ -17,6 +17,12 @@ Deliberately generic and demo-oriented:
     (Hailo model-zoo S3), curated in `modules/hailo_infer.CURATED_MODELS`.
   - `hailo.model` picks one; the "AI" tab in the camera config card is a
     dropdown over the curated list, grouped by category.
+  - Or upload your own detection HEF from the AI tab (NMS compiled in, as
+    `tools/convert_to_hailo.py` builds them): it lands in USER_HEF_DIR,
+    `hailo.model` is then its filename, and its class names are the
+    matching `hailo.custom_labels` entry ({"hef": name, "labels": [...]}).
+    A list rather than a dict keyed by filename, since config keys are
+    dot-separated paths and every filename has a dot in it.
   - No Hailo device / missing HEF → runs as a plain camera (overlay shows why).
   - Recording is untouched *pixel-wise*: the overlay is on the lores/preview
     stream, the recorded "main" stream never sees it. A synchronized detection
@@ -60,11 +66,14 @@ from modules.hailo_infer import (
     COCO_SKELETON,
     CURATED_MODELS,
     DEFAULT_MODEL,
+    HEF_NAME_RE,
     MODEL_DIR,
+    USER_HEF_DIR,
     HailoDepthEstimator,
     HailoDetector,
     HailoPoseDetector,
     HailoSegDetector,
+    download_hef,
     labels_for,
 )
 from modules.module import check, command
@@ -74,6 +83,7 @@ _PALETTE = [
     (0, 255, 0), (0, 165, 255), (255, 128, 0), (0, 0, 255), (255, 0, 255),
     (255, 255, 0), (128, 0, 255), (0, 255, 255), (200, 200, 200), (0, 128, 255),
 ]
+HAILO_DEVICE = "/dev/hailo0"
 _KP_COLOUR = (0, 255, 255)      # keypoints
 _BONE_COLOUR = (0, 255, 0)      # skeleton edges
 
@@ -158,6 +168,10 @@ class HailoCameraModule(CameraBase):
         threshold = float(self.config.get("hailo.threshold", 0.4))
         max_det = max(1, int(self.config.get("hailo.max_detections", 12)))
         with self._det_lock:
+            # An uploaded model's class names (hailo.custom_labels) apply
+            # without a reload too.
+            if self._model_key not in CURATED_MODELS:
+                self._labels = self._uploaded_labels(self._model_key)
             if self.detector is not None:
                 self.detector.set_threshold(threshold)
                 if hasattr(self.detector, "set_max_det"):
@@ -255,7 +269,32 @@ class HailoCameraModule(CameraBase):
             self._model_key, self._infer_every_n)
 
     def _hef_path(self, spec: dict) -> str:
+        # An uploaded model's spec carries an absolute path, which join keeps.
         return os.path.join(MODEL_DIR, spec["hef"])
+
+    def _uploaded_labels(self, filename: str) -> list[str]:
+        """Class names for an uploaded HEF, from `hailo.custom_labels`.
+        Unnamed classes (or none at all) draw as their class index."""
+        for entry in self.config.get("hailo.custom_labels", []) or []:
+            if isinstance(entry, dict) and entry.get("hef") == filename:
+                return [str(name).strip() for name in entry.get("labels") or []]
+        return []
+
+    def _model_spec(self, model_key: str) -> tuple[str, dict]:
+        """(key, spec) for `hailo.model`: a CURATED_MODELS key, or the
+        filename of an uploaded HEF in USER_HEF_DIR (always a detector with
+        NMS compiled in). Anything else falls back to DEFAULT_MODEL."""
+        if model_key in CURATED_MODELS:
+            return model_key, CURATED_MODELS[model_key]
+        if HEF_NAME_RE.match(str(model_key or "")):
+            return model_key, {
+                "hef": os.path.join(USER_HEF_DIR, model_key),
+                "task": "detection",
+                "labels": self._uploaded_labels(model_key),
+                "uploaded": True,
+            }
+        self.logger.warning(f"hailo.model '{model_key}' not in the curated list — using {DEFAULT_MODEL}")
+        return DEFAULT_MODEL, CURATED_MODELS[DEFAULT_MODEL]
 
     def _build_detector(self, swap: bool = False) -> None:
         with self._rebuild_lock:
@@ -285,11 +324,7 @@ class HailoCameraModule(CameraBase):
             self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
             max_det = max(1, int(self.config.get("hailo.max_detections", 12)))
 
-            spec = CURATED_MODELS.get(model_key)
-            if spec is None:
-                self.logger.warning(f"hailo.model '{model_key}' not in the curated list — using {DEFAULT_MODEL}")
-                model_key = DEFAULT_MODEL
-                spec = CURATED_MODELS[DEFAULT_MODEL]
+            model_key, spec = self._model_spec(model_key)
 
             # Release the current device handle BEFORE opening a new one — the
             # Hailo-8L can't hold two VDevices. The close() MUST happen under
@@ -314,7 +349,9 @@ class HailoCameraModule(CameraBase):
             hef_path = self._hef_path(spec)
             new_detector = None
             error = None
-            if not os.path.exists(hef_path):
+            if not os.path.exists(hef_path) and spec.get("uploaded"):
+                error = f"HEF not found: {hef_path} — upload it again from the AI tab"
+            elif not os.path.exists(hef_path):
                 error = f"HEF not found: {hef_path} — run download_hefs.sh (wrong Hailo-8/8L arch is the usual cause)"
             else:
                 try:
@@ -336,7 +373,8 @@ class HailoCameraModule(CameraBase):
                 self._detector_error = error
                 self._model_key = model_key
                 self._task = task
-                self._labels = labels_for(model_key)
+                self._labels = (spec["labels"] if spec.get("uploaded")
+                                else labels_for(model_key))
                 self._infer_error_logged = False
                 self._rebuilding = False
             if old is not None:
@@ -457,6 +495,66 @@ class HailoCameraModule(CameraBase):
         """Return the curated model list + the module's current selection for
         the config card's 'AI' tab dropdown."""
         return {"models": CURATED_MODELS, "current": self._model_key}
+
+    # Uploaded HEFs. The web UI's upload stages the file on the controller
+    # (web.py, upload_hef_*), then sends fetch_hef; replies to all three come
+    # back to the AI tab as hef_list_response.
+
+    @command()
+    def list_hefs(self) -> dict:
+        """Uploaded HEFs for the AI tab's model picker (the curated stock nets
+        are listed by the frontend itself), and whether a Hailo accelerator is
+        fitted at all."""
+        hefs = []
+        try:
+            names = sorted(os.listdir(USER_HEF_DIR))
+        except OSError:
+            names = []
+        for name in names:
+            path = os.path.join(USER_HEF_DIR, name)
+            if name.endswith(".hef") and os.path.isfile(path):
+                hefs.append({"name": name, "path": path, "source": "uploaded",
+                             "size_bytes": os.path.getsize(path)})
+        return {
+            "hailo_present": os.path.exists(HAILO_DEVICE),
+            "hefs": hefs,
+            "current": self.config.get("hailo.model", DEFAULT_MODEL),
+        }
+
+    @command()
+    def fetch_hef(self, controller_url: str = "", filename: str = "") -> dict:
+        """Download an uploaded HEF from the controller into USER_HEF_DIR.
+        Returns the refreshed list_hefs() plus `fetched` (the filename, which
+        is what `hailo.model` is set to for it)."""
+        if not HEF_NAME_RE.match(filename or ""):
+            return {**self.list_hefs(), "error": f"Invalid HEF filename: {filename!r}"}
+        if not controller_url:
+            return {**self.list_hefs(), "error": "controller_url is required"}
+        try:
+            size = download_hef(controller_url, filename, USER_HEF_DIR)
+        except Exception as e:
+            self.logger.error(f"fetch_hef {filename} failed: {e}")
+            return {**self.list_hefs(), "error": f"Download failed: {e}"}
+        self.logger.info(f"Fetched HEF {filename} ({size // 1024} KiB) to {USER_HEF_DIR}")
+        if filename == self._model_key:
+            # Replaced the HEF that's loaded: reload it.
+            self._rebuild_detector_async()
+        return {**self.list_hefs(), "fetched": filename}
+
+    @command()
+    def delete_hef(self, filename: str = "") -> dict:
+        """Remove an uploaded HEF. Refused for the selected model; pick
+        another one first."""
+        if not HEF_NAME_RE.match(filename or ""):
+            return {**self.list_hefs(), "error": f"Invalid HEF filename: {filename!r}"}
+        if filename == self.config.get("hailo.model", DEFAULT_MODEL):
+            return {**self.list_hefs(), "error": "That model is selected; choose another and save first"}
+        try:
+            os.remove(os.path.join(USER_HEF_DIR, filename))
+        except OSError as e:
+            return {**self.list_hefs(), "error": f"Delete failed: {e}"}
+        self.logger.info(f"Deleted uploaded HEF {filename}")
+        return self.list_hefs()
 
     @check()
     def _check_hailo(self) -> tuple[bool, str]:

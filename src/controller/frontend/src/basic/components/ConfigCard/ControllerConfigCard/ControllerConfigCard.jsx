@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
@@ -9,7 +9,10 @@ import ExportConfigSection from "./ExportConfigSection";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
-import { listThemes, themeTokens, DEFAULT_THEME_ID, BUILTIN_THEMES } from "/src/basic/utils/themes";
+import useLiveThemePreview from "/src/hooks/useLiveThemePreview";
+import {
+  listThemes, themeTokens, frontendTheme, DEFAULT_THEME_ID, BUILTIN_THEMES,
+} from "/src/basic/utils/themes";
 
 const BUILTIN_THEME_IDS = new Set(BUILTIN_THEMES.map(t => t.id));
 
@@ -55,6 +58,14 @@ function ControllerConfigCard() {
   // that custom theme.
   const [themeModal, setThemeModal] = useState(null);
   const saveTimerRef = useRef(null);
+
+  // The theme tile and dark mode toggle preview on the whole page as soon as
+  // they're clicked; Save keeps it, leaving the page unsaved drops it. Matches
+  // the configured theme until something is changed, and shows nothing until
+  // the config has loaded (an empty form would read as "default, dark").
+  const previewFe = formData?.frontend;
+  const livePreview = useMemo(() => (previewFe ? frontendTheme(previewFe) : null), [previewFe]);
+  useLiveThemePreview(livePreview?.tokens ?? null, livePreview?.darkMode ?? true);
 
   useEffect(() => {
     socket.emit("get_controller_config");
@@ -337,12 +348,12 @@ function ControllerConfigCard() {
                       disabled={!loggedIn}
                       title={loggedIn ? undefined : "Login required for this action"}
                     >
-                      + Import from Coolors
+                      + New theme
                     </button>
                   </div>
                   <span className="frontend-accent-hint">
-                    Applied live across every dashboard variant on save - background, cards,
-                    text, buttons, links and highlights. Preview shows each theme's{" "}
+                    Click a theme to preview it on this page; Save applies it across every
+                    dashboard variant (leave without saving to go back). Tiles show each theme's{" "}
                     {(formData?.frontend?.dark_mode ?? true) ? "dark" : "light"} variant.
                   </span>
                 </div>

@@ -1365,24 +1365,34 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <HefUploadControls upload={hefUpload} inputRef={hefInputRef} onFile={handleHefFile}
               doneText="Uploaded and selected. Name its classes below, then Save to start using it." />
             {!curated && (
-              <>
-                <HefClassNames labels={labels} onChange={l => setHefLabels(model, l)} />
-                {!missing && (
-                  <div className="form-field">
-                    <label></label>
-                    <div>
-                      <button type="button" className="copy-btn"
-                        disabled={model === (hefInfo?.current ?? "")}
-                        title={model === (hefInfo?.current ?? "")
-                          ? "This is the model the camera is running; choose and save another one first"
-                          : undefined}
-                        onClick={() => deleteHef(model)}>
-                        Delete this .hef from the module
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
+              <HefClassNames labels={labels} onChange={l => setHefLabels(model, l)} />
+            )}
+            {uploaded.length > 0 && (
+              <div className="form-field hef-uploads">
+                <label>Uploaded models:</label>
+                <div className="hef-uploads__list">
+                  {uploaded.map(h => {
+                    // The module refuses to delete the model it's configured
+                    // to run (hefInfo.current is the saved hailo.model).
+                    const inUse = h.name === (hefInfo?.current ?? "");
+                    return (
+                      <div key={h.name} className="hef-uploads__row">
+                        <span className="hef-uploads__name" title={h.name}>{h.name}</span>
+                        {inUse ? (
+                          <span className="hef-uploads__in-use">
+                            in use: choose and save another model to delete it
+                          </span>
+                        ) : (
+                          <button type="button" className="copy-btn"
+                            onClick={() => deleteHef(h.name)}>
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
             {hailoTask !== "depth" && (
               <div className="form-field">

@@ -811,3 +811,33 @@ min-width: 300px;
 .hef-class-names__add {
   align-self: flex-start;
 }
+
+/* hailo_camera AI tab: uploaded HEFs with per-file delete */
+.hef-uploads {
+  align-items: flex-start;
+}
+
+.hef-uploads__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hef-uploads__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hef-uploads__name {
+  font-family: monospace;
+  font-size: 0.82em;
+  overflow-wrap: anywhere;
+}
+
+.hef-uploads__in-use {
+  font-size: 0.78em;
+  opacity: 0.65;
+}

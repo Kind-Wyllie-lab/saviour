@@ -82,9 +82,37 @@
 
 .theme-role-swatch__color {
   width: 100%;
-  height: 22px;
+  height: 36px;
+  padding: 0;
   border-radius: 4px;
   border: 1px solid var(--border-color);
+  background: none;
+  cursor: pointer;
+}
+
+.theme-role-swatch__color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.theme-role-swatch__color::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.theme-role-swatch__color::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.theme-role-swatch__hex {
+  font-family: monospace;
+  font-size: 0.64em;
+  opacity: 0.6;
+}
+
+.theme-import-modal__import-toggle {
+  display: block;
+  margin: 10px 0 0;
 }
 
 .theme-role-swatch__label {
@@ -109,65 +137,57 @@
   cursor: default;
 }
 
-.theme-import-modal__previews {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+/* Light scrim, modal off to the right: the page behind is the preview. */
+.theme-import-overlay {
+  background: rgba(0, 0, 0, 0.12);
+  justify-content: flex-end;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
-.theme-preview {
-  border: 1px solid;
-  border-radius: 8px;
-  padding: 8px;
+.theme-import-overlay .theme-import-modal {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
 
-.theme-preview__label {
-  font-size: 0.72em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 6px;
+@media (max-width: 600px) {
+  .theme-import-overlay {
+    justify-content: center;
+    align-items: flex-end;
+  }
 }
 
-.theme-preview__card {
-  border: 1px solid;
-  border-radius: 6px;
-  padding: 8px;
-}
-
-.theme-preview__title {
-  font-size: 0.95em;
-  font-weight: 700;
-}
-
-.theme-preview__body {
-  font-size: 0.78em;
-  margin: 3px 0 8px;
-}
-
-.theme-preview__row {
+.theme-import-modal__preview-mode {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  font-size: 0.8em;
 }
 
-.theme-preview__btn {
-  color: #fff;
-  font-size: 0.74em;
-  font-weight: 600;
-  padding: 3px 8px;
+.theme-import-modal__mode-btn {
+  border: 1px solid var(--border-color);
   border-radius: 4px;
+  background: none;
+  color: var(--text-color);
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 1em;
 }
 
-.theme-preview__chip {
-  font-size: 0.74em;
-  font-weight: 600;
-  padding: 2px 7px;
-  border: 1px solid;
-  border-radius: 999px;
+.theme-import-modal__mode-btn.is-active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.theme-import-modal__mode-note {
+  opacity: 0.6;
 }
 
 .theme-import-modal__msg {
   margin: 10px 0 0;
   font-size: 0.86em;
 }
+

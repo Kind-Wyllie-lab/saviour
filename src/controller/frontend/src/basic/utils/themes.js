@@ -234,6 +234,22 @@ export function themeTokens(theme, darkMode) {
   }, {});
 }
 
+/**
+ * The tokens and dark/light mode a `config.frontend` block asks for:
+ * theme_id -> "default" and dark_mode -> true when absent. While the
+ * Default theme is selected, a legacy `accent_color` still overrides its
+ * accent (see useControllerTheme.js).
+ */
+export function frontendTheme(fe) {
+  const darkMode = fe?.dark_mode ?? true;
+  const themeId = fe?.theme_id ?? DEFAULT_THEME_ID;
+  const tokens = themeTokens(resolveTheme(themeId, fe?.custom_themes), darkMode);
+  if (themeId === DEFAULT_THEME_ID && fe?.accent_color) {
+    tokens["--accent-color"] = fe.accent_color;
+  }
+  return { tokens, darkMode };
+}
+
 // ─── Coolors palette import ──────────────────────────────────────────────
 // Turn a flat list of palette colours (pasted as a Coolors URL or a bare hex
 // list) into a full light+dark theme: the light map lightens the palette's
@@ -383,18 +399,24 @@ export const PALETTE_ROLES = [
 ];
 
 /**
- * Seeds the manual role editor with the same picks buildModeMap makes
- * automatically: lightest hex anchors bg + card, darkest anchors text, the
- * two most vivid mid-tone hexes anchor the accents. One assignment covers
- * both light and dark previews — each mode just mixes the same anchor
- * toward a different target lightness (see buildModeMapFromRoles).
+ * Seeds the role editor: lightest hex anchors bg, darkest anchors text, the
+ * two most vivid of the rest anchor the accents, and whatever is left
+ * anchors card -- so a 5-colour palette uses every colour once. Shorter
+ * palettes reuse colours (card falls back to bg, the alt accent to the
+ * accent); beyond 5, the extras go unused. One assignment covers both light
+ * and dark previews -- each mode just mixes the same anchor toward a
+ * different target lightness (see buildModeMapFromRoles).
  */
 export function defaultRoleAssignment(hexes) {
-  const byLum = [...hexes].sort((a, b) => relLum(a) - relLum(b));
-  const darkest = byLum[0];
-  const lightest = byLum[byLum.length - 1];
-  const [a1, a2] = pickAccents(hexes);
-  return { bg: lightest, card: lightest, text: darkest, accent: a1, accentAlt: a2 };
+  const byLum = [...new Set(hexes)].sort((a, b) => relLum(a) - relLum(b));
+  const text = byLum[0];
+  const bg = byLum[byLum.length - 1];
+  const rest = byLum.slice(1, -1);
+  const [accent, accentAlt] = rest.length ? pickAccents(rest) : pickAccents(byLum);
+  const leftover = rest.filter((h) => h !== accent && h !== accentAlt);
+  // Of the leftovers, the lightest makes the most card-like card.
+  const card = leftover.length ? leftover[leftover.length - 1] : bg;
+  return { bg, card, text, accent, accentAlt };
 }
 
 /**

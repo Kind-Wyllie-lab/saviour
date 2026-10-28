@@ -1,11 +1,7 @@
 import { useEffect } from "react";
 import socket from "../socket";
-import {
-  resolveTheme,
-  themeTokens,
-  THEME_TOKENS,
-  DEFAULT_THEME_ID,
-} from "/src/basic/utils/themes";
+import { frontendTheme, THEME_TOKENS } from "/src/basic/utils/themes";
+import { setConfiguredDarkMode } from "./useLiveThemePreview";
 
 const STYLE_TAG_ID = "controller-theme-override";
 
@@ -37,6 +33,9 @@ const STYLE_TAG_ID = "controller-theme-override";
  * silently invisible in dark mode. A <style> rule targeting both selectors
  * overrides both index.css blocks directly instead.
  *
+ * Unsaved themes (the Frontend settings tab, ThemeImportModal) are previewed
+ * over this by useLiveThemePreview.
+ *
  * Uses a named handler so cleanup removes exactly this listener via
  * socket.off(event, handler) -- ControllerConfigCard.jsx listens on the same
  * "controller_config_response" event, and the bare socket.off(event) form
@@ -47,17 +46,10 @@ export default function useControllerTheme() {
     socket.emit("get_controller_config");
 
     const handleConfig = (data) => {
-      const fe = data?.config?.frontend || {};
-      const darkMode = fe.dark_mode ?? true;
-      document.body.classList.toggle("dark-mode", darkMode);
-
-      const themeId = fe.theme_id ?? DEFAULT_THEME_ID;
-      const theme = resolveTheme(themeId, fe.custom_themes);
-      const tokens = themeTokens(theme, darkMode);
-
-      if (themeId === DEFAULT_THEME_ID && fe.accent_color) {
-        tokens["--accent-color"] = fe.accent_color;
-      }
+      const { tokens, darkMode } = frontendTheme(data?.config?.frontend);
+      // Sets body.dark-mode, unless an unsaved theme preview is showing
+      // (useLiveThemePreview), which keeps its own mode until it closes.
+      setConfiguredDarkMode(darkMode);
 
       const decls = THEME_TOKENS
         .filter((key) => tokens[key])

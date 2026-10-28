@@ -3,48 +3,19 @@ import socket from "/src/socket";
 import {
   parsePalette, themeFromPalette, defaultRoleAssignment, PALETTE_ROLES,
 } from "/src/basic/utils/themes";
+import useLiveThemePreview from "/src/hooks/useLiveThemePreview";
 import "./ThemeImportModal.css";
 
-function Preview({ label, map }) {
-  return (
-    <div
-      className="theme-preview"
-      style={{ background: map["--bg-color"], borderColor: map["--border-color"] }}
-    >
-      <div className="theme-preview__label" style={{ color: map["--secondary-text-color"] }}>
-        {label}
-      </div>
-      <div
-        className="theme-preview__card"
-        style={{ background: map["--card-bg-color"], borderColor: map["--border-color"] }}
-      >
-        <div className="theme-preview__title" style={{ color: map["--text-color"] }}>
-          Aa Heading
-        </div>
-        <div className="theme-preview__body" style={{ color: map["--secondary-text-color"] }}>
-          Secondary text sample
-        </div>
-        <div className="theme-preview__row">
-          <span className="theme-preview__btn" style={{ background: map["--accent-color"] }}>
-            Button
-          </span>
-          <span
-            className="theme-preview__chip"
-            style={{ borderColor: map["--accent-color-alt"], color: map["--accent-color-alt"] }}
-          >
-            Chip
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Starting colours for a new theme (the same Coolors palette the import
+// field uses as its placeholder).
+const DEFAULT_PALETTE = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"];
 
-// One draggable chip per role, in fixed PALETTE_ROLES order. Dragging a chip
-// onto another swaps their colours -- there are always exactly 5 roles, so
+// The palette editor: one tile per role, in fixed PALETTE_ROLES order. Its
+// colour is a native colour input (click to change it); dragging a tile onto
+// another swaps their colours -- there are always exactly 5 roles, so
 // "reorder" here means "which of the 5 roles this hex anchors", not an
 // insert/shift.
-function RoleSwatches({ roles, onSwap }) {
+function RoleSwatches({ roles, onSwap, onPick }) {
   const [dragIndex, setDragIndex] = useState(null);
   return (
     <div className="theme-import-modal__roles">
@@ -53,7 +24,7 @@ function RoleSwatches({ roles, onSwap }) {
           key={key}
           className={`theme-role-swatch${dragIndex === i ? " theme-role-swatch--dragging" : ""}`}
           draggable
-          title="Drag to swap with another role"
+          title="Click the colour to change it; drag to swap with another role"
           onDragStart={() => setDragIndex(i)}
           onDragEnd={() => setDragIndex(null)}
           onDragOver={(e) => e.preventDefault()}
@@ -63,8 +34,15 @@ function RoleSwatches({ roles, onSwap }) {
             setDragIndex(null);
           }}
         >
-          <span className="theme-role-swatch__color" style={{ background: roles[key] }} />
+          <input
+            type="color"
+            className="theme-role-swatch__color"
+            aria-label={`${label} colour`}
+            value={roles[key]}
+            onChange={(e) => onPick(key, e.target.value.toLowerCase())}
+          />
           <span className="theme-role-swatch__label">{label}</span>
+          <span className="theme-role-swatch__hex">{roles[key]}</span>
         </div>
       ))}
     </div>
@@ -108,18 +86,26 @@ function initialStateFor(editingTheme) {
 export default function ThemeImportModal({ onClose, editingTheme }) {
   const initial = useMemo(() => initialStateFor(editingTheme), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [name, setName] = useState(initial?.name ?? "");
-  const [input, setInput] = useState(initial?.input ?? "");
+  // A new theme starts on DEFAULT_PALETTE, so the editor and preview show
+  // straight away.
+  const [input, setInput] = useState(initial?.input ?? DEFAULT_PALETTE.join(" "));
   const [status, setStatus] = useState(null); // null | "saving" | "error"
   const [error, setError] = useState("");
-  // null == automatic (the heuristic pick, one per mode); once the operator
+  // null == automatic (defaultRoleAssignment's pick); once the operator
   // drags a swatch this becomes an explicit { bg, card, text, accent,
-  // accentAlt } hex assignment shared by both light and dark previews.
+  // accentAlt } hex assignment shared by both light and dark.
   const [manualRoles, setManualRoles] = useState(initial?.manualRoles ?? null);
-  const [rawColours, setRawColours] = useState(initial?.rawColours ?? false);
+  // The palette is used as picked by default, so light and dark come out the
+  // same. Ticking "Normalise colours" (rawColours false) gives each mode its
+  // lightness/contrast fix-up.
+  const [rawColours, setRawColours] = useState(initial?.rawColours ?? true);
+  // The Coolors URL / hex-list field is tucked away by default; the role
+  // tiles are the main editor.
+  const [showImport, setShowImport] = useState(false);
 
   const hexes = useMemo(() => parsePalette(input), [input]);
-  // The drag editor's starting arrangement -- matches what automatic mode
-  // would pick, so it looks pre-sorted until the operator changes anything.
+  // The drag editor's starting arrangement, and the roles the theme is built
+  // from until the operator changes anything.
   const seedRoles = useMemo(() => (hexes ? defaultRoleAssignment(hexes) : null), [hexes]);
   const displayRoles = manualRoles || seedRoles;
 
@@ -137,14 +123,26 @@ export default function ThemeImportModal({ onClose, editingTheme }) {
   }, [hexesKey]);
 
   const theme = useMemo(
-    () =>
-      !hexes
-        ? null
-        : manualRoles
-        ? themeFromPalette(name || "Preview", hexes, manualRoles, rawColours)
-        : themeFromPalette(name || "Preview", hexes),
-    [hexes, name, manualRoles, rawColours],
+    () => (displayRoles ? themeFromPalette(name || "Preview", hexes, displayRoles, rawColours) : null),
+    [hexes, name, displayRoles, rawColours],
   );
+
+  // Picking a tile's colour makes the 5 roles the palette. The
+  // palette-changed reset above is skipped, since the roles are the source.
+  const pickColour = (key, hex) => {
+    const roles = { ...displayRoles, [key]: hex };
+    const palette = PALETTE_ROLES.map((r) => roles[r.key]);
+    setManualRoles(roles);
+    prevHexesKeyRef.current = palette.join(",");
+    setInput(palette.join(" "));
+  };
+
+  // Which half of the theme the live page preview shows; starts on the
+  // page's current mode.
+  const [previewDark, setPreviewDark] = useState(
+    () => document.body.classList.contains("dark-mode"),
+  );
+  useLiveThemePreview(theme ? (previewDark ? theme.dark : theme.light) : null, previewDark);
 
   const swapRoles = (i, j) => {
     const keys = PALETTE_ROLES.map((r) => r.key);
@@ -181,28 +179,21 @@ export default function ThemeImportModal({ onClose, editingTheme }) {
       dark: theme.dark,
       // Recorded so a later edit can reconstruct this exact drag-and-drop
       // state instead of reverse-engineering it from the final colours.
-      source: { palette: hexes, roles: manualRoles || null, raw: manualRoles ? rawColours : false },
+      source: { palette: hexes, roles: manualRoles || null, raw: rawColours },
     });
   };
 
   return (
-    <div className="modal-overlay" onClick={() => onClose(false)}>
+    <div className="modal-overlay theme-import-overlay" onClick={() => onClose(false)}>
       <div className="modal theme-import-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{editingTheme ? "Edit theme" : "Import theme from Coolors"}</h2>
+        <h2>{editingTheme ? "Edit theme" : "New theme"}</h2>
         <p className="modal-subtext">
-          {editingTheme ? (
-            "Paste a different palette to replace this theme's colours, or leave it and just drag the swatches below."
-          ) : (
-            <>
-              Paste a{" "}
-              <a href="https://coolors.co" target="_blank" rel="noreferrer">coolors.co</a>{" "}
-              palette URL (or a list of hex colours).
-            </>
-          )}{" "}
-          Both light and dark variants are derived from the palette
-          automatically — drag a swatch below to assign a colour to a role
-          yourself instead, or fine-tune later by editing the theme file on
-          the controller.
+          Click a colour below to change it, and drag one onto another to
+          swap which role it plays. Or start from a{" "}
+          <a href="https://coolors.co" target="_blank" rel="noreferrer">coolors.co</a>{" "}
+          palette. Your colours are used as they are; tick "Normalise
+          colours" to derive separate light and dark variants automatically.
+          Fine-tune later by editing the theme file on the controller.
         </p>
 
         <label className="theme-import-modal__label" htmlFor="theme-name">Name</label>
@@ -216,28 +207,42 @@ export default function ThemeImportModal({ onClose, editingTheme }) {
           onChange={(e) => setName(e.target.value)}
         />
 
-        <label className="theme-import-modal__label" htmlFor="theme-url">Coolors URL or hex list</label>
-        <input
-          id="theme-url"
-          className="theme-import-modal__input"
-          type="text"
-          placeholder="https://coolors.co/palette/264653-2a9d8f-e9c46a-f4a261-e76f51"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-
-        {input.trim() && !hexes && (
-          <p className="theme-import-modal__hint">
-            Need at least 3 hex colours — paste a Coolors palette link or
-            something like <code>264653 2a9d8f e9c46a</code>.
-          </p>
+        {showImport ? (
+          <>
+            <label className="theme-import-modal__label" htmlFor="theme-url">
+              Import from Coolors: URL or hex list
+            </label>
+            <input
+              id="theme-url"
+              className="theme-import-modal__input"
+              type="text"
+              autoFocus
+              placeholder="https://coolors.co/palette/264653-2a9d8f-e9c46a-f4a261-e76f51"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+            />
+            {input.trim() && !hexes && (
+              <p className="theme-import-modal__hint">
+                Need at least 3 hex colours — paste a Coolors palette link or
+                something like <code>264653 2a9d8f e9c46a</code>.
+              </p>
+            )}
+          </>
+        ) : (
+          <button
+            type="button"
+            className="theme-import-modal__reset-roles theme-import-modal__import-toggle"
+            onClick={() => setShowImport(true)}
+          >
+            Import from Coolors…
+          </button>
         )}
 
         {theme && (
           <>
             <div className="theme-import-modal__roles-head">
               <label className="theme-import-modal__label theme-import-modal__label--inline">
-                Drag to assign colours
+                Colours: click to change, drag to swap
               </label>
               {manualRoles && (
                 <button
@@ -249,20 +254,30 @@ export default function ThemeImportModal({ onClose, editingTheme }) {
                 </button>
               )}
             </div>
-            <RoleSwatches roles={displayRoles} onSwap={swapRoles} />
+            <RoleSwatches roles={displayRoles} onSwap={swapRoles} onPick={pickColour} />
             <label className="theme-import-modal__raw-toggle">
               <input
                 type="checkbox"
-                checked={rawColours}
-                disabled={!manualRoles}
-                onChange={(e) => setRawColours(e.target.checked)}
+                checked={!rawColours}
+                onChange={(e) => setRawColours(!e.target.checked)}
               />
-              Use exact colours (skip automatic contrast/lightness adjustment)
+              Normalise colours (adjust lightness and contrast for readability, with
+              separate light and dark variants)
             </label>
 
-            <div className="theme-import-modal__previews">
-              <Preview label="Light" map={theme.light} />
-              <Preview label="Dark" map={theme.dark} />
+            <div className="theme-import-modal__preview-mode">
+              <span>Previewing on this page in</span>
+              {[false, true].map((dark) => (
+                <button
+                  key={String(dark)}
+                  type="button"
+                  className={`theme-import-modal__mode-btn${previewDark === dark ? " is-active" : ""}`}
+                  onClick={() => setPreviewDark(dark)}
+                >
+                  {dark ? "Dark" : "Light"}
+                </button>
+              ))}
+              {rawColours && <span className="theme-import-modal__mode-note">(same in both unless normalised)</span>}
             </div>
           </>
         )}

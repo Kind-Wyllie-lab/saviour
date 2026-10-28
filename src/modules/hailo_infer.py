@@ -15,6 +15,11 @@ repo's `tools/convert_to_hailo.py`. For a HEF that only emits raw YOLO tensors
 (no on-chip NMS), see `apa_camera`'s `HailoRawDetector`.
 """
 
+import contextlib
+import os
+import re
+import urllib.request
+
 import cv2
 import numpy as np
 
@@ -36,6 +41,41 @@ def _as_prob(x: np.ndarray) -> np.ndarray:
 
 # Where download_hefs.sh drops the curated stock HEFs on a deployed module.
 MODEL_DIR = "/usr/local/src/saviour/hailo_models"
+
+# HEFs uploaded from the web UI: the browser sends one to the controller,
+# which stages it at /hailo_models/<name> and tells the camera to fetch it
+# (`fetch_hef` on hailo_camera; apa_camera has its own copy). Outside the
+# source tree so a code update never touches them.
+USER_HEF_DIR = "/var/lib/saviour/hailo_models"
+HEF_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.hef$")
+MAX_HEF_BYTES = 256 * 1024 * 1024
+
+
+def download_hef(controller_url: str, filename: str, dest_dir: str = USER_HEF_DIR) -> int:
+    """Fetch `<controller_url>/hailo_models/<filename>` into `dest_dir`
+    (via a `.part` file, so a failed download never leaves a truncated HEF).
+    Returns the size in bytes; raises on a bad name, a download error or a
+    file over MAX_HEF_BYTES."""
+    if not HEF_NAME_RE.match(filename or ""):
+        raise ValueError(f"Invalid HEF filename: {filename!r}")
+    url = f"{controller_url.rstrip('/')}/hailo_models/{filename}"
+    dest = os.path.join(dest_dir, filename)
+    tmp = dest + ".part"
+    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, open(tmp, "wb") as f:
+            total = 0
+            while chunk := resp.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_HEF_BYTES:
+                    raise ValueError("HEF larger than 256 MB")
+                f.write(chunk)
+        os.replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+    return total
 
 # 80-class COCO label set (yolov8/yolov6/yolov5/yolox model-zoo detection HEFs).
 COCO_LABELS = [
@@ -229,9 +269,10 @@ class HailoDetector:
                     continue
                 box = (int(x1 * ow), int(y1 * oh),
                        int((x2 - x1) * ow), int((y2 - y1) * oh))
-                detections.append(Detection(
-                    class_id if class_id < len(labels) else 0, score, box
-                ))
+                # Keep the real class index even past the end of `labels`:
+                # an uploaded HEF may have more classes than were named, and
+                # callers already fall back to the index for an unnamed one.
+                detections.append(Detection(class_id, score, box))
         detections.sort(key=lambda d: d.conf, reverse=True)
         return detections
 

@@ -154,6 +154,72 @@ function apaSaveTransform(fd) {
   return filtered;
 }
 
+// "Upload .hef…" button + progress/result line, shared by the APA tracking
+// model picker and the hailo_camera AI tab. `upload` is hefUpload state.
+function HefUploadControls({ upload, inputRef, onFile, doneText }) {
+  const busy = upload && upload.total != null && !upload.error && !upload.done;
+  return (
+    <>
+      <div className="form-field">
+        <label></label>
+        <div>
+          <button type="button" className="copy-btn" disabled={!!busy}
+            onClick={() => inputRef.current?.click()}>
+            Upload .hef…
+          </button>
+          <input ref={inputRef} type="file" accept=".hef" style={{ display: "none" }}
+            onChange={e => { onFile(e.target.files[0]); e.target.value = ""; }} />
+        </div>
+      </div>
+      {upload && (
+        <div className={upload.error ? "fov-label fov-cropped" : "sensor-mode-info"}>
+          {upload.error
+            ? `Upload failed: ${upload.error}`
+            : upload.done
+              ? doneText
+              : upload.installing
+                ? "Copying to the module…"
+                : `Uploading… ${upload.received} / ${upload.total} chunks`}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Class names for an uploaded hailo_camera HEF, in class-index order. Edits
+// the matching hailo.custom_labels entry ({ hef, labels }).
+function HefClassNames({ labels, onChange }) {
+  const rows = labels.length ? labels : [""];
+  const set = (i, value) => onChange(rows.map((l, j) => (j === i ? value : l)));
+  return (
+    <div className="form-field hef-class-names">
+      <label title="Same order as the classes the model was trained with (the `names` list in the YOLO data.yaml). Classes left unnamed show as their number.">
+        Class names:
+      </label>
+      <div className="hef-class-names__list">
+        {rows.map((name, i) => (
+          <div key={i} className="hef-class-names__row">
+            <span className="hef-class-names__index">{i}</span>
+            <input type="text" value={name} maxLength={60}
+              placeholder={i === 0 ? "e.g. rubber duck" : `class ${i}`}
+              onChange={e => set(i, e.target.value)} />
+            {rows.length > 1 && (
+              <button type="button" className="hef-class-names__remove"
+                title="Remove this class" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        <button type="button" className="copy-btn hef-class-names__add"
+          onClick={() => onChange([...rows, ""])}>
+          + Add class
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const { moduleList } = useModules();
@@ -166,7 +232,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [roiInfo, setRoiInfo] = useState(null);
   const [showCropEditor, setShowCropEditor] = useState(false);
   const closeCropEditor = useCallback(() => setShowCropEditor(false), []);
-  // APA tracking model picker: list_hefs result + upload progress.
+  // Uploaded-HEF picker (APA tracking, hailo_camera AI tab): list_hefs
+  // result + upload progress.
   const [hefInfo, setHefInfo] = useState(null); // { hailo_present, hefs, current, error }
   const [hefUpload, setHefUpload] = useState(null); // null | { received, total } | { error } | { done }
   const hefInputRef = useRef(null);
@@ -211,7 +278,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps, presets]);
 
   useEffect(() => {
-    if (module.type !== "apa_camera") return;
+    if (module.type !== "apa_camera" && module.type !== "hailo_camera") return;
     socket.emit("send_command", { module_id: module.id, type: "list_hefs", params: {} });
     const mine = (h) => (data) => { if (data.module_id === module.id) h(data); };
     const onList = mine((data) => {
@@ -222,7 +289,16 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         // Select the new model; it takes effect when the card is saved.
         setFormData(prev => {
           const cloned = structuredClone(prev);
-          cloned.object_detection = { ...(cloned.object_detection ?? {}), model_path: data.fetched };
+          if (module.type === "hailo_camera") {
+            // hailo_camera reports the filename; give it a class-names entry.
+            const hailo = (cloned.hailo = { ...(cloned.hailo ?? {}), model: data.fetched });
+            const entries = hailo.custom_labels ?? [];
+            if (!entries.some(e => e.hef === data.fetched)) {
+              hailo.custom_labels = [...entries, { hef: data.fetched, labels: [] }];
+            }
+          } else {
+            cloned.object_detection = { ...(cloned.object_detection ?? {}), model_path: data.fetched };
+          }
           return cloned;
         });
       }
@@ -390,6 +466,22 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         await new Promise(r => setTimeout(r, 0));
       }
     })();
+  };
+
+  const setHefLabels = (hef, labels) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      const hailo = (cloned.hailo = cloned.hailo ?? {});
+      const others = (hailo.custom_labels ?? []).filter(e => e.hef !== hef);
+      hailo.custom_labels = [...others, { hef, labels }];
+      return cloned;
+    });
+  };
+
+  const deleteHef = (filename) => {
+    if (!window.confirm(`Delete ${filename} from this module?`)) return;
+    setHefUpload(null);
+    socket.emit("send_command", { module_id: module.id, type: "delete_hef", params: { filename } });
   };
 
   const handleShockZoneColor = (hex) => {
@@ -1237,16 +1329,19 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
         {/* AI (hailo_camera) */}
         {activeTab === "hailo" && (() => {
-          const hailoTask = (HAILO_MODELS.find(
-            m => m.key === (formData?.hailo?.model ?? "yolov8s")
-          )?.task) ?? "detection";
+          const model = formData?.hailo?.model ?? "yolov8s";
+          const curated = HAILO_MODELS.find(m => m.key === model);
+          // Anything not in the curated list is an uploaded HEF's filename,
+          // always a detector (NMS compiled in).
+          const hailoTask = curated?.task ?? "detection";
+          const uploaded = (hefInfo?.hefs ?? []).filter(h => h.source === "uploaded");
+          const missing = !curated && hefInfo != null && !uploaded.some(h => h.name === model);
+          const labels = (formData?.hailo?.custom_labels ?? []).find(e => e.hef === model)?.labels ?? [];
           return (
           <>
             <div className="form-field">
               <label>Model:</label>
-              <select
-                value={formData?.hailo?.model ?? "yolov8s"}
-                onChange={e => handleChange(["hailo", "model"], e)}>
+              <select value={model} onChange={e => handleChange(["hailo", "model"], e)}>
                 {[...new Set(HAILO_MODELS.map(m => m.category))].map(cat => (
                   <optgroup key={cat} label={cat}>
                     {HAILO_MODELS.filter(m => m.category === cat).map(m => (
@@ -1254,8 +1349,41 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     ))}
                   </optgroup>
                 ))}
+                {(uploaded.length > 0 || (!curated && hefInfo == null)) && (
+                  <optgroup label="Uploaded">
+                    {uploaded.map(h => (
+                      <option key={h.name} value={h.name}>
+                        {h.name} ({(h.size_bytes / 1048576).toFixed(1)} MB)
+                      </option>
+                    ))}
+                    {!curated && hefInfo == null && <option value={model}>{model}</option>}
+                  </optgroup>
+                )}
+                {missing && <option value={model}>{model} (not on this module)</option>}
               </select>
             </div>
+            <HefUploadControls upload={hefUpload} inputRef={hefInputRef} onFile={handleHefFile}
+              doneText="Uploaded and selected. Name its classes below, then Save to start using it." />
+            {!curated && (
+              <>
+                <HefClassNames labels={labels} onChange={l => setHefLabels(model, l)} />
+                {!missing && (
+                  <div className="form-field">
+                    <label></label>
+                    <div>
+                      <button type="button" className="copy-btn"
+                        disabled={model === (hefInfo?.current ?? "")}
+                        title={model === (hefInfo?.current ?? "")
+                          ? "This is the model the camera is running; choose and save another one first"
+                          : undefined}
+                        onClick={() => deleteHef(model)}>
+                        Delete this .hef from the module
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
             {hailoTask !== "depth" && (
               <div className="form-field">
                 <label>Confidence threshold:</label>
@@ -1291,7 +1419,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched
               at module setup; switching model reloads on the device and takes a
               few seconds. No Hailo device / missing HEF → still records, overlay
-              shows why.
+              shows why. An uploaded .hef must be a detection model with NMS
+              compiled in (as tools/convert_to_hailo.py builds them), for this
+              module's chip (Hailo-8 or 8L).
               {hailoTask === "depth" && (
                 <> Depth nets output one relative-depth map - there are no
                 boxes, instances or confidence, so only the frame-skip applies.</>
@@ -1482,7 +1612,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               const hefs = hefInfo?.hefs ?? [];
               const current = detection.model_path ?? "";
               const known = hefs.some(h => h.path === current);
-              const uploading = hefUpload && hefUpload.total != null && !hefUpload.error;
               return (
               <>
                 <div className="form-field">
@@ -1508,28 +1637,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     })}
                   </select>
                 </div>
-                <div className="form-field">
-                  <label></label>
-                  <div>
-                    <button type="button" className="copy-btn" disabled={!!uploading && !hefUpload.done}
-                      onClick={() => hefInputRef.current?.click()}>
-                      Upload .hef…
-                    </button>
-                    <input ref={hefInputRef} type="file" accept=".hef" style={{ display: "none" }}
-                      onChange={e => { handleHefFile(e.target.files[0]); e.target.value = ""; }} />
-                  </div>
-                </div>
-                {hefUpload && (
-                  <div className={hefUpload.error ? "fov-label fov-cropped" : "sensor-mode-info"}>
-                    {hefUpload.error
-                      ? `Upload failed: ${hefUpload.error}`
-                      : hefUpload.done
-                        ? "Uploaded and selected. Save to start using it."
-                        : hefUpload.installing
-                          ? "Copying to the module…"
-                          : `Uploading… ${hefUpload.received} / ${hefUpload.total} chunks`}
-                  </div>
-                )}
+                <HefUploadControls upload={hefUpload} inputRef={hefInputRef} onFile={handleHefFile}
+                  doneText="Uploaded and selected. Save to start using it." />
                 <div className="form-field">
                   <label title="Most HEFs (including ones built with tools/convert_to_hailo.py) have NMS compiled in. Pick raw only for a model that outputs raw YOLOv8 tensors.">
                     Model output:

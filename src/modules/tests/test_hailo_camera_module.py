@@ -248,3 +248,135 @@ class TestStopOrdering:
         with patch.object(camera_base_cls, "stop", MagicMock(return_value=True)):
             HailoCameraModule.stop(m)
         m.detector.close.assert_not_called()   # never close a running device
+
+
+# --------------------------------------------------------------------------- #
+# Uploaded HEFs: model resolution, class names, list / fetch / delete
+# --------------------------------------------------------------------------- #
+
+def _upload_module(tmp_path, monkeypatch, cfg):
+    from src.modules.variants.hailo_camera import hailo_camera_module as mod
+    monkeypatch.setattr(mod, "USER_HEF_DIR", str(tmp_path))
+    monkeypatch.setattr(mod, "HAILO_DEVICE", str(tmp_path / "no-device"))
+    m = _module()
+    m.config.get.side_effect = lambda k, d=None: cfg.get(k, d)
+    m._rebuild_detector_async = MagicMock()
+    return m
+
+
+class TestUploadedModels:
+    def test_curated_key_resolves_to_the_registry(self, tmp_path, monkeypatch):
+        m = _upload_module(tmp_path, monkeypatch, {})
+        key, spec = m._model_spec("yolov8s")
+        assert key == "yolov8s" and not spec.get("uploaded")
+
+    def test_hef_filename_resolves_to_the_upload_dir_with_its_labels(
+            self, tmp_path, monkeypatch):
+        m = _upload_module(tmp_path, monkeypatch, {"hailo.custom_labels": [
+            {"hef": "other.hef", "labels": ["cat"]},
+            {"hef": "ducks.hef", "labels": [" rubber duck ", "goose"]},
+        ]})
+        key, spec = m._model_spec("ducks.hef")
+        assert key == "ducks.hef"
+        assert spec["hef"] == str(tmp_path / "ducks.hef")
+        assert m._hef_path(spec) == str(tmp_path / "ducks.hef")
+        assert spec["task"] == "detection"
+        assert spec["labels"] == ["rubber duck", "goose"]
+
+    def test_unnamed_upload_has_no_labels(self, tmp_path, monkeypatch):
+        m = _upload_module(tmp_path, monkeypatch, {})
+        assert m._model_spec("ducks.hef")[1]["labels"] == []
+
+    def test_unknown_non_hef_key_falls_back_to_default(self, tmp_path, monkeypatch):
+        from src.modules.hailo_infer import DEFAULT_MODEL
+        m = _upload_module(tmp_path, monkeypatch, {})
+        assert m._model_spec("../etc/passwd")[0] == DEFAULT_MODEL
+
+    def test_missing_upload_reports_reupload_not_download_script(
+            self, tmp_path, monkeypatch):
+        m = _upload_module(tmp_path, monkeypatch, {
+            "hailo.infer_enabled": True, "hailo.model": "gone.hef"})
+        m._build_detector()
+        assert m.detector is None
+        assert "upload it again" in m._detector_error
+        assert m._model_key == "gone.hef"
+
+    def test_label_edit_applies_without_a_reload(self, tmp_path, monkeypatch):
+        cfg = {"hailo.custom_labels": [{"hef": "ducks.hef", "labels": ["duck"]}]}
+        m = _upload_module(tmp_path, monkeypatch, cfg)
+        m._model_key = "ducks.hef"
+        m._labels = []
+        m._configure_module_extra({"hailo.custom_labels"})
+        assert m._labels == ["duck"]
+        m._rebuild_detector_async.assert_not_called()
+
+    def test_list_hefs_lists_only_hef_files(self, tmp_path, monkeypatch):
+        (tmp_path / "a.hef").write_bytes(b"xy")
+        (tmp_path / "a.hef.part").write_bytes(b"x")
+        (tmp_path / "notes.txt").write_bytes(b"x")
+        m = _upload_module(tmp_path, monkeypatch, {"hailo.model": "a.hef"})
+        out = m.list_hefs()
+        assert out["hailo_present"] is False
+        assert [(h["name"], h["size_bytes"]) for h in out["hefs"]] == [("a.hef", 2)]
+        assert out["current"] == "a.hef"
+
+    def test_fetch_hef_rejects_path_tricks(self, tmp_path, monkeypatch):
+        m = _upload_module(tmp_path / "u", monkeypatch, {})
+        for bad in ("../x.hef", "x.txt", "", ".hidden.hef"):
+            assert "error" in m.fetch_hef("http://c:5000", bad)
+        assert not (tmp_path / "u").exists()
+
+    def test_fetch_hef_downloads_and_reloads_only_the_selected_model(
+            self, tmp_path, monkeypatch):
+        from src.modules.variants.hailo_camera import hailo_camera_module as mod
+        m = _upload_module(tmp_path, monkeypatch, {})
+        got = []
+        monkeypatch.setattr(mod, "download_hef",
+                            lambda url, name, d: got.append((url, name, d)) or 10)
+        out = m.fetch_hef("http://c:5000", "ducks.hef")
+        assert got == [("http://c:5000", "ducks.hef", str(tmp_path))]
+        assert out["fetched"] == "ducks.hef"
+        m._rebuild_detector_async.assert_not_called()
+        m._model_key = "ducks.hef"
+        m.fetch_hef("http://c:5000", "ducks.hef")
+        m._rebuild_detector_async.assert_called_once()
+
+    def test_delete_hef_refuses_the_selected_model(self, tmp_path, monkeypatch):
+        (tmp_path / "a.hef").write_bytes(b"x")
+        (tmp_path / "b.hef").write_bytes(b"x")
+        m = _upload_module(tmp_path, monkeypatch, {"hailo.model": "a.hef"})
+        assert "error" in m.delete_hef("a.hef")
+        assert (tmp_path / "a.hef").exists()
+        out = m.delete_hef("b.hef")
+        assert "error" not in out
+        assert [h["name"] for h in out["hefs"]] == ["a.hef"]
+
+
+class TestDownloadHef:
+    def test_writes_via_part_file_and_cleans_up_on_failure(self, tmp_path):
+        import io
+
+        from src.modules import hailo_infer
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with patch.object(hailo_infer.urllib.request, "urlopen",
+                          return_value=_Resp(b"abc")) as uo:
+            assert hailo_infer.download_hef("http://c:5000/", "m.hef", str(tmp_path)) == 3
+        uo.assert_called_once()
+        assert uo.call_args[0][0] == "http://c:5000/hailo_models/m.hef"
+        assert (tmp_path / "m.hef").read_bytes() == b"abc"
+
+        with patch.object(hailo_infer.urllib.request, "urlopen",
+                          side_effect=OSError("refused")):
+            try:
+                hailo_infer.download_hef("http://c:5000", "n.hef", str(tmp_path))
+                raise AssertionError("expected OSError")
+            except OSError:
+                pass
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["m.hef"]

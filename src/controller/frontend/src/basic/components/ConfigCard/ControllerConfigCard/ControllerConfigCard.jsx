@@ -47,6 +47,32 @@ const THRESHOLD_FIELDS = [
     hint: "Alert if a session still has files waiting to export this long after they were recorded." },
 ];
 
+// "Send test alert" button + ✓/✗ result, one per alert channel.
+// `status`: null | "testing" | { success, detail }.
+function AlertTestRow({ status, disabled, title, onClick }) {
+  return (
+    <div className="teams-test-row">
+      <button type="button" className="teams-test-btn"
+        disabled={status === "testing" || disabled} title={title} onClick={onClick}>
+        {status === "testing" ? "Sending…" : "Send test alert"}
+      </button>
+      {status && status !== "testing" && (
+        <span className={`teams-test-result ${status.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
+          {status.success ? "✓" : "✗"} {status.detail}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// A hard-to-guess public ntfy.sh topic: anyone who knows a topic name can
+// read it. getRandomValues works over plain HTTP (randomUUID doesn't).
+function randomNtfyTopicUrl() {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  return `https://ntfy.sh/saviour-${hex}`;
+}
+
 function ControllerConfigCard() {
   const loggedIn = useIsLoggedIn();
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm();
@@ -54,6 +80,7 @@ function ControllerConfigCard() {
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
+  const [ntfyTestStatus, setNtfyTestStatus] = useState(null);
   // null == closed; "new" == the blank import flow; a theme object == editing
   // that custom theme.
   const [themeModal, setThemeModal] = useState(null);
@@ -94,15 +121,20 @@ function ControllerConfigCard() {
     const handleTeamsTestResult = (data) => {
       setTeamsTestStatus(data);
     };
+    const handleNtfyTestResult = (data) => {
+      setNtfyTestStatus(data);
+    };
 
     socket.on("controller_config_response", handleConfigResponse);
     socket.on("controller_info_response", handleInfoResponse);
     socket.on("teams_test_result", handleTeamsTestResult);
+    socket.on("ntfy_test_result", handleNtfyTestResult);
 
     return () => {
       socket.off("controller_config_response", handleConfigResponse);
       socket.off("controller_info_response", handleInfoResponse);
       socket.off("teams_test_result", handleTeamsTestResult);
+      socket.off("ntfy_test_result", handleNtfyTestResult);
       clearTimeout(saveTimerRef.current);
     };
     // Subscribe once on mount; the handlers only call state setters.
@@ -205,49 +237,27 @@ function ControllerConfigCard() {
               />
             )}
 
-            {/* ALERTS (Teams webhook + notification toggles) */}
+            {/* ALERTS (Teams webhook, ntfy, and the shared cooldown + event
+                toggles -- those live under teams.* for history but apply to
+                both channels; see notify.py) */}
             {activeTab === "alerts" && (
-              <fieldset className="nested-fieldset teams-fieldset">
-                <legend className="nested-fieldset-legend teams-fieldset-legend">
-                  Teams webhook
-                </legend>
-                <div className="nested">
-                  <div className="form-field">
-                    <label>Webhook URL:</label>
-                    <input
-                      type="text"
-                      value={formData?.teams?.webhook_url ?? ""}
-                      onChange={e => handleChange(["teams", "webhook_url"], e)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label>Alert cooldown (secs):</label>
-                    <input
-                      type="number"
-                      value={formData?.teams?.alert_cooldown_secs ?? 600}
-                      onChange={e => handleChange(["teams", "alert_cooldown_secs"], e)}
-                    />
-                  </div>
-                  <div className="teams-notify-section">
-                    <span className="teams-notify-label">Notify on:</span>
-                    <div className="teams-notify-grid">
-                      {NOTIFY_TOGGLES.map(({ key, label }) => (
-                        <label key={key} className="teams-notify-row">
-                          <input
-                            type="checkbox"
-                            checked={formData?.teams?.[key] ?? false}
-                            onChange={e => handleChange(["teams", key], e)}
-                          />
-                          <span>{label}</span>
-                        </label>
-                      ))}
+              <>
+                <fieldset className="nested-fieldset teams-fieldset">
+                  <legend className="nested-fieldset-legend teams-fieldset-legend">
+                    Teams webhook
+                  </legend>
+                  <div className="nested">
+                    <div className="form-field">
+                      <label>Webhook URL:</label>
+                      <input
+                        type="text"
+                        value={formData?.teams?.webhook_url ?? ""}
+                        onChange={e => handleChange(["teams", "webhook_url"], e)}
+                      />
                     </div>
-                  </div>
-                  <div className="teams-test-row">
-                    <button
-                      type="button"
-                      className="teams-test-btn"
-                      disabled={teamsTestStatus === "testing" || !formData?.teams?.webhook_url?.trim()}
+                    <AlertTestRow
+                      status={teamsTestStatus}
+                      disabled={!formData?.teams?.webhook_url?.trim()}
                       title={formData?.teams?.webhook_url?.trim()
                         ? "Sends a real alert to the webhook URL above (the typed value, saved or not)"
                         : "Enter a webhook URL above first"}
@@ -255,20 +265,104 @@ function ControllerConfigCard() {
                         setTeamsTestStatus("testing");
                         socket.emit("test_teams_webhook", { webhook_url: formData?.teams?.webhook_url });
                       }}
-                    >
-                      {teamsTestStatus === "testing" ? "Sending…" : "Send test alert"}
-                    </button>
-                    {teamsTestStatus && teamsTestStatus !== "testing" && (
-                      <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
-                        {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
-                      </span>
-                    )}
+                    />
+                    <span className="field-hint">
+                      Posts an alert card to a Power Automate webhook. Needs internet access.
+                    </span>
                   </div>
-                  <span className="field-hint">
-                    Posts a real alert card to the webhook (tests the URL you've typed, even before Save) — bypasses the cooldown and the "Notify on" filters.
-                  </span>
-                </div>
-              </fieldset>
+                </fieldset>
+
+                <fieldset className="nested-fieldset teams-fieldset">
+                  <legend className="nested-fieldset-legend teams-fieldset-legend">
+                    ntfy
+                  </legend>
+                  <div className="nested">
+                    <div className="form-field">
+                      <label>Topic URL:</label>
+                      <input
+                        type="text"
+                        placeholder="https://ntfy.sh/your-topic"
+                        value={formData?.ntfy?.url ?? ""}
+                        onChange={e => handleChange(["ntfy", "url"], e)}
+                      />
+                    </div>
+                    {!formData?.ntfy?.url?.trim() && (
+                      <div className="form-field">
+                        <label></label>
+                        <button
+                          type="button"
+                          className="teams-test-btn"
+                          title="Fills in a random ntfy.sh topic. Subscribe to it in the ntfy app, then Save."
+                          onClick={() => handleChange(["ntfy", "url"], { target: { value: randomNtfyTopicUrl(), type: "text" } })}
+                        >
+                          Suggest a private topic
+                        </button>
+                      </div>
+                    )}
+                    <div className="form-field">
+                      <label>Access token (optional):</label>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        placeholder="tk_…"
+                        value={formData?.ntfy?.token ?? ""}
+                        onChange={e => handleChange(["ntfy", "token"], e)}
+                      />
+                    </div>
+                    <AlertTestRow
+                      status={ntfyTestStatus}
+                      disabled={!formData?.ntfy?.url?.trim()}
+                      title={formData?.ntfy?.url?.trim()
+                        ? "Sends a real notification to the topic above (the typed values, saved or not)"
+                        : "Enter a topic URL above first"}
+                      onClick={() => {
+                        setNtfyTestStatus("testing");
+                        socket.emit("test_ntfy", { url: formData?.ntfy?.url, token: formData?.ntfy?.token ?? "" });
+                      }}
+                    />
+                    <span className="field-hint">
+                      Push notifications to the ntfy phone or desktop app: subscribe to the same topic
+                      there. Anyone who knows a public ntfy.sh topic name can read it, so use a long
+                      random one or a token. A self-hosted server on the lab network works without
+                      internet access.
+                    </span>
+                  </div>
+                </fieldset>
+
+                <fieldset className="nested-fieldset teams-fieldset">
+                  <legend className="nested-fieldset-legend teams-fieldset-legend">
+                    Alerts (both channels)
+                  </legend>
+                  <div className="nested">
+                    <div className="form-field">
+                      <label>Alert cooldown (secs):</label>
+                      <input
+                        type="number"
+                        value={formData?.teams?.alert_cooldown_secs ?? 600}
+                        onChange={e => handleChange(["teams", "alert_cooldown_secs"], e)}
+                      />
+                    </div>
+                    <div className="teams-notify-section">
+                      <span className="teams-notify-label">Notify on:</span>
+                      <div className="teams-notify-grid">
+                        {NOTIFY_TOGGLES.map(({ key, label }) => (
+                          <label key={key} className="teams-notify-row">
+                            <input
+                              type="checkbox"
+                              checked={formData?.teams?.[key] ?? false}
+                              onChange={e => handleChange(["teams", key], e)}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="field-hint">
+                      Test alerts bypass the cooldown and these filters.
+                    </span>
+                  </div>
+                </fieldset>
+              </>
             )}
 
             {/* FRONTEND */}

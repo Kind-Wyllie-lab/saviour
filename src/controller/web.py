@@ -3346,6 +3346,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
             threading.Thread(target=_run, daemon=True, name="teams-test").start()
 
+        @self.socketio.on("test_ntfy")
+        def handle_test_ntfy(data=None):
+            if not self._require_auth("auth_required"):
+                return
+            # Like test_teams_webhook: tests the typed (maybe unsaved) URL/token.
+            data = data if isinstance(data, dict) else {}
+            def _run():
+                success, detail = self.facade.controller.notifier.send_ntfy_test(
+                    url=data.get("url"), token=data.get("token"))
+                self.socketio.emit("ntfy_test_result", {"success": success, "detail": detail})
+            threading.Thread(target=_run, daemon=True, name="ntfy-test").start()
+
         @self.socketio.on("get_bug_report")
         def handle_get_bug_report(data=None):
             if not self._require_auth("auth_required"):

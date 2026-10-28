@@ -86,6 +86,10 @@
         "notify_disk_space": true,
         "notify_framesync": true
     },
+    "ntfy": {
+        "url": "",
+        "token": ""
+    },
     "frontend": {
         "theme_id": "default",
         "dark_mode": true,

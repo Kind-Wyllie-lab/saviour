@@ -285,6 +285,8 @@ poll. Event types:
 | `alert` | `{"key", "title", "message", "severity"}` | any controller fault — module offline, PTP degraded, export stall, low disk, … (independent of whether Teams alerting is configured) |
 | `marker` | `{"session", "label", "recv_wall_ns"}` | a marker is accepted |
 | `ttl_edge` | `{"module_id", "pin", "state", "mode", "description", "timestamp_ns"}` | a TTL module input pin edge (fires live, before the session's CSV exports — see `pulse_pin`'s note above on why there's no equivalent synchronous signal the other direction) |
+| `rfid_read` | `{"module_id", "unit_address", "transponder_id", "transponder_type", "packet_ts", "total_reads"}` | an RFID transponder read (all-zero IDs excluded; with presence tracking on, only when `rfid.presence.record` keeps raw reads). Live and lossy; the durable copy is the RFID module's database sync |
+| `rfid_enter` / `rfid_exit` | `{"module_id", "unit_address", "transponder_id", "transponder_type", "enter_ts"}`, plus `exit_ts`, `duration_s`, `ping_count`, `closed_reason` on exit | an RFID presence visit opens / closes (needs `rfid.presence.enabled`) |
 
 Every event also carries `type` and `ts` (controller epoch seconds). Optional
 `?types=marker,alert` restricts the stream. Comment lines (`: keep-alive`)

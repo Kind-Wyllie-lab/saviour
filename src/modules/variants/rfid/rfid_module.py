@@ -11,7 +11,10 @@ A thin :class:`Module` wrapper around the Trovan LID650/665 RS485 bus driver
     controller, and - while a recording session is active - appends a row to
     the current segment CSV,
   * serves an MJPEG "pings" monitoring stream (a scrolling per-tag timeline
-    with a flash on each fresh read) on ``monitoring._port`` (default 8083).
+    with a flash on each fresh read) on ``monitoring._port`` (default 8083),
+  * logs every read, recording or not, to a local SQLite store
+    (:mod:`rfid_store`) that :mod:`rfid_sync` forwards to a long-term MariaDB
+    whose connection settings the controller pushes (``set_rfid_db_config``).
 
 Author: Andrew SG
 """
@@ -30,9 +33,14 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 sys.path.append(os.path.dirname(__file__))
 from rfid_bus import RS485Bus
+from rfid_store import KIND_READ, KIND_ZERO, RfidStore, StoredRead
+from rfid_sync import DbSettings, RfidSync, load_settings, save_settings
 
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
+from src.shared.supervised import supervise
+
+DEFAULT_STORE_PATH = "/var/lib/saviour/rfid/reads.db"
 
 
 @dataclass
@@ -41,6 +49,7 @@ class Ping:
     unit: int          # reader unit address
     tag: str           # transponder id, hex, upper-case
     type_name: str      # e.g. "Trovan Unique"
+    type_code: int | None = None   # raw type byte; None if not a known type
 
 
 @dataclass
@@ -152,6 +161,15 @@ class RFIDModule(Module):
         self._sweep_timer: threading.Timer | None = None
         self._rebuild_presence()
 
+        # ── Local store + DB sync (opened in start()) ──────────────────
+        self._store: RfidStore | None = None
+        self._store_error: str | None = None
+        self._sync: RfidSync | None = None
+        self._db_settings = DbSettings()
+        self._db_stop = threading.Event()
+        self._db_threads: list[threading.Thread] = []
+        self._zero_reads = 0
+
         # ── Bus ─────────────────────────────────────────────────────────
         self.bus = RS485Bus()
         self.bus.on_transponder_read = self._on_transponder_read
@@ -184,11 +202,37 @@ class RFIDModule(Module):
     # ══════════════════════════════════════════════════════════════════════
 
     def _on_transponder_read(self, unit_addr: int, tid: bytes,
-                             type_name: str, ts: float) -> None:
+                             type_name: str, ts: float,
+                             type_code: int | None = None) -> None:
         """Called from the bus reader thread for every spontaneous read."""
-        tag = tid.hex().upper() if isinstance(tid, (bytes, bytearray)) else str(tid)
-        self._record_ping(Ping(ts=ts, unit=unit_addr, tag=tag,
-                               type_name=type_name or "Unknown"))
+        is_bytes = isinstance(tid, (bytes, bytearray))
+        tag = tid.hex().upper() if is_bytes else str(tid)
+        ping = Ping(ts=ts, unit=unit_addr, tag=tag,
+                    type_name=type_name or "Unknown", type_code=type_code)
+        # An all-zero ID: meaning not yet known (see rfid_store.KIND_ZERO).
+        # Stored and kept in the raw CSV, but not shown as a tag, sent as an
+        # rfid_read or fed to presence tracking, where it would look like one
+        # very busy animal.
+        zero = is_bytes and len(tid) > 0 and not any(tid)
+        self._store_read(ping, KIND_ZERO if zero else KIND_READ)
+        if zero:
+            self._zero_reads += 1
+            if self._want_raw_output():
+                self._write_raw_row(ping)
+            return
+        self._record_ping(ping)
+
+    def _store_read(self, ping: Ping, kind: str) -> None:
+        store = self._store
+        if store is None:
+            return
+        session = None
+        if self.is_recording:
+            session = getattr(getattr(self, "recording", None),
+                              "current_session_name", None)
+        store.put(StoredRead(ts_ns=int(ping.ts * 1e9), unit=ping.unit,
+                             tag=ping.tag, type_code=ping.type_code,
+                             kind=kind, session=session))
 
     def _record_ping(self, ping: Ping) -> None:
         with self._pings_lock:
@@ -196,7 +240,8 @@ class RFIDModule(Module):
             self._total_reads += 1
             self._last_ping = ping
 
-        self.logger.info(
+        # debug, not info: a busy bus is 10+ reads/s, a journald flood at info.
+        self.logger.debug(
             f"RFID ping: unit {ping.unit:#04x} tag {ping.tag} ({ping.type_name})"
         )
 
@@ -488,11 +533,14 @@ class RFIDModule(Module):
         rfid_keys = [k for k in updated_keys if k.startswith("rfid.")]
         if not rfid_keys:
             return
-        # Presence keys just rebuild the tracker; only non-presence rfid.*
-        # changes (serial port, baud, ...) need a bus reconnect.
+        # Presence keys rebuild the tracker and sync keys apply live; only
+        # bus keys (serial port, baud, ...) need a bus reconnect.
+        # rfid.store.path takes effect at the next restart.
         self._rebuild_presence()
         self._start_sweeper()
-        if any(not k.startswith("rfid.presence") for k in rfid_keys):
+        self._apply_sync_config()
+        live = ("rfid.presence", "rfid.sync", "rfid.store")
+        if any(not k.startswith(live) for k in rfid_keys):
             self.logger.info("RFID config changed - reconnecting bus")
             self._teardown_bus()
             self._bring_up_bus()
@@ -525,6 +573,123 @@ class RFIDModule(Module):
     # ══════════════════════════════════════════════════════════════════════
     # Commands
     # ══════════════════════════════════════════════════════════════════════
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Local store + database sync
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _store_path(self) -> str:
+        return (self.config.get("rfid.store.path", DEFAULT_STORE_PATH)
+                or DEFAULT_STORE_PATH)
+
+    def _db_settings_path(self) -> str:
+        return os.path.join(os.path.dirname(self._store_path()), "db_settings.json")
+
+    def _start_store(self) -> None:
+        """Open the store and start its writer and the sync thread. A failure
+        here (disk, permissions) leaves live monitoring and session CSVs
+        working; it shows in the heartbeat's rfid_db.state."""
+        try:
+            store = RfidStore(self._store_path(), logger=self.logger)
+            store.open()
+        except Exception as e:
+            self._store_error = f"{type(e).__name__}: {e}"
+            self.logger.error(f"RFID store: cannot open {self._store_path()}: {e}")
+            return
+        try:
+            self._db_settings = load_settings(self._db_settings_path())
+        except Exception as e:
+            self.logger.warning(f"RFID DB: cannot read saved settings: {e}")
+        self._store = store
+        self._store_error = None
+        self._sync = RfidSync(store, module_id=lambda: self.module_id,
+                              get_settings=lambda: self._db_settings,
+                              logger=self.logger)
+        self._apply_sync_config()
+        self._db_stop.clear()
+        self._db_threads = [
+            supervise("rfid.store_writer", store.run_writer,
+                      stop_event=self._db_stop, logger=self.logger),
+            supervise("rfid.db_sync", self._sync.run,
+                      stop_event=self._db_stop, logger=self.logger),
+        ]
+        self.logger.info(f"RFID store open at {self._store_path()} "
+                         f"(store_id {store.store_id})")
+
+    def _stop_store(self) -> None:
+        self._db_stop.set()
+        if self._sync is not None:
+            self._sync.wake()
+        for t in self._db_threads:
+            t.join(timeout=5)
+        self._db_threads = []
+        if self._store is not None:
+            try:
+                self._store.close()
+            except Exception as e:
+                self.logger.warning(f"RFID store: error closing: {e}")
+        self._store = None
+        self._sync = None
+
+    def _apply_sync_config(self) -> None:
+        sync = self._sync
+        if sync is None:
+            return
+        get = self.config.get
+        sync.interval_s = max(1.0, float(get("rfid.sync.interval_s", 5.0)))
+        sync.batch_rows = max(1, int(get("rfid.sync.batch_rows", 500)))
+        sync.retain_days = max(1.0, float(get("rfid.store.retain_days", 30)))
+
+    def rfid_db_status(self) -> dict:
+        """Heartbeat field ModuleHealthSnapshot.rfid_db."""
+        if self._sync is None:
+            return {"state": "store_error" if self._store_error else "stopped",
+                    "last_error": self._store_error,
+                    "zero_reads": self._zero_reads}
+        try:
+            status = self._sync.status()
+        except Exception as e:
+            status = {"state": "error", "last_error": f"status: {e}"}
+        status["zero_reads"] = self._zero_reads
+        return status
+
+    @command()
+    def set_rfid_db_config(self, host: str = "", port: int = 3306,
+                           database: str = "", username: str = "",
+                           password: str = "") -> dict:
+        """Database settings pushed by the controller (its rfid_db config
+        section). Saved to a root-only file next to the store, not to the
+        module config, so get_config never echoes the password."""
+        settings = DbSettings.from_dict({
+            "host": host, "port": port, "database": database,
+            "username": username, "password": password})
+        try:
+            save_settings(self._db_settings_path(), settings)
+        except Exception as e:
+            self.logger.error(f"RFID DB: cannot save settings: {e}")
+            return {"result": "error", "message": str(e)}
+        self._db_settings = settings
+        if self._sync is not None:
+            self._sync.wake()
+        if settings.configured:
+            self.logger.info(
+                f"RFID DB settings updated: {settings.username}@{settings.host}:"
+                f"{settings.port}/{settings.database}")
+        else:
+            self.logger.info("RFID DB settings cleared; sync is off")
+        return {"result": "success"}
+
+    @command()
+    def rfid_db_test(self) -> dict:
+        """Try the saved database settings and report what happened."""
+        sync = self._sync
+        if sync is None:
+            reason = self._store_error or "stopped"
+            return {"result": "error", "ok": False,
+                    "message": f"Local store not running ({reason})"}
+        ok, message = sync.test_connection(self._db_settings)
+        return {"result": "success" if ok else "error", "ok": ok,
+                "message": message, "status": self.rfid_db_status()}
 
     @command()
     def rfid_scan(self):
@@ -729,6 +894,7 @@ class RFIDModule(Module):
     def start(self) -> bool:
         if not super().start():
             return False
+        self._start_store()
         self._bring_up_bus()
         self.start_streaming()
         self._start_sweeper()
@@ -739,6 +905,7 @@ class RFIDModule(Module):
             self._stop_sweeper()
             self.stop_streaming()
             self._teardown_bus()
+            self._stop_store()
         except Exception as e:
             self.logger.error(f"RFID: error during stop: {e}")
         return super().stop()
@@ -750,6 +917,7 @@ class RFIDModule(Module):
                 self._stop_recording()
             self.stop_streaming()
             self._teardown_bus()
+            self._stop_store()
         except Exception as e:
             self.logger.error(f"RFID cleanup error: {e}")
 

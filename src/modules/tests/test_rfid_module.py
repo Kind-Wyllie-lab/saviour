@@ -14,6 +14,7 @@ import time
 from unittest.mock import MagicMock
 
 from src.modules.variants.rfid.rfid_module import Ping, PresenceTracker, RFIDModule
+from src.modules.variants.rfid.rfid_sync import DbSettings
 
 
 def _make_rfid(**attrs) -> RFIDModule:
@@ -31,6 +32,13 @@ def _make_rfid(**attrs) -> RFIDModule:
     m._presence = None
     m._presence_lock = threading.Lock()
     m._sweep_timer = None
+    m._store = None
+    m._store_error = None
+    m._sync = None
+    m._db_settings = DbSettings()
+    m._db_stop = threading.Event()
+    m._db_threads = []
+    m._zero_reads = 0
     m.is_streaming = False
     m.bus = MagicMock()
     m.bus.is_connected = False

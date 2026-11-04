@@ -13,6 +13,14 @@
             "min_dwell_s": 0.0,
             "record": "both"
         },
+        "store": {
+            "path": "/var/lib/saviour/rfid/reads.db",
+            "retain_days": 30
+        },
+        "sync": {
+            "interval_s": 5.0,
+            "batch_rows": 500
+        },
         "_reader": "Trovan LID650/665 RS485 bus"
     },
     "monitoring": {

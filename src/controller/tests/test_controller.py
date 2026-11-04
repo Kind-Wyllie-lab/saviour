@@ -256,3 +256,49 @@ class TestUnhandledStatusTypeLogging:
         for t in ("a", "a", "a", "b"):
             Controller._log_unhandled_status_type(ctx, "m1", t)
         assert ctx.logger.warning.call_count == 2
+
+
+class TestRfidDbPush:
+    """The controller's rfid_db config section goes to RFID modules only, on
+    every get_config ack (the same moment the export credentials are pushed)."""
+
+    def _ctx(self, section, module_type="rfid"):
+        ctx = _Ctx()
+        ctx.config = MagicMock()
+        ctx.config.get.side_effect = (
+            lambda k, d=None: section if k == "rfid_db" else d)
+        ctx.modules.get_modules.return_value = {"rfid_ab12": {"type": module_type}}
+        ctx.get_rfid_db_settings = lambda: Controller.get_rfid_db_settings(ctx)
+        return ctx
+
+    def test_settings_are_normalised(self):
+        ctx = self._ctx({"host": " db ", "port": "3307", "database": "h",
+                         "username": "u", "password": "p"})
+        assert Controller.get_rfid_db_settings(ctx) == {
+            "host": "db", "port": 3307, "database": "h",
+            "username": "u", "password": "p"}
+        ctx = self._ctx({"port": "nope"})
+        assert Controller.get_rfid_db_settings(ctx)["port"] == 3306
+
+    def test_pushed_to_rfid_module(self):
+        ctx = self._ctx({"host": "db", "database": "h", "username": "u"})
+        assert Controller.push_rfid_db_settings(ctx, "rfid_ab12") is True
+        module_id, cmd, params = ctx.communication.send_command.call_args[0]
+        assert (module_id, cmd) == ("rfid_ab12", "set_rfid_db_config")
+        assert params["host"] == "db"
+
+    def test_not_pushed_to_other_types(self):
+        ctx = self._ctx({"host": "db"}, module_type="camera")
+        assert Controller.push_rfid_db_settings(ctx, "rfid_ab12") is False
+        ctx.communication.send_command.assert_not_called()
+
+    def test_get_config_ack_pushes(self):
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        ctx.get_export_credentials = MagicMock(return_value={})
+        ctx.push_rfid_db_settings = MagicMock()
+        data = json.dumps({"type": "cmd_ack", "command": "get_config",
+                           "result": "success", "config": {"a": 1}})
+        Controller.handle_status_update(ctx, "status/rfid_ab12", data)
+        ctx.push_rfid_db_settings.assert_called_once_with("rfid_ab12")

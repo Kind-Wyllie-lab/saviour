@@ -510,6 +510,22 @@ class ControllerFacade:
             return {"success": False, "error": "No export credentials configured on controller"}
         return self._push_export_creds_to_module(module_id, creds)
 
+    def push_rfid_db_settings_to_all(self) -> dict:
+        """Send the rfid_db settings to every RFID module. Returns
+        {"sent": [...module ids], "total": n_rfid_modules}."""
+        sent = [m for m in self.controller.modules.get_modules()
+                if self.controller.push_rfid_db_settings(m)]
+        return {"sent": sent, "total": len(sent)}
+
+    def test_rfid_db(self, module_id: str) -> bool:
+        """Ask an RFID module to try its database settings; the answer
+        arrives as an rfid_db_test cmd_ack (web.py -> rfid_db_test_result)."""
+        module = self.controller.modules.get_modules().get(module_id) or {}
+        if module.get("type") != "rfid":
+            return False
+        self.controller.communication.send_command(module_id, "rfid_db_test", {})
+        return True
+
     def sync_export_with_creds(self, module_id: str, creds: dict) -> dict:
         """Push explicit export credentials to a single module."""
         return self._push_export_creds_to_module(module_id, creds)

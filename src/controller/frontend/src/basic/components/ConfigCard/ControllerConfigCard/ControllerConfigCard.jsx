@@ -6,6 +6,7 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "./ExportConfigSection";
+import RfidDbSection from "./RfidDbSection";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
@@ -17,6 +18,7 @@ const TABS = [
   { key: "basic",      label: "Basic"      },
   { key: "thresholds", label: "Thresholds" },
   { key: "export",     label: "Export"     },
+  { key: "rfid",       label: "RFID DB"    },
   { key: "alerts",     label: "Alerts"     },
   { key: "frontend",   label: "Frontend"   },
 ];
@@ -190,6 +192,14 @@ function ControllerConfigCard() {
             {activeTab === "export" && (
               <ExportConfigSection
                 exportConfig={formData?.export}
+                handleChange={handleChange}
+              />
+            )}
+
+            {/* RFID DB (long-term MariaDB for RFID reads) */}
+            {activeTab === "rfid" && (
+              <RfidDbSection
+                rfidDb={formData?.rfid_db}
                 handleChange={handleChange}
               />
             )}

@@ -798,3 +798,65 @@ class TestSupervisedThreadAlerts:
             health._check_supervised_threads()
         assert facade.send_alert.call_args.kwargs["key"].startswith(
             "thread_crash_loop_controller_")
+
+
+# ---------------------------------------------------------------------------
+# RFID long-term DB sync backlog
+# ---------------------------------------------------------------------------
+
+class TestRfidDbSyncAlerts:
+    def _with(self, health, status="online", **db):
+        rfid_db = {"state": "error", "backlog": 120, "host": "db",
+                   "database": "habitat_rfid", "last_error": "refused"}
+        rfid_db.update(db)
+        health.module_health["rfid_ab12"] = {"status": status, "rfid_db": rfid_db}
+
+    def test_fresh_backlog_is_quiet(self):
+        health, facade = _make_health()
+        self._with(health, state="ok", oldest_unsynced_age_s=4.0)
+        health._check_rfid_db_sync()
+        facade.send_alert.assert_not_called()
+
+    def test_warns_once_then_escalates_once(self):
+        health, facade = _make_health()
+        self._with(health, oldest_unsynced_age_s=6 * 60)
+        health._check_rfid_db_sync()
+        health._check_rfid_db_sync()
+        assert facade.send_alert.call_count == 1
+        assert facade.send_alert.call_args.kwargs["severity"] == "warning"
+        assert "refused" in facade.send_alert.call_args.kwargs["message"]
+
+        self._with(health, oldest_unsynced_age_s=2 * 3600)
+        health._check_rfid_db_sync()
+        health._check_rfid_db_sync()
+        assert facade.send_alert.call_count == 2
+        assert facade.send_alert.call_args.kwargs["severity"] == "error"
+
+    def test_re_alerts_after_catching_up(self):
+        health, facade = _make_health()
+        self._with(health, oldest_unsynced_age_s=600)
+        health._check_rfid_db_sync()
+        self._with(health, state="ok", oldest_unsynced_age_s=None, backlog=0)
+        health._check_rfid_db_sync()
+        self._with(health, oldest_unsynced_age_s=600)
+        health._check_rfid_db_sync()
+        assert facade.send_alert.call_count == 2
+
+    def test_not_configured_offline_and_non_rfid_are_ignored(self):
+        health, facade = _make_health()
+        self._with(health, state="not_configured", oldest_unsynced_age_s=9999)
+        health._check_rfid_db_sync()
+        self._with(health, status="offline", oldest_unsynced_age_s=9999)
+        health._check_rfid_db_sync()
+        health.module_health["cam1"] = {"status": "online", "rfid_db": None}
+        health._check_rfid_db_sync()
+        facade.send_alert.assert_not_called()
+
+    def test_store_error_is_an_error(self):
+        health, facade = _make_health()
+        self._with(health, state="store_error", oldest_unsynced_age_s=None,
+                   last_error="PermissionError")
+        health._check_rfid_db_sync()
+        kwargs = facade.send_alert.call_args.kwargs
+        assert kwargs["severity"] == "error"
+        assert "PermissionError" in kwargs["message"]

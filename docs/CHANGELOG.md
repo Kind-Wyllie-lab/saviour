@@ -11,6 +11,12 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-04
+
+- [x] **Storage page: GB/day and a countdown to the share filling up** (branch `feat/storage-fill-forecast`). The Export destination card shows the rate the share has filled at over the last 7 days, the days until it is full at that rate with the date, and the date free space drops below `recording.nas_min_free_pct` (new sessions blocked). The border turns amber under 14 days to that floor and red under 3.
+  - **How:** `src/controller/storage_forecast.py::fill_forecast` over the controller's free-space history (5-min samples, kept 30 days, survives restarts), returned as `fill_forecast` in the storage overview. It sums only the drops in free space and divides by calendar time. The page's old projection fitted a straight line to free space over the visible range, so one session deletion read as "free space increasing", and its result changed with the range buttons. Only samples on the current share size count, so a resized share or new destination restarts the window. No forecast under 6 h of history; "not filling" under 0.05 GB/day.
+  - Tests: 7 in `test_storage_forecast.py` (steady fill, deletion jump, 7-day window, share resize, short history, idle, already below the floor) and 1 in `test_web.py` (overview carries the forecast). Checked in the mock UI; not yet seen on the habitat's real history.
+
 ## 2026-10-27
 
 - [x] **Controller SSH to modules: a per-rig key instead of a CA certificate** (plan `plans/ssh-certificate-auth.md`, phase 2 redone).

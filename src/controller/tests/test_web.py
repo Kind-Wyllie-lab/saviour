@@ -17,7 +17,10 @@ import re
 import tempfile
 import time
 import zipfile
+from collections import deque
 from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 from src.controller.dashboard_views import DashboardViewStore
 from src.controller.recording import RecordingSession
@@ -1896,6 +1899,24 @@ class TestStorageOverview:
         assert ov["disks"][0]["name"] == "A"
         assert ov["disks"][0]["free_gb"] == 10.0
         assert ov["disks"][1]["name"] == "cam_b"  # falls back to id
+
+    def test_fill_forecast_from_nas_history(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {}
+        now = 1_800_000_000.0
+        gib = 1024 ** 3
+        # 2 days of 5-min samples, 10 GB/day, 1000 of 2000 GB free now
+        web._nas_history = deque(
+            (now - i * 300, int(1000 * gib + i * 300 * 10 * gib / 86400), 2000 * gib)
+            for i in range(576, -1, -1))
+        web._nas_health = {"free_gb": 1000.0, "min_free_pct": 5}
+        with patch("src.controller.web.time.time", return_value=now):
+            f = web._storage_overview()["fill_forecast"]
+        assert f["state"] == "filling"
+        assert f["gb_per_day"] == pytest.approx(10, rel=1e-2)
+        assert f["days_to_full"] == pytest.approx(100, abs=0.5)
+        assert f["days_to_min"] == pytest.approx(90, abs=0.5)
 
     def test_survives_facade_errors(self):
         web, facade = _make_web_with_facade()

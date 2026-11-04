@@ -47,6 +47,7 @@ from src.controller import compose, framesync_check, rest_api
 from src.controller import system_update as su
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
+from src.controller.storage_forecast import fill_forecast
 from src.controller.themes import ThemeError, ThemeStore
 from src.shared.cifs import cifs_mount_cmd, unmount
 from src.shared.data_rate import (
@@ -4092,8 +4093,20 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             est_share_runway_hours = round(
                 share_free_gb * 1024 / fleet_est_mb_per_min / 60, 1)
 
+        try:
+            min_free_pct = float(nas.get("min_free_pct")
+                                 if nas.get("min_free_pct") is not None
+                                 else self.config.get("recording.nas_min_free_pct", 5))
+        except (TypeError, ValueError):
+            min_free_pct = None
+        forecast = fill_forecast(list(self._nas_history), time.time(),
+                                 min_free_pct=min_free_pct)
+
         return {
             "nas": self._nas_health,
+            # GB/day the share has filled at over the last 7 days, and when
+            # it fills (and crosses the new-session floor) at that rate.
+            "fill_forecast": forecast,
             "exports": {
                 "pending": pending,
                 "failed": failed,

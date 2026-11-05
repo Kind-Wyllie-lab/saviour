@@ -1,0 +1,321 @@
+.gates-page {
+    padding: 16px;
+    color: var(--text-color);
+    max-width: 1300px;
+}
+
+.gates-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.gates-header h2 { margin: 0; }
+
+.gates-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.gates-tab {
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-color);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.gates-tab--active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--bg-color);
+}
+
+.gates-body {
+    display: grid;
+    grid-template-columns: minmax(260px, 560px) minmax(300px, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .gates-body { grid-template-columns: 1fr; }
+}
+
+.gates-grid-col {
+    position: sticky;
+    top: 0;
+}
+
+.gates-side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.gates-card {
+    background: var(--card-bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+
+.gates-card h3 { margin: 0 0 8px; font-size: 16px; }
+.gates-card h4 { margin: 12px 0 6px; font-size: 14px; }
+
+.gates-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.gates-card-head h3 { margin: 0; }
+
+.gates-muted {
+    color: var(--text-muted, var(--secondary-text-color));
+    font-size: 13px;
+    margin: 4px 0;
+}
+
+.gates-ok {
+    color: var(--success-color, #2e9e5b);
+    font-size: 14px;
+    margin: 6px 0;
+}
+
+.gates-mono {
+    font-family: ui-monospace, "Cascadia Mono", "Roboto Mono",
+        "DejaVu Sans Mono", "Courier New", monospace;
+    font-size: 12px;
+}
+
+.gates-btn {
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-color);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.gates-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text-color) 8%, transparent);
+}
+
+.gates-btn:disabled,
+.gates-link:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.gates-btn--primary {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--bg-color);
+    font-weight: 600;
+}
+
+.gates-btn--primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color) 85%, var(--text-color));
+}
+
+.gates-btn--danger {
+    color: var(--error-color, #e74c3c);
+    border-color: color-mix(in srgb, var(--error-color, #e74c3c) 50%, transparent);
+}
+
+.gates-link {
+    border: none;
+    background: transparent;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 4px 6px;
+}
+
+.gates-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.gates-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    margin: 10px 0;
+}
+
+.gates-field input:not([type="radio"]),
+.gates-field select {
+    background: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 13px;
+}
+
+.gates-field--inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.gates-field--inline input { width: 56px; }
+
+.gates-size {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.gates-step { margin-top: 8px; }
+
+.gates-step-count {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted, var(--secondary-text-color));
+    margin: 0;
+}
+
+.gates-prompt {
+    font-size: 20px;
+    margin: 4px 0 6px;
+}
+
+.gates-problems {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.gates-problem {
+    border-left: 3px solid var(--border-color);
+    padding: 6px 10px;
+    font-size: 13px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+}
+
+.gates-problem--warn {
+    border-left-color: var(--warning-color, #d9822b);
+}
+
+.gates-problem--error {
+    border-left-color: var(--error-color, #e74c3c);
+}
+
+.gates-problem--info {
+    border-left-color: var(--accent-color);
+}
+
+/* Bare text use (walk-through "not mapped"). */
+span.gates-problem--warn {
+    color: var(--warning-color, #d9822b);
+    border: none;
+    background: none;
+    padding: 0;
+}
+
+.gates-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid var(--error-color, #e74c3c);
+    color: var(--error-color, #e74c3c);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 14px;
+}
+
+.gates-table-wrap {
+    max-height: 420px;
+    overflow: auto;
+}
+
+.gates-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.gates-table th,
+.gates-table td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    white-space: nowrap;
+}
+
+.gates-table th {
+    position: sticky;
+    top: 0;
+    background: var(--card-bg-color);
+    font-weight: 600;
+}
+
+.gates-changes,
+.gates-hits {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.gates-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 8px 0;
+    font-size: 12px;
+}
+
+.gates-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.gates-legend-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    box-sizing: border-box;
+}
+
+.gates-legend-dot--mapped { background: var(--success-color, #2e9e5b); }
+.gates-legend-dot--unmapped { border-color: var(--warning-color, #d9822b); }
+.gates-legend-dot--closed { background: color-mix(in srgb, var(--text-color) 45%, transparent); }
+.gates-legend-dot--faulty { background: var(--error-color, #e74c3c); }
+.gates-legend-dot--unfitted {
+    border: 2px dashed color-mix(in srgb, var(--text-color) 35%, transparent);
+}

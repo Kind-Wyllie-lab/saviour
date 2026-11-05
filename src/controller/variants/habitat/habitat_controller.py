@@ -11,6 +11,10 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from gate_map import GateMapStore
+from gate_map_service import GateMapService, register_socket_handlers, rfid_module_ids
 
 from controller.controller import Controller
 
@@ -22,6 +26,16 @@ class HabitatController(Controller):
         self.config.load_controller_config("habitat_controller_config.json")
 
         self.web.handle_special_module_status = self.handle_special_module_status
+
+        # RFID gate mapping (plans/rfid-gate-mapping.md): the Gates page.
+        self.gate_map = GateMapService(
+            GateMapStore(),
+            emit=self.web.socketio.emit,
+            send_command=self.facade.send_command,
+            rfid_module_ids=self._rfid_module_ids,
+            logger=self.logger,
+        )
+        self.web.module_status_listeners.append(self.gate_map.on_module_status)
 
         self._register_habitat_socket_handlers()
 
@@ -35,6 +49,15 @@ class HabitatController(Controller):
             sio.emit("habitat_config", self._get_habitat_config())
 
         sio.on_event("get_habitat_config", handle_get_habitat_config)
+        self._register_gate_map_handlers()
+
+    def _rfid_module_ids(self) -> list[str]:
+        return rfid_module_ids(self.facade.get_modules())
+
+    def _register_gate_map_handlers(self) -> None:
+        register_socket_handlers(self.web.socketio, self.gate_map,
+                                 require_auth=self.web._require_auth,
+                                 logger=self.logger)
 
 
     # ── Habitat config ────────────────────────────────────────────────────────

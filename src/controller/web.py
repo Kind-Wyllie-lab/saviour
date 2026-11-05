@@ -370,6 +370,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # before a risky action while another admin is (see _clients_payload).
         self._clients: dict = {}
 
+        # Callables (module_id, status) that see every module status before
+        # the dispatch below, including the types it handles itself
+        # (rfid_read, cmd_ack, ...). For a rig variant that needs those as
+        # well as the web UI does (habitat gate mapping). Observers only:
+        # their return value and exceptions don't affect dispatch.
+        self.module_status_listeners: list = []
+
         # Short-lived tokens authorizing a plain browser GET (session file/
         # zip downloads) -- a Socket.IO connection being in
         # _authenticated_sids doesn't help those routes at all, since a
@@ -4503,6 +4510,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             status_type = status.get('type')
             if not status_type:
                 self.logger.warning(f"Bad status type: {status}")
+
+            for listener in self.module_status_listeners:
+                try:
+                    listener(module_id, status)
+                except Exception as e:
+                    self.logger.error(f"Module status listener failed: {e!s}")
 
             match status_type:
                 # Handle recordings list response

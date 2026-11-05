@@ -39,6 +39,7 @@ def _make_rfid(**attrs) -> RFIDModule:
     m._db_stop = threading.Event()
     m._db_threads = []
     m._zero_reads = 0
+    m._mapping_until = 0.0
     m.is_streaming = False
     m.bus = MagicMock()
     m.bus.is_connected = False
@@ -362,3 +363,59 @@ class TestCheckRecordingAlive:
         m = self._live(is_recording=True, _csv_handle=MagicMock(closed=True))
         ok, detail = m._check_recording_alive()
         assert not ok and "CSV" in detail
+
+
+# ── Gate-mapping mode ───────────────────────────────────────────────────
+
+
+def _visits_only_rfid():
+    m = _make_rfid()
+    m.config.get.side_effect = _cfg({"rfid.presence.enabled": True,
+                                     "rfid.presence.record": "visits"})
+    m._presence = MagicMock()
+    m._presence.observe.return_value = (None, None)
+    m._send_status_safe = MagicMock()
+    m._write_raw_row = MagicMock()
+    return m
+
+
+def test_mapping_mode_forwards_reads_that_visits_only_would_drop():
+    m = _visits_only_rfid()
+    ping = Ping(ts=time.time(), unit=3, tag="ABC", type_name="Trovan Unique")
+    m._record_ping(ping)
+    m._send_status_safe.assert_not_called()
+
+    assert m.rfid_mapping_mode(enabled=True, timeout_s=30)["mapping_mode"]
+    m._record_ping(ping)
+    sent = m._send_status_safe.call_args.args[0]
+    assert sent["type"] == "rfid_read" and sent["unit_address"] == 3
+    # Never adds raw CSV rows the record mode didn't ask for.
+    m._write_raw_row.assert_not_called()
+
+
+def test_mapping_mode_turns_itself_off():
+    m = _visits_only_rfid()
+    m.rfid_mapping_mode(enabled=True, timeout_s=30)
+    m._mapping_until = time.time() - 1
+    m._record_ping(Ping(ts=time.time(), unit=3, tag="ABC", type_name="x"))
+    m._send_status_safe.assert_not_called()
+
+
+def test_mapping_mode_timeout_is_capped_and_can_be_cancelled():
+    m = _visits_only_rfid()
+    r = m.rfid_mapping_mode(enabled=True, timeout_s=10_000)
+    assert r["until"] - time.time() <= RFIDModule.MAPPING_MAX_S + 1
+    assert m.rfid_mapping_mode(enabled=False)["until"] is None
+    assert not m._mapping_active()
+
+
+def test_rfid_units_lists_bus_units():
+    from src.modules.variants.rfid.rfid_bus import UnitInfo
+    m = _make_rfid()
+    m.bus.is_connected = True
+    m.bus.port = "simulated"
+    m.bus.units = {2: UnitInfo(2, "800", "AABBCCDD"), 1: UnitInfo(1, "800")}
+    r = m.rfid_units()
+    assert [u["address"] for u in r["units"]] == [1, 2]
+    assert r["units"][1]["serial_number"] == "AABBCCDD"
+    assert r["connected"] and r["port"] == "simulated"

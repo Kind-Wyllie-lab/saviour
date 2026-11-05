@@ -1,6 +1,8 @@
 # RFID gate mapping: which antenna is which habitat gate
 
-- **Status:** proposed
+- **Status:** phases 1-2 built 2026-11-05 (`feat/rfid-gate-mapping`), tested
+  in mock mode and against an `rfid` module's simulated bus; not yet run on
+  the habitat bus. Phases 3-4 open.
 - **Created:** 2026-11-04
 - **Owner:** ascottg
 - **CLAUDE.md ref:** Reliability / UX → "Habitat RFID: gate mapping routine"
@@ -8,6 +10,37 @@
   `rfid` module on the habitat bus, live `rfid_read` forwarding). Becomes
   part of the wider habitat layout plan (not yet written; see "Relation to
   the habitat layout plan" below).
+
+## Built (phases 1-2)
+
+- **Controller** (`src/controller/variants/habitat/`):
+  - `gate_map.py`: plain logic, no Socket.IO. Covers the layout (generate,
+    validate, scope), `GateMapStore` (the files below, atomic writes,
+    append-only change log) and `MappingRun`, the routine's state machine.
+    It also has the review checks: a unit shared by two gates, units on the
+    bus but not mapped, mapped units missing from the bus, and a changed
+    serial number.
+  - `gate_map_service.py`: connects the logic to Socket.IO and the RFID
+    modules, and keeps the run on the controller. Every browser sees the
+    same run, a draft resumes after a restart, and the settle window runs
+    on a timer.
+  - `web.py` gained `module_status_listeners`, which lets a variant see
+    `rfid_read` and `cmd_ack`, the messages `web.py` handles itself.
+- **Module** (`rfid_module.py`): `rfid_mapping_mode(enabled, timeout_s)`
+  (90 s per renewal, 10 min cap) and `rfid_units()`. Mapping mode forces the
+  `rfid_read` message, never the CSV row.
+- **Frontend** (habitat variant): a **Gates** page
+  (`habitat/pages/Gates/`) with four tabs: Map (bus check, gate table,
+  recent changes), Walk-through, Mapping run and Layout. The grid diagram,
+  `habitat/components/HabitatGrid`, is the piece meant to grow into the
+  layout-aware habitat view. `dev:mock` simulates a run
+  (`src/mock/gateMapMock.js`) for UI work without a habitat controller:
+  `VITE_VARIANT=habitat npm run dev:mock`.
+- Tests: `src/controller/tests/test_gate_map.py`, plus mapping-mode tests
+  in `test_rfid_module.py`.
+- Built differently from the text below: a live read already shows its
+  gate in the walk-through, but not yet in the RFID MJPEG view or in
+  normal running (phase 4).
 
 ## Why
 
@@ -153,16 +186,15 @@ layout-aware frontend.
 
 ## Open questions
 
-1. **Naming.** Boxes A1-D4: are letters rows and numbers columns? Is a wall
-   named by its two boxes in a fixed order (A1B1, not B1A1)? How are a-d
-   ordered along a wall (e.g. left to right, top to bottom, seen from above)?
-2. **Which walls have gates.** A 4x4 grid has 24 internal walls, so 96 gate
-   positions at four per wall; the old logger saw 72 unit addresses. Are
-   some walls without gates, or some gates without antennas? Are there gates
-   on the outer walls?
-3. **One antenna per gate, or two** (one each side, which would give
-   direction of travel)? The mapping model can hold either, but the routine's
-   prompts differ.
+1. ~~**Naming.**~~ Decided 2026-11-05: letter = column (A-D left to right),
+   number = row (1-4 top to bottom), seen from above. A wall is named by its
+   two boxes, left or top box first (A1B1, A1A2). The gate order a-d (top to
+   bottom along a vertical wall, left to right along a horizontal one) is
+   the default as built; still to confirm on the rig.
+2. **Which walls have gates.** Up to 4 gates per wall, internal walls only
+   (decided 2026-11-05). Which walls and gates are actually fitted is set in
+   the Layout tab, which would account for 72 units rather than 96.
+3. ~~**One antenna per gate, or two.**~~ One (decided 2026-11-05).
 4. **One RFID bus / module for the whole habitat?** The design allows several.
 5. **Is there a dedicated probe tag**, and will animals be in the habitat
    during mapping?

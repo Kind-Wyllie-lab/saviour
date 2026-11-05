@@ -174,6 +174,12 @@ class RFIDModule(Module):
         self._db_threads: list[threading.Thread] = []
         self._zero_reads = 0
 
+        # ── Gate-mapping mode (habitat controller's mapping routine) ────
+        # Epoch seconds it stays on until; 0 = off. Renewed by the
+        # controller while a mapping page is open, so a closed browser tab
+        # can't leave it on.
+        self._mapping_until = 0.0
+
         # ── Bus ─────────────────────────────────────────────────────────
         self.bus = RS485Bus()
         self.bus.on_transponder_read = self._on_transponder_read
@@ -252,7 +258,8 @@ class RFIDModule(Module):
         # With presence tracking on, the raw per-ping status message + CSV row
         # are only kept when `record` asks for them; the enter/exit events
         # carry the useful signal. With it off, behaviour is unchanged.
-        if self._want_raw_output():
+        # Gate-mapping mode forces the status message (never the CSV row).
+        if self._want_raw_output() or self._mapping_active():
             self._send_status_safe({
                 "type": "rfid_read",
                 "unit_address": ping.unit,
@@ -261,6 +268,7 @@ class RFIDModule(Module):
                 "packet_ts": ping.ts,
                 "total_reads": self._total_reads,
             })
+        if self._want_raw_output():
             self._write_raw_row(ping)
 
         presence = self._presence
@@ -720,6 +728,34 @@ class RFIDModule(Module):
             return {"result": "error", "message": "bus not connected"}
         self.bus.scan_bus()
         return {"result": "success"}
+
+    MAPPING_MAX_S = 600.0
+
+    def _mapping_active(self) -> bool:
+        return time.time() < self._mapping_until
+
+    @command()
+    def rfid_mapping_mode(self, enabled: bool = True, timeout_s: float = 120.0):
+        """Send every read as rfid_read for ``timeout_s`` (max 10 min), even
+        with presence tracking set to record only visits: the habitat gate
+        mapping routine needs each probe pass, not the smoothed visits. The
+        session CSVs are unchanged."""
+        if enabled:
+            timeout_s = min(self.MAPPING_MAX_S, max(1.0, float(timeout_s)))
+            self._mapping_until = time.time() + timeout_s
+        else:
+            self._mapping_until = 0.0
+        return {"result": "success", "mapping_mode": bool(enabled),
+                "until": self._mapping_until or None}
+
+    @command()
+    def rfid_units(self):
+        """Every unit seen on the bus since connect (address, firmware,
+        serial number), for the gate map's bus-vs-map checks."""
+        return {"result": "success",
+                "connected": bool(self.bus.is_connected),
+                "port": self.bus.port,
+                "units": [u.to_dict() for _, u in sorted(self.bus.units.items())]}
 
     # ══════════════════════════════════════════════════════════════════════
     # Bus lifecycle

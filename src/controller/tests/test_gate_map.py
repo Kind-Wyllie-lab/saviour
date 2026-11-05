@@ -407,6 +407,35 @@ def test_keepalive_renews_only_when_needed_and_due(tmp_path):
     assert len(t.commands("rfid_mapping_mode")) == n + 1
 
 
+def test_live_view_forwards_every_read_until_it_lapses(tmp_path):
+    t = _Svc(tmp_path)
+    t.svc.store.save_map({"A1B1_a": {"gate": "A1B1_a", "status": gm.MAPPED,
+                                     "module_id": "rfid_1", "unit": 34}},
+                         run_id=None, operator="AS", reason="manual_edit")
+    t.svc.map = t.svc.store.load_map()
+    t.svc.live_keepalive()
+    assert t.commands("rfid_mapping_mode")[-1][1]["enabled"] is True
+    t.read(34, tag=ANIMAL)
+    assert t.last("gate_map_hit")["gates"] == ["A1B1_a"]
+    assert t.svc.state()["hits"] == []          # Gates page list untouched
+    t.now += 61                                 # dashboard closed: lapses
+    n = len([e for e, _ in t.emitted if e == "gate_map_hit"])
+    t.read(34, tag=ANIMAL)
+    assert len([e for e, _ in t.emitted if e == "gate_map_hit"]) == n
+
+
+def test_ending_walkthrough_keeps_mapping_mode_for_live_dashboard(tmp_path):
+    t = _Svc(tmp_path)
+    t.svc.live_keepalive()
+    t.svc.set_walkthrough(True)
+    t.svc.set_walkthrough(False)
+    assert t.commands("rfid_mapping_mode")[-1][1]["enabled"] is True
+    t.now += 61
+    t.svc.set_walkthrough(True)
+    t.svc.set_walkthrough(False)
+    assert t.commands("rfid_mapping_mode")[-1][1]["enabled"] is False
+
+
 def test_orphaned_entries_after_unfitting_a_gate(tmp_path):
     t = _Svc(tmp_path)
     t.svc.store.save_map({"A1B1_a": {"gate": "A1B1_a", "status": gm.CLOSED}},

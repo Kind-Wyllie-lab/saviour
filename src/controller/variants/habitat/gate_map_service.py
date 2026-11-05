@@ -9,8 +9,9 @@ Kept apart from habitat_controller.py so it can be tested with fakes for
 Module side (rfid_module.py): ``rfid_scan`` (bus logon), ``rfid_units``
 (addresses + serial numbers, answered as a cmd_ack) and
 ``rfid_mapping_mode`` (forward every read for a while). Mapping mode is
-renewed only while a browser has the Gates page open (``keepalive``), so a
-closed tab can't leave it on.
+renewed only while a browser has the Gates page open (``keepalive``) or
+the dashboard's live gate view (``live_keepalive``), so a closed tab can't
+leave it on.
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ KEEPALIVE_EVERY_S = 30.0
 # little after that.
 SCAN_REPLY_DELAY_S = 4.0
 HIT_HISTORY = 20
+# The dashboard renews its live gate view every 20 s; it lapses this long
+# after the last renewal (closed tab), and mapping mode times out on the
+# modules MAPPING_TIMEOUT_S after that.
+LIVE_TTL_S = 60.0
 
 
 class GateMapService:
@@ -69,6 +74,7 @@ class GateMapService:
         self.bus_scanned_at: float | None = None
         self.hits: deque[dict] = deque(maxlen=HIT_HISTORY)
         self._last_keepalive = 0.0
+        self._live_until = 0.0
         self._settle_timer: threading.Timer | None = None
 
         draft = store.load_draft()
@@ -173,8 +179,7 @@ class GateMapService:
             self._cancel_settle()
             self.logger.info(f"Gate-mapping run {run.run_id} saved: "
                              f"{len(changes)} gate(s) changed")
-        if not self.walkthrough:
-            self._set_mapping_mode(False)
+        self._release_mapping_mode()
         self.broadcast()
 
     def discard_run(self) -> None:
@@ -185,8 +190,7 @@ class GateMapService:
             self.run = None
             self._cancel_settle()
             self.store.delete_draft()
-        if not self.walkthrough:
-            self._set_mapping_mode(False)
+        self._release_mapping_mode()
         self.broadcast()
 
     # ── Walk-through check ──────────────────────────────────────────────────
@@ -198,8 +202,8 @@ class GateMapService:
                 self.hits.clear()
         if enabled:
             self._set_mapping_mode(True)
-        elif not self.run:
-            self._set_mapping_mode(False)
+        else:
+            self._release_mapping_mode()
         self.broadcast()
 
     # ── Modules ─────────────────────────────────────────────────────────────
@@ -220,10 +224,30 @@ class GateMapService:
     def keepalive(self) -> None:
         """A Gates page is open: keep mapping mode on while it's needed."""
         with self._lock:
-            needed = bool(self.run) or self.walkthrough
+            needed = self._mapping_needed()
             due = self.clock() - self._last_keepalive >= KEEPALIVE_EVERY_S
         if needed and due:
             self._set_mapping_mode(True)
+
+    def live_keepalive(self) -> None:
+        """The dashboard's live gate view is open: forward every read (as
+        gate_map_hit) for another LIVE_TTL_S."""
+        with self._lock:
+            self._live_until = self.clock() + LIVE_TTL_S
+        self.keepalive()
+
+    def _live(self) -> bool:
+        return self.clock() < self._live_until
+
+    def _mapping_needed(self) -> bool:
+        return bool(self.run) or self.walkthrough or self._live()
+
+    def _release_mapping_mode(self) -> None:
+        """Turn mapping mode off unless something else still wants it."""
+        with self._lock:
+            needed = self._mapping_needed()
+        if not needed:
+            self._set_mapping_mode(False)
 
     def _set_mapping_mode(self, enabled: bool) -> None:
         with self._lock:
@@ -256,7 +280,7 @@ class GateMapService:
         ts = float(status.get("packet_ts") or self.clock())
         changed = False
         with self._lock:
-            if not (self.run or self.walkthrough):
+            if not self._mapping_needed():
                 return
             hit = {"module_id": module_id, "unit": unit, "tag": tag, "ts": ts,
                    "gates": gates_for_unit(self.map["entries"], module_id, unit)}
@@ -269,7 +293,10 @@ class GateMapService:
                 elif changed and was_first is None:
                     self._start_settle()
                 hit["probe"] = tag.upper() == (self.run.probe_tag or "")
-            self.hits.appendleft(hit)
+            # The Gates page's recent-hits list; the dashboard's every-ping
+            # view alone doesn't fill it.
+            if self.run or self.walkthrough:
+                self.hits.appendleft(hit)
         self.emit("gate_map_hit", hit)
         if changed:
             self.broadcast()
@@ -332,6 +359,7 @@ def register_socket_handlers(sio, svc: GateMapService, *,
         "get_gate_map": (lambda d: sio.emit(
             "gate_map_state", svc.state(), room=request.sid), False),
         "gate_map_keepalive": (lambda d: svc.keepalive(), False),
+        "gate_map_live": (lambda d: svc.live_keepalive(), False),
         "gate_map_walkthrough": (
             lambda d: svc.set_walkthrough(bool(d.get("enabled"))), False),
         "gate_map_scan": (lambda d: svc.scan(), False),

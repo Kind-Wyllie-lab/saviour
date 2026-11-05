@@ -1,0 +1,207 @@
+.habitat-live {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    align-items: center;
+    /* The map sizes to whichever of width / height is tighter. */
+    container-type: size;
+}
+
+/* Sized by height, kept to the grid's aspect ratio (set inline). */
+.habitat-live-map {
+    position: relative;
+    flex: none;
+    /* --ratio (cols / rows) is set inline; 26px leaves room for the footer. */
+    width: min(100cqw, calc((100cqh - 26px) * var(--ratio)));
+    aspect-ratio: var(--ratio);
+    /* Wall gutter: half on each side of a box, so gates (on box edges)
+       sit in the middle of it. */
+    --wall: 12px;
+}
+
+.habitat-live-box {
+    position: absolute;
+    box-sizing: border-box;
+    padding: calc(var(--wall) / 2);
+}
+
+.habitat-live-box-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 3px;
+    background: #000;
+}
+
+.habitat-live-empty {
+    width: 100%;
+    height: 100%;
+    background: color-mix(in srgb, var(--text-color) 6%, var(--card-bg-color));
+}
+
+.habitat-live-dup {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.8em;
+    color: var(--error-color, #e74c3c);
+    background: #000;
+}
+.habitat-live-dup p { margin: 2px 6px; }
+
+.habitat-live-box-label {
+    position: absolute;
+    left: 6px;
+    bottom: 5px;
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* ── Per-box AudioMoth level meter (right edge of the box) ─────────────── */
+
+.habitat-live-meter {
+    position: absolute;
+    /* Clear of the gate dots on the wall to the right. */
+    right: 12px;
+    top: 16px;
+    bottom: 16px;
+    width: 6px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.55);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+    overflow: hidden;
+    z-index: 2;
+}
+
+.habitat-live-meter-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--success-color, #2e9e5b);
+    transition: height 0.3s linear;
+}
+
+.habitat-live-meter-peak {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #fff;
+    transition: bottom 0.3s linear;
+}
+
+.habitat-live-meter--clip {
+    box-shadow: 0 0 0 2px var(--error-color, #e74c3c);
+}
+.habitat-live-meter--clip .habitat-live-meter-fill {
+    background: var(--error-color, #e74c3c);
+}
+
+.habitat-live-meter--stale {
+    opacity: 0.35;
+}
+
+/* ── Gate overlay ──────────────────────────────────────────────────────── */
+
+.habitat-live-gates {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 3;
+}
+
+.habitat-live-gate { pointer-events: auto; }
+
+.habitat-live-gate-dot {
+    stroke-width: 2;
+    fill: color-mix(in srgb, var(--text-color) 35%, var(--card-bg-color));
+    stroke: var(--card-bg-color);
+    transition: fill 0.25s;
+}
+
+/* Mapping status is the Gates page's job; here an unmapped gate stays
+   quiet so reads stand out. */
+.habitat-live-gate--unmapped .habitat-live-gate-dot {
+    fill: transparent;
+    stroke: color-mix(in srgb, var(--text-color) 35%, transparent);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 2;
+}
+
+.habitat-live-gate--faulty .habitat-live-gate-dot {
+    fill: var(--error-color, #e74c3c);
+}
+
+.habitat-live-gate--closed .habitat-live-gate-dot,
+.habitat-live-gate--not_fitted .habitat-live-gate-dot {
+    opacity: 0.35;
+}
+
+.habitat-live-gate--on .habitat-live-gate-dot {
+    fill: var(--accent-color);
+    stroke: #fff;
+    transition: none;
+}
+
+.habitat-live-gate-halo {
+    fill: var(--accent-color);
+    opacity: 0.35;
+}
+
+/* ── Chrome ────────────────────────────────────────────────────────────── */
+
+.habitat-live-refresh {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--card-bg-color) 80%, transparent);
+    color: var(--text-color);
+    cursor: pointer;
+    opacity: 0.55;
+    z-index: 4;
+}
+.habitat-live-refresh:hover { opacity: 1; }
+
+.habitat-live-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    justify-content: center;
+    font-size: 0.8em;
+    opacity: 0.75;
+}
+.habitat-live-footer a { color: var(--accent-color); }
+
+.habitat-live-loading {
+    padding: 24px;
+    opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .habitat-live-meter-fill,
+    .habitat-live-meter-peak,
+    .habitat-live-gate-dot { transition: none; }
+}

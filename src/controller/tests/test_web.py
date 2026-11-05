@@ -2795,6 +2795,22 @@ class TestCropStatusForwarding:
         assert events and events[0]["args"][0]["fov"] == [4056, 3040]
 
 
+class TestAudioLevels:
+    def test_audio_levels_reach_socketio_not_sse(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        q = web._event_subscribe()
+        assert web.handle_module_status("microphone_ab12", {
+            "type": "audio_levels", "timestamp": 2.0,
+            "levels": [{"serial": "24E1", "label": "B3", "level_db": -52.0,
+                        "peak_db": -40.0, "clip_pct": 0.0, "clipping": False}]})
+        events = [e for e in client.get_received() if e["name"] == "audio_levels"]
+        payload = events[0]["args"][0]
+        assert payload["module_id"] == "microphone_ab12"
+        assert payload["levels"][0]["label"] == "B3"
+        assert q.empty()
+
+
 class TestRfidStatus:
     """RFID reads/visits fanned out live (Socket.IO + SSE), the rfid_db
     settings push on save, and the Test connection relay."""

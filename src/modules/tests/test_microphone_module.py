@@ -309,3 +309,22 @@ def test_sync_pulse_config_change_releases_gpio(tmp_path):
     m.configure_module_special({"sync_pulse.buzzer_pin"})
     pulser.close.assert_called_once()
     assert m._sync_pulser is None
+
+
+def test_levels_snapshot_holds_peak_and_skips_stale(tmp_path):
+    """audio_levels for the habitat dashboard: the loudest block since the
+    last send (peak_acc), reset after each read; a silent thread is dropped."""
+    m, _ = _make(tmp_path)
+    m.monitor_data_lock = threading.Lock()
+    now = time.time()
+    m.monitor_data = {
+        "AAAA": {"level_db": -50.0, "peak_db": -45.0, "peak_acc": -12.0,
+                 "clip_pct": 0.0, "clipping": False, "timestamp": now},
+        "BBBB": {"level_db": -50.0, "peak_db": -45.0, "peak_acc": -20.0,
+                 "clip_pct": 0.0, "clipping": False, "timestamp": now - 10},
+    }
+    levels = m._levels_snapshot()
+    assert [lv["serial"] for lv in levels] == ["AAAA"]
+    assert levels[0]["label"] == "audiomoth_AAAA"
+    assert levels[0]["peak_db"] == -12.0
+    assert m.monitor_data["AAAA"]["peak_acc"] == -200.0

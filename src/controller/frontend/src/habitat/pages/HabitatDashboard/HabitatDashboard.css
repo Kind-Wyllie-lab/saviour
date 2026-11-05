@@ -24,6 +24,12 @@
   align-self: flex-start;
 }
 
+/* The health card sets min-width: 400px for the basic dashboard; here it
+   would spill over the map, and it has its own narrow layout. */
+.habitat-dashboard-left > * {
+  min-width: 0;
+}
+
 /* Camera grid: takes all remaining space */
 .habitat-dashboard-center {
   flex: 1;

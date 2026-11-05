@@ -177,7 +177,41 @@ function prompt(run) {
   run.prompt_ts = now();
 }
 
+// The dashboard's live map: a read at a random mapped gate now and then,
+// plus one fake unmapped unit, and AudioMoth levels for every box from four
+// fake microphone modules (one per column, like the habitat).
+let liveTimer = null;
+function startLive(sock) {
+  if (liveTimer) return;
+  const boxes = generateLayout().boxes.map((b) => b.id);
+  const base = Object.fromEntries(boxes.map((b) => [b, -60 + Math.random() * 15]));
+  let tick = 0;
+  liveTimer = setInterval(() => {
+    tick++;
+    g ??= initialState();
+    const mapped = Object.values(g.entries).filter((e) => e.status === "mapped");
+    if (mapped.length && Math.random() < 0.6) hit(sock, mapped[Math.floor(Math.random() * mapped.length)].unit, "000807DC20");
+    if (tick % 7 === 0) hit(sock, 99, "000807DC21");
+    if (tick % 2 === 0) {
+      for (const col of ["A", "B", "C", "D"]) {
+        sock._fire("audio_levels", {
+          module_id: `microphone-mock-${col.toLowerCase()}`,
+          levels: boxes.filter((b) => b[0] === col).map((b) => {
+            const burst = Math.random() < 0.08 ? 30 + Math.random() * 25 : 0;
+            const level = base[b] + Math.random() * 6 + burst;
+            return { serial: `24E1440${b}`, label: b, level_db: level,
+              peak_db: Math.min(0, level + 8 + Math.random() * 6), clip_pct: 0,
+              clipping: burst > 52 };
+          }).concat(col === "D" ? [{ serial: "24E1440XYZ", label: "24E1440XYZ",
+            level_db: -70, peak_db: -62, clip_pct: 0, clipping: false }] : []),
+        });
+      }
+    }
+  }, 250);
+}
+
 export const gateMapRoutes = {
+  gate_map_live() { startLive(this); },
   get_gate_map() {
     g ??= initialState();
     this._fire("gate_map_state", view());

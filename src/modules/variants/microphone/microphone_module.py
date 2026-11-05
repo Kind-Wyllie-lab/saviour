@@ -231,6 +231,42 @@ class AudiomothModule(Module):
         }
 
 
+    def _levels_snapshot(self) -> list[dict]:
+        """Per-AudioMoth level/peak/clip for the controller's dashboard
+        meters, resetting each one's held peak. Stale entries (monitor
+        thread gone quiet for 2 s) are left out."""
+        now = time.time()
+        levels = []
+        with self.monitor_data_lock:
+            for serial, d in self.monitor_data.items():
+                if now - d.get('timestamp', 0) > 2.0:
+                    continue
+                levels.append({
+                    'serial': serial,
+                    'label': self._label_for(serial),
+                    'level_db': round(d.get('level_db', -200.0), 1),
+                    'peak_db': round(d.get('peak_acc', d.get('peak_db', -200.0)), 1),
+                    'clip_pct': round(d.get('clip_pct', 0.0), 3),
+                    'clipping': bool(d.get('clipping')),
+                })
+                d['peak_acc'] = -200.0
+        return levels
+
+    def _publish_levels(self, interval: float) -> None:
+        """audio_levels status at monitoring.levels_hz while the monitor
+        threads run (habitat dashboard meters; lossy, display only)."""
+        while not self.should_stop_monitoring_stream:
+            time.sleep(interval)
+            comm = getattr(self, 'communication', None)
+            if not (comm and comm.controller_ip):
+                continue
+            levels = self._levels_snapshot()
+            if levels:
+                try:
+                    comm.send_status({'type': 'audio_levels', 'levels': levels})
+                except Exception as e:
+                    self.logger.debug(f"audio_levels send failed: {e}")
+
     def _label_for(self, serial: str) -> str:
         """Return the user-defined label for a serial, or the serial itself if none is set."""
         labels = self.config.get("audiomoth_labels", {})
@@ -895,6 +931,9 @@ class AudiomothModule(Module):
                     spec_cols = max(10, int(time_window_s * sample_rate / fft_size))
                     with self.monitor_data_lock:
                         prev      = self.monitor_data.get(serial, {})
+                        # Loudest block since _publish_levels last read it,
+                        # so a short call between two sends still shows.
+                        peak_acc  = max(prev.get('peak_acc', -200.0), peak_db)
                         prev_buf  = prev.get('spec_buffer', [])
                         prev_rms  = prev.get('rms_history', [])
                         new_buf   = (prev_buf + [spectrum_db])[-spec_cols:]
@@ -910,6 +949,7 @@ class AudiomothModule(Module):
                             'rms_history': new_rms,
                             'clip_pct':    clip_pct,
                             'clipping':    clipping,
+                            'peak_acc':    peak_acc,
                             'timestamp':   time.time(),
                         }
                         self._monitor_clip_pct = max(
@@ -1517,6 +1557,14 @@ class AudiomothModule(Module):
                     daemon=True,
                     name=f"monitor-{serial}"
                 )
+                self.monitor_threads.append(t)
+                t.start()
+
+            levels_hz = float(self.config.get("monitoring.levels_hz", 2.0) or 0)
+            if levels_hz > 0:
+                t = threading.Thread(target=self._publish_levels,
+                                     args=(1.0 / levels_hz,), daemon=True,
+                                     name="audio-levels")
                 self.monitor_threads.append(t)
                 t.start()
 

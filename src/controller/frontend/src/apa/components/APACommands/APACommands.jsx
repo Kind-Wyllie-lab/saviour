@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import socket from "../../../socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useSessions from "/src/hooks/useSessions";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useShockState, { getShockState, subscribeShockState, MODE_LABELS } from "../../shockState";
@@ -421,7 +422,12 @@ function APACommands( {modules} ) {
                                     <div className="apa-confirm-btns">
                                         <button
                                             className="apa-confirm-yes"
-                                            onClick={() => { socket.emit("stop_session", { session_name: s.session_name }); setConfirmStop(null); }}
+                                            onClick={() => {
+                                                if (confirmIfOtherAdmins("End this session")) {
+                                                    socket.emit("stop_session", { session_name: s.session_name });
+                                                }
+                                                setConfirmStop(null);
+                                            }}
                                         >
                                             Yes, end
                                         </button>

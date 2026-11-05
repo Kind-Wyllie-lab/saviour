@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./ModuleActionsMenu.css";
 
@@ -86,6 +87,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
   useEffect(() => () => clearTimeout(shutdownTimerRef.current), []);
 
   const handleUpdate = () => {
+    if (!confirmIfOtherAdmins("Update and restart this module")) return;
     setUpdateStatus("updating");
     setShowActions(false);
     socket.emit("deploy_update_to_module", { module_id: id });

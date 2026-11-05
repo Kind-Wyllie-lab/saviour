@@ -522,6 +522,79 @@ class TestConnectHandler:
         assert modules_events[0]["args"][0] == {"cam1": {"type": "camera"}}
 
 
+def _last(received, name):
+    """Payload of the last ``name`` event ({} if it had none), or None."""
+    events = [e for e in received if e["name"] == name]
+    if not events:
+        return None
+    args = events[-1]["args"]
+    return args[0] if args else {}
+
+
+class TestConnectedClients:
+    """clients_update: who else has the UI open, and as guest or admin."""
+
+    def test_connect_sends_self_id_and_client_list(self):
+        web, _ = _make_web_with_facade()
+        client = web.socketio.test_client(web.app)
+        rec = client.get_received()
+        me = _last(rec, "client_self")["id"]
+        clients = _last(rec, "clients_update")["clients"]
+        assert [c["id"] for c in clients] == [me]
+        assert clients[0]["admin"] is False
+        assert clients[0]["via_proxy"] is False
+        assert "client_ip" not in {e["name"] for e in rec}
+
+    def test_self_id_is_not_the_sid(self):
+        web, _ = _make_web_with_facade()
+        client = web.socketio.test_client(web.app)
+        me = _last(client.get_received(), "client_self")["id"]
+        assert me not in web._clients and len(me) == 12
+
+    def test_second_client_and_disconnect_are_broadcast(self):
+        web, _ = _make_web_with_facade()
+        a = _connected_client(web)
+        b = _connected_client(web)
+        assert len(_last(a.get_received(), "clients_update")["clients"]) == 2
+        b.disconnect()
+        assert len(_last(a.get_received(), "clients_update")["clients"]) == 1
+        assert len(web._clients) == 1
+
+    def test_login_and_logout_change_admin_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            watcher = _connected_client(web)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            clients = _last(watcher.get_received(), "clients_update")["clients"]
+            assert sum(c["admin"] for c in clients) == 1
+
+            client.emit("logout")
+            assert _last(client.get_received(), "logout_success") is not None
+            clients = _last(watcher.get_received(), "clients_update")["clients"]
+            assert not any(c["admin"] for c in clients)
+            # The connection really lost admin rights, not just the flag.
+            client.emit("remove_module", {"id": "m1"})
+            assert _last(client.get_received(), "auth_required") is not None
+
+    def test_forwarded_for_is_used_behind_a_proxy(self):
+        web, _ = _make_web_with_facade()
+        client = web.socketio.test_client(
+            web.app, headers={"X-Forwarded-For": "100.64.0.9, 10.0.0.1"})
+        clients = _last(client.get_received(), "clients_update")["clients"]
+        assert clients[0]["ip"] == "100.64.0.9"
+        assert clients[0]["via_proxy"] is True
+
+    def test_get_clients_replies_only_to_caller(self):
+        web, _ = _make_web_with_facade()
+        a = _connected_client(web)
+        b = _connected_client(web)
+        a.get_received()
+        b.emit("get_clients")
+        assert len(_last(b.get_received(), "clients_update")["clients"]) == 2
+        assert _last(a.get_received(), "clients_update") is None
+
+
 class TestReadOnlySocketIOHandlers:
     """Handlers that only read facade state -- no auth required."""
 

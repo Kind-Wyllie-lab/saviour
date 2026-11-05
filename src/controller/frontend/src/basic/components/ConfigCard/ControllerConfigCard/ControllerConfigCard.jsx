@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
@@ -144,6 +145,7 @@ function ControllerConfigCard() {
   }, []);
 
   const handleSave = () => {
+    if (!confirmIfOtherAdmins("Save the controller config")) return;
     setSaveStatus("saving");
     socket.emit("save_controller_config", { config: filterPrivateKeys(formData) });
     markSaved();

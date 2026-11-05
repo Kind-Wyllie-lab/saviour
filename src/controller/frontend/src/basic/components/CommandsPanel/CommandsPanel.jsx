@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import socket from "../../../socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import "./CommandsPanel.css";
 
 function CommandsPanel({ modules, experimentName }) {
@@ -20,6 +21,7 @@ function CommandsPanel({ modules, experimentName }) {
   };
 
   const confirmStartRecording = () => {
+    if (!confirmIfOtherAdmins("Start a recording")) return;
     socket.emit("start_recording", {
       target: targetModule,
       duration: Number(duration),
@@ -29,6 +31,7 @@ function CommandsPanel({ modules, experimentName }) {
   };
 
   const handleStopRecording = () => {
+    if (!confirmIfOtherAdmins("Stop the recording")) return;
     socket.emit("stop_recording", {
       target: targetModule
     });

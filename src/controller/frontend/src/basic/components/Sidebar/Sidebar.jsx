@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router";
 import socket from "/src/socket";
 import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
+import ConnectedClients from "/src/basic/components/ConnectedClients/ConnectedClients";
+import { confirmIfOtherAdmins } from "/src/clients";
 
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
@@ -221,11 +223,13 @@ function Sidebar({ navItems }) {
   }, [uploadProgress, stagingCurrent, deployStatus, ctrlPhase, gitPullStatus]);
 
   const handleRebootAll = () => {
+    if (!confirmIfOtherAdmins("Reboot all devices")) return;
     socket.emit("reboot_saviour");
     setShowPowerModal(false);
   };
 
   const handleShutdownAll = () => {
+    if (!confirmIfOtherAdmins("Shut down all devices")) return;
     socket.emit("shutdown_saviour");
     setShutdownState("sent");
   };
@@ -287,6 +291,7 @@ function Sidebar({ navItems }) {
   // Step 1 (zip): apply the uploaded package to this controller — snapshot,
   // rsync over the checkout, pip + frontend rebuild, restart.
   const handleInstallZip = () => {
+    if (!confirmIfOtherAdmins("Update and restart the controller")) return;
     setDeployStatus(null);
     setDeployError(null);
     setCtrlPhase("installing");
@@ -296,6 +301,7 @@ function Sidebar({ navItems }) {
   // Step 1 (git): fetch + hard-reset to origin/<branch>, then rebuild and
   // restart. Modules are step 2, so deploy_modules stays off here.
   const handleGitPull = () => {
+    if (!confirmIfOtherAdmins("Update and restart the controller")) return;
     setGitPullStatus({ stage: "fetching" });
     setUploadError(null);
     setDeployStatus(null);
@@ -306,6 +312,7 @@ function Sidebar({ navItems }) {
   // Step 2: package exactly what the controller is running and push it to
   // every module, so modules always end up matching the controller.
   const handleDeployModules = () => {
+    if (!confirmIfOtherAdmins("Update and restart every module")) return;
     setStagingCurrent(true);
     setUploadError(null);
     setDeployStatus(null);
@@ -396,6 +403,7 @@ function Sidebar({ navItems }) {
           </button>
         )}
         {hostname && <p className="sidebar-hostname">{hostname}</p>}
+        <ConnectedClients />
 
         <nav className="main-nav">
           {navItems.map(({ label, path, disabled }) =>

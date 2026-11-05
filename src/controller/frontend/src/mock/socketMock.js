@@ -328,6 +328,19 @@ const ROUTER = {
     else this._fire("login_error", { error: "Wrong password (mock: any 4+ chars, or 'dev')" });
   },
   change_admin_password() { this._fire("change_password_success", {}); },
+  logout() { this._fire("logout_success"); },
+  // Another admin on a second machine, so the Sidebar indicator and the
+  // confirmIfOtherAdmins() warning can be seen in mock mode.
+  get_clients() {
+    const t = Date.now() / 1000;
+    this._fire("client_self", { id: "mock-self" });
+    this._fire("clients_update", { clients: [
+      { id: "mock-self", ip: "10.0.0.50", via_proxy: false, since: t - 300, admin: false },
+      { id: "mock-other", ip: "10.0.0.23", via_proxy: false, since: t - 2700, admin: true },
+      { id: "mock-other-2", ip: "10.0.0.23", via_proxy: false, since: t - 60, admin: true },
+      { id: "mock-guest", ip: "10.0.0.41", via_proxy: false, since: t - 7200, admin: false },
+    ] });
+  },
 
   // mutations — mutate state, re-emit the matching update
   save_controller_config(payload) {

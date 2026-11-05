@@ -1,5 +1,6 @@
 import { useState } from "react";
 import socket from "../../../../socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
@@ -145,6 +146,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   };
 
   const saveConfig = () => {
+    if (!confirmIfOtherAdmins("Save this module's config")) return;
     socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
     setHasSaved(true);
     markSaved();

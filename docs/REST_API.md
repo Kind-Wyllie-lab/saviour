@@ -104,9 +104,15 @@ until the periodic monitor has sampled the share at least once
                "paused": 0, "stopped": 1, "error": 0},
   "modules": {"total": 6, "online": 6, "offline": 0},
   "ptp": {"worst_offset_ns": 8200, "start_gate_ns": 50000, "synced": true},
-  "disk": {"status": "ok", "free_gb": 812.4, "free_pct": 41.3, ...}
+  "disk": {"status": "ok", "free_gb": 812.4, "free_pct": 41.3, ...},
+  "ui_clients": {"total": 2, "admins": 1, "ips": ["10.0.0.23", "10.0.0.41"]}
 }
 ```
+
+`ui_clients` counts web UI browser tabs connected over Socket.IO (each tab is one;
+REST callers aren't counted), how many of those are signed in, and their
+addresses. Check it before a deploy or a reboot to see whether anyone is
+using the UI.
 
 `ptp.synced` is `worst_offset_ns <= start_gate_ns` (the
 `recording.ptp_start_gate_us` threshold, ×1000). It is the same condition

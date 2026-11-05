@@ -218,6 +218,13 @@ def create_api_blueprint(web) -> Blueprint:
     # state / health / ptp
     # ------------------------------------------------------------------ #
 
+    def _ui_clients() -> dict:
+        """Web UI browser tabs connected right now (not REST callers)."""
+        clients = web._clients_payload()["clients"]
+        return {"total": len(clients),
+                "admins": sum(1 for c in clients if c["admin"]),
+                "ips": sorted({c["ip"] for c in clients})}
+
     @bp.get("/state")
     @require_auth
     def get_state():
@@ -250,6 +257,7 @@ def create_api_blueprint(web) -> Blueprint:
                 "synced": worst is not None and worst <= gate_ns,
             },
             "disk": web._nas_health,
+            "ui_clients": _ui_clients(),
         })
 
     @bp.get("/readiness")

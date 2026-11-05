@@ -129,6 +129,14 @@ class ControllerFacade:
     def remove_module(self, module_id: str):
         self.controller._remove_module(module_id)
 
+    def forget_module(self, module_id: str) -> None:
+        """Drop a module from the list without telling it to shut down --
+        for an id that's gone for good (the module is reprovisioning as
+        another type). If it does come back under that id, discovery
+        re-adds it."""
+        self.controller.modules.remove_module(module_id)
+        self.controller.health.remove_module(module_id)
+
 
     def send_command(self, module_id: str, command: str, params: dict) -> None:
         self.controller.communication.send_command(module_id, command, params)

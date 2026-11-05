@@ -6,8 +6,8 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./ModuleActionsMenu.css";
 
 /**
- * ModuleActionsMenu — the module lifecycle actions (Update / Restart /
- * Reboot / Shutdown / Remove) shared between the System page's per-module
+ * ModuleActionsMenu — the module lifecycle actions (Update / Mend / Change
+ * type / Restart / Reboot / Shutdown / Remove) shared between the System page's per-module
  * row and each module's config card header, so both places drive the same
  * commands through the same UI instead of maintaining separate copies.
  */
@@ -23,7 +23,27 @@ function ModuleActionsMenu({ id, name, isOnline }) {
   const [shutdownTarget, setShutdownTarget] = useState(false);
   const [shutdownState, setShutdownState] = useState(null); // null | "sent" | "acked"
   const [removeTarget, setRemoveTarget] = useState(false);
+  const [typeTarget, setTypeTarget] = useState(false);
+  const [moduleTypes, setModuleTypes] = useState([]);
+  const [newType, setNewType] = useState("");
+  // null | {stage: "started"|"success"|"error", output, new_module_id}
+  const [retype, setRetype] = useState(null);
   const shutdownTimerRef = useRef(null);
+  // Module ids are "<type>_<last 4 of the MAC>".
+  const currentType = id.replace(/_[0-9a-f]{4}$/i, "");
+
+  useEffect(() => {
+    const onTypes = (data) => setModuleTypes(data?.types ?? []);
+    const onRetype = (data) => {
+      if (data.module_id === id) setRetype(data);
+    };
+    socket.on("module_types", onTypes);
+    socket.on("module_type_change_result", onRetype);
+    return () => {
+      socket.off("module_types", onTypes);
+      socket.off("module_type_change_result", onRetype);
+    };
+  }, [id]);
 
   useEffect(() => {
     socket.emit("get_update_info");
@@ -117,13 +137,28 @@ function ModuleActionsMenu({ id, name, isOnline }) {
     shutdownTimerRef.current = setTimeout(() => setShutdownState(null), 90000);
   };
 
+  const openTypeChange = () => {
+    socket.emit("get_module_types");
+    setNewType("");
+    setTypeTarget(true);
+    setShowActions(false);
+  };
+
+  const handleTypeConfirm = () => {
+    if (!newType) return;
+    if (!confirmIfOtherAdmins(`Change ${name} to a ${newType} module`)) return;
+    setRetype({ stage: "started", output: "Preparing…" });
+    socket.emit("send_command", { module_id: id, type: "change_module_type", params: { new_type: newType } });
+    setTypeTarget(false);
+  };
+
   const handleRemoveConfirm = () => {
     socket.emit("remove_module", { id });
     setRemoveTarget(false);
   };
 
   return (
-    <>
+    <span className="module-actions">
       {shutdownState ? (
         <span className="module-actions-shutdown-status">
           {shutdownState === "acked" ? "Powering off…" : "Shutting down…"}
@@ -137,6 +172,16 @@ function ModuleActionsMenu({ id, name, isOnline }) {
       {updateStatus && updateStatus !== "updating" && (
         <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
           {updateStatus.success ? "Updated" : `Failed: ${updateStatus.output}`}
+        </span>
+      )}
+      {retype && (
+        <span className={`config-sync-badge ${retype.stage === "error" ? "config-sync-badge--failed" : "config-sync-badge--pending"}`}
+          title={retype.output}>
+          {retype.stage === "error"
+            ? `Type change failed: ${retype.output}`
+            : retype.stage === "success"
+              ? `Becoming ${retype.new_module_id}…`
+              : "Changing type…"}
         </span>
       )}
       {mendStatus && mendStatus !== "mending" && (
@@ -170,6 +215,10 @@ function ModuleActionsMenu({ id, name, isOnline }) {
                   onClick={() => { setMendTarget(true); setShowActions(false); }}>
                   <span>Run mend</span>
                   <span className="actions-modal__hint">Repairs dependencies/config and regenerates the service file, then restarts - takes a few minutes</span>
+                </button>
+                <button type="button" className="actions-modal__item" onClick={openTypeChange}>
+                  <span>Change type</span>
+                  <span className="actions-modal__hint">Reprovision this Pi as another module type (e.g. camera → RFID) - resets its settings</span>
                 </button>
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRestartTarget(true); setShowActions(false); }}>
@@ -210,6 +259,31 @@ function ModuleActionsMenu({ id, name, isOnline }) {
             <div className="modal-buttons">
               <button className="reset-button" type="button" onClick={handleMendConfirm}>Run mend</button>
               <button className="save-button" type="button" onClick={() => setMendTarget(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {typeTarget && (
+        <div className="modal-overlay" onClick={() => setTypeTarget(false)}>
+          <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
+            <p>Change <strong>{name}</strong> from <strong>{currentType}</strong> to:</p>
+            <select className="module-type-select" value={newType} onChange={e => setNewType(e.target.value)}>
+              <option value="">Choose a type…</option>
+              {moduleTypes.filter(t => t.type !== currentType).map(t => (
+                <option key={t.type} value={t.type}>{t.name}{t.description ? ` - ${t.description}` : ""}</option>
+              ))}
+            </select>
+            <p className="modal-subtext">
+              The module installs anything the new type needs, then reconfigures and restarts
+              as <strong>{newType ? `${newType}_${id.slice(-4)}` : "a new module id"}</strong>.
+              Its settings reset to the new type&apos;s defaults (name and any box placement
+              included), and its old entry here is replaced once it reconnects. Takes a minute
+              or two, longer if packages need downloading. Not possible while it records.
+            </p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" disabled={!newType} onClick={handleTypeConfirm}>Change type</button>
+              <button className="save-button" type="button" onClick={() => setTypeTarget(false)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -271,7 +345,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
         </div>
       )}
       </>, document.body)}
-    </>
+    </span>
   );
 }
 

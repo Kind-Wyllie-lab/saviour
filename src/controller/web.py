@@ -114,6 +114,36 @@ def _journalctl(args: list, timeout: int = 20) -> str:
         return f"journalctl {' '.join(args)} failed: {e}"
 
 
+MODULE_VARIANTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "..", "modules", "variants")
+
+
+def list_module_types(variants_dir: str = MODULE_VARIANTS_DIR) -> list[dict]:
+    """[{type, name, description}] for every module variant with a
+    variant.conf (what saviour-config offers), template excluded."""
+    out = []
+    try:
+        entries = sorted(os.listdir(variants_dir))
+    except OSError:
+        return out
+    for slug in entries:
+        conf = os.path.join(variants_dir, slug, "variant.conf")
+        if slug == "template" or not os.path.isfile(conf):
+            continue
+        values = {}
+        try:
+            with open(conf) as f:
+                for line in f:
+                    key, sep, value = line.strip().partition("=")
+                    if sep and key in ("NAME", "DESCRIPTION"):
+                        values[key] = value.strip().strip('"')
+        except OSError:
+            continue
+        out.append({"type": slug, "name": values.get("NAME", slug),
+                    "description": values.get("DESCRIPTION", "")})
+    return out
+
+
 def _filter_private_keys(d: dict) -> dict:
     """Return a deep copy of *d* with all keys starting with '_' removed.
 
@@ -376,6 +406,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # well as the web UI does (habitat gate mapping). Observers only:
         # their return value and exceptions don't affect dispatch.
         self.module_status_listeners: list = []
+        # new module id -> old id, for a module changing type (forget the
+        # old one when the new one first reports).
+        self._pending_retypes: dict[str, str] = {}
 
         # Short-lived tokens authorizing a plain browser GET (session file/
         # zip downloads) -- a Socket.IO connection being in
@@ -1462,6 +1495,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             self.socketio.emit("clients_update", self._clients_payload(),
                                room=request.sid)
 
+
+        @self.socketio.on('get_module_types')
+        def handle_get_module_types(data=None):
+            """Module types a module can be changed to (the actions menu's
+            Change type), from this checkout's src/modules/variants."""
+            self.socketio.emit("module_types", {"types": list_module_types()},
+                               room=request.sid)
 
         @self.socketio.on('send_command')
         def handle_command(data):
@@ -4511,6 +4551,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             if not status_type:
                 self.logger.warning(f"Bad status type: {status}")
 
+            old_id = self._pending_retypes.pop(module_id, None)
+            if old_id:
+                self.logger.info(f"{old_id} is back as {module_id}; forgetting {old_id}")
+                self.facade.forget_module(old_id)
+                self.socketio.emit("module_type_change_result", {
+                    "module_id": old_id, "stage": "done", "new_module_id": module_id,
+                    "output": f"{old_id} is now {module_id}"})
+
             for listener in self.module_status_listeners:
                 try:
                     listener(module_id, status)
@@ -4701,6 +4749,23 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                                 "reboot_required": result == "reboot_required",
                                 "output": status.get("output", ""),
                             })
+                    elif command == "change_module_type":
+                        # "started" (preparing), then "success" (reprovisioning
+                        # in a detached unit; the module restarts under
+                        # new_module_id) or "error" (nothing changed).
+                        result = status.get("result")
+                        if result == "success" and status.get("new_module_id"):
+                            # Forget the old id once the new one reports in
+                            # (top of this method), so the old row stays to
+                            # show progress until then.
+                            self._pending_retypes[status["new_module_id"]] = module_id
+                        self.socketio.emit("module_type_change_result", {
+                            "module_id": module_id,
+                            "stage": result,
+                            "output": status.get("output", ""),
+                            "new_type": status.get("new_type"),
+                            "new_module_id": status.get("new_module_id"),
+                        })
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
                     elif command == "set_loom_roi" and status.get("status") == "error":

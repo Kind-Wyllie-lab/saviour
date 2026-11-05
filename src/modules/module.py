@@ -30,6 +30,8 @@ INSTALL_DIR = "/usr/local/src/saviour"
 MEND_REBOOT_REQUIRED_EXIT = 10
 # Transient unit name for a detached run_mend (see Module.run_mend).
 MEND_UNIT = "saviour-mend"
+RETYPE_UNIT = "saviour-retype"
+SAVIOUR_CONFIG = "/usr/local/bin/saviour-config"
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -573,6 +575,70 @@ class Module(ABC):
 
         threading.Thread(target=_do_mend, daemon=True, name="saviour-mend").start()
         return {"result": "started", "output": "mend.sh started"}
+
+
+    @command()
+    def change_module_type(self, new_type: str = "") -> dict:
+        """Reprovision this Pi as another module type (the web UI's
+        "Change type" action). Two steps, both saviour-config:
+
+        1. ``--prepare-module-type`` here, waiting for it: checks the type
+           and installs the new type's apt packages before anything changes,
+           so a module without internet fails with nothing touched.
+        2. ``--set-module-type`` in a detached systemd unit (like run_mend):
+           writes TYPE= and runs the usual --apply, which resets this
+           module's config to the new type's defaults, renames the host,
+           rewrites the service and restarts it. It comes back under a new
+           id (``<new_type>_<mac>``). Outcome in /var/log/saviour-config.log.
+        """
+        new_type = str(new_type or "").strip()
+        if self.is_recording:
+            return {"result": "error",
+                    "output": "Can't change type while recording -- stop the session first."}
+        if not new_type:
+            return {"result": "error", "output": "No module type given."}
+        if new_type == self.module_type:
+            return {"result": "error", "output": f"Already a {new_type} module."}
+        new_id = self.generate_module_id(new_type)
+
+        def _ack(result: str, output: str) -> None:
+            self.communication.send_status({
+                "type": "cmd_ack", "command": "change_module_type",
+                "result": result, "output": output,
+                "new_type": new_type, "new_module_id": new_id})
+
+        def _do_change():
+            try:
+                prep = subprocess.run(
+                    ["sudo", SAVIOUR_CONFIG, "--prepare-module-type", new_type],
+                    capture_output=True, text=True, timeout=900, check=False)
+                if prep.returncode != 0:
+                    err = (prep.stderr or prep.stdout or "").strip()[-500:]
+                    self.logger.warning(f"change_module_type {new_type} refused: {err}")
+                    _ack("error", err or "saviour-config refused the change")
+                    return
+                argv = ["sudo", "systemd-run", f"--unit={RETYPE_UNIT}", "--collect",
+                        "--quiet", "--setenv=HOME=/root",
+                        SAVIOUR_CONFIG, "--set-module-type", new_type]
+                self.logger.info(f"Changing module type {self.module_type} -> {new_type} "
+                                 f"(systemd unit {RETYPE_UNIT})")
+                run = subprocess.run(argv, capture_output=True, text=True,
+                                     timeout=30, check=False)
+                if run.returncode != 0:
+                    err = (run.stderr or run.stdout or "").strip()
+                    if "already" in err.lower():
+                        err = "A type change is already running on this module"
+                    _ack("error", f"could not start the type change: {err[-500:]}")
+                    return
+                _ack("success", f"Reconfiguring as {new_type}; the module restarts and "
+                                f"comes back as {new_id} with {new_type} defaults.")
+            except Exception as e:
+                self.logger.error(f"change_module_type failed: {e}")
+                _ack("error", str(e))
+
+        threading.Thread(target=_do_change, daemon=True, name="module-retype").start()
+        return {"result": "started",
+                "output": f"Preparing to become a {new_type} module (installing anything it needs)."}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

@@ -1,4 +1,4 @@
-.habitat-grid {
+.habitat-map {
     width: 100%;
     max-width: 560px;
     height: auto;
@@ -6,13 +6,13 @@
     user-select: none;
 }
 
-.habitat-grid-box {
+.habitat-map-box {
     fill: color-mix(in srgb, var(--text-color) 4%, transparent);
     stroke: color-mix(in srgb, var(--text-color) 55%, transparent);
     stroke-width: 2;
 }
 
-.habitat-grid-box-label {
+.habitat-map-box-label {
     fill: var(--text-color);
     opacity: 0.45;
     font-size: 22px;
@@ -21,65 +21,65 @@
     dominant-baseline: central;
 }
 
-.habitat-grid-gate-dot {
+.habitat-map-gate-dot {
     stroke-width: 2;
     transition: r 0.15s;
 }
 
-.habitat-grid-gate--clickable { cursor: pointer; }
-.habitat-grid-gate--clickable:hover .habitat-grid-gate-dot { r: 9; }
+.habitat-map-gate--clickable { cursor: pointer; }
+.habitat-map-gate--clickable:hover .habitat-map-gate-dot { r: 9; }
 
-.habitat-grid-gate--mapped .habitat-grid-gate-dot {
+.habitat-map-gate--mapped .habitat-map-gate-dot {
     fill: var(--success-color, #2e9e5b);
     stroke: var(--success-color, #2e9e5b);
 }
 
 /* Fitted but nothing mapped yet: hollow, warning outline. */
-.habitat-grid-gate--unmapped .habitat-grid-gate-dot {
+.habitat-map-gate--unmapped .habitat-map-gate-dot {
     fill: var(--card-bg-color);
     stroke: var(--warning-color, #d9822b);
 }
 
-.habitat-grid-gate--closed .habitat-grid-gate-dot {
+.habitat-map-gate--closed .habitat-map-gate-dot {
     fill: color-mix(in srgb, var(--text-color) 45%, transparent);
     stroke: color-mix(in srgb, var(--text-color) 45%, transparent);
 }
 
-.habitat-grid-gate--not_fitted .habitat-grid-gate-dot,
-.habitat-grid-gate--unfitted .habitat-grid-gate-dot {
+.habitat-map-gate--not_fitted .habitat-map-gate-dot,
+.habitat-map-gate--unfitted .habitat-map-gate-dot {
     fill: transparent;
     stroke: color-mix(in srgb, var(--text-color) 30%, transparent);
     stroke-dasharray: 3 3;
 }
 
-.habitat-grid-gate--faulty .habitat-grid-gate-dot {
+.habitat-map-gate--faulty .habitat-map-gate-dot {
     fill: var(--error-color, #e74c3c);
     stroke: var(--error-color, #e74c3c);
 }
 
-.habitat-grid-gate--selected .habitat-grid-gate-dot {
+.habitat-map-gate--selected .habitat-map-gate-dot {
     stroke: var(--accent-color);
     stroke-width: 4;
 }
 
-.habitat-grid-gate-ring {
+.habitat-map-gate-ring {
     fill: none;
     stroke: var(--accent-color);
     stroke-width: 3;
-    animation: habitat-grid-pulse 1.2s ease-in-out infinite;
+    animation: habitat-map-pulse 1.2s ease-in-out infinite;
 }
 
-@keyframes habitat-grid-pulse {
+@keyframes habitat-map-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.25; }
 }
 
-.habitat-grid-gate--flash .habitat-grid-gate-dot {
+.habitat-map-gate--flash .habitat-map-gate-dot {
     fill: var(--accent-color);
     stroke: var(--accent-color);
     r: 11;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .habitat-grid-gate-ring { animation: none; }
+    .habitat-map-gate-ring { animation: none; }
 }

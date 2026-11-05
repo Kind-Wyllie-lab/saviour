@@ -47,7 +47,7 @@ function HabitatGrid({ layout, entries = {}, current, flash, selected, onGateCli
 
   return (
     <svg
-      className="habitat-grid"
+      className="habitat-map"
       viewBox={`${-PAD} ${-PAD} ${w + 2 * PAD} ${h + 2 * PAD}`}
       role="img"
       aria-label="Habitat grid"
@@ -55,10 +55,10 @@ function HabitatGrid({ layout, entries = {}, current, flash, selected, onGateCli
       {layout.boxes.map((b) => (
         <g key={b.id}>
           <rect
-            className="habitat-grid-box"
+            className="habitat-map-box"
             x={b.col * BOX} y={b.row * BOX} width={BOX} height={BOX}
           />
-          <text className="habitat-grid-box-label" x={b.col * BOX + BOX / 2} y={b.row * BOX + BOX / 2}>
+          <text className="habitat-map-box-label" x={b.col * BOX + BOX / 2} y={b.row * BOX + BOX / 2}>
             {b.id}
           </text>
         </g>
@@ -69,21 +69,21 @@ function HabitatGrid({ layout, entries = {}, current, flash, selected, onGateCli
         const entry = entries[g.id];
         const tone = gateTone(g, entry);
         const classes = [
-          "habitat-grid-gate",
-          `habitat-grid-gate--${tone}`,
-          g.id === current && "habitat-grid-gate--current",
-          flash?.has(g.id) && "habitat-grid-gate--flash",
-          selected?.has(g.id) && "habitat-grid-gate--selected",
-          onGateClick && "habitat-grid-gate--clickable",
+          "habitat-map-gate",
+          `habitat-map-gate--${tone}`,
+          g.id === current && "habitat-map-gate--current",
+          flash?.has(g.id) && "habitat-map-gate--flash",
+          selected?.has(g.id) && "habitat-map-gate--selected",
+          onGateClick && "habitat-map-gate--clickable",
         ].filter(Boolean).join(" ");
         const title = labelFor ? labelFor(g, entry) : g.id;
         return (
           <g key={g.id} className={classes}
              onClick={onGateClick ? () => onGateClick(g.id) : undefined}>
             {g.id === current && (
-              <circle className="habitat-grid-gate-ring" cx={p.x} cy={p.y} r={GATE_R + 7} />
+              <circle className="habitat-map-gate-ring" cx={p.x} cy={p.y} r={GATE_R + 7} />
             )}
-            <circle className="habitat-grid-gate-dot" cx={p.x} cy={p.y} r={GATE_R} />
+            <circle className="habitat-map-gate-dot" cx={p.x} cy={p.y} r={GATE_R} />
             <title>{title}</title>
           </g>
         );

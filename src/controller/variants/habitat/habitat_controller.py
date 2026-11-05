@@ -15,6 +15,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from gate_map import GateMapStore
 from gate_map_service import GateMapService, register_socket_handlers, rfid_module_ids
+from placement import PlacementLog, PlacementService
+from placement import register_socket_handlers as register_placement_handlers
 
 from controller.controller import Controller
 
@@ -37,6 +39,20 @@ class HabitatController(Controller):
         )
         self.web.module_status_listeners.append(self.gate_map.on_module_status)
 
+        # Which camera / AudioMoth is in which box (dashboard Placement
+        # panel): module names and AudioMoth labels, on the gate map's boxes.
+        self.placement = PlacementService(
+            PlacementLog(self.gate_map.store.dir),
+            get_modules=self.facade.get_modules,
+            get_boxes=lambda: [b["id"] for b in self.gate_map.layout["boxes"]],
+            set_target_config=self.facade.set_target_module_config,
+            send_command=self.facade.send_command,
+            is_recording=self.facade.is_module_recording,
+            emit=self.web.socketio.emit,
+            logger=self.logger,
+        )
+        self.web.module_status_listeners.append(self.placement.on_module_status)
+
         self._register_habitat_socket_handlers()
 
 
@@ -58,6 +74,9 @@ class HabitatController(Controller):
         register_socket_handlers(self.web.socketio, self.gate_map,
                                  require_auth=self.web._require_auth,
                                  logger=self.logger)
+        register_placement_handlers(self.web.socketio, self.placement,
+                                    require_auth=self.web._require_auth,
+                                    logger=self.logger)
 
 
     # ── Habitat config ────────────────────────────────────────────────────────

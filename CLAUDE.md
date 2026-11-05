@@ -145,6 +145,8 @@ The frontend variant (basic / loom / apa / habitat / acoustic_startle) is select
 
 The main way to test against real hardware. The desk fleet's controller is `10.0.0.1`; this dev machine reaches it directly over SSH (`pi@`, key-based).
 
+**Check where you are first:** a session may run *on* the controller itself (`hostname` is `*-controller-*`, `ip -br addr` shows eth0 `10.0.0.1`). There, don't SSH to `10.0.0.1` (it isn't in `known_hosts`, so non-interactive SSH fails with `Host key verification failed`); run the `sudo cat` + `curl` calls below directly.
+
 - **Find modules:** `GET /api/v1/modules` (id, type, ip, status, version), or `/var/lib/misc/dnsmasq.leases` on the controller. Module SSH is `pi@<ip>`. A re-imaged Pi on a reused IP has a new host key (hostname `saviour-unprov-*`): ask the user before replacing a `known_hosts` entry.
 - **Auth without moving the password:** the bearer token is the admin password in `/etc/saviour/admin_credentials` (root-only). Run `curl` *on the controller*, reading it there with `sudo`, so it never leaves the box. Flask binds `10.0.0.1:5000` only (eth0), **not** `127.0.0.1`. Keep a helper at `/tmp/sv.sh` (`/tmp` is wiped on reboot, so recreate it if missing):
   ```bash

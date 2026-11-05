@@ -13,6 +13,7 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-05
 
+- [x] **The controller key's SSH drop-in switched off pi's own keys** (`saviour-config`; `test_ssh_access.py` asserts the defaults are listed). `/etc/ssh/ssh_config.d/50-saviour-controller.conf` set `IdentityFile /etc/saviour/ssh/controller_key` and claimed to add it to the user's usual keys. But any `IdentityFile` stops ssh trying its defaults, so `~/.ssh/id_ed25519` was never offered and `git push` to GitHub failed from the moment `saviour-config --apply` first created the controller key (desk controller, 2026-11-05). The drop-in now also lists `~/.ssh/id_ed25519`, `id_ecdsa` and `id_rsa`; missing ones are skipped. Controllers already provisioned need `saviour-config --apply` (or the SSH access menu) again to rewrite it.
 - [x] **Habitat: Placement panel, which camera and AudioMoth is in which box** (branch `feat/habitat-placement`; 10 tests in `test_placement.py`; clicked through in `dev:mock`; on the desk rig it answers and refuses guests, but the rig has no camera and the mic module isn't updated, so **no real placement has been done yet**). Opened from the dashboard map's footer (**Placement…**), it takes the left column while the map stays in view.
   - **What it changes:** a camera's box stays its module name (also its export folder, so recordings are filed by box). An AudioMoth's box is its `audiomoth_labels` entry. The panel sets those through the same `set_config` round trip as Settings, so there's no new placement store.
   - **Panel:**

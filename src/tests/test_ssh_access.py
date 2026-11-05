@@ -413,6 +413,9 @@ def test_controller_makes_its_own_key_without_a_ca(rig):
     conf = (rig / "ssh_client" / "50-saviour-controller.conf").read_text()
     assert "Match localuser pi,root" in conf and "IdentityFile" in conf
     assert "CertificateFile" not in conf
+    # An IdentityFile switches off ssh's default keys, so they're listed
+    # (else pi's own GitHub key was never offered).
+    assert "IdentityFile ~/.ssh/id_ed25519" in conf
     # Same key on a second run.
     _run(rig, "controller", "apply_ssh_access")
     assert (rig / "src" / "controller_key.pub").read_text().strip() == pub

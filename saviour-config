@@ -2603,12 +2603,19 @@ _ssh_ensure_controller_key() {
     chown pi:pi "$SSH_CTL_KEY" "$SSH_CTL_KEY.pub" 2>/dev/null || true
     chmod 600 "$SSH_CTL_KEY"
     chmod 644 "$SSH_CTL_KEY.pub"
+    # Any IdentityFile in the config stops ssh trying its default keys, so
+    # they're listed too: without them pi's own ~/.ssh/id_ed25519 was never
+    # offered and git push to GitHub failed (2026-11-05). Missing files are
+    # skipped; a heredoc never expands ~, so ssh expands it per user.
     cat > "$SSH_CLIENT_DIR/50-saviour-controller.conf" <<EOF
 # Managed by saviour-config: the controller's own key, for its SSH to its
-# modules (plans/ssh-certificate-auth.md). Added to, not replacing, the
-# user's usual keys.
+# modules (plans/ssh-certificate-auth.md), plus ssh's default keys, which
+# any IdentityFile line would otherwise switch off.
 Match localuser pi,root
     IdentityFile $SSH_CTL_KEY
+    IdentityFile ~/.ssh/id_ed25519
+    IdentityFile ~/.ssh/id_ecdsa
+    IdentityFile ~/.ssh/id_rsa
 EOF
     chmod 644 "$SSH_CLIENT_DIR/50-saviour-controller.conf"
 }

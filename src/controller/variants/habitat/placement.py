@@ -25,7 +25,9 @@ import time
 from collections.abc import Callable
 
 CAMERA = "camera"
+MIC = "mic"
 AUDIOMOTH = "audiomoth"
+KIND_NAMES = {CAMERA: "cameras", MIC: "microphone modules", AUDIOMOTH: "AudioMoths"}
 CHANGES_FILE = "placement_changes.jsonl"
 # An AudioMoth counts as live if its levels arrived this recently.
 SEEN_S = 10.0
@@ -62,6 +64,20 @@ def _labels(m: dict) -> dict:
     return labels if isinstance(labels, dict) else {}
 
 
+def columns_of(boxes: list[str]) -> list[str]:
+    """Column letters of the layout's boxes, in order ('A1' -> 'A')."""
+    return list(dict.fromkeys(_col(b) for b in boxes))
+
+
+def _col(box: str) -> str:
+    return re.match(r"[A-Z]+", box).group(0)
+
+
+def normalise_column(text: object, columns: list[str]) -> str | None:
+    t = _norm(text)
+    return t if t in columns else None
+
+
 def placement_state(modules: dict, boxes: list[str],
                     seen: dict[str, set[str]] | None = None) -> dict:
     """The current placement from the modules' names and labels.
@@ -69,9 +85,14 @@ def placement_state(modules: dict, boxes: list[str],
     ``modules``: facade.get_modules() (id -> dict with type, name, online,
     status, config). ``seen``: module id -> AudioMoth serials heard from
     recently (audio_levels), which also lists ones not yet labelled.
+
+    A microphone module's column is its name ("A"): its AudioMoths' cables
+    only reach that column's boxes, so they're offered (and checked
+    against) those boxes only. A module with no column may use any box.
     """
     seen = seen or {}
-    cameras, moths, problems = [], [], []
+    columns = columns_of(boxes)
+    cameras, mics, moths, problems = [], [], [], []
 
     for mid, m in sorted(modules.items()):
         if is_camera(m):
@@ -85,20 +106,35 @@ def placement_state(modules: dict, boxes: list[str],
             elif box and not _online(m):
                 problems.append(f"{box}: camera {mid} is offline")
         elif is_mic(m):
+            name = m.get("name") or ""
+            column = name if name in columns else None
+            mics.append({"module_id": mid, "name": name, "column": column,
+                         "online": _online(m), "recording": m.get("status") == "RECORDING"})
+            if column is None and normalise_column(name, columns):
+                problems.append(f"Microphone module {mid} is named '{name}', not a "
+                                f"column (did you mean {normalise_column(name, columns)}?)")
             labels = _labels(m)
             heard = seen.get(mid, set())
             for serial in sorted(set(labels) | set(heard)):
                 label = labels.get(serial) or ""
                 box = label if label in boxes else None
                 moths.append({"module_id": mid, "serial": serial, "label": label,
-                              "box": box, "live": serial in heard,
+                              "box": box, "column": column, "live": serial in heard,
                               "online": _online(m)})
                 if box is None and label and normalise_box(label, boxes):
                     problems.append(f"AudioMoth {serial} is labelled '{label}', not on "
                                     f"the map (did you mean {normalise_box(label, boxes)}?)")
+                elif box and column and _col(box) != column:
+                    problems.append(f"{box}: AudioMoth {serial} is on {mid}, which is "
+                                    f"column {column}")
                 elif box and _online(m) and serial not in heard:
                     problems.append(f"{box}: AudioMoth {serial} isn't sending levels "
                                     f"(unplugged, or monitoring off on {mid})")
+
+    for col in columns:
+        on = [x["module_id"] for x in mics if x["column"] == col]
+        if len(on) > 1:
+            problems.append(f"Column {col}: {len(on)} microphone modules ({', '.join(on)})")
 
     by_box = {b: {"id": b, "cameras": [], "audiomoths": []} for b in boxes}
     for c in cameras:
@@ -115,8 +151,9 @@ def placement_state(modules: dict, boxes: list[str],
             problems.append(f"{b['id']}: {len(b['audiomoths'])} AudioMoths "
                             f"({', '.join(b['audiomoths'])})")
 
-    return {"boxes": [by_box[b] for b in boxes], "cameras": cameras,
-            "audiomoths": moths, "problems": problems,
+    return {"boxes": [by_box[b] for b in boxes], "columns": columns,
+            "cameras": cameras, "mics": mics, "audiomoths": moths,
+            "problems": problems,
             "empty": {"cameras": [b for b in boxes if not by_box[b]["cameras"]],
                       "audiomoths": [b for b in boxes if not by_box[b]["audiomoths"]]}}
 
@@ -124,82 +161,112 @@ def placement_state(modules: dict, boxes: list[str],
 def plan(assignments: list[dict], state: dict, boxes: list[str]) -> dict:
     """Turn assignments into per-module config patches and change records.
 
-    Each assignment: ``{"kind": "camera", "module_id", "box"}`` or
-    ``{"kind": "audiomoth", "module_id", "serial", "box"}``; ``box`` None
-    or "" unplaces it. Whatever already sits in a target box (and isn't
-    itself being moved in this batch) is unplaced, so a box never ends up
-    with two cameras or two AudioMoths.
+    Assignments:
+      ``{"kind": "camera", "module_id", "box"}``
+      ``{"kind": "mic", "module_id", "column"}``
+      ``{"kind": "audiomoth", "module_id", "serial", "box"}``
+    An empty/None box or column unplaces it. Whatever already holds a target
+    box or column (and isn't itself moving in this batch) is unplaced, so a
+    box never has two cameras or AudioMoths and a column never two
+    microphone modules. An AudioMoth must go in its module's column (as it
+    is or as this batch sets it).
     Returns ``{"patches": {module_id: patch}, "changes": [...]}``.
     """
+    columns = state.get("columns") or columns_of(boxes)
     cams = {c["module_id"]: c for c in state["cameras"]}
+    mics = {x["module_id"]: x for x in state.get("mics", [])}
     moths = {(a["module_id"], a["serial"]): a for a in state["audiomoths"]}
     target: dict[tuple, str | None] = {}
 
     for a in assignments:
         kind = a.get("kind")
-        raw_box = a.get("box")
-        box = None if raw_box in (None, "") else normalise_box(raw_box, boxes)
-        if raw_box not in (None, "") and box is None:
-            raise PlacementError(f"'{raw_box}' is not a box on the layout")
-        if kind == CAMERA:
-            if a.get("module_id") not in cams:
-                raise PlacementError(f"No camera module '{a.get('module_id')}'")
-            key = (CAMERA, a["module_id"])
-        elif kind == AUDIOMOTH:
-            k = (a.get("module_id"), a.get("serial"))
-            if k not in moths:
-                raise PlacementError(f"No AudioMoth {a.get('serial')} on "
-                                     f"{a.get('module_id')}")
-            key = (AUDIOMOTH, *k)
+        if kind == MIC:
+            raw = a.get("column")
+            spot = None if raw in (None, "") else normalise_column(raw, columns)
+            if raw not in (None, "") and spot is None:
+                raise PlacementError(f"'{raw}' is not a column on the layout")
+            if a.get("module_id") not in mics:
+                raise PlacementError(f"No microphone module '{a.get('module_id')}'")
+            key = (MIC, a["module_id"])
         else:
-            raise PlacementError(f"Unknown kind '{kind}'")
+            raw = a.get("box")
+            spot = None if raw in (None, "") else normalise_box(raw, boxes)
+            if raw not in (None, "") and spot is None:
+                raise PlacementError(f"'{raw}' is not a box on the layout")
+            if kind == CAMERA:
+                if a.get("module_id") not in cams:
+                    raise PlacementError(f"No camera module '{a.get('module_id')}'")
+                key = (CAMERA, a["module_id"])
+            elif kind == AUDIOMOTH:
+                k = (a.get("module_id"), a.get("serial"))
+                if k not in moths:
+                    raise PlacementError(f"No AudioMoth {a.get('serial')} on "
+                                         f"{a.get('module_id')}")
+                key = (AUDIOMOTH, *k)
+            else:
+                raise PlacementError(f"Unknown kind '{kind}'")
         if key in target:
             raise PlacementError(f"{key[-1]} is assigned twice")
-        target[key] = box
+        target[key] = spot
 
-    for kind in (CAMERA, AUDIOMOTH):
-        taken = [b for k, b in target.items() if k[0] == kind and b]
-        dup = {b for b in taken if taken.count(b) > 1}
+    for kind in (CAMERA, MIC, AUDIOMOTH):
+        taken = [s for k, s in target.items() if k[0] == kind and s]
+        dup = {s for s in taken if taken.count(s) > 1}
         if dup:
-            raise PlacementError(f"Two {kind}s assigned to {', '.join(sorted(dup))}")
+            raise PlacementError(f"Two {KIND_NAMES[kind]} assigned to {', '.join(sorted(dup))}")
 
-    # Displace current occupants of target boxes that aren't moving.
-    for kind, current in ((CAMERA, {(CAMERA, c["module_id"]): c["box"] for c in cams.values()}),
-                          (AUDIOMOTH, {(AUDIOMOTH, *k): a["box"] for k, a in moths.items()})):
-        wanted = {b for k, b in target.items() if k[0] == kind and b}
-        for key, box in current.items():
-            if box in wanted and key not in target:
+    # Each microphone module's column after this batch.
+    column_of = {mid: target.get((MIC, mid), x["column"]) for mid, x in mics.items()}
+    for key, box in target.items():
+        if key[0] == AUDIOMOTH and box:
+            col = column_of.get(key[1])
+            if col and _col(box) != col:
+                raise PlacementError(f"{box} isn't in column {col}, where {key[1]} "
+                                     f"(AudioMoth {key[2]}) is")
+
+    # Displace current occupants of target spots that aren't moving.
+    current = {
+        CAMERA: {(CAMERA, mid): c["box"] for mid, c in cams.items()},
+        MIC: {(MIC, mid): x["column"] for mid, x in mics.items()},
+        AUDIOMOTH: {(AUDIOMOTH, *k): a["box"] for k, a in moths.items()},
+    }
+    for kind, spots in current.items():
+        wanted = {s for k, s in target.items() if k[0] == kind and s}
+        for key, spot in spots.items():
+            if spot in wanted and key not in target:
                 target[key] = None
 
     patches: dict[str, dict] = {}
     changes = []
-    for key, box in sorted(target.items(), key=lambda kv: tuple(map(str, kv[0]))):
-        if key[0] == CAMERA:
-            mid = key[1]
-            before = cams[mid]["name"]
-            after = box or ""
-            if before == after or (not box and cams[mid]["box"] is None):
+    for key, spot in sorted(target.items(), key=lambda kv: tuple(map(str, kv[0]))):
+        kind, mid = key[0], key[1]
+        if kind in (CAMERA, MIC):
+            item = cams[mid] if kind == CAMERA else mics[mid]
+            placed = item["box"] if kind == CAMERA else item["column"]
+            if item["name"] == (spot or "") or (not spot and placed is None):
                 continue
-            patches.setdefault(mid, {})["module"] = {"name": after}
-            changes.append({"kind": CAMERA, "module_id": mid, "serial": None,
-                            "before": cams[mid]["box"], "after": box})
+            patches.setdefault(mid, {})["module"] = {"name": spot or ""}
+            changes.append({"kind": kind, "module_id": mid, "serial": None,
+                            "before": placed, "after": spot})
         else:
-            mid, serial = key[1], key[2]
+            serial = key[2]
             moth = moths[(mid, serial)]
-            after = box or ""
-            if moth["label"] == after or (not box and moth["box"] is None):
+            if moth["label"] == (spot or "") or (not spot and moth["box"] is None):
                 continue
-            patches.setdefault(mid, {}).setdefault("audiomoth_labels", {})[serial] = after
+            patches.setdefault(mid, {}).setdefault("audiomoth_labels", {})[serial] = spot or ""
             changes.append({"kind": AUDIOMOTH, "module_id": mid, "serial": serial,
-                            "before": moth["box"], "after": box})
+                            "before": moth["box"], "after": spot})
     return {"patches": patches, "changes": changes}
 
 
 def parse_import(text: str, state: dict, boxes: list[str]) -> tuple[list[dict], list[str]]:
-    """Pasted ``<camera module id | AudioMoth serial>, <box>`` lines (comma,
-    tab or spaces; '#' comments and a header line are skipped) into
-    assignments. Returns (assignments, errors)."""
+    """Pasted lines into assignments: ``<camera module id>, <box>``,
+    ``<microphone module id>, <column>`` or ``<AudioMoth serial>, <box>``
+    (comma, tab or spaces; '#' comments and a header line are skipped).
+    Returns (assignments, errors)."""
+    columns = state.get("columns") or columns_of(boxes)
     cams = {c["module_id"].upper(): c for c in state["cameras"]}
+    mics = {x["module_id"].upper(): x for x in state.get("mics", [])}
     moths: dict[str, list[dict]] = {}
     for a in state["audiomoths"]:
         moths.setdefault(a["serial"].upper(), []).append(a)
@@ -213,16 +280,25 @@ def parse_import(text: str, state: dict, boxes: list[str]) -> tuple[list[dict], 
         if len(parts) == 1:
             parts = line.split()
         if len(parts) != 2:
-            errors.append(f"Line {n}: expected '<id or serial>, <box>', got '{line}'")
+            errors.append(f"Line {n}: expected '<id or serial>, <box or column>', "
+                          f"got '{line}'")
             continue
-        key, raw_box = parts
-        box = normalise_box(raw_box, boxes)
-        if box is None:
-            if not out and not errors and n == 1:
-                continue                      # a header line
-            errors.append(f"Line {n}: '{raw_box}' is not a box on the layout")
-            continue
+        key, raw = parts
         k = key.upper()
+        if k in mics:
+            column = normalise_column(raw, columns)
+            if column is None:
+                errors.append(f"Line {n}: '{raw}' is not a column on the layout")
+            else:
+                out.append({"kind": MIC, "module_id": mics[k]["module_id"],
+                            "column": column})
+            continue
+        box = normalise_box(raw, boxes)
+        if box is None:
+            if not out and not errors and n == 1 and k not in cams and k not in moths:
+                continue                      # a header line
+            errors.append(f"Line {n}: '{raw}' is not a box on the layout")
+            continue
         if k in cams:
             out.append({"kind": CAMERA, "module_id": cams[k]["module_id"], "box": box})
         elif k in moths:
@@ -233,8 +309,8 @@ def parse_import(text: str, state: dict, boxes: list[str]) -> tuple[list[dict], 
             out.append({"kind": AUDIOMOTH, "module_id": a["module_id"],
                         "serial": a["serial"], "box": box})
         else:
-            errors.append(f"Line {n}: '{key}' is not a connected camera module "
-                          f"or a known AudioMoth serial")
+            errors.append(f"Line {n}: '{key}' is not a connected camera or microphone "
+                          f"module, or a known AudioMoth serial")
     return out, errors
 
 

@@ -59,11 +59,14 @@ function MiniMeter({ level }) {
   );
 }
 
-function BoxSelect({ value, boxes, occupant, disabled, onChange }) {
+function BoxSelect({ value, boxes, occupant, disabled, onChange, none = "not placed" }) {
+  // Keep the current value selectable even if it's outside the offered set
+  // (an AudioMoth labelled outside its module's column), so it shows truly.
+  const options = value && !boxes.includes(value) ? [...boxes, value] : boxes;
   return (
     <select value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value || null)}>
-      <option value="">not placed</option>
-      {boxes.map((b) => (
+      <option value="">{none}</option>
+      {options.map((b) => (
         <option key={b} value={b}>
           {b}{occupant(b) && b !== value ? ` (replaces ${occupant(b)})` : ""}
         </option>
@@ -73,9 +76,9 @@ function BoxSelect({ value, boxes, occupant, disabled, onChange }) {
 }
 
 function describe(c) {
-  const what = c.kind === "camera" ? c.module_id : `AudioMoth ${c.serial}`;
-  if (!c.after) return `${what}: ${c.before} → not placed`;
-  return `${what}: ${c.before ?? "not placed"} → ${c.after}`;
+  const what = c.kind === "audiomoth" ? `AudioMoth ${c.serial}` : c.module_id;
+  const spot = (v) => (v ? (c.kind === "mic" ? `column ${v}` : v) : "not placed");
+  return `${what}: ${spot(c.before)} → ${spot(c.after)}`;
 }
 
 function PlacementPanel({ modules, onClose }) {
@@ -94,6 +97,10 @@ function PlacementPanel({ modules, onClose }) {
     (acc[a.module_id] ??= []).push(a);
     return acc;
   }, {}), [state]);
+  const micIn = useMemo(() => Object.fromEntries(
+    (state?.mics ?? []).filter((m) => m.column).map((m) => [m.column, m.module_id])), [state]);
+  // A module's AudioMoths only reach its own column's boxes.
+  const boxesFor = (column) => (column ? boxes.filter((b) => b.replace(/\d+$/, "") === column) : boxes);
 
   const place = (assignment) => send("placement_apply", { assignments: [assignment] });
 
@@ -101,6 +108,7 @@ function PlacementPanel({ modules, onClose }) {
 
   const placedCams = state.cameras.filter((c) => c.box).length;
   const placedMoths = state.audiomoths.filter((a) => a.box).length;
+  const placedMics = state.mics.filter((m) => m.column).length;
 
   return (
     <aside className="placement-panel">
@@ -109,7 +117,8 @@ function PlacementPanel({ modules, onClose }) {
         <button type="button" className="placement-close" onClick={onClose} title="Close">×</button>
       </header>
       <p className="placement-summary">
-        {placedCams}/{boxes.length} cameras · {placedMoths}/{boxes.length} AudioMoths placed
+        {placedCams}/{boxes.length} cameras · {placedMics}/{state.columns.length} mic columns ·{" "}
+        {placedMoths}/{boxes.length} AudioMoths placed
       </p>
       {!isLoggedIn && <p className="placement-note">Sign in to change placement.</p>}
       {error && <p className="placement-error">{error}</p>}
@@ -123,27 +132,41 @@ function PlacementPanel({ modules, onClose }) {
       )}
 
       <nav className="placement-tabs">
-        {[["audiomoths", "AudioMoths"], ["cameras", "Cameras"], ["import", "Import"], ["log", "Changes"]].map(([k, label]) => (
+        {[["audiomoths", "Microphones"], ["cameras", "Cameras"], ["import", "Import"], ["log", "Changes"]].map(([k, label]) => (
           <button key={k} type="button" className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{label}</button>
         ))}
       </nav>
 
       {tab === "audiomoths" && (
         <div className="placement-list">
-          <p className="placement-hint">Make a noise next to a box and watch which meter jumps.</p>
-          {Object.keys(mothsByModule).length === 0 && <p className="placement-empty">No AudioMoths reporting.</p>}
-          {Object.entries(mothsByModule).map(([mid, list]) => (
-            <section key={mid}>
-              <h4>{modules?.[mid]?.name || mid}</h4>
-              {list.map((a) => (
+          <p className="placement-hint">
+            Set each microphone module's column first; its AudioMoths can then
+            only go in that column. Make a noise next to a box and watch which
+            meter jumps.
+          </p>
+          {state.mics.length === 0 && <p className="placement-empty">No microphone modules connected.</p>}
+          {state.mics.map((m) => (
+            <section key={m.module_id} className="placement-mic">
+              <div className="placement-row placement-mic-head">
+                <span className={`placement-dot${m.online ? "" : " placement-dot--off"}`} />
+                <span className="placement-id">{m.module_id}</span>
+                <BoxSelect value={m.column} boxes={state.columns} none="no column"
+                  occupant={(c) => micIn[c]} disabled={!isLoggedIn || m.recording}
+                  onChange={(column) => send("placement_apply", {
+                    assignments: [{ kind: "mic", module_id: m.module_id, column }] })} />
+              </div>
+              {(mothsByModule[m.module_id] ?? []).length === 0 && (
+                <p className="placement-empty">No AudioMoths reporting.</p>
+              )}
+              {(mothsByModule[m.module_id] ?? []).map((a) => (
                 <div key={a.serial} className="placement-row">
                   <span className="placement-id" title={a.live ? "Sending levels" : "Not heard recently"}>
                     {a.serial}
                   </span>
-                  <MiniMeter level={levels[`${mid}:${a.serial}`]} />
-                  <BoxSelect value={a.box} boxes={boxes} occupant={(b) => mothIn[b]}
-                    disabled={!isLoggedIn}
-                    onChange={(box) => place({ kind: "audiomoth", module_id: mid, serial: a.serial, box })} />
+                  <MiniMeter level={levels[`${m.module_id}:${a.serial}`]} />
+                  <BoxSelect value={a.box} boxes={boxesFor(m.column)} occupant={(b) => mothIn[b]}
+                    disabled={!isLoggedIn || m.recording}
+                    onChange={(box) => place({ kind: "audiomoth", module_id: m.module_id, serial: a.serial, box })} />
                 </div>
               ))}
             </section>
@@ -170,10 +193,11 @@ function PlacementPanel({ modules, onClose }) {
       {tab === "import" && (
         <div className="placement-import">
           <p className="placement-hint">
-            One per line: a camera module id or AudioMoth serial, then its box
-            (comma, tab or space between). Boxes not listed keep what they have.
+            One per line: a camera module id or AudioMoth serial and its box,
+            or a microphone module id and its column (comma, tab or space
+            between). Anything not listed keeps what it has.
           </p>
-          <textarea rows={10} value={text} placeholder={"hailo_camera_3606, A1\n24E1440A5F2C, A1"}
+          <textarea rows={10} value={text} placeholder={"hailo_camera_3606, A1\nmicrophone_4703, A\n24E1440A5F2C, A1"}
                     onChange={(e) => { setText(e.target.value); clearPreview(); }} />
           <button type="button" disabled={!isLoggedIn || !text.trim()}
                   onClick={() => send("placement_preview_import", { text })}>

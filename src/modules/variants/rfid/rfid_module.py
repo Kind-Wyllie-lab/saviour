@@ -33,6 +33,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 sys.path.append(os.path.dirname(__file__))
 from rfid_bus import RS485Bus
+from rfid_mock import MOCK_PORT, MockBusSerial, MockOptions
 from rfid_store import KIND_READ, KIND_ZERO, RfidStore, StoredRead
 from rfid_sync import DbSettings, RfidSync, load_settings, save_settings
 
@@ -41,6 +42,9 @@ from modules.module import Module, check, command
 from src.shared.supervised import supervise
 
 DEFAULT_STORE_PATH = "/var/lib/saviour/rfid/reads.db"
+# rfid.mock.enabled swaps the store for this sibling file, so simulated reads
+# never mix with real ones or reach the database.
+MOCK_STORE_SUFFIX = "_mock"
 
 
 @dataclass
@@ -543,6 +547,10 @@ class RFIDModule(Module):
         if any(not k.startswith(live) for k in rfid_keys):
             self.logger.info("RFID config changed - reconnecting bus")
             self._teardown_bus()
+            # Mock on/off switches to the other store file.
+            if any(k.startswith("rfid.mock") for k in rfid_keys):
+                self._stop_store()
+                self._start_store()
             self._bring_up_bus()
 
     @check()
@@ -578,9 +586,21 @@ class RFIDModule(Module):
     # Local store + database sync
     # ══════════════════════════════════════════════════════════════════════
 
+    def _mock_enabled(self) -> bool:
+        return bool(self.config.get("rfid.mock.enabled", False))
+
     def _store_path(self) -> str:
-        return (self.config.get("rfid.store.path", DEFAULT_STORE_PATH)
+        path = (self.config.get("rfid.store.path", DEFAULT_STORE_PATH)
                 or DEFAULT_STORE_PATH)
+        if self._mock_enabled():
+            root, ext = os.path.splitext(path)
+            path = f"{root}{MOCK_STORE_SUFFIX}{ext}"
+        return path
+
+    def _sync_settings(self) -> DbSettings:
+        """The saved database settings, or none (sync off) on a simulated
+        bus, so fake reads never reach the long-term database."""
+        return DbSettings() if self._mock_enabled() else self._db_settings
 
     def _db_settings_path(self) -> str:
         return os.path.join(os.path.dirname(self._store_path()), "db_settings.json")
@@ -603,7 +623,7 @@ class RFIDModule(Module):
         self._store = store
         self._store_error = None
         self._sync = RfidSync(store, module_id=lambda: self.module_id,
-                              get_settings=lambda: self._db_settings,
+                              get_settings=self._sync_settings,
                               logger=self.logger)
         self._apply_sync_config()
         self._db_stop.clear()
@@ -651,6 +671,8 @@ class RFIDModule(Module):
         except Exception as e:
             status = {"state": "error", "last_error": f"status: {e}"}
         status["zero_reads"] = self._zero_reads
+        if self._mock_enabled():
+            status["mock"] = True
         return status
 
     @command()
@@ -706,9 +728,16 @@ class RFIDModule(Module):
     def _bring_up_bus(self) -> None:
         port = self.config.get("rfid.serial_port", "") or ""
         baud = int(self.config.get("rfid.baud", 19200))
+        opener = None
+        if self._mock_enabled():
+            opts = MockOptions.from_config(self.config.get)
+            port, opener = MOCK_PORT, lambda: MockBusSerial(opts)
+            self.logger.warning(
+                f"RFID: SIMULATED bus ({opts.units} units, {opts.tags} tags); "
+                "rfid.mock.enabled is on, reads are not real")
         connected = False
         try:
-            connected = self.bus.connect(port=port, baud=baud)
+            connected = self.bus.connect(port=port, baud=baud, opener=opener)
         except Exception as e:
             self.logger.warning(f"RFID: bus connect failed: {e}")
 

@@ -220,12 +220,17 @@ class RS485Bus:
 
     # ── Connection ────────────────────────────────────────────────────────────
 
-    def connect(self, port: str = '', baud: int = BAUD_DEFAULT) -> bool:
+    def connect(self, port: str = '', baud: int = BAUD_DEFAULT,
+                opener: Callable[[], object] | None = None) -> bool:
         """
         Open the serial port.  If *port* is empty the first auto-detected
         USB-serial adapter is used.  Returns True on success.
+
+        *opener*, if given, returns the serial-like object to use instead of
+        opening *port* (the simulated bus, ``rfid_mock.MockBusSerial``);
+        *port* is then only a label.
         """
-        if not port:
+        if opener is None and not port:
             ports = self.find_ports()
             if not ports:
                 log.error('No USB-serial port found')
@@ -234,14 +239,17 @@ class RS485Bus:
             log.info('Auto-selected port: %s', port)
 
         try:
-            self._serial = serial.Serial(
-                port=port,
-                baudrate=baud,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=0.1,
-            )
+            if opener is not None:
+                self._serial = opener()
+            else:
+                self._serial = serial.Serial(
+                    port=port,
+                    baudrate=baud,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0.1,
+                )
         except serial.SerialException as exc:
             log.error('Cannot open %s: %s', port, exc)
             self._serial = None

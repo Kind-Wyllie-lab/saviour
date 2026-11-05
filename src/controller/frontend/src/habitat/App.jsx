@@ -12,6 +12,7 @@ import Guide from '../basic/pages/Guide/Guide';
 
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
+import Gates from "./pages/Gates/Gates";
 import HabitatRecordingControl from "./components/HabitatRecordingControl/HabitatRecordingControl";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
@@ -26,6 +27,7 @@ const pages = [
   { label: "Dashboard", path: "/" },
   { label: "Settings", path: "/settings" },
   { label: "Monitor", path: "/monitor" },
+  { label: "Gates", path: "/gates" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
@@ -46,6 +48,7 @@ function App() {
             <Route path="/" element={<HabitatDashboard />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/monitor" element={<Monitor />} />
+            <Route path="/gates" element={<Gates />} />
             <Route path="/recording/*" element={<Recording />} />
             <Route path="/system" element={<System />} />
             <Route path="/storage" element={<Storage />} />

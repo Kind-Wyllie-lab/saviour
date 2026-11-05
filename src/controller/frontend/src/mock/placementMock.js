@@ -9,6 +9,8 @@ const BOXES = ["A", "B", "C", "D"].flatMap((c) => [1, 2, 3, 4].map((r) => `${c}$
 let p = null;
 const init = () => ({
   cameras: { "camera-module-a1b2": "A1", "camera-module-c3d4": "B1", "hailo-camera-3606": "" },
+  // One microphone module per column; D's not given its column yet.
+  mics: { "microphone-mock-a": "A", "microphone-mock-b": "B", "microphone-mock-c": "C", "microphone-mock-d": "" },
   moths: Object.fromEntries(["A", "B", "C", "D"].map((col) => [
     `microphone-mock-${col.toLowerCase()}`,
     Object.fromEntries([
@@ -24,15 +26,19 @@ function state() {
   const box = (v) => (BOXES.includes(v) ? v : null);
   const cameras = Object.entries(p.cameras).map(([id, name]) => (
     { module_id: id, name: name || id, box: box(name), online: true, recording: false }));
+  const columns = ["A", "B", "C", "D"];
+  const mics = Object.entries(p.mics).map(([id, name]) => (
+    { module_id: id, name, column: columns.includes(name) ? name : null, online: true, recording: false }));
+  const colOf = Object.fromEntries(mics.map((m) => [m.module_id, m.column]));
   const audiomoths = Object.entries(p.moths).flatMap(([mid, labels]) =>
     Object.entries(labels).map(([serial, label]) => (
-      { module_id: mid, serial, label, box: box(label), live: true, online: true })));
+      { module_id: mid, serial, label, box: box(label), column: colOf[mid], live: true, online: true })));
   const boxes = BOXES.map((b) => ({
     id: b,
     cameras: cameras.filter((c) => c.box === b).map((c) => c.module_id),
     audiomoths: audiomoths.filter((a) => a.box === b).map((a) => a.serial),
   }));
-  return { boxes, cameras, audiomoths, problems: [], changes: p.changes,
+  return { boxes, columns, cameras, mics, audiomoths, problems: [], changes: p.changes,
     empty: { cameras: boxes.filter((b) => !b.cameras.length).map((b) => b.id),
       audiomoths: boxes.filter((b) => !b.audiomoths.length).map((b) => b.id) } };
 }
@@ -41,7 +47,14 @@ function apply(assignments, reason) {
   const changes = [];
   for (const a of assignments) {
     const box = a.box || "";
-    if (a.kind === "camera") {
+    if (a.kind === "mic") {
+      const col = a.column || "";
+      for (const [id, name] of Object.entries(p.mics)) {
+        if (col && name === col && id !== a.module_id) { p.mics[id] = ""; changes.push({ kind: "mic", module_id: id, serial: null, before: col, after: null }); }
+      }
+      changes.push({ kind: "mic", module_id: a.module_id, serial: null, before: p.mics[a.module_id] || null, after: col || null });
+      p.mics[a.module_id] = col;
+    } else if (a.kind === "camera") {
       for (const [id, name] of Object.entries(p.cameras)) {
         if (box && name === box && id !== a.module_id) { p.cameras[id] = ""; changes.push({ kind: "camera", module_id: id, serial: null, before: box, after: null }); }
       }
@@ -70,6 +83,8 @@ function parse(text) {
     const line = raw.split("#")[0].trim();
     if (!line) return;
     const [key, b] = line.split(/[,\t;]|\s+/).filter(Boolean);
+    const mic = s.mics.find((m) => m.module_id.toUpperCase() === key.toUpperCase());
+    if (mic) { assignments.push({ kind: "mic", module_id: mic.module_id, column: (b || "").toUpperCase() }); return; }
     const box = (b || "").toUpperCase();
     if (!BOXES.includes(box)) { if (i > 0) errors.push(`Line ${i + 1}: '${b}' is not a box on the layout`); return; }
     const cam = s.cameras.find((c) => c.module_id.toUpperCase() === key.toUpperCase());

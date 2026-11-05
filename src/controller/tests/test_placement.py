@@ -150,3 +150,64 @@ def test_service_preview_import(tmp_path):
     assert p["assignments"] == [{"kind": "camera", "module_id": "camera_3", "box": "A1"}]
     assert {c["module_id"] for c in p["changes"]} == {"camera_1", "camera_3"}
     assert len(p["errors"]) == 1
+
+
+def _col_modules():
+    mods = _modules()
+    mods["microphone_a"]["name"] = "A"
+    mods["microphone_b"] = _mic({"T1": "B1"})
+    mods["microphone_b"]["name"] = "b"                # near-miss column
+    return mods
+
+
+def test_state_reads_mic_columns_and_flags_cross_column_labels():
+    mods = _col_modules()
+    mods["microphone_a"]["config"]["audiomoth_labels"]["S2"] = "C3"
+    s = pl.placement_state(mods, BOXES, {"microphone_a": {"S1", "S2"}})
+    assert s["columns"] == ["A", "B", "C", "D"]
+    cols = {x["module_id"]: x["column"] for x in s["mics"]}
+    assert cols == {"microphone_a": "A", "microphone_b": None}
+    assert any("S2 is on microphone_a, which is column A" in p for p in s["problems"])
+    assert any("microphone_b" in p and "did you mean B" in p for p in s["problems"])
+
+
+def test_plan_keeps_audiomoths_in_their_modules_column():
+    s = pl.placement_state(_col_modules(), BOXES, {"microphone_a": {"S1", "S2"}})
+    with pytest.raises(pl.PlacementError, match="isn't in column A"):
+        pl.plan([{"kind": "audiomoth", "module_id": "microphone_a",
+                  "serial": "S2", "box": "B2"}], s, BOXES)
+    # Moving the module to column B in the same batch makes B2 fine.
+    out = pl.plan([{"kind": "mic", "module_id": "microphone_a", "column": "b"},
+                   {"kind": "audiomoth", "module_id": "microphone_a",
+                    "serial": "S2", "box": "B2"}], s, BOXES)
+    assert out["patches"]["microphone_a"] == {
+        "module": {"name": "B"}, "audiomoth_labels": {"S2": "B2"}}
+
+
+def test_plan_mic_column_displaces_the_previous_module():
+    mods = _col_modules()
+    mods["microphone_b"]["name"] = "B"
+    s = pl.placement_state(mods, BOXES, {})
+    out = pl.plan([{"kind": "mic", "module_id": "microphone_a", "column": "B"}], s, BOXES)
+    assert out["patches"]["microphone_b"] == {"module": {"name": ""}}
+    assert ("mic", "microphone_a", "A", "B") in {
+        (c["kind"], c["module_id"], c["before"], c["after"]) for c in out["changes"]}
+    with pytest.raises(pl.PlacementError, match="not a column"):
+        pl.plan([{"kind": "mic", "module_id": "microphone_a", "column": "Q"}], s, BOXES)
+
+
+def test_unplaced_module_may_use_any_box():
+    s = pl.placement_state(_modules(), BOXES, {"microphone_a": {"S2"}})   # named "mic"
+    out = pl.plan([{"kind": "audiomoth", "module_id": "microphone_a",
+                    "serial": "S2", "box": "D4"}], s, BOXES)
+    assert out["patches"]["microphone_a"] == {"audiomoth_labels": {"S2": "D4"}}
+
+
+def test_parse_import_takes_mic_columns():
+    s = pl.placement_state(_col_modules(), BOXES, {"microphone_a": {"S2"}})
+    assignments, errors = pl.parse_import(
+        "microphone_b, C\nS2, A3\nmicrophone_a, A9", s, BOXES)
+    assert assignments == [
+        {"kind": "mic", "module_id": "microphone_b", "column": "C"},
+        {"kind": "audiomoth", "module_id": "microphone_a", "serial": "S2", "box": "A3"}]
+    assert errors == ["Line 3: 'A9' is not a column on the layout"]

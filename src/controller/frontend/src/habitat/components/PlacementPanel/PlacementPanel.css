@@ -96,6 +96,13 @@
 }
 .placement-row select { flex: none; max-width: 150px; }
 
+.placement-mic {
+    padding: 6px 0;
+    border-top: 1px solid var(--border-color);
+}
+.placement-mic-head { font-weight: 600; margin-bottom: 4px; }
+.placement-mic .placement-row:not(.placement-mic-head) { padding-left: 14px; }
+
 .placement-dot {
     width: 8px;
     height: 8px;

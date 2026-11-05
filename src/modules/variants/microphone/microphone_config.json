@@ -46,6 +46,7 @@
         "freq_hi_hz": 70000,
         "time_window_s": 3.0,
         "peak_hold_s": 2.0,
+        "levels_hz": 2.0,
         "plot_mode": "spectrogram",
         "freq_range": "band",
         "layout": "stacked",

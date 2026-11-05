@@ -4,9 +4,8 @@ import "./HabitatDashboard.css";
 import useModules from "/src/hooks/useModules";
 import useSessions from "/src/hooks/useSessions";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
-import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
+import HabitatLiveMap from "../../components/HabitatLiveMap/HabitatLiveMap";
 import HabitatModuleStatusList from "../../components/HabitatModuleStatusList/HabitatModuleStatusList";
-import HabitatMicrophoneStrip from "../../components/HabitatMicrophoneStrip/HabitatMicrophoneStrip";
 
 function HabitatDashboard() {
   const { modules } = useModules();
@@ -20,14 +19,10 @@ function HabitatDashboard() {
           <HabitatModuleStatusList modules={modules} sessions={sessionList} />
         </section>
 
+        {/* Cameras, gate reads and AudioMoth levels on one map; the full
+            camera grid and spectrograms are on the Monitor page. */}
         <section className="habitat-dashboard-center">
-          <div className="livestream-square">
-            <HabitatLivestreamGrid modules={modules} />
-          </div>
-        </section>
-
-        <section className="habitat-dashboard-mics">
-          <HabitatMicrophoneStrip modules={modules} />
+          <HabitatLiveMap modules={modules} />
         </section>
       </div>
     </main>

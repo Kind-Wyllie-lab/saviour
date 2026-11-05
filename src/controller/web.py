@@ -4598,6 +4598,16 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     self.socketio.emit(status_type, event)
                     self._publish_api_event(status_type, event)
 
+                # Per-AudioMoth level/peak/clip from microphone modules at
+                # monitoring.levels_hz (habitat dashboard meters). Display
+                # only, so Socket.IO and not the SSE stream.
+                case "audio_levels":
+                    self.socketio.emit("audio_levels", {
+                        "module_id": module_id,
+                        "levels": status.get("levels") or [],
+                        "timestamp": status.get("timestamp"),
+                    })
+
                 case "rfid_bus_status":
                     self.socketio.emit("module_status",
                                        {**status, "module_id": module_id})

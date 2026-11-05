@@ -1,7 +1,6 @@
 import "./HabitatGrid.css";
+import { BOX, gatePoint } from "./geometry";
 
-// Box edge in SVG units; the SVG scales to its container.
-const BOX = 120;
 const PAD = 14;
 const GATE_R = 7;
 
@@ -10,17 +9,6 @@ function gateTone(gate, entry) {
   if (!gate.fitted) return "unfitted";
   if (!entry) return "unmapped";
   return entry.status;              // mapped | closed | not_fitted | faulty
-}
-
-// Position of gate `index` of `count` along its wall: top to bottom on a
-// vertical wall, left to right on a horizontal one (gate_map.py naming).
-function gatePoint(wall, box, index, count) {
-  const t = (index + 1) / (count + 1);
-  const [a] = wall.boxes.map((id) => box[id]);
-  if (wall.orientation === "vertical") {
-    return { x: (a.col + 1) * BOX, y: (a.row + t) * BOX };
-  }
-  return { x: (a.col + t) * BOX, y: (a.row + 1) * BOX };
 }
 
 /**

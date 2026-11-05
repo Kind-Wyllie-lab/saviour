@@ -116,13 +116,17 @@ class Controller(ABC):
         self.listen_host = resolve_listen_host(
             self.config.get("interface.listen_on", "lan"), self.network.ip)
         self.logger.info(f"Controller services listening on {self.listen_host}")
+        # Before Communication: its constructor starts the listener thread,
+        # and a module reconnecting during the (slow) Web init otherwise hit
+        # handle_status_update with no self.modules yet ("'HabitatController'
+        # object has no attribute 'modules'", basic->habitat switch 2026-11-05).
+        self.modules = Modules()
         self.communication = Communication(
             status_callback=self.handle_status_update, bind_host=self.listen_host)
         self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
         self.web.host = "0.0.0.0" if self.listen_host == "*" else self.listen_host
         self.health = Health(self.config)
-        self.modules = Modules()
         self.recording = Recording()
         self.export_queue = ExportQueue(self.config)
         # module_id -> latest sync_selftest_result (docs/AV_SYNC_TEST.md)

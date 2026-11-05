@@ -471,6 +471,16 @@ class Modules:
             export.update({k: v for k, v in creds.items()
                            if k in known and v not in (None, "")})
             state.true_config = {**state.true_config, "export": export}
+            # The controller sent these credentials, so they are the target
+            # too. Without this, a target captured from an earlier get_config
+            # (e.g. before the export share changed: basic->habitat switch,
+            # 2026-11-05) kept the old share and the module read FAILED for
+            # good although it held exactly what the controller pushed.
+            if state.target_config:
+                target_export = dict(state.target_config.get("export") or {})
+                target_export.update({k: v for k, v in creds.items()
+                                      if k in target_export and v not in (None, "")})
+                state.target_config = {**state.target_config, "export": target_export}
             if module_id in self._modules:
                 self._modules[module_id].config = state.true_config
             if state.target_config and state.status != ConfigSyncStatus.PENDING:

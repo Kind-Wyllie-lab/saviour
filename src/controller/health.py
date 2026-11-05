@@ -103,6 +103,9 @@ class Health:
         # (source, thread name) pairs currently alerted as crash-looping;
         # source is "controller" or a module_id.
         self._crash_looping_alerted: set[tuple[str, str]] = set()
+        # module_id -> "warning" | "error": the RFID DB backlog level already
+        # alerted, so a persisting backlog alerts once per level, not per cycle.
+        self._rfid_db_alerted: dict[str, str] = {}
 
         # Modules explicitly force-offlined (e.g. mDNS goodbye). These must not
         # be re-marked online by stale ZMQ messages or the heartbeat monitor loop;
@@ -469,6 +472,7 @@ class Health:
             if cycle_count % 2 == 0:
                 self._check_ptp_health()
                 self._check_supervised_threads()
+                self._check_rfid_db_sync()
 
             stop_event.wait(self.monitor_interval)
 
@@ -873,6 +877,64 @@ class Health:
             self.logger.info(f"Supervised thread '{name}' on {source} is stable again")
         self._crash_looping_alerted = looping
 
+
+    # Oldest unsynced RFID read older than this -> warning / error. Normal
+    # lag is one sync interval (~5 s), so 5 min means the sync is failing.
+    RFID_DB_WARN_S = 5 * 60
+    RFID_DB_ERROR_S = 60 * 60
+
+    def _check_rfid_db_sync(self) -> None:
+        """Alert when an RFID module's reads stop reaching the long-term
+        database. Reads are safe in the module's local store meanwhile, so
+        this never blocks recording; it says the server, network or
+        credentials need attention."""
+        seen = set()
+        for module_id, h in list(self.module_health.items()):
+            db = h.get("rfid_db")
+            if h.get("status") != "online" or not isinstance(db, dict):
+                continue
+            seen.add(module_id)
+            age = db.get("oldest_unsynced_age_s")
+            state = db.get("state")
+            if state == "not_configured" or age is None:
+                level = None
+            elif age >= self.RFID_DB_ERROR_S:
+                level = "error"
+            elif age >= self.RFID_DB_WARN_S:
+                level = "warning"
+            else:
+                level = None
+            if state == "store_error":
+                level = "error"
+
+            previous = self._rfid_db_alerted.get(module_id)
+            if level is None:
+                if previous:
+                    self.logger.info(f"RFID DB sync on {module_id} caught up")
+                    del self._rfid_db_alerted[module_id]
+                continue
+            if previous == level or (previous == "error" and level == "warning"):
+                continue
+            self._rfid_db_alerted[module_id] = level
+            if state == "store_error":
+                message = (f"The local RFID store on {module_id} could not be "
+                           f"opened ({db.get('last_error')}); reads are not "
+                           "being logged to the database.")
+            else:
+                message = (
+                    f"{db.get('backlog')} RFID read(s) on {module_id} are "
+                    f"waiting to reach {db.get('host')}/{db.get('database')}; "
+                    f"the oldest is {age / 60:.0f} min old. They are kept on "
+                    f"the module. Last error: {db.get('last_error') or 'none'}")
+            self.logger.warning(f"RFID DB sync: {message}")
+            self.facade.send_alert(
+                key=f"rfid_db_sync_{module_id}_{level}",
+                title=f"RFID database sync behind — {module_id}",
+                message=message,
+                severity=level,
+            )
+        for module_id in set(self._rfid_db_alerted) - seen:
+            del self._rfid_db_alerted[module_id]
 
     def start_monitoring(self):
         """Start the health monitoring thread"""

@@ -2483,7 +2483,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             # share credentials (vs. e.g. an unrelated controller.name edit)
             # -- auto-sync should fire on a real credential change, not on
             # every save regardless of section.
-            old_export = self.facade.get_config().get("export", {})
+            old_config = self.facade.get_config()
+            old_export = old_config.get("export", {})
+            old_rfid_db = old_config.get("rfid_db", {})
             new_config = _filter_private_keys(data.get("config", {}))
             # custom_themes rides in the config payload for the frontend's
             # convenience but lives only as on-disk theme files -- never let a
@@ -2512,6 +2514,34 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 creds = self.facade.get_export_credentials()
                 if creds:
                     _sync_export_to_all_modules(creds)
+
+            # Same rule for the RFID database settings: a real change is
+            # pushed to every RFID module straight away.
+            if "rfid_db" in new_config and new_config["rfid_db"] != old_rfid_db:
+                self.socketio.emit("rfid_db_sync_result",
+                                   self.facade.push_rfid_db_settings_to_all())
+
+        @self.socketio.on('sync_rfid_db_to_all')
+        def handle_sync_rfid_db_to_all(data=None):
+            """Re-push the saved rfid_db settings to every RFID module."""
+            if not self._require_auth("auth_required"):
+                return
+            self.socketio.emit("rfid_db_sync_result",
+                               self.facade.push_rfid_db_settings_to_all(),
+                               room=request.sid)
+
+        @self.socketio.on('test_rfid_db')
+        def handle_test_rfid_db(data=None):
+            """Ask one RFID module to try its saved database settings; the
+            module's answer comes back as rfid_db_test_result."""
+            if not self._require_auth("auth_required"):
+                return
+            module_id = (data or {}).get("module_id", "")
+            if not self.facade.test_rfid_db(module_id):
+                self.socketio.emit("rfid_db_test_result", {
+                    "module_id": module_id, "ok": False,
+                    "message": "Not a connected RFID module",
+                }, room=request.sid)
 
 
         @self.socketio.on("get_controller_info")
@@ -4482,6 +4512,21 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     self.socketio.emit("ttl_edge", edge)
                     self._publish_api_event("ttl_edge", edge)
 
+                # RFID reads and presence visits (rfid_module.py), fanned out
+                # like ttl_edge: Socket.IO for live monitoring in the web UI
+                # and the /api/v1/events SSE stream for an external experiment
+                # controller to trigger on. The durable copy is the module's
+                # local store + MariaDB sync, not this path (lossy by design).
+                case "rfid_read" | "rfid_enter" | "rfid_exit":
+                    event = {k: v for k, v in status.items() if k != "type"}
+                    event["module_id"] = module_id
+                    self.socketio.emit(status_type, event)
+                    self._publish_api_event(status_type, event)
+
+                case "rfid_bus_status":
+                    self.socketio.emit("module_status",
+                                       {**status, "module_id": module_id})
+
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
                 # Not a session fault -- "error" covers every command (e.g. a failed
@@ -4532,6 +4577,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "sensor_modes": status.get("sensor_modes", []),
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
+                        })
+                    elif command == "rfid_db_test":
+                        self.socketio.emit("rfid_db_test_result", {
+                            "module_id": module_id,
+                            "ok": bool(status.get("ok")),
+                            "message": status.get("message", ""),
+                            "status": status.get("status"),
                         })
                     elif command in ("list_hefs", "fetch_hef", "delete_hef"):
                         self.socketio.emit("hef_list_response", {

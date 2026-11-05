@@ -92,6 +92,10 @@ class ModuleHealthSnapshot:
     # {name: {state, restarts, restarts_last_hour, last_crash, last_error}}.
     # The controller alerts on any that are crash-looping.
     supervised_threads: dict | None = None
+    # RFID only: local read store + MariaDB sync state (RFIDModule.
+    # rfid_db_status): state, backlog, oldest_unsynced_age_s, last_error, ...
+    # The controller alerts when the oldest unsynced read gets old.
+    rfid_db: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

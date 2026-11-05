@@ -159,8 +159,11 @@ class RS485Bus:
         Fired when a unit is first seen AND on every subsequent update
         (firmware/serial/last_seen refresh).  Check unit.address to distinguish.
 
-    on_transponder_read(unit_addr, tid: bytes, type_name: str, timestamp: float)
-        Fired for every spontaneous transponder read frame.
+    on_transponder_read(unit_addr, tid: bytes, type_name: str, timestamp: float,
+                        type_code: int | None)
+        Fired for every spontaneous transponder read frame. ``type_code`` is
+        the raw type byte when it is one of TRANSPONDER_TYPES, else None (the
+        whole content is then the ID).
 
     on_bus_status(connected: bool, port: str)
         Fired on connect and disconnect.
@@ -467,19 +470,22 @@ class RS485Bus:
             # The first byte may be a type indicator (0x20 / 0x13 / 0x15 / 0x17)
             if content:
                 if content[0] in TRANSPONDER_TYPES:
-                    type_name = TRANSPONDER_TYPES[content[0]]
+                    type_code = content[0]
+                    type_name = TRANSPONDER_TYPES[type_code]
                     tid       = content[1:]
                 else:
+                    type_code = None
                     type_name = 'Unknown'
                     tid       = content
 
                 tid_hex = tid.hex().upper()
-                log.info('Transponder read unit %02Xh: %s (%s)',
-                         unit_from, tid_hex, type_name)
+                log.debug('Transponder read unit %02Xh: %s (%s)',
+                          unit_from, tid_hex, type_name)
                 self._register_unit(unit_from, ts=ts)
                 if self.on_transponder_read:
                     try:
-                        self.on_transponder_read(unit_from, tid, type_name, ts)
+                        self.on_transponder_read(unit_from, tid, type_name, ts,
+                                                 type_code)
                     except Exception as exc:
                         log.error('on_transponder_read error: %s', exc)
             return

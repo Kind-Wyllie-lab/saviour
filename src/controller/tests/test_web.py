@@ -2720,3 +2720,72 @@ class TestCropStatusForwarding:
             "type": "crop_editing", "enabled": True, "fov": [4056, 3040]})
         events = [e for e in client.get_received() if e["name"] == "module_status"]
         assert events and events[0]["args"][0]["fov"] == [4056, 3040]
+
+
+class TestRfidStatus:
+    """RFID reads/visits fanned out live (Socket.IO + SSE), the rfid_db
+    settings push on save, and the Test connection relay."""
+
+    def test_rfid_read_reaches_socketio_and_sse(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        q = web._event_subscribe()
+        web.handle_module_status("rfid_ab12", {
+            "type": "rfid_read", "unit_address": 45,
+            "transponder_id": "000807DC1F", "transponder_type": "Trovan Unique",
+            "packet_ts": 1.5, "total_reads": 7})
+        events = [e for e in client.get_received() if e["name"] == "rfid_read"]
+        assert events[0]["args"][0]["module_id"] == "rfid_ab12"
+        assert events[0]["args"][0]["transponder_id"] == "000807DC1F"
+        sse = q.get_nowait()
+        assert sse["type"] == "rfid_read" and sse["unit_address"] == 45
+
+    def test_rfid_exit_forwarded(self):
+        web, _ = _make_web_with_facade()
+        q = web._event_subscribe()
+        web.handle_module_status("rfid_ab12", {
+            "type": "rfid_exit", "transponder_id": "AB", "duration_s": 3.2})
+        assert q.get_nowait()["duration_s"] == 3.2
+
+    def test_rfid_db_test_ack_emitted(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("rfid_ab12", {
+            "type": "cmd_ack", "command": "rfid_db_test", "result": "error",
+            "ok": False, "message": "refused"})
+        events = [e for e in client.get_received()
+                  if e["name"] == "rfid_db_test_result"]
+        assert events[0]["args"][0] == {
+            "module_id": "rfid_ab12", "ok": False, "message": "refused",
+            "status": None}
+
+    def test_save_pushes_rfid_db_only_when_changed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {"rfid_db": {"host": "old"}}
+            facade.push_rfid_db_settings_to_all.return_value = {
+                "sent": ["rfid_ab12"], "total": 1}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_controller_config",
+                        {"config": {"rfid_db": {"host": "old"}}})
+            facade.push_rfid_db_settings_to_all.assert_not_called()
+
+            client.emit("save_controller_config",
+                        {"config": {"rfid_db": {"host": "new"}}})
+            facade.push_rfid_db_settings_to_all.assert_called_once()
+
+    def test_test_rfid_db_requires_login_and_reports_bad_module(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            client = _connected_client(web)
+            client.emit("test_rfid_db", {"module_id": "rfid_ab12"})
+            facade.test_rfid_db.assert_not_called()
+
+            _login(web, client, tmpdir)
+            facade.test_rfid_db.return_value = False
+            client.emit("test_rfid_db", {"module_id": "cam1"})
+            events = [e for e in client.get_received()
+                      if e["name"] == "rfid_db_test_result"]
+            assert events[0]["args"][0]["ok"] is False

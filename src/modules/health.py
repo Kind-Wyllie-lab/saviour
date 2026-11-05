@@ -135,6 +135,7 @@ class Health:
             hardware_fault=self.facade.get_hardware_fault(),
             version=self.facade.get_saviour_version(),
             supervised_threads=REGISTRY.snapshot(),
+            rfid_db=self.facade.get_rfid_db_status(),
         )
         return snapshot.to_dict()
 

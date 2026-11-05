@@ -16,6 +16,37 @@ A thin SAVIOUR `Module` around the Trovan **LID650 / LID665** RS485 bus.
   rate, and a recent-reads list. Visible in the frontend on the module's
   config card (Settings -> the RFID module).
 
+## Local store and long-term database
+
+Every read is also written, recording or not, to a local SQLite store
+(`rfid_store.py`, `rfid.store.path`, default `/var/lib/saviour/rfid/reads.db`).
+A sync thread (`rfid_sync.py`) sends unsynced rows to a MariaDB every
+`rfid.sync.interval_s` (5 s) in one `INSERT IGNORE` batch, then marks them
+synced. The server's unique key on `(store_id, seq)` makes a re-sent batch a
+no-op, so a crash between "sent" and "marked" never duplicates. A server or
+network outage only grows the local backlog.
+
+- **Connection settings** come from the controller config page (RFID DB tab,
+  the `rfid_db` section), pushed with `set_rfid_db_config` on every module
+  connect and on save. The module keeps them in `db_settings.json` (mode 0600)
+  next to the store, not in the module config, so `get_config` never echoes
+  the password, and it keeps syncing after a reboot while the controller is
+  down. An empty host turns the sync off.
+- **Schema**: `docs/sql/rfid_schema.sql` (an admin runs it once; the module
+  never runs DDL).
+- **Retention**: synced rows older than `rfid.store.retain_days` (30) are
+  deleted hourly. Unsynced rows are kept indefinitely while a database is
+  configured; with none configured the store is a rolling 30-day log.
+- **Health**: each heartbeat carries `rfid_db` (state, backlog, age of the
+  oldest unsynced read, last error). The controller alerts at 5 min and again
+  at 1 h of backlog; it never blocks recording.
+- **All-zero transponder IDs** (`0000000000`, about half of all reads on the
+  busiest habitat units under the old Pi 4 logger; meaning not yet known)
+  are stored with `kind = 'zero'` and kept in the raw session CSV, but are
+  not sent as `rfid_read` or fed to presence tracking. The heartbeat counts
+  them (`zero_reads`).
+- Dependency: `python3-pymysql` (apt, `variant.conf`).
+
 ## Presence tracking (enter / exit smoothing)
 
 A tag sitting in a reader's field pings several times a second, so the raw
@@ -49,6 +80,10 @@ gap longer than `gap_timeout_s`. A visit is only counted once it clears
 | `rfid.presence.min_pings` | pings before a visit counts (default 2) |
 | `rfid.presence.min_dwell_s` | seconds present before a visit counts (default 0) |
 | `rfid.presence.record` | `raw` \| `visits` \| `both` (default `both`) |
+| `rfid.store.path` | local SQLite store (restart to change) |
+| `rfid.store.retain_days` | delete synced reads older than this (default 30) |
+| `rfid.sync.interval_s` | seconds between database syncs (default 5) |
+| `rfid.sync.batch_rows` | rows per sync transaction (default 500) |
 | `monitoring._port` | MJPEG stream port |
 | `monitoring.history_secs` | timeline window shown in the stream |
 | `monitoring.ping_flash_secs` | how long a fresh read stays highlighted |
@@ -62,11 +97,6 @@ Larger than the current demo scope, recorded so they aren't lost:
   Given a set of expected transponders, if none ping for a configured
   period, poll each unit to tell "animals left / out of range" from
   "reader or antenna fault". Pairs with the antenna self-test below.
-- **Local SQLite buffer, periodically synced to a long-term DB**
-  (controller / NAS) instead of - or alongside - the per-segment CSV +
-  Samba export used today. Gives queryability and resilience to export
-  gaps; costs a schema to maintain and a sync mechanism. The
-  (removed) `rfid_server.py` / `rfid_db.py` were an earlier take on this.
 - **Antenna self-test.** The reader exposes antenna current / tuning
   diagnostics; surface "antenna connected / tuned / detuned" as a
   `@check()` and/or a periodic health field, so an unattended rig flags a
@@ -76,6 +106,8 @@ Larger than the current demo scope, recorded so they aren't lost:
 
 - `rfid_module.py` - the `RFIDModule` class (this is what the service runs)
 - `rfid_bus.py` - standalone RS485 / DLE-framed protocol driver
+- `rfid_store.py` - always-on local SQLite read store
+- `rfid_sync.py` - store-and-forward sync to MariaDB
 - `rfid_config.json`, `variant.conf` - SAVIOUR variant metadata
 - `docs/LID665_commands.pdf` - vendor command reference (not tracked)
 

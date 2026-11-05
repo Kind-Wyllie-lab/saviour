@@ -94,6 +94,11 @@ class ModuleFacade:
         return max(getattr(self.module, "_exposure_over_pct", 0.0),
                    getattr(self.module, "_exposure_under_pct", 0.0))
 
+    def get_rfid_db_status(self) -> dict | None:
+        """RFID only: local store + DB sync state; None for other types."""
+        fn = getattr(self.module, "rfid_db_status", None)
+        return fn() if callable(fn) else None
+
     def get_hardware_fault(self) -> str | None:
         """Human-readable reason a module's expected sensor/peripheral
         hardware is missing or failed to initialise, or None when healthy.

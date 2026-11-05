@@ -307,6 +307,7 @@ class Controller(ABC):
                             creds = self.get_export_credentials()
                             if creds:
                                 self.communication.send_command(module_id, "set_export_config", creds)
+                            self.push_rfid_db_settings(module_id)
 
                     elif command == 'set_export_config':
                         if result == 'success':
@@ -663,6 +664,36 @@ class Controller(ABC):
         self.logger.info("Sending get_config command to all modules")
         self.communication.send_command("all", "get_config", {})
 
+
+    def get_rfid_db_settings(self) -> dict:
+        """The rfid_db config section (long-term MariaDB for RFID reads),
+        as sent to RFID modules by set_rfid_db_config."""
+        section = self.config.get("rfid_db", {}) or {}
+        try:
+            port = int(section.get("port") or 3306)
+        except (TypeError, ValueError):
+            port = 3306
+        return {
+            "host": str(section.get("host", "") or "").strip(),
+            "port": port,
+            "database": str(section.get("database", "") or "").strip(),
+            "username": str(section.get("username", "") or "").strip(),
+            "password": str(section.get("password", "") or ""),
+        }
+
+    def push_rfid_db_settings(self, module_id: str) -> bool:
+        """Send the rfid_db settings to one module if it is an RFID module.
+        Sent even when empty, so clearing the host on the controller turns a
+        module's sync off. The module keeps them in a root-only file, so it
+        syncs on its own after a reboot while the controller is down; this
+        push (on every get_config ack, like the export credentials) keeps it
+        current. Returns True if a command was sent."""
+        module = self.modules.get_modules().get(module_id) or {}
+        if module.get("type") != "rfid":
+            return False
+        self.communication.send_command(
+            module_id, "set_rfid_db_config", self.get_rfid_db_settings())
+        return True
 
     def get_export_credentials(self) -> dict:
         """

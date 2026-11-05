@@ -230,6 +230,22 @@ class TestExportCredentialsApplied:
         mgr.export_credentials_applied("camera_abc", self.CREDS)
         assert mgr._config_states["camera_abc"].status == ConfigSyncStatus.PENDING
 
+    def test_changed_share_updates_the_target_too(self):
+        """2026-11-05 basic->habitat switch: the baseline target came from a
+        get_config while modules still held the old share; pushing the new
+        share left them FAILED for good although they held what was sent."""
+        mgr = _make_modules()
+        _register(mgr)
+        old = {"camera": {"fps": 30},
+               "export": {"share_ip": "192.168.1.2", "share_path": "habitat_recording",
+                          "share_username": "", "share_password": ""}}
+        mgr.received_module_config("camera_abc", old)   # baseline target = old share
+        mgr.export_credentials_applied("camera_abc", self.CREDS)
+        state = mgr._config_states["camera_abc"]
+        assert state.status == ConfigSyncStatus.SYNCED
+        assert state.target_config["export"]["share_ip"] == "10.0.0.1"
+        assert state.true_config["export"]["share_path"] == "controller_share"
+
     def test_unknown_module_or_no_config_is_a_noop(self):
         mgr = _make_modules()
         mgr.export_credentials_applied("ghost", self.CREDS)

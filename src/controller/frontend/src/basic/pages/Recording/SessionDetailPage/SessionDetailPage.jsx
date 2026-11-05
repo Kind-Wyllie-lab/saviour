@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useOutletContext, Link } from "react-router";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
 import useExportQueue from "/src/hooks/useExportQueue";
@@ -391,7 +392,10 @@ export default function SessionDetailPage() {
   );
   const candidates = modules.filter(m => !allBusyModuleIds.has(m.id));
 
-  const handleStop = () => socket.emit("stop_session", { session_name: sessionName });
+  const handleStop = () => {
+    if (!confirmIfOtherAdmins("Stop this session")) return;
+    socket.emit("stop_session", { session_name: sessionName });
+  };
   const handleForceStart = () => socket.emit("force_start_session", { session_name: sessionName });
   const startEditingPending = () => {
     setEditName(session.session_name);

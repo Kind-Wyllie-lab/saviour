@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import "./NewSessionForm.css";
 
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
@@ -192,6 +193,8 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!experimentName) return;
+    if (!confirmIfOtherAdmins(recordingMode === "scheduled"
+      ? "Schedule this session" : "Start this session")) return;
     setSubmitError(null);
 
     if (recordingMode === "scheduled") {

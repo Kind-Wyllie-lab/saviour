@@ -1,0 +1,101 @@
+.connected-clients {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    margin: 0 0 22px;
+}
+
+/* Under the hostname: its 22px bottom margin is the gap above the nav, so
+   pull up close to it and take over that gap from here. */
+.sidebar-hostname + .connected-clients {
+    margin-top: -16px;
+}
+
+.connected-clients-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-color);
+    opacity: 0.6;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.connected-clients-btn:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+
+.connected-clients-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--success-color, #2e9e5b);
+    flex: none;
+}
+
+/* Another admin is connected: worth a glance before changing anything. */
+.connected-clients-btn--admin {
+    opacity: 0.95;
+    color: var(--warning-color, #d9822b);
+    font-weight: 600;
+}
+
+.connected-clients-btn--admin .connected-clients-dot {
+    background: var(--warning-color, #d9822b);
+}
+
+.connected-clients-menu {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 4px;
+    z-index: 50;
+    min-width: 190px;
+    max-width: 260px;
+    background: var(--card-bg-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 20%, transparent);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    padding: 4px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.connected-clients-row {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-color);
+}
+
+.connected-clients-row + .connected-clients-row {
+    border-top: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+
+.connected-clients-ip {
+    font-family: ui-monospace, "Cascadia Mono", "Roboto Mono",
+        "DejaVu Sans Mono", "Courier New", monospace;
+    word-break: break-all;
+}
+
+.connected-clients-self {
+    font-family: inherit;
+    opacity: 0.6;
+}
+
+.connected-clients-meta {
+    opacity: 0.7;
+}
+
+.connected-clients-role--admin {
+    color: var(--warning-color, #d9822b);
+    font-weight: 600;
+}

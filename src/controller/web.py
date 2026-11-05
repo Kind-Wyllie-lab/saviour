@@ -364,6 +364,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # handle_connect below).
         self._authenticated_sids: set = set()
         self._auth_lock = threading.Lock()
+        # Every connected browser tab (by request.sid, guest or admin) ->
+        # {"ip", "via_proxy", "since"}, guarded by _auth_lock. Broadcast as
+        # clients_update so each UI can show who else is connected and warn
+        # before a risky action while another admin is (see _clients_payload).
+        self._clients: dict = {}
 
         # Short-lived tokens authorizing a plain browser GET (session file/
         # zip downloads) -- a Socket.IO connection being in
@@ -606,6 +611,35 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         in. Gates every mutating/destructive handler."""
         return request.sid in self._authenticated_sids
 
+
+    @staticmethod
+    def _client_address() -> tuple[str, bool]:
+        """(address, via_proxy) of the current request. Behind a reverse
+        proxy (e.g. ``tailscale serve``) remote_addr is the proxy itself, so
+        prefer the first X-Forwarded-For hop. Display only: LAN clients are
+        trusted (see the threat model), so a spoofed header doesn't matter."""
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip(), True
+        return request.remote_addr or "unknown", False
+
+    @staticmethod
+    def _client_id(sid: str) -> str:
+        """A stable public id for a connection. Not the sid itself, which
+        _authenticated_sids is keyed on."""
+        return hashlib.sha256(sid.encode()).hexdigest()[:12]
+
+    def _clients_payload(self) -> dict:
+        with self._auth_lock:
+            clients = [
+                {"id": self._client_id(sid), "ip": c["ip"],
+                 "via_proxy": c["via_proxy"], "since": c["since"],
+                 "admin": sid in self._authenticated_sids}
+                for sid, c in self._clients.items()]
+        return {"clients": clients}
+
+    def _broadcast_clients(self) -> None:
+        self.socketio.emit("clients_update", self._clients_payload())
 
     def _controller_config_payload(self) -> dict:
         """facade.get_config() with frontend.custom_themes populated from the
@@ -1366,8 +1400,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):
-            client_ip = request.remote_addr
-            self.socketio.emit('client_ip', client_ip)
+            client_ip, via_proxy = self._client_address()
             self.logger.info(f"Client connected from {client_ip}")
 
             # Silently re-authenticate a returning connection that already
@@ -1375,9 +1408,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             # blip) -- no explicit "login" event needed for this path, since
             # the frontend already knows it was logged in and just wants the
             # new connection to carry the same privilege.
-            if auth and self._check_admin_password(auth.get("password")):
-                with self._auth_lock:
+            is_admin = bool(auth) and self._check_admin_password(auth.get("password"))
+            with self._auth_lock:
+                if is_admin:
                     self._authenticated_sids.add(request.sid)
+                self._clients[request.sid] = {
+                    "ip": client_ip, "via_proxy": via_proxy, "since": time.time()}
 
             # Send initial module list -- event name/payload shape must match
             # what useModules.js listens for (modules_update, raw dict), the
@@ -1398,12 +1434,26 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             self.socketio.emit("first_run_state", self._first_run_state(),
                                room=request.sid)
 
+            self.socketio.emit("client_self", {"id": self._client_id(request.sid)},
+                               room=request.sid)
+            self._broadcast_clients()
+
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
             self.logger.info("Client disconnected")
             with self._auth_lock:
                 self._authenticated_sids.discard(request.sid)
+                self._clients.pop(request.sid, None)
+            self._broadcast_clients()
+
+
+        @self.socketio.on('get_clients')
+        def handle_get_clients(data=None):
+            self.socketio.emit("client_self", {"id": self._client_id(request.sid)},
+                               room=request.sid)
+            self.socketio.emit("clients_update", self._clients_payload(),
+                               room=request.sid)
 
 
         @self.socketio.on('send_command')
@@ -3528,8 +3578,20 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 with self._auth_lock:
                     self._authenticated_sids.add(request.sid)
                 self.socketio.emit("login_success", room=request.sid)
+                self._broadcast_clients()
             else:
                 self.socketio.emit("login_error", "Wrong password", room=request.sid)
+
+
+        @self.socketio.on("logout")
+        def handle_logout(data=None):
+            # The browser forgets the password itself (auth.js logOut); this
+            # drops the live connection's admin rights too, which otherwise
+            # lasted until its next reconnect.
+            with self._auth_lock:
+                self._authenticated_sids.discard(request.sid)
+            self.socketio.emit("logout_success", room=request.sid)
+            self._broadcast_clients()
 
 
         @self.socketio.on("request_download_token")

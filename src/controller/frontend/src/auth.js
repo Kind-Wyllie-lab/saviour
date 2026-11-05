@@ -36,6 +36,9 @@ export function rememberLogin(password) {
 export function logOut() {
   clearStoredPassword();
   socket.auth = {};
+  // Drop this connection's admin rights on the server too, not only at the
+  // next reconnect.
+  socket.emit("logout");
   _notify();
 }
 

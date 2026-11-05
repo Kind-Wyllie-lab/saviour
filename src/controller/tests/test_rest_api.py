@@ -115,6 +115,22 @@ class TestState:
         assert data["ptp"]["start_gate_ns"] == 50_000
         assert data["ptp"]["synced"] is True
         assert data["disk"]["status"] == "unknown"
+        assert data["ui_clients"] == {"total": 0, "admins": 0, "ips": []}
+
+    def test_state_counts_ui_clients(self):
+        web, password = _web()
+        guest = web.socketio.test_client(web.app)
+        admin = web.socketio.test_client(web.app, auth={"password": password})
+        try:
+            data = web.app.test_client().get(
+                "/api/v1/state", headers=_auth(password)).get_json()
+        finally:
+            guest.disconnect()
+            admin.disconnect()
+        assert data["ui_clients"]["total"] == 2
+        assert data["ui_clients"]["admins"] == 1
+        # The Socket.IO test client has no remote address.
+        assert len(data["ui_clients"]["ips"]) == 1
 
     def test_state_ptp_not_synced_when_over_gate(self):
         web, password = _web(**{"recording.ptp_start_gate_us": 50})

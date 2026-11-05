@@ -1,5 +1,6 @@
 import { useState } from "react";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins, CONTROLLER_ACTIONS } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "../ModuleActionsMenu/ModuleActionsMenu.css";
 
@@ -19,6 +20,7 @@ function ControllerActionsMenu({ onAction }) {
 
   const handleConfirm = () => {
     if (!confirmTarget) return;
+    if (!confirmIfOtherAdmins(CONTROLLER_ACTIONS[confirmTarget] ?? "Continue")) return;
     if (confirmTarget === "restart_service") {
       socket.emit("restart_saviour_controller_service");
     } else if (confirmTarget === "reboot") {

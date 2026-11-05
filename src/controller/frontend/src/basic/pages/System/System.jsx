@@ -2,6 +2,7 @@ import { useMemo, useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins, CONTROLLER_ACTIONS } from "/src/clients";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
 import UpdateProgressModal from "../../components/UpdateProgressModal/UpdateProgressModal";
@@ -219,6 +220,7 @@ export default function System() {
 
   const handleControllerActionConfirm = () => {
     if (!controllerActionTarget) return;
+    if (!confirmIfOtherAdmins(CONTROLLER_ACTIONS[controllerActionTarget] ?? "Continue")) return;
     if (controllerActionTarget === "restart_service") {
       socket.emit("restart_saviour_controller_service");
       setDeviceStatuses({ controller: "restarting" });

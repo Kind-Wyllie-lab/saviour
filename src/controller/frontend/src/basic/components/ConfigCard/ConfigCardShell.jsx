@@ -1,5 +1,6 @@
 import { useState } from "react";
 import socket from "/src/socket";
+import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { filterPrivateKeys, checkClipboardCompatibility } from "./configUtils";
 import CopyActionsBar from "./CopyActionsBar";
@@ -54,6 +55,7 @@ function ConfigCardShell({
   const [hasSaved, setHasSaved] = useState(false);
 
   const handleSave = () => {
+    if (!confirmIfOtherAdmins("Save this module's config")) return;
     setHasSaved(true);
     const config = saveTransform ? saveTransform(formData) : filterPrivateKeys(formData);
     socket.emit("save_module_config", { id, config });

@@ -94,3 +94,23 @@
   background: var(--border-color);
   margin: 4px 0;
 }
+
+.module-type-select {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+/* Button with its status badges (Updated, Mended, Changing type…) stacked
+   under it, so a badge stays inside a narrow table cell or card header. */
+.module-actions {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.module-actions .config-sync-badge {
+  width: max-content;
+  max-width: 110px;
+  white-space: normal;
+  overflow-wrap: break-word;
+}

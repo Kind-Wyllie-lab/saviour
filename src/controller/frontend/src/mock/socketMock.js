@@ -406,8 +406,35 @@ const ROUTER = {
       case "start_motor": r.rotating = true; break;
       case "stop_motor": r.rotating = false; break;
       case "reset_pulse_counter": if (!r.shockActivated) { r.attempted = 0; r.delivered = 0; } break;
+      case "change_module_type": {
+        // Prepare, reprovision, come back under the new id (web.py swaps the
+        // old entry for the new one when it first reports).
+        const oldId = payload.module_id;
+        const newType = payload.params?.new_type;
+        const newId = `${newType}_${oldId.slice(-4)}`;
+        const ack = (stage, output) => this._fire("module_type_change_result",
+          { module_id: oldId, stage, output, new_type: newType, new_module_id: newId });
+        setTimeout(() => ack("success", `Reconfiguring as ${newType}`), 1200);
+        setTimeout(() => {
+          const old = state.modules[oldId];
+          if (!old) return;
+          delete state.modules[oldId];
+          state.modules[newId] = { ...old, id: newId, name: newId, type: newType, status: "WAITING", online: true };
+          ack("done", `${oldId} is now ${newId}`);
+          this._fire("modules_update", clone(state.modules));
+        }, 4000);
+        break;
+      }
       default: console.debug("[mock] send_command ignored:", payload);
     }
+  },
+  get_module_types() {
+    this._fire("module_types", { types: [
+      { type: "camera", name: "Camera", description: "Basic camera" },
+      { type: "microphone", name: "Microphone", description: "AudioMoth (up to 4 microphones)" },
+      { type: "rfid", name: "RFID", description: "Trovan LID650/665 RFID transponder reader" },
+      { type: "ttl", name: "TTL", description: "TTL pulse generator / capture" },
+    ] });
   },
   remove_module(payload) {
     const id = payload?.module_id || payload;

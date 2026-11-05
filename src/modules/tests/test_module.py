@@ -193,6 +193,55 @@ def test_run_mend_already_running_is_a_clear_error():
 
 
 # ---------------------------------------------------------------------------
+# change_module_type -- the web UI's "Change type" action
+# ---------------------------------------------------------------------------
+
+def _retype_instance():
+    inst = _mend_instance()
+    inst.module_type = "camera"
+    inst.is_recording = False
+    inst.generate_module_id = lambda t: f"{t}_2904"
+    return inst
+
+
+def _retype(inst, *procs, new_type="rfid"):
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", side_effect=list(procs)) as run:
+        ret = inst.change_module_type(new_type=new_type)
+    calls = [c[0][0] for c in run.call_args_list]
+    acks = [c[0][0] for c in inst.communication.send_status.call_args_list]
+    return ret, calls, acks
+
+
+def test_change_module_type_prepares_then_runs_detached():
+    ok = MagicMock(returncode=0, stdout="Ready", stderr="")
+    ret, calls, acks = _retype(_retype_instance(), ok, ok)
+    assert ret["result"] == "started"
+    assert calls[0][-2:] == ["--prepare-module-type", "rfid"]
+    assert calls[1][:3] == ["sudo", "systemd-run", "--unit=saviour-retype"]
+    assert calls[1][-2:] == ["--set-module-type", "rfid"]
+    assert acks[-1]["result"] == "success"
+    assert acks[-1]["new_module_id"] == "rfid_2904"
+
+
+def test_change_module_type_stops_when_prepare_fails():
+    """No internet for the new type's packages: nothing changes."""
+    bad = MagicMock(returncode=2, stdout="", stderr="Could not install x; nothing changed")
+    _ret, calls, acks = _retype(_retype_instance(), bad)
+    assert len(calls) == 1
+    assert acks[-1]["result"] == "error" and "nothing changed" in acks[-1]["output"]
+
+
+def test_change_module_type_refuses_while_recording_or_same_type():
+    inst = _retype_instance()
+    inst.is_recording = True
+    ret, calls, _ = _retype(inst)
+    assert ret["result"] == "error" and calls == []
+    ret, calls, _ = _retype(_retype_instance(), new_type="camera")
+    assert ret["result"] == "error" and "Already" in ret["output"] and calls == []
+
+
+# ---------------------------------------------------------------------------
 # apply_ssh_access -- controller-pushed SSH CA refresh
 # ---------------------------------------------------------------------------
 

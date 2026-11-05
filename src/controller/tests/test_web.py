@@ -2795,6 +2795,47 @@ class TestCropStatusForwarding:
         assert events and events[0]["args"][0]["fov"] == [4056, 3040]
 
 
+class TestModuleTypeChange:
+    def test_list_module_types_skips_template(self, tmp_path):
+        from src.controller.web import list_module_types
+        for t, conf in (("rfid", 'NAME="RFID"\nDESCRIPTION="Trovan"\n'),
+                        ("template", 'NAME="T"\n'), ("nodir", None)):
+            (tmp_path / t).mkdir()
+            if conf:
+                (tmp_path / t / "variant.conf").write_text(conf)
+        assert list_module_types(str(tmp_path)) == [
+            {"type": "rfid", "name": "RFID", "description": "Trovan"}]
+
+    def test_get_module_types_answers_the_caller(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("get_module_types")
+        events = [e for e in client.get_received() if e["name"] == "module_types"]
+        types = {t["type"] for t in events[0]["args"][0]["types"]}
+        assert "rfid" in types and "camera" in types and "template" not in types
+
+    def test_old_id_forgotten_when_new_one_reports(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("camera_2904", {
+            "type": "cmd_ack", "command": "change_module_type", "result": "success",
+            "output": "Reconfiguring", "new_type": "rfid", "new_module_id": "rfid_2904"})
+        facade.forget_module.assert_not_called()          # old row stays for now
+        web.handle_module_status("rfid_2904", {"type": "heartbeat"})
+        facade.forget_module.assert_called_once_with("camera_2904")
+        stages = [e["args"][0]["stage"] for e in client.get_received()
+                  if e["name"] == "module_type_change_result"]
+        assert stages == ["success", "done"]
+
+    def test_failed_change_keeps_the_module(self):
+        web, facade = _make_web_with_facade()
+        web.handle_module_status("camera_2904", {
+            "type": "cmd_ack", "command": "change_module_type", "result": "error",
+            "output": "nothing changed", "new_module_id": "rfid_2904"})
+        web.handle_module_status("rfid_2904", {"type": "heartbeat"})
+        facade.forget_module.assert_not_called()
+
+
 class TestAudioLevels:
     def test_audio_levels_reach_socketio_not_sse(self):
         web, _ = _make_web_with_facade()

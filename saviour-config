@@ -2820,9 +2820,67 @@ ssh_menu() {
     done
 }
 
+# ── Module type change from the web UI ───────────────────────────────────────
+# The module command change_module_type (src/modules/module.py) runs
+# --prepare-module-type first, in the module's own service: it checks the type
+# and installs the new type's APT_PACKAGES *before anything changes*, so a
+# module without internet fails cleanly instead of half-way through
+# run_configuration (which installs them after rewriting the service unit).
+# Only then does the module start --set-module-type in a detached systemd
+# unit, which writes TYPE= and runs the usual --apply (stale active config
+# removed, hostname, service, dependencies, restart); detached because that
+# restart would otherwise kill it along with the service.
+_module_type_valid() {          # $1 type -> 0 if it's a module variant
+    [ -n "$1" ] && [ "$1" != "template" ] && [[ "$1" =~ ^[a-z0-9_]+$ ]] \
+        && [ -f "$DIR/src/modules/variants/$1/variant.conf" ]
+}
+
+prepare_module_type() {
+    local new="${1:-}" role cur
+    role=$(read_config_value "$CONFIG_FILE" ROLE)
+    cur=$(read_config_value "$CONFIG_FILE" TYPE)
+    [ "$role" = "module" ] || { echo "This device is not a module (ROLE=${role:-unset})" >&2; return 1; }
+    _module_type_valid "$new" || { echo "Unknown module type '$new'" >&2; return 1; }
+    [ "$new" != "$cur" ] || { echo "Already a $new module" >&2; return 1; }
+    local packages pkg missing=""
+    packages=$(read_variant_value "$DIR/src/modules/variants/$new/variant.conf" APT_PACKAGES)
+    for pkg in $packages; do
+        is_installed "$pkg" || missing="$missing $pkg"
+    done
+    if [ -n "$missing" ]; then
+        echo "Installing$missing"
+        log "prepare-module-type $new: installing$missing"
+        # shellcheck disable=SC2086  # word-split the package list on purpose
+        if ! apt-get install -y $missing >> "$LOG" 2>&1; then
+            apt-get update >> "$LOG" 2>&1 || true
+            # shellcheck disable=SC2086
+            if ! apt-get install -y $missing >> "$LOG" 2>&1; then
+                echo "Could not install$missing (no internet on this module?); nothing changed" >&2
+                return 2
+            fi
+        fi
+    fi
+    echo "Ready to become a $new module"
+}
+
+set_module_type() {
+    prepare_module_type "${1:-}" || return $?
+    sed -i "s/^TYPE=.*/TYPE=$1/" "$CONFIG_FILE"
+    log "set-module-type: TYPE=$1, applying"
+    apply_from_config
+}
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "--apply" ]; then
     apply_from_config
+    exit $?
+fi
+if [ "${1:-}" = "--prepare-module-type" ]; then
+    prepare_module_type "${2:-}"
+    exit $?
+fi
+if [ "${1:-}" = "--set-module-type" ]; then
+    set_module_type "${2:-}"
     exit $?
 fi
 

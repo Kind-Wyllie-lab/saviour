@@ -14,6 +14,7 @@
 
 import { state, reset } from "./fixtures";
 import { gateMapRoutes } from "./gateMapMock";
+import { placementRoutes } from "./placementMock";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
@@ -239,6 +240,7 @@ class MockSocket {
 const ROUTER = {
   // Habitat Gates page (RFID gate mapping), see gateMapMock.js.
   ...gateMapRoutes,
+  ...placementRoutes,
   // bootstrap reads
   get_system_state() { this._fire("system_state", clone(state.systemState)); },
   get_modules() { this._fire("modules_update", clone(state.modules)); },

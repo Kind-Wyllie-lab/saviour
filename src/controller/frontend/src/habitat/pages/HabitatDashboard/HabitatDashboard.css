@@ -30,6 +30,15 @@
   min-width: 0;
 }
 
+/* The placement panel is taller than the cards it replaces: let it fill
+   the column and scroll inside. */
+.habitat-dashboard-left--placing {
+  align-self: stretch;
+  min-height: 0;
+  min-width: 320px;
+  max-width: 380px;
+}
+
 /* Camera grid: takes all remaining space */
 .habitat-dashboard-center {
   flex: 1;

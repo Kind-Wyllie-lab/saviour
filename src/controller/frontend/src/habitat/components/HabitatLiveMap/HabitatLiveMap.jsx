@@ -3,6 +3,7 @@ import { NavLink } from "react-router";
 import socket from "/src/socket";
 import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCard";
 import { BOX, gatePoint } from "../HabitatGrid/geometry";
+import useAudioLevels, { isStale } from "../../hooks/useAudioLevels";
 import "./HabitatLiveMap.css";
 
 // The habitat dashboard's live view: every box's camera, every gate's RFID
@@ -20,8 +21,6 @@ const LIVE_RENEW_MS = 20000;
 const FLASH_MS = 600;
 const UNMAPPED_WINDOW_MS = 10000;
 const STREAM_REFRESH_MS = 60000;
-const PEAK_HOLD_MS = 2000;
-const LEVEL_STALE_MS = 3000;
 const DB_FLOOR = -80;
 const GATE_R = 6;
 
@@ -76,44 +75,12 @@ function useLiveGates() {
   return { state, flashes, unmappedCount: unmapped.length };
 }
 
-// label -> {level_db, peak_db, hold_db, hold_at, clipping, at, module_id, serial}
-function useAudioLevels() {
-  const [levels, setLevels] = useState({});
-  const [, setTick] = useState(0);
-
-  useEffect(() => {
-    const onLevels = ({ module_id, levels: list }) => {
-      const t = Date.now();
-      setLevels((prev) => {
-        const next = { ...prev };
-        for (const l of list ?? []) {
-          const key = l.label || l.serial;
-          const old = prev[key];
-          const holdLive = old && t - old.hold_at < PEAK_HOLD_MS && old.hold_db > l.peak_db;
-          next[key] = {
-            ...l, module_id, at: t,
-            hold_db: holdLive ? old.hold_db : l.peak_db,
-            hold_at: holdLive ? old.hold_at : t,
-          };
-        }
-        return next;
-      });
-    };
-    socket.on("audio_levels", onLevels);
-    // Re-render now and then so a meter whose module went quiet greys out.
-    const t = setInterval(() => setTick((x) => x + 1), 1000);
-    return () => { socket.off("audio_levels", onLevels); clearInterval(t); };
-  }, []);
-
-  return levels;
-}
-
 const dbToPct = (db) =>
   Math.max(0, Math.min(100, ((db - DB_FLOOR) / -DB_FLOOR) * 100));
 
 function LevelMeter({ level }) {
   if (!level) return null;
-  const stale = Date.now() - level.at > LEVEL_STALE_MS;
+  const stale = isStale(level);
   const cls = [
     "habitat-live-meter",
     stale && "habitat-live-meter--stale",
@@ -156,9 +123,18 @@ function BoxCell({ id, mods, level, refreshKey }) {
   );
 }
 
-function HabitatLiveMap({ modules }) {
+function HabitatLiveMap({ modules, onPlacement, placing }) {
   const { state, flashes, unmappedCount } = useLiveGates();
-  const levels = useAudioLevels();
+  const rawLevels = useAudioLevels();
+  // Box id -> the AudioMoth labelled with it (the newest, if two are).
+  const levels = useMemo(() => {
+    const out = {};
+    for (const l of Object.values(rawLevels)) {
+      const key = l.label || l.serial;
+      if (!out[key] || out[key].at < l.at) out[key] = l;
+    }
+    return out;
+  }, [rawLevels]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -250,6 +226,11 @@ function HabitatLiveMap({ modules }) {
           <span title={unlabelled.map((l) => `${l.serial} on ${l.module_id}`).join("\n")}>
             {unlabelled.length} AudioMoth{unlabelled.length === 1 ? "" : "s"} without a box label
           </span>
+        )}
+        {onPlacement && (
+          <button type="button" className="habitat-live-link" onClick={onPlacement}>
+            {placing ? "Close placement" : "Placement…"}
+          </button>
         )}
       </div>
     </div>

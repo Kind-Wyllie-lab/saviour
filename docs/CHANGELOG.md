@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-05
+
+- [x] **RFID module: mock mode with a simulated reader bus** (branch `feat/rfid-mock-mode`; 15 tests in `test_rfid_mock.py`, not yet run on a Pi). `rfid.mock.enabled` gives `RS485Bus.connect` an `opener` that returns `rfid_mock.MockBusSerial` instead of opening a serial port. The simulator speaks the real DLE-framed protocol: it answers the logon, `J`/`V`/`x` and generates reads from `tags` animals that wander between neighbouring `units` (dwell 1.5-8 s at `ping_hz`, away 3-20 s, `zero_fraction` all-zero IDs, IDs fixed by `seed`). So framing, presence visits, `rfid_read`, the MJPEG view, CSVs and the heartbeat all run unchanged with no reader. The bus is labelled `simulated` and the module logs a warning. Simulated reads go to `reads_mock.db` and the sync gets empty settings, so they never reach MariaDB (`rfid_db.mock: true` in the heartbeat). Toggling it reconnects the bus and reopens the store. No frontend change: the generated RFID settings tab shows the `mock` group.
+
 ## 2026-11-04
 
 - [x] **Storage page: GB/day and a countdown to the share filling up** (branch `feat/storage-fill-forecast`). The Export destination card shows the rate the share has filled at over the last 7 days, the days until it is full at that rate with the date, and the date free space drops below `recording.nas_min_free_pct` (new sessions blocked). The border turns amber under 14 days to that floor and red under 3.

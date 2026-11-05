@@ -68,6 +68,27 @@ gap longer than `gap_timeout_s`. A visit is only counted once it clears
   rest of the current segment; switching `record` away from a file type
   takes effect at the next segment.
 
+## Mock mode (no reader attached)
+
+`rfid.mock.enabled` swaps the serial port for a simulated bus
+(`rfid_mock.MockBusSerial`), for working on the frontend or the module without
+hardware. The simulator speaks the real frame protocol, so everything from the
+frame decoder up runs as normal: the logon finds `rfid.mock.units` units
+(addresses 1..N, firmware `800`, made-up serial numbers), and `rfid.mock.tags`
+animals wander between neighbouring units, pinging at `ping_hz` for a few
+seconds at a time. That gives presence enter/exit visits, `rfid_read` messages,
+the MJPEG view, session CSVs and heartbeat counts. `zero_fraction` of reads carry
+an all-zero ID. Tag IDs come from `seed`, so they're the same across restarts.
+
+- The bus shows as `simulated` (health check, stream header) and the module logs a
+  warning on connect, so it can't be mistaken for a real reader.
+- Simulated reads go to a separate store (`reads_mock.db` next to `reads.db`)
+  and are **never synced** to MariaDB. The DB tab shows `rfid_db.mock: true`
+  and the sync as not configured. "Test connection" still uses the saved
+  settings.
+- Toggling it, or changing any `rfid.mock.*` key, reconnects the bus and
+  reopens the store. Turn it off before recording real data.
+
 ## Config (`rfid_config.json`)
 
 | key | meaning |
@@ -84,6 +105,11 @@ gap longer than `gap_timeout_s`. A visit is only counted once it clears
 | `rfid.store.retain_days` | delete synced reads older than this (default 30) |
 | `rfid.sync.interval_s` | seconds between database syncs (default 5) |
 | `rfid.sync.batch_rows` | rows per sync transaction (default 500) |
+| `rfid.mock.enabled` | simulated bus instead of the serial port (default off) |
+| `rfid.mock.units` / `tags` | simulated reader units / animals (6 / 4) |
+| `rfid.mock.ping_hz` | reads per second while a tag is at a unit (5) |
+| `rfid.mock.zero_fraction` | share of reads with an all-zero ID (0.05) |
+| `rfid.mock.seed` | fixes the simulated tag IDs and serial numbers (1) |
 | `monitoring._port` | MJPEG stream port |
 | `monitoring.history_secs` | timeline window shown in the stream |
 | `monitoring.ping_flash_secs` | how long a fresh read stays highlighted |
@@ -108,6 +134,7 @@ Larger than the current demo scope, recorded so they aren't lost:
 - `rfid_bus.py` - standalone RS485 / DLE-framed protocol driver
 - `rfid_store.py` - always-on local SQLite read store
 - `rfid_sync.py` - store-and-forward sync to MariaDB
+- `rfid_mock.py` - simulated bus for `rfid.mock.enabled`
 - `rfid_config.json`, `variant.conf` - SAVIOUR variant metadata
 - `docs/LID665_commands.pdf` - vendor command reference (not tracked)
 

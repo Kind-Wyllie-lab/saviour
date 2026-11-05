@@ -21,6 +21,14 @@
             "interval_s": 5.0,
             "batch_rows": 500
         },
+        "mock": {
+            "enabled": false,
+            "units": 6,
+            "tags": 4,
+            "ping_hz": 5.0,
+            "zero_fraction": 0.05,
+            "seed": 1
+        },
         "_reader": "Trovan LID650/665 RS485 bus"
     },
     "monitoring": {

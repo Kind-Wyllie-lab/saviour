@@ -307,3 +307,44 @@ a.storage-session-list__name {
   font-weight: 600;
   margin: 2px 0 6px;
 }
+
+/* Fill countdown (Export destination card): GB/day + days until full. */
+.storage-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--bg-color);
+}
+.storage-countdown--ok     { border-left-color: var(--accent-color); }
+.storage-countdown--warn   { border-left-color: #d1971a; }
+.storage-countdown--danger { border-left-color: #d14b4b; }
+.storage-countdown--muted  { border-left-color: var(--border-color); }
+.storage-countdown__rate {
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.storage-countdown__big {
+  font-size: 1rem;
+}
+.storage-countdown__num {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.storage-countdown--warn .storage-countdown__num   { color: #d1971a; }
+.storage-countdown--danger .storage-countdown__num { color: #d14b4b; }
+.storage-countdown__date {
+  font-size: 0.85rem;
+  color: var(--secondary-text-color);
+}
+.storage-countdown__floor {
+  font-size: 0.8rem;
+  margin-top: 2px;
+}

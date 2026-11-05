@@ -58,30 +58,69 @@ function gbPerHour(mbPerMin) {
   return fmt2((mbPerMin * 60) / 1024);
 }
 
-// Least-squares slope of free bytes vs time over the visible window.
-function projectFull(samples) {
-  const pts = samples.filter((s) => s.length >= 3);
-  if (pts.length < 4) return { text: "not enough history", trend: "flat" };
-  const n = pts.length;
-  const t0 = pts[0][0];
-  let sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (const [t, free] of pts) {
-    const x = t - t0;
-    sx += x; sy += free; sxx += x * x; sxy += x * free;
+function fmtDate(epochS) {
+  return new Date(epochS * 1000).toLocaleDateString(undefined, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric",
+  });
+}
+
+// "23 days", "1 day 6 h", "9 hours": the countdown's headline.
+function countdownText(days) {
+  if (days == null) return null;
+  if (days >= 730) return { num: `${Math.floor(days / 365)}+`, unit: "years" };
+  if (days >= 2) return { num: `${Math.floor(days)}`, unit: "days" };
+  const h = Math.max(0, Math.round(days * 24));
+  return { num: `${h}`, unit: h === 1 ? "hour" : "hours" };
+}
+
+/**
+ * GB/day the share has filled at over the last 7 days (fill_forecast from the
+ * controller, which counts only drops in free space so a clean-up doesn't hide
+ * the fill) and a countdown to full at that rate.
+ */
+function FillCountdown({ forecast, minFreePct }) {
+  if (!forecast) return null;
+  if (forecast.state === "insufficient") {
+    return (
+      <div className="storage-countdown storage-countdown--muted">
+        <span className="storage-muted">
+          Fill forecast needs at least 6 hours of free-space history.
+        </span>
+      </div>
+    );
   }
-  const denom = n * sxx - sx * sx;
-  if (denom === 0) return { text: "stable", trend: "flat" };
-  const slope = (n * sxy - sx * sy) / denom; // bytes per second
-  const lastFree = pts[pts.length - 1][1];
-  if (slope >= -1) {
-    return { text: slope > 1 ? "free space increasing" : "stable", trend: "flat" };
+  const basis = `last ${forecast.window_days} day${forecast.window_days === 1 ? "" : "s"}`;
+  if (forecast.state === "not_filling") {
+    return (
+      <div className="storage-countdown storage-countdown--muted">
+        <span className="storage-countdown__rate">{fmt2(forecast.gb_per_day)} GB/day</span>
+        <span className="storage-muted">Not filling over the {basis}.</span>
+      </div>
+    );
   }
-  const secsToZero = lastFree / -slope;
-  const dur = humanDuration(secsToZero);
-  return {
-    text: dur ? `full in ${dur} at current rate` : "filling",
-    trend: secsToZero < 3 * 86400 ? "danger" : "warn",
-  };
+  // Tone from when new sessions get blocked, the date that matters in practice.
+  const critical = forecast.days_to_min ?? forecast.days_to_full;
+  const tone = critical < 3 ? "danger" : critical < 14 ? "warn" : "ok";
+  const full = countdownText(forecast.days_to_full);
+  return (
+    <div className={`storage-countdown storage-countdown--${tone}`}>
+      <span className="storage-countdown__rate">
+        {fmt2(forecast.gb_per_day)} GB/day
+        <span className="storage-muted"> · {basis}</span>
+      </span>
+      <span className="storage-countdown__big">
+        <span className="storage-countdown__num">{full.num}</span> {full.unit} until full
+      </span>
+      <span className="storage-countdown__date">{fmtDate(forecast.full_at)}</span>
+      {forecast.min_at != null && (
+        <span className="storage-countdown__floor">
+          {forecast.days_to_min <= 0
+            ? `Already below the ${minFreePct}% minimum: new sessions are blocked.`
+            : `New sessions blocked from ${fmtDate(forecast.min_at)} (below ${minFreePct}% free).`}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function StatusPill({ status }) {
@@ -161,7 +200,7 @@ export default function Storage() {
       .map(([t, free, total]) => ({ t, v: (free / total) * 100 })),
     [history]
   );
-  const projection = useMemo(() => projectFull(history), [history]);
+  const forecast = overview?.fill_forecast;
 
   const rateSeries = useMemo(
     () => rateHistory
@@ -263,6 +302,7 @@ export default function Storage() {
                 <div className="storage-thresholds storage-muted">
                   warn at {nas.warn_free_pct}% free · block new sessions below {nas.min_free_pct}%
                 </div>
+                <FillCountdown forecast={forecast} minFreePct={nas.min_free_pct ?? 5} />
               </>
             ) : (
               <p className="storage-muted">
@@ -295,9 +335,12 @@ export default function Storage() {
               ].filter(Boolean)}
             />
 
-            <div className={`storage-projection storage-projection--${projection.trend}`}>
-              {projection.text}
-            </div>
+            {forecast?.state === "filling" && (
+              <div className="storage-projection storage-projection--flat">
+                Filling at {fmt2(forecast.gb_per_day)} GB/day (last{" "}
+                {forecast.window_days} days, whatever range is shown)
+              </div>
+            )}
             <button className="refresh-btn" onClick={downloadCsv}>Download CSV</button>
           </section>
 

@@ -281,6 +281,12 @@ function makeStorageOverview() {
       free_gb: 812.4, free_pct: 63, total_gb: 1288.0,
       warn_free_pct: 15, min_free_pct: 5,
     },
+    // storage_forecast.fill_forecast: 812.4 GB free at 21.3 GB/day
+    fill_forecast: {
+      state: "filling", window_days: 7.0, gb_per_day: 21.3,
+      days_to_full: 38.1, full_at: now() + 38.1 * 86400,
+      days_to_min: 35.1, min_at: now() + 35.1 * 86400,
+    },
     exports: {
       pending: 4, failed: 0,
       sessions: [

@@ -97,3 +97,42 @@ def test_disarm_finishes_the_open_clip_before_returning():
     m._close_diagnostic_csv = MagicMock()
     assert HabitatCameraModule._stop_recording(m)
     m._finish_clip.assert_called_once_with("/tmp/c.h264", "/tmp/c.ts")
+
+
+def _csv(path, rows):
+    path.write_text("timestamp_ns,frame\n" + "".join(f"{i},{i}\n" for i in range(rows)))
+
+
+def test_finish_clip_drops_csv_rows_past_the_last_frame(tmp_path):
+    """Frames still in the encoder at stop never reach the .ts, but their
+    rows were written; the clip CSV must end at the clip's last frame."""
+    from unittest.mock import patch
+
+    from src.modules.variants.habitat_camera import habitat_camera_module as hcm
+    m = HabitatCameraModule.__new__(HabitatCameraModule)
+    m.logger, m.facade = MagicMock(), MagicMock()
+    csv_path = tmp_path / "clip_timestamps.csv"
+    _csv(csv_path, 10)
+    m._close_timestamp_csv = MagicMock(return_value=str(csv_path))
+    m._remux_clip_to_ts = MagicMock(return_value=str(tmp_path / "clip.ts"))
+    with patch.object(hcm, "_count_video_frames", return_value=7):
+        HabitatCameraModule._finish_clip(m, "clip.h264", str(tmp_path / "clip.ts"))
+    m._close_timestamp_csv.assert_called_once_with(stage=False)
+    lines = csv_path.read_text().splitlines()
+    assert len(lines) == 8 and lines[-1] == "6,6"
+    staged = [c.args[0] for c in m.facade.stage_file_for_export.call_args_list]
+    assert staged == [str(csv_path), str(tmp_path / "clip.ts")]
+
+
+def test_csv_trim_leaves_odd_mismatches_alone(tmp_path):
+    from unittest.mock import patch
+
+    from src.modules.variants.habitat_camera import habitat_camera_module as hcm
+    m = HabitatCameraModule.__new__(HabitatCameraModule)
+    m.logger = MagicMock()
+    for rows, frames in ((100, 10), (10, 0), (5, 9), (8, 8)):
+        csv_path = tmp_path / f"c{rows}_{frames}.csv"
+        _csv(csv_path, rows)
+        with patch.object(hcm, "_count_video_frames", return_value=frames):
+            assert m._trim_trailing_csv_rows(str(csv_path), "v.ts") == 0
+        assert len(csv_path.read_text().splitlines()) == rows + 1

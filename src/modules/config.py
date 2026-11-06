@@ -30,10 +30,12 @@ class Config:
     # its <module>_config.json, the live values live in a sidecar file
     # (runtime_state.json) next to active_config.json and are overlaid
     # transparently by get()/get_all()/set()/set_all(), so nothing outside
-    # Config has to know. Currently AudioMoth serial->port labels and the APA
-    # motor's learned feedforward per setpoint; export.* credentials and
+    # Config has to know. Currently AudioMoth serial->port labels, the APA
+    # motor's learned feedforward per setpoint, and each AudioMoth's measured
+    # sync offset (sync_selftest); export.* credentials and
     # camera.crop_rect are candidates to move here.
-    _SIDECAR_SECTIONS = ("audiomoth_labels", "motor_learned_output")
+    _SIDECAR_SECTIONS = ("audiomoth_labels", "motor_learned_output",
+                         "audiomoth_sync_offsets_ms")
     _SIDECAR_FILENAME = "runtime_state.json"
 
     # Configuration that should be loaded from environment variables

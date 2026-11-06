@@ -7,21 +7,27 @@ Input: kept sync self-test runs (the microphone module's `sync_selftest`
 with `keep_audio: true`), one directory per run, each holding
 `sync_selftest.json` and `selftest_<label>_timestamps.txt` per AudioMoth.
 The buzzer gives the truth: the self-test's median offset says how late
-the current anchor (`STARTED`) places the sound, so
+the anchor in force placed the sound, so
 
-    true sample 0 = STARTED - median offset
+    true sample 0 = that anchor's sample 0 - median offset
+
+The anchor in force is the result's per-mic `anchor` (parse_mic_sidecar's
+choice: "latency" with LAT lines); results from before 2026-11-07 have no
+`anchor` field and were all measured on `STARTED`.
 
 For every recording, each candidate anchor is compared with that, and the
 spread of (candidate - true) across recordings is what matters: a
 constant mean can be subtracted, the sd can't.
 
 Candidates:
-  STARTED          the current anchor (audio_align.parse_mic_sidecar)
+  STARTED          the stream-open stamp (the anchor before LAT lines)
   fit intercept    robust block-index fit over blocks 1.. (steady state)
   stream latency   from the recorder's `LAT <index> <t0> <t1> <latency_us>`
                    lines (microphone.latency_probe): per line,
                    (t0+t1)/2 - latency - index/rate, median over the
-                   recording. Only when the sidecars have LAT lines.
+                   recording, *before* any per-AudioMoth offset. Its mean
+                   per AudioMoth is that AudioMoth's offset
+                   (audiomoth_sync_offsets_ms). Only with LAT lines.
 
 Plan: plans/audio-video-sync-residual-validation.md ("Proposed anchor").
 Needs numpy only (main env).
@@ -55,7 +61,10 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from src.controller.audio_align import _robust_linfit  # noqa: E402
+from src.controller.audio_align import (  # noqa: E402
+    _robust_linfit,
+    parse_mic_sidecar,
+)
 
 
 def read_sidecar(path: str) -> tuple[dict[str, float], list[float], list[tuple]]:
@@ -75,11 +84,14 @@ def read_sidecar(path: str) -> tuple[dict[str, float], list[float], list[tuple]]
     return trailer, blocks, lats
 
 
-def anchors_for(sidecar: str, offset_ms: float) -> dict:
+def anchors_for(sidecar: str, audio: str, offset_ms: float,
+                anchor: str = "started") -> dict:
     trailer, blocks, lats = read_sidecar(sidecar)
     started = trailer["STARTED"]
     frame_num = trailer.get("FIRST_RECORD_SAMPLES", 32768)
-    true0 = started - offset_ms / 1e3
+    used = (started if anchor == "started"
+            else parse_mic_sidecar(sidecar, audio).sample0_wall_ns / 1e9)
+    true0 = used - offset_ms / 1e3
     k = np.arange(len(blocks), dtype=float)
     slope, intercept, _keep = _robust_linfit(k[1:], np.asarray(blocks[1:]))
     rate = frame_num / slope
@@ -112,11 +124,14 @@ def main(argv: list[str] | None = None) -> int:
         result = json.load(open(os.path.join(run, "sync_selftest.json")))
         for label, mic in sorted(result.get("microphones", {}).items()):
             sidecar = os.path.join(run, f"selftest_{label}_timestamps.txt")
+            audio = os.path.join(run, f"selftest_{label}.flac")
             if mic.get("median_ms") is None or not glob.glob(sidecar):
                 print(f"skip {run} {label}: no offset or sidecar", file=sys.stderr)
                 continue
             rows.append({"run": os.path.basename(os.path.normpath(run)),
-                         "mic": label, **anchors_for(sidecar, mic["median_ms"])})
+                         "mic": label,
+                         **anchors_for(sidecar, audio, mic["median_ms"],
+                                       mic.get("anchor", "started"))})
     if not rows:
         print("no usable recordings", file=sys.stderr)
         return 1

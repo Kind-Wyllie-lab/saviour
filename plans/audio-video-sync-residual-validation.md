@@ -362,11 +362,15 @@ anchor − true sample 0, per AudioMoth (STARTED sd in brackets):
   dir: `avsync_av1_{started,latency}_{realtime,slow10x}.mkv`. Rendered with
   a one-row-one-frame mapping, see the compose remap item in the backlog.
 
-**Next (anchor):** step 3 above: `parse_mic_sidecar` prefers the latency
-anchor when `LAT` lines exist, plus a per-AudioMoth constant (keyed by serial,
-from `sync_selftest`), falling back to `STARTED`. Needs a decision on where
-the constants live (module config `audiomoth_sync_offsets_ms`, written by the
-self-test, is the obvious place).
+**Step 3 built (2026-11-06):** `parse_mic_sidecar` uses the latency anchor
+when `LAT` lines exist, minus the AudioMoth's offset from its sidecar
+(`LATENCY_OFFSET_MS`, copied from the module's `audiomoth_sync_offsets_ms`,
+which a clean `sync_selftest` writes), or −4.8 ms uncalibrated; else
+`STARTED`. See CHANGELOG 2026-11-06 and `docs/AV_SYNC_TEST.md`.
+
+**Next (anchor):** calibrate on the rig (one self-test, then a second should
+read ~0 ms), repeat on another day, and calibrate the habitat AudioMoths on
+the bench before they go in.
 
 **How far to trust the GPIO edge times.** The self-test's truth is the
 Python stamp around the gpiozero write (bracket ≤ 40 µs), on the same Pi and

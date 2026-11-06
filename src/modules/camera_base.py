@@ -1017,8 +1017,10 @@ class CameraBase(Module):
         self._csv_flush_thread.start()
         self.facade.add_session_file(self._current_csv_path)
 
-    def _close_timestamp_csv(self) -> None:
-        """Flush, close, and stage the current timestamp CSV for export."""
+    def _close_timestamp_csv(self, stage: bool = True) -> str | None:
+        """Flush, close, and (unless `stage` is False) stage the current
+        timestamp CSV for export. Returns its path, or None if none was open."""
+        path = None
         if self._timestamp_csv_file is not None:
             self._csv_flush_stop.set()
             if self._csv_flush_thread is not None:
@@ -1031,8 +1033,11 @@ class CameraBase(Module):
             self._timestamp_csv_file = None
             self._timestamp_csv_writer = None
             if self._current_csv_path:
-                self.facade.stage_file_for_export(self._current_csv_path)
+                path = self._current_csv_path
+                if stage:
+                    self.facade.stage_file_for_export(path)
                 self._current_csv_path = None
+        return path
 
     def _probe_encoded_frames(self, video_path: str) -> int | None:
         """Frames actually in the container, via ffprobe packet count.

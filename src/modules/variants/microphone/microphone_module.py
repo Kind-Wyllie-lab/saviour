@@ -416,6 +416,7 @@ class AudiomothModule(Module):
         clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))
         clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
         latency_probe = bool(self.config.get("microphone.latency_probe", True))
+        sync_offset_ms = self._sync_offset_ms(serial) if latency_probe else None
 
         timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
         if register:  # False for sync_selftest scratch recordings
@@ -447,6 +448,11 @@ class AudiomothModule(Module):
                     # was captured.  Used for post-hoc alignment with video.
                     actual_start = time.time()
                     timestamps_writer.write(f"STARTED {actual_start:.6f}\n")
+                    if sync_offset_ms is not None:
+                        # This AudioMoth's calibrated latency-anchor offset
+                        # (sync_selftest), applied by parse_mic_sidecar.
+                        timestamps_writer.write(
+                            f"LATENCY_OFFSET_MS {sync_offset_ms:.3f}\n")
                     # Sync-residual diagnostics. Written as "KEY value" trailer
                     # lines — audio_align.parse_mic_sidecar skips any line
                     # containing a space, so these don't perturb the block fit.
@@ -630,6 +636,58 @@ class AudiomothModule(Module):
             "mic_distance_m": float(get("sync_pulse.mic_distance_m", 0.0)),
         }
 
+    def _sync_offset_ms(self, serial: str) -> float | None:
+        """This AudioMoth's calibrated anchor offset, or None if uncalibrated."""
+        offsets = self.config.get("audiomoth_sync_offsets_ms", {}) or {}
+        try:
+            value = offsets.get(serial) if isinstance(offsets, dict) else None
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
+
+    # A self-test result only becomes a calibration when it is clean: most
+    # pulses found, loud onsets (a weak onset is detected late), and a tight
+    # spread. Measured on the desk rig: ~33 dB, spread ~0.3 ms.
+    _CAL_MIN_DETECTED_FRAC = 0.75
+    _CAL_MIN_SNR_DB = 25.0
+    _CAL_MAX_MAD_MS = 1.0
+
+    @classmethod
+    def _calibration(cls, fit, onsets) -> tuple[float | None, str | None]:
+        """(new offset ms, None) from one AudioMoth's self-test, or
+        (None, reason) when it can't calibrate. The self-test placed sample 0
+        with the offset in force (fit.latency_offset_ms); its median
+        onset error is what that offset is still out by."""
+        if fit.anchor != "latency" or fit.latency_offset_ms is None:
+            return None, "no LAT lines (microphone.latency_probe off?)"
+        found = [o for o in onsets if o is not None]
+        if len(found) < max(3, cls._CAL_MIN_DETECTED_FRAC * len(onsets)):
+            return None, f"only {len(found)}/{len(onsets)} pulses detected"
+        offs = np.array([o.offset_ms for o in found])
+        snr = float(np.median([o.snr_db for o in found]))
+        if snr < cls._CAL_MIN_SNR_DB:
+            return None, f"onsets too quiet ({snr:.0f} dB): move the buzzer closer"
+        med = float(np.median(offs))
+        mad = float(np.median(np.abs(offs - med)))
+        if mad > cls._CAL_MAX_MAD_MS:
+            return None, f"onsets too spread (MAD {mad:.2f} ms)"
+        return round(fit.latency_offset_ms + med, 3), None
+
+    def _store_sync_offsets(self, calibrated: dict[str, float]) -> None:
+        """Save measured offsets (serial -> ms) and hand the controller the
+        new config, so its copy (and any later save from the UI) has them."""
+        offsets = dict(self.config.get("audiomoth_sync_offsets_ms", {}) or {})
+        for serial, value in calibrated.items():
+            old = offsets.get(serial)
+            offsets[serial] = value
+            self.logger.info(
+                f"sync_selftest: AudioMoth {serial} ({self._label_for(serial)}) "
+                f"offset {old} -> {value} ms")
+        self.config.set("audiomoth_sync_offsets_ms", offsets)
+        self.facade.send_status({
+            "type": "module_config_updated", "reason": "sync_selftest",
+            "config": self.config.get_all()})
+
     def _get_sync_pulser(self) -> SyncPulser:
         """The pulser for the current config (rebuilt if the pins changed)."""
         cfg = self._sync_cfg()
@@ -730,12 +788,16 @@ class AudiomothModule(Module):
     @command()
     def sync_selftest(self, pulses: int = 10, interval_s: float = 1.2,
                       pulse_ms: float | None = None, lead_s: float = 4.0,
-                      keep_audio: bool = False) -> dict:
+                      keep_audio: bool = False, calibrate: bool = True) -> dict:
         """Measure buzz edge -> audio onset on every AudioMoth, outside a
         session: records to a scratch dir through the same recorder code as
         a real segment, fires `pulses` buzzes, times each onset with the
         aligner's own anchor (audio_align.parse_mic_sidecar) and sends a
-        `sync_selftest_result` status. Returns immediately."""
+        `sync_selftest_result` status. Returns immediately.
+
+        With `calibrate`, each AudioMoth with a clean result gets its
+        anchor offset (audiomoth_sync_offsets_ms) updated, so later
+        recordings place its audio on the measured truth."""
         if self._recording_active():
             return {"result": "error", "message": "not while recording -- use sync_pulses"}
         try:
@@ -753,7 +815,7 @@ class AudiomothModule(Module):
             try:
                 result = self._run_sync_selftest(
                     pulser, pulses, interval_s, pulse_ms,
-                    max(2.0, float(lead_s)), bool(keep_audio))
+                    max(2.0, float(lead_s)), bool(keep_audio), bool(calibrate))
             except Exception as e:
                 self.logger.error(f"sync_selftest failed: {e}", exc_info=True)
                 result = {"status": "error", "message": str(e)}
@@ -767,7 +829,8 @@ class AudiomothModule(Module):
                 "pulse_ms": pulse_ms}
 
     def _run_sync_selftest(self, pulser: SyncPulser, pulses: int, interval_s: float,
-                           pulse_ms: float, lead_s: float, keep_audio: bool) -> dict:
+                           pulse_ms: float, lead_s: float, keep_audio: bool,
+                           calibrate: bool = True) -> dict:
         from src.controller.audio_align import parse_mic_sidecar
         from src.shared import av_sync
 
@@ -797,7 +860,7 @@ class AudiomothModule(Module):
                 t.join(timeout=10)
         edge_ns = [e.on_ns for e in edges]
 
-        per_mic = {}
+        per_mic, calibrated = {}, {}
         for serial, path in files.items():
             sidecar = f"{os.path.splitext(path)[0]}_timestamps.txt"
             label = self._label_for(serial)
@@ -816,7 +879,16 @@ class AudiomothModule(Module):
                 "fit_rate_hz": round(fit.measured_rate_hz, 1),
                 "fit_residual_p95_ms": round(fit.residual_p95_ms, 2),
                 "frame_num": fit.frame_num,
+                "anchor": fit.anchor,
+                "latency_offset_ms": fit.latency_offset_ms,
+                "latency_offset_calibrated": fit.latency_offset_calibrated,
             }
+            new_offset, why_not = self._calibration(fit, onsets)
+            per_mic[label]["measured_offset_ms"] = new_offset
+            if why_not:
+                per_mic[label]["calibration_skipped"] = why_not
+            elif calibrate:
+                calibrated[serial] = new_offset
 
         result = {
             "status": "ok",
@@ -830,8 +902,11 @@ class AudiomothModule(Module):
                 max((e.on_spread_ns for e in edges), default=0) / 1e3, 1),
             "block_size": int(self.config.get("microphone.block_size", 32768)),
             "microphones": per_mic,
+            "calibrated": {self._label_for(s): v for s, v in calibrated.items()},
             "sign": "positive offset = audio onset placed after the GPIO edge",
         }
+        if calibrated:
+            self._store_sync_offsets(calibrated)
         with open(os.path.join(scratch, "sync_selftest.json"), "w") as f:
             json.dump(result, f, indent=2)
         if keep_audio:

@@ -676,19 +676,71 @@ def test_window_inputs_skip_a_segment_that_ended_before_the_window():
                          10**12 + 10 * 10**9, 2.0) == ([], [])
 
 
-def test_fit_ignores_latency_probe_lines(tmp_path):
-    """The recorder's LAT lines (stream latency probe) must not change the fit."""
-    plain, probed = tmp_path / "a_timestamps.txt", tmp_path / "b_timestamps.txt"
-    _write_sidecar(plain, 1_700_000_000.0, NOMINAL_RATE, 300, jitter_s=0.001, seed=3)
-    out = []
-    for i, ln in enumerate(plain.read_text().splitlines()):
-        if _is_float(ln):
-            out.append(f"LAT {(i + 1) * FRAME_NUM} {ln} {ln} 104000")
+def _add_lat_lines(src, dst, true_sample0_s, rate_hz, offset_ms=None,
+                   anchor_bias_ms=-6.0, latency_us=112_000, n=None, extra=""):
+    """Copy a synthetic sidecar, adding the recorder's LAT line after every
+    block: PipeWire's latency figure, `anchor_bias_ms` off the truth (the
+    per-AudioMoth constant), plus LATENCY_OFFSET_MS when calibrated."""
+    out, k = [], 0
+    for ln in src.read_text().splitlines():
         out.append(ln)
-    probed.write_text("\n".join(out) + "\n")
+        if ln.startswith("STARTED ") and offset_ms is not None:
+            out.append(f"LATENCY_OFFSET_MS {offset_ms:.3f}")
+        if _is_float(ln) and (n is None or k < n):
+            k += 1
+            idx = k * FRAME_NUM
+            t = true_sample0_s + idx / rate_hz + latency_us / 1e6 \
+                + anchor_bias_ms / 1e3
+            out.append(f"LAT {idx} {t - 0.0005:.6f} {t + 0.0005:.6f} {latency_us}")
+    dst.write_text("\n".join(out) + "\n" + extra)
+
+
+def _parse(path, n_blocks=300):
     with patch("src.controller.audio_align._probe_audio",
-               return_value=(300 * FRAME_NUM, NOMINAL_RATE)):
-        a = parse_mic_sidecar(str(plain), "unused.flac")
-        b = parse_mic_sidecar(str(probed), "unused.flac")
-    assert (a.sample0_wall_ns, a.measured_rate_hz, a.n_blocks) == (
-        b.sample0_wall_ns, b.measured_rate_hz, b.n_blocks)
+               return_value=(n_blocks * FRAME_NUM, NOMINAL_RATE)):
+        return parse_mic_sidecar(str(path), "unused.flac")
+
+
+def test_latency_anchor_replaces_started_and_keeps_the_fit(tmp_path):
+    """STARTED is stamped 20 ms after the true sample 0; the LAT lines
+    (calibrated: offset = their -6 ms bias) put sample 0 back on the truth.
+    The rate fit is untouched."""
+    true0 = 1_700_000_000.0
+    plain, probed = tmp_path / "a_timestamps.txt", tmp_path / "b_timestamps.txt"
+    _write_sidecar(plain, true0 + 0.020, NOMINAL_RATE, 300, jitter_s=0.001, seed=3)
+    _add_lat_lines(plain, probed, true0, NOMINAL_RATE, offset_ms=-6.0)
+    a, b = _parse(plain), _parse(probed)
+    assert a.anchor == "started" and b.anchor == "latency"
+    # within the rate fit's own error over the recording (~0.1 ms here)
+    assert abs(b.sample0_wall_ns / 1e9 - true0) < 5e-4
+    assert abs(a.sample0_wall_ns / 1e9 - (true0 + 0.020)) < 1e-6
+    assert b.started_wall_ns == a.sample0_wall_ns          # the STARTED stamp
+    assert (a.measured_rate_hz, a.n_blocks) == (b.measured_rate_hz, b.n_blocks)
+    assert b.latency_offset_ms == -6.0 and b.latency_offset_calibrated
+    report = b.as_report()
+    assert report["anchor"] == "latency" and report["latency_offset_ms"] == -6.0
+
+
+def test_uncalibrated_latency_anchor_uses_the_default_offset(tmp_path):
+    true0 = 1_700_000_000.0
+    plain, probed = tmp_path / "a_timestamps.txt", tmp_path / "b_timestamps.txt"
+    _write_sidecar(plain, true0 + 0.020, NOMINAL_RATE, 300, seed=3)
+    _add_lat_lines(plain, probed, true0, NOMINAL_RATE, offset_ms=None,
+                   anchor_bias_ms=audio_align.DEFAULT_LATENCY_OFFSET_MS)
+    b = _parse(probed)
+    assert b.anchor == "latency" and not b.latency_offset_calibrated
+    assert b.latency_offset_ms == audio_align.DEFAULT_LATENCY_OFFSET_MS
+    assert abs(b.sample0_wall_ns / 1e9 - true0) < 5e-4
+
+
+def test_latency_anchor_needs_a_few_lines_and_a_sane_answer(tmp_path):
+    true0 = 1_700_000_000.0
+    plain = tmp_path / "a_timestamps.txt"
+    _write_sidecar(plain, true0, NOMINAL_RATE, 300, seed=3)
+    few, wild = tmp_path / "few_timestamps.txt", tmp_path / "wild_timestamps.txt"
+    _add_lat_lines(plain, few, true0, NOMINAL_RATE, n=2)
+    _add_lat_lines(plain, wild, true0, NOMINAL_RATE, anchor_bias_ms=5000.0)
+    for path in (few, wild):
+        fit = _parse(path)
+        assert fit.anchor == "started" and fit.latency_offset_ms is None
+        assert abs(fit.sample0_wall_ns / 1e9 - true0) < 1e-6

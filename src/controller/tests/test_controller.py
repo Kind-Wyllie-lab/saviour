@@ -195,6 +195,22 @@ class TestSyncSelftestResult:
         assert body["module_id"] == "microphone_4703"
 
 
+class TestModuleConfigUpdated:
+    def test_self_set_config_is_adopted(self):
+        """sync_selftest stores AudioMoth offsets on the module; the
+        controller takes that config as true + target (no FAILED sync, and
+        a later save doesn't push the old offsets back)."""
+        import json
+        ctx = _Ctx()
+        ctx.modules.is_removed.return_value = False
+        cfg = {"audiomoth_sync_offsets_ms": {"24FC": -3.4}}
+        Controller.handle_status_update(ctx, "status/microphone_4703", json.dumps(
+            {"type": "module_config_updated", "reason": "sync_selftest",
+             "config": cfg}))
+        ctx.modules.adopt_module_config.assert_called_once_with(
+            "microphone_4703", cfg)
+
+
 class TestSetExportConfigAck:
     def test_success_ack_folds_credentials_into_cached_config(self):
         import json

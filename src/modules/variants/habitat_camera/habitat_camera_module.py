@@ -575,10 +575,47 @@ class HabitatCameraModule(CameraBase):
         """Background: close the timestamp CSV, remux .h264 -> .ts, stage
         for export. See _close_clip()'s docstring for why this runs off
         the calling thread."""
-        self._close_timestamp_csv()
+        csv_path = self._close_timestamp_csv(stage=False)
         final_path = self._remux_clip_to_ts(h264_path, ts_path)
+        if csv_path:
+            self._trim_trailing_csv_rows(csv_path, final_path)
+            self.facade.stage_file_for_export(csv_path)
         self.facade.stage_file_for_export(final_path)
         self.logger.info(f"Motion clip closed and staged: {final_path}")
+
+    # Frames still inside the encoder when CircularOutput stops never reach
+    # the file, but their CSV rows were already written: every clip ended
+    # with a few more rows than frames (5 on the desk rig at 30 fps, and the
+    # LED test showed row i = frame i up to there). Compose remaps any
+    # surplus proportionally, which shifted mid-clip frames by ~80 ms.
+    # A bigger surplus means something else went wrong: leave it be.
+    _MAX_TRAILING_CSV_TRIM = 30
+
+    def _trim_trailing_csv_rows(self, csv_path: str, video_path: str) -> int:
+        """Drop CSV rows past the clip's last frame. Returns rows dropped."""
+        frames = _count_video_frames(video_path)
+        try:
+            with open(csv_path) as f:
+                lines = f.readlines()
+        except OSError as e:
+            self.logger.warning(f"Clip CSV trim: can't read {csv_path}: {e}")
+            return 0
+        excess = len(lines) - 1 - frames
+        if frames <= 0 or excess <= 0:
+            return 0
+        if excess > self._MAX_TRAILING_CSV_TRIM:
+            self.logger.warning(
+                f"Clip CSV has {excess} more rows than {video_path} has frames; "
+                f"left as is")
+            return 0
+        tmp = csv_path + ".tmp"
+        with open(tmp, "w") as f:
+            f.writelines(lines[:1 + frames])
+        os.replace(tmp, csv_path)
+        self.logger.info(
+            f"Clip CSV: dropped {excess} trailing row(s) for frames the "
+            f"encoder never wrote ({frames} frames)")
+        return excess
 
     def _remux_clip_to_ts(self, h264_path: str, ts_path: str) -> str:
         """Remux CircularOutput's raw .h264 to .ts (the export format the
@@ -623,6 +660,19 @@ class HabitatCameraModule(CameraBase):
         if self._occupancy_thread is not None:
             self._occupancy_thread.join(timeout=self._occupancy_interval_s + 1)
         return super().stop()
+
+
+def _count_video_frames(path: str) -> int:
+    """Video packets (= frames) in `path` by ffprobe; 0 if it can't tell."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+             "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=120, check=True,
+        ).stdout
+        return int(out.strip().splitlines()[0].strip().rstrip(","))
+    except Exception:
+        return 0
 
 
 def main():

@@ -4803,7 +4803,10 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # (re)connect and export.
                 case ("export_ready" | "export_failed" | "export_progress"
                       | "sync_selftest_result" | "status" | "streaming_started"
-                      | "streaming_stopped"):
+                      | "streaming_stopped" | "module_config_updated"):
+                    # module_config_updated carries the whole config
+                    # (share password): adopted in controller.py, never
+                    # forwarded to browsers.
                     pass
 
                 case _:

@@ -631,17 +631,24 @@ def create_api_blueprint(web) -> Blueprint:
     def start_sync_selftest(module_id):
         """Run the microphone module's buzz->audio delay self-test (no
         session needed). Body (all optional): {"pulses", "interval_s",
-        "pulse_ms"}. Returns 202; the result arrives as a
-        `sync_selftest_result` event and from GET on this path."""
+        "pulse_ms", "calibrate"}. A clean run stores each AudioMoth's audio
+        anchor offset unless "calibrate" is false. Returns 202; the result
+        arrives as a `sync_selftest_result` event and from GET on this
+        path."""
         modules = web.facade.get_modules()
         if module_id not in modules:
             return _error("not_found", f"Unknown module '{module_id}'", 404)
         if modules[module_id].get("type") != "microphone":
             return _error("wrong_module_type",
                           f"Module '{module_id}' is not a microphone module", 400)
-        params = _pulse_params(request.get_json(silent=True) or {}, "pulses")
+        body = request.get_json(silent=True) or {}
+        params = _pulse_params(body, "pulses")
         if isinstance(params, tuple):
             return params
+        if "calibrate" in body:
+            if not isinstance(body["calibrate"], bool):
+                return _error("invalid_request", "'calibrate' must be true or false", 400)
+            params["calibrate"] = body["calibrate"]
         web.facade.send_command(module_id, "sync_selftest", params)
         return jsonify({"module_id": module_id, "dispatched": True, **params}), 202
 

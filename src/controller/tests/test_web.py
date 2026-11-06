@@ -2786,6 +2786,16 @@ class TestCropStatusForwarding:
         assert "config" not in payload and "hunter2" not in json.dumps(payload)
         assert payload["width"] == 1088 and payload["module_id"] == "camera_ab12"
 
+    def test_module_config_updated_is_never_forwarded(self):
+        """sync_selftest's stored offsets arrive with the whole config."""
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("microphone_ab12", {
+            "type": "module_config_updated", "reason": "sync_selftest",
+            "config": {"export": {"share_password": "hunter2"}},
+        })
+        assert "hunter2" not in json.dumps(client.get_received())
+
     def test_crop_editing_status_is_forwarded(self):
         web, _ = _make_web_with_facade()
         client = _connected_client(web)

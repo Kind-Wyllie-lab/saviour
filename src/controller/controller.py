@@ -285,12 +285,13 @@ class Controller(ABC):
                     # Apply any FrameSync role change deferred while recording.
                     self.facade.reconcile_framesync()
 
-                case 'camera_crop_updated':
-                    # A crop changes camera.width/height on the module itself
-                    # (the output follows the crop's aspect), so take the
-                    # module's config as the new target -- otherwise it reads
-                    # as a FAILED sync and a later config save would push the
-                    # old size back over the crop.
+                case 'camera_crop_updated' | 'module_config_updated':
+                    # The module changed its own config: a crop changes
+                    # camera.width/height (the output follows the crop's
+                    # aspect); sync_selftest stores AudioMoth offsets. Take
+                    # the module's config as the new target -- otherwise it
+                    # reads as a FAILED sync and a later config save would
+                    # push the old values back.
                     config_data = status_data.get('config')
                     if config_data and not status_data.get('error'):
                         self.modules.adopt_module_config(module_id, config_data)

@@ -1268,6 +1268,17 @@ class TestSyncRig:
         web.facade.send_command.assert_called_once_with(
             "microphone_4703", "sync_selftest", {"pulses": 12, "interval_s": 1.5})
 
+    def test_selftest_passes_calibrate(self):
+        web, password = self._web()
+        client = web.app.test_client()
+        url = "/api/v1/modules/microphone_4703/sync_selftest"
+        assert client.post(url, json={"calibrate": False},
+                           headers=_auth(password)).status_code == 202
+        web.facade.send_command.assert_called_once_with(
+            "microphone_4703", "sync_selftest", {"calibrate": False})
+        assert client.post(url, json={"calibrate": "no"},
+                           headers=_auth(password)).status_code == 400
+
     def test_selftest_rejects_non_microphone_and_bad_numbers(self):
         web, password = self._web()
         client = web.app.test_client()

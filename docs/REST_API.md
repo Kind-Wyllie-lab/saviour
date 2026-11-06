@@ -417,18 +417,22 @@ read the results: [`docs/AV_SYNC_TEST.md`](AV_SYNC_TEST.md).
 ### `POST /api/v1/modules/<id>/sync_selftest`
 
 Buzz-to-audio delay self-test on a microphone module (no session). Body, all
-optional: `{"pulses": 10, "interval_s": 1.2, "pulse_ms": 50}`. Returns `202`
-immediately; the module records to a scratch folder for ~`4 + pulses x
-interval_s` seconds. `400` `wrong_module_type` if not a microphone, `404`
-unknown module. The module refuses (logged) while recording or with no
-`sync_pulse.buzzer_pin` configured.
+optional: `{"pulses": 10, "interval_s": 1.2, "pulse_ms": 50, "calibrate":
+true}`. Returns `202` immediately; the module records to a scratch folder for
+~`4 + pulses x interval_s` seconds. A clean run (most pulses found, loud,
+tight) stores each AudioMoth's audio anchor offset, which later recordings
+use; `"calibrate": false` only measures. `400` `wrong_module_type` if not a
+microphone, `404` unknown module. The module refuses (logged) while
+recording or with no `sync_pulse.buzzer_pin` configured.
 
 ### `GET /api/v1/modules/<id>/sync_selftest`
 
 The latest result (controller memory only): per AudioMoth `mean_ms` /
 `median_ms` / `std_ms` / min / max of *audio onset − GPIO edge*, each
-pulse's offset and SNR, plus the clock-fit quality. Positive = audio placed
-late. `404` `no_result` before the first run. Also published on `/events`
+pulse's offset and SNR, plus the clock-fit quality, the `anchor` used, the
+`latency_offset_ms` in force and the `measured_offset_ms` (or
+`calibration_skipped` with the reason); `calibrated` lists the offsets
+stored. Positive = audio placed late. `404` `no_result` before the first run. Also published on `/events`
 as `sync_selftest_result`.
 
 ### `POST /api/v1/sessions/<name>/sync_pulses`

@@ -7,7 +7,7 @@ PTP-disciplined clock. Two tests use the same rig:
 
 | Test | Needs | Answers |
 |---|---|---|
-| **Self-test** (`sync_selftest`) | buzzer near the AudioMoth(s); no session | How late (or early) does the aligner place a sound relative to when it happened? Per AudioMoth, in ms, with its spread. |
+| **Self-test** (`sync_selftest`) | buzzer near the AudioMoth(s); no session | How late (or early) does the aligner place a sound relative to when it happened? Per AudioMoth, in ms, with its spread. Also **calibrates** each AudioMoth. |
 | **Session check** (`sync_pulses` + `tools/av_sync_check.py`) | buzzer + LED in view of every camera; a normal session | Where do the same instant's sound and flash land in every stream, and how far apart are they in an aligned composite? |
 
 Background and the measurements so far: `plans/audio-video-sync-residual-validation.md`.
@@ -80,14 +80,36 @@ jittered intervals, finds each onset and converts it to wall time with
 exactly the anchor the aligner uses (`audio_align.parse_mic_sidecar`).
 The result (also an SSE `sync_selftest_result` event and a controller log
 line) has, per AudioMoth: `mean_ms`, `median_ms`, `std_ms`, min/max, each
-pulse's offset and SNR, and the clock-fit quality. **Positive = the audio
-places the sound after it happened.** Refused while recording (use the
-session check instead).
+pulse's offset and SNR, the clock-fit quality, and the calibration (below).
+**Positive = the audio places the sound after it happened.** Refused while
+recording (use the session check instead).
 
-Run it several times, across a reboot and on another day: if `mean_ms` is
-stable for an AudioMoth (spread well under 10 ms between runs), it is a
-per-device constant that can be subtracted in `parse_mic_sidecar`. If it
-moves, calibration alone won't fix it (see the plan's Phase C).
+### How audio is anchored, and what the self-test calibrates
+
+Every recording's sidecar has a `LAT` line per block: PipeWire's reported
+stream latency (`microphone.latency_probe`, on by default). The aligner
+(`audio_align.parse_mic_sidecar`) places sample 0 from those, which is steady
+to ~0.1 ms between recordings, then subtracts a fixed **per-AudioMoth
+offset**. Recordings without `LAT` lines (before 2026-11-06) fall back to
+`STARTED`, about 20 ms late, ±5 ms per recording.
+
+The offset is what the self-test measures. A run that is clean for an
+AudioMoth (≥ 75 % of pulses found, median SNR ≥ 25 dB, offsets within a
+1 ms MAD) stores it in the module's `audiomoth_sync_offsets_ms` (serial →
+ms), and each later recording copies it into its sidecar
+(`LATENCY_OFFSET_MS`). The result shows `anchor`, the `latency_offset_ms`
+in force, the `measured_offset_ms`, and `calibration_skipped` with the
+reason when a run doesn't qualify. An uncalibrated AudioMoth gets a default
+(−4.8 ms), good to about ±2 ms. Pass `"calibrate": false` to measure only.
+
+**When to run it:** once per AudioMoth, buzzer a few cm away, before it's
+deployed (on the bench is fine, the offset belongs to the AudioMoth); again
+after changing its firmware, sample rate, block size or filter, a kernel or
+PipeWire update, or the Pi/USB hub it hangs off; and a quick check at the
+start of an experiment campaign. Measured 2026-11-06 on the desk rig: the
+offsets hold to 0.1 ms across a reboot and move 0.3-0.5 ms under heavy
+CPU/disk load. After a calibration, a second run should read `median_ms`
+near 0.
 
 ## Session check (cameras too)
 
@@ -127,11 +149,13 @@ It prints three blocks:
 
 - Edge times are stamped by Python around the GPIO write (the bracket width
   is reported as `edge_spread_us_max`, typically tens of µs).
-- `STARTED` (the audio anchor) is stamped in Python just after the
-  AudioMoth stream opens, so a thread switch there (up to ~5 ms) shifts that
-  recording's anchor. The run-to-run spread of the self-test includes it.
+- `STARTED` (the fallback anchor) varies ±5 ms per recording: the audio
+  stack's latency is fixed for a stream's life and differs on each open.
+  The latency anchor measures it; without `LAT` lines nothing can.
 - Buzzers take a millisecond or two to start sounding after the edge; that
-  is part of what is measured (an LED is effectively instant).
+  is part of what is measured (an LED is effectively instant), so it ends
+  up in each AudioMoth's calibrated offset. It is the same for every
+  AudioMoth calibrated with the same buzzer.
 - The video side assumes frame `i` of the `.ts` is row `i` of the timestamp
   CSV. The tool warns when the counts differ (the sync-client caveat in
   CLAUDE.md).

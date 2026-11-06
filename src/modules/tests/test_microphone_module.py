@@ -264,6 +264,89 @@ def test_sync_selftest_measures_buzz_to_audio_delay(tmp_path):
     m.facade.add_session_file.assert_not_called()   # scratch, never exported
 
 
+class _LatencyClockedRecorder(_ClockedRecorder):
+    """Also reports a stream latency, as PipeWire does: how long ago the
+    next unread sample was captured, plus a fixed per-device bias (what
+    the self-test calibrates out)."""
+
+    BIAS_S = -0.006
+
+    @property
+    def latency(self):
+        return time.time() - (self.t0 + self.n / SYNC_RATE) + self.BIAS_S
+
+
+def _run_selftest(m, recorder_cls):
+    from src.controller import audio_align
+
+    _FakePulser.instances, _FakePulser.all_edges = [], []
+    m.facade.send_status.reset_mock()
+    with patch.object(mm, "SyncPulser", _FakePulser), \
+         patch.object(audio_align, "_probe_audio", _sf_probe), \
+         patch.object(mm, "soundcard") as soundcard:
+        soundcard.get_microphone.return_value.recorder.side_effect = (
+            lambda **_kw: recorder_cls(_FakePulser.all_edges))
+        assert m.sync_selftest(pulses=3, interval_s=1.0, pulse_ms=20,
+                               lead_s=2.0)["result"] == "started"
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            sent = [c[0][0] for c in m.facade.send_status.call_args_list]
+            done = [s for s in sent if s["type"] == "sync_selftest_result"]
+            if done:
+                return done[0], sent
+            time.sleep(0.05)
+    raise AssertionError("no sync_selftest_result")
+
+
+def test_sync_selftest_calibrates_the_latency_anchor(tmp_path):
+    """With LAT lines the self-test measures the AudioMoth's anchor offset
+    and stores it; the next recording carries it in its sidecar and the
+    same buzz then comes back at ~0 ms."""
+    m = _sync_module(tmp_path)
+    cfg = {k: m.config.get(k) for k in (
+        "recording.mic_throughput_log_secs", "audiomoth.sample_rate",
+        "microphone.frame_num", "microphone.block_size",
+        "sync_pulse.buzzer_pin", "sync_pulse.led_pin")}
+    m.config.get.side_effect = lambda key, default=None: cfg.get(key, default)
+    m.config.set.side_effect = lambda key, value, persist=True: cfg.__setitem__(key, value)
+
+    status, sent = _run_selftest(m, _LatencyClockedRecorder)
+    r = status["microphones"]["audiomoth_AAAA"]
+    assert r["anchor"] == "latency" and not r["latency_offset_calibrated"], r
+    # truth 30 ms buzz delay; the anchor sits BIAS early -> offset 30 - BIAS
+    want = SYNC_LATENCY_S * 1e3 - _LatencyClockedRecorder.BIAS_S * 1e3
+    assert abs(cfg["audiomoth_sync_offsets_ms"]["AAAA"] - want) < 1.5, cfg
+    assert status["calibrated"] == {"audiomoth_AAAA": r["measured_offset_ms"]}
+    assert any(s["type"] == "module_config_updated" for s in sent)
+
+    status, _ = _run_selftest(m, _LatencyClockedRecorder)
+    r = status["microphones"]["audiomoth_AAAA"]
+    assert r["latency_offset_calibrated"] and abs(r["median_ms"]) < 1.5, r
+
+
+def test_sync_selftest_without_lat_lines_does_not_calibrate(tmp_path):
+    m = _sync_module(tmp_path)
+    status, sent = _run_selftest(m, _ClockedRecorder)   # no .latency
+    r = status["microphones"]["audiomoth_AAAA"]
+    assert r["anchor"] == "started" and r["measured_offset_ms"] is None
+    assert "LAT" in r["calibration_skipped"] and status["calibrated"] == {}
+    m.config.set.assert_not_called()
+    assert not any(s["type"] == "module_config_updated" for s in sent)
+
+
+def test_calibration_refuses_a_poor_self_test():
+    from types import SimpleNamespace
+    fit = SimpleNamespace(anchor="latency", latency_offset_ms=-4.8)
+    good = [SimpleNamespace(offset_ms=10.0 + 0.1 * i, snr_db=33.0) for i in range(8)]
+    value, why = mm.AudiomothModule._calibration(fit, good)
+    assert why is None and abs(value - (-4.8 + 10.35)) < 1e-6
+    assert "detected" in mm.AudiomothModule._calibration(fit, good[:2] + [None] * 6)[1]
+    quiet = [SimpleNamespace(offset_ms=o.offset_ms, snr_db=18.0) for o in good]
+    assert "quiet" in mm.AudiomothModule._calibration(fit, quiet)[1]
+    spread = [SimpleNamespace(offset_ms=10.0 + 5 * i, snr_db=33.0) for i in range(8)]
+    assert "spread" in mm.AudiomothModule._calibration(fit, spread)[1]
+
+
 def test_sync_selftest_refuses_while_recording_or_unconfigured(tmp_path):
     m = _sync_module(tmp_path)
     m.is_recording = True

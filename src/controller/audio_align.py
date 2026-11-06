@@ -59,6 +59,24 @@ DEFAULT_STRIP_HEIGHT = 240
 PLAYHEAD_PPS = 120
 _MAX_STRIP_PX = 48000
 
+# Audio sample-0 anchor (plans/audio-video-sync-residual-validation.md).
+# When the sidecar has `LAT <index> <t_before> <t_after> <latency_us>` lines
+# (the recorder's microphone.latency_probe), sample 0 is placed from
+# PipeWire's own reported stream latency: per block,
+#     (t_before + t_after)/2 - latency - index/rate,
+# median over the recording, minus a fixed per-AudioMoth offset. That offset
+# is what the buzzer self-test measures (`sync_selftest` stores it per
+# serial; the recorder writes it to the sidecar as LATENCY_OFFSET_MS). An
+# uncalibrated AudioMoth gets the default below: the mean of the two desk-rig
+# AudioMoths (-6.2 / -3.4 ms, 2026-11-06), so expect +-2 ms until calibrated.
+# Without LAT lines (older recordings) the anchor stays `STARTED`, which
+# places audio ~20 ms late, +-5 ms per recording.
+DEFAULT_LATENCY_OFFSET_MS = -4.8
+_MIN_LAT_LINES = 3
+# A latency anchor further than this from STARTED is a broken probe, not a
+# measurement: keep STARTED.
+_MAX_LAT_ANCHOR_SHIFT_S = 1.0
+
 # ffmpeg showspectrum(pic) enum values we let the caller pick from.
 SPEC_COLORS = (
     "intensity", "rainbow", "moreland", "nebulae", "fire", "fiery", "fruit",
@@ -183,6 +201,12 @@ class SidecarFit:
     residual_p95_ms: float
     n_outliers: int
     started_wall_ns: int
+    # Which stamp placed sample 0: "latency" (LAT lines), "started", or
+    # "intercept" (no STARTED line either); and, for "latency", the
+    # per-AudioMoth offset applied and whether it came from a calibration.
+    anchor: str = "started"
+    latency_offset_ms: float | None = None
+    latency_offset_calibrated: bool = False
 
     @property
     def n_samples(self) -> int:
@@ -210,6 +234,9 @@ class SidecarFit:
             "residual_p95_ms": _round_or_none(self.residual_p95_ms, 3),
             "n_outliers": self.n_outliers,
             "recording_duration_s": round(self.duration_s, 3),
+            "anchor": self.anchor,
+            "latency_offset_ms": self.latency_offset_ms,
+            "latency_offset_calibrated": self.latency_offset_calibrated,
         }
 
 
@@ -310,9 +337,13 @@ def parse_mic_sidecar(
 
     `frame_num` defaults to what the sidecar itself records
     (`FIRST_RECORD_SAMPLES`) -- pass an explicit value only to override.
+
+    Sample 0 is anchored on the stream latency when the sidecar has `LAT`
+    lines, else on `STARTED` (see DEFAULT_LATENCY_OFFSET_MS).
     """
     block_times: list[float] = []
     trailer: dict[str, float] = {}
+    lat_lines: list[tuple[int, float, float, float]] = []
     started_wall_ns = 0
     with open(sidecar_path) as f:
         for raw in f:
@@ -327,6 +358,10 @@ def parse_mic_sidecar(
                 parts = line.split()
                 if len(parts) == 2 and _is_float(parts[1]):
                     trailer[parts[0]] = float(parts[1])
+                elif (len(parts) == 5 and parts[0] == "LAT"
+                      and all(_is_float(p) for p in parts[1:])):
+                    lat_lines.append((int(float(parts[1])), float(parts[2]),
+                                      float(parts[3]), float(parts[4])))
                 continue
             block_times.append(float(line))
 
@@ -377,12 +412,31 @@ def parse_mic_sidecar(
         )
 
     # Anchor sample-0 on the real post-open timestamp, not the fit's
-    # intercept -- see the comment above the fit call.
+    # intercept -- see the comment above the fit call -- unless the stream's
+    # own reported latency is there to do better.
     sample0_wall_ns = started_wall_ns or int(round(intercept * 1e9))
+    anchor = "started" if started_wall_ns else "intercept"
+    rate_hz = frame_num / slope
+    lat_offset_ms: float | None = None
+    calibrated = "LATENCY_OFFSET_MS" in trailer
+    if len(lat_lines) >= _MIN_LAT_LINES:
+        est = np.array([(t0 + t1) / 2 - lat_us / 1e6 - idx / rate_hz
+                        for idx, t0, t1, lat_us in lat_lines])
+        lat_offset_ms = trailer.get("LATENCY_OFFSET_MS", DEFAULT_LATENCY_OFFSET_MS)
+        lat_s0 = float(np.median(est)) - lat_offset_ms / 1e3
+        if abs(lat_s0 * 1e9 - sample0_wall_ns) <= _MAX_LAT_ANCHOR_SHIFT_S * 1e9:
+            sample0_wall_ns = int(round(lat_s0 * 1e9))
+            anchor = "latency"
+        else:
+            logger.warning(
+                "%s: latency anchor %.1f ms from %s -- ignoring LAT lines",
+                os.path.basename(sidecar_path),
+                (lat_s0 * 1e9 - sample0_wall_ns) / 1e6, anchor)
+            lat_offset_ms = None
 
     return SidecarFit(
         sample0_wall_ns=sample0_wall_ns,
-        measured_rate_hz=frame_num / slope,
+        measured_rate_hz=rate_hz,
         nominal_rate_hz=nominal_rate,
         frame_num=frame_num,
         n_blocks=n_blocks,
@@ -390,7 +444,10 @@ def parse_mic_sidecar(
         residual_p50_ms=float(np.percentile(resid_ms[keep], 50)),
         residual_p95_ms=float(np.percentile(resid_ms[keep], 95)),
         n_outliers=int(np.count_nonzero(~keep)),
-        started_wall_ns=sample0_wall_ns,
+        started_wall_ns=started_wall_ns or sample0_wall_ns,
+        anchor=anchor,
+        latency_offset_ms=lat_offset_ms,
+        latency_offset_calibrated=calibrated and lat_offset_ms is not None,
     )
 
 

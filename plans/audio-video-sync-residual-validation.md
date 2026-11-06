@@ -272,8 +272,8 @@ hundreds of blocks, so Python scheduling can't be what moves it: the ~±5 ms is
 stream's life and different each time a stream opens**. It looks quantised:
 intercepts bunch at ≈ 99 and ≈ 106.5 ms (6 of 12 within 106.2–106.7). No
 host-side "better time to stamp" can recover that; the latency itself has to be
-measured, per recording. (The comparison was a one-off script, not committed; worth
-folding into `tools/analyse_audio_sync.py` as an `anchors` subcommand.)
+measured, per recording. (Now `tools/audio_anchor_check.py`, which reproduces this table from the kept
+runs.)
 
 **Proposed anchor: the stream's own reported latency.** PipeWire (via its
 PulseAudio API; `soundcard` 0.4.6 exposes it as `recorder.latency`, which calls
@@ -293,17 +293,39 @@ truth). The quantum here is the default (`clock.quantum` 1024, min 32, max
 2048).
 
 Probe first, change the anchor second:
-1. Recorder: after each `record()`, append `LAT <block index> <T> <latency_us>`
-   to the sidecar (a trailer-style line with spaces, so `parse_mic_sidecar`'s
-   current fit ignores it). One `update_timing_info` round trip per block;
-   check it adds no stalls under the Phase B stress run.
-2. Re-run the 6 kept-audio self-tests. Accept the new anchor if
-   `median(T − latency − S/fs)` per recording tracks true sample 0 with
+1. **Built 2026-11-06:** after each `record()` the recorder appends
+   `LAT <index> <t_before> <t_after> <latency_us>` to the sidecar
+   (`microphone.latency_probe`, default on; `stream_latency_line` in
+   `microphone_module.py`). `<index>` is samples returned plus the ones
+   soundcard still holds in `_pending_chunk`, because PipeWire counts those as
+   read. Five fields, so `parse_mic_sidecar` and the other sidecar readers skip
+   it (tested). One `update_timing_info` round trip per block; the line's
+   `t_after − t_before` shows that cost, check it adds no stalls under the
+   Phase B stress run.
+2. Re-run the 6 kept-audio self-tests and compare with
+   `tools/audio_anchor_check.py run_dirs...` (numpy only; how to fetch the
+   root-owned scratch dirs is in its docstring). Accept the new anchor if
+   `median(t − latency − index/fs)` per recording tracks true sample 0 with
    sd ≲ 1 ms (vs 5.75 for `STARTED`).
 3. Then `parse_mic_sidecar` prefers the latency anchor when `LAT` lines exist,
    falling back to `STARTED` (old recordings, and the 131072-block habitat audio).
    Any fixed remainder (buzzer start-up, USB transport the stream latency doesn't
    see) is then a genuine per-rig constant, from the same self-test.
+
+**How far to trust the GPIO edge times.** The self-test's truth is the
+Python stamp around the gpiozero write (bracket ≤ 40 µs), on the same Pi and
+the same `CLOCK_REALTIME` as the audio stamps, so PTP error can't enter it.
+Not yet measured: (a) with `drive: "pwm"` the 4 kHz tone comes from gpiozero's
+lgpio *software* PWM, whose first transition after the write is unmeasured
+(expected well under 1 ms, but nobody has looked); (b) the piezo's acoustic
+ring-up, a few 4 kHz cycles (~0.5–1 ms). Both are fixed delays that land in
+the mean, not the per-recording spread, so they don't affect today's ±5 ms
+finding. They matter once an anchor aims at ~1 ms. To bound (a): jumper GPIO17
+to a spare input (e.g. GPIO22, header pin 15) and log that input's kernel edge
+timestamps (libgpiod edge events, realtime clock) beside each pulse's Python
+stamp. (b) can't be separated from the audio path by the camera run (audio −
+video still contains it); bound it from the kept FLACs by how many cycles the
+onset detector needs before it fires, or compare against a bare piezo disc.
 
 **Next: corroborate with a camera (LED).** Wire an LED on the same mic Pi
 (GPIO27, header pin 13, 330 Ω to GND; `sync_pulse.led_pin: 27`) in view of

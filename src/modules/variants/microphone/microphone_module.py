@@ -415,6 +415,7 @@ class AudiomothModule(Module):
         block_size = max(4096, min(block_size, 1024 * 1024))
         clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))
         clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
+        latency_probe = bool(self.config.get("microphone.latency_probe", True))
 
         timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
         if register:  # False for sync_selftest scratch recordings
@@ -463,12 +464,18 @@ class AudiomothModule(Module):
                     timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
                         first_block = True
+                        samples_returned = 0
                         while not recording_stop.is_set() and not segment_stop.is_set():
                             # Timestamp BEFORE record() so it marks the start of
                             # the block, not the end (each block is frame_num /
                             # sample_rate seconds long, ~683 ms at default settings).
                             block_start = time.time()
                             data = recorder.record(numframes=frame_num)
+                            samples_returned += data.shape[0]
+                            if latency_probe:
+                                lat_line = stream_latency_line(recorder, samples_returned)
+                                if lat_line:
+                                    timestamps_writer.write(lat_line)
                             timestamps_writer.write(f"{block_start}\n")
                             if first_block:
                                 # See RECORDER_ENTER_MS note above. FIRST_RECORD_*
@@ -1674,6 +1681,30 @@ class AudiomothModule(Module):
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False
+
+
+def stream_latency_line(recorder, samples_returned: int) -> str | None:
+    """One `LAT` sidecar line: PipeWire's own age of the next sample it hasn't
+    handed over, for a candidate per-recording audio anchor
+    (plans/audio-video-sync-residual-validation.md, "Proposed anchor").
+
+    `LAT <index> <t_before> <t_after> <latency_us>`: sample `<index>` (counted
+    from the stream's first sample) was captured `latency_us` before the
+    query, which ran between the two wall times. `<index>` adds the samples
+    soundcard has fetched but is still holding for the next record() call
+    (`_pending_chunk`), since PipeWire counts those as read. Five fields, so
+    parse_mic_sidecar and the other sidecar readers skip the line. None if
+    the backend has no latency (not PulseAudio) or the query fails."""
+    try:
+        pending = getattr(recorder, "_pending_chunk", None)
+        channels = int(getattr(recorder, "channels", 1) or 1)
+        held = int(pending.shape[0] // channels) if pending is not None else 0
+        t0 = time.time()
+        latency_s = recorder.latency
+        t1 = time.time()
+    except Exception:
+        return None
+    return f"LAT {samples_returned + held} {t0:.6f} {t1:.6f} {latency_s * 1e6:.0f}\n"
 
 
 def main():

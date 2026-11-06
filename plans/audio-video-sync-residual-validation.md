@@ -1,6 +1,6 @@
 # Audio/video sync residual: validation & root cause
 
-- **Status:** proposed
+- **Status:** in progress (Phase A buzzer runs 2026-11-06; LED/camera check and the latency-anchor probe next)
 - **Created:** 2026-09-07
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "AudioMoth sync calibration" open item (Architectural concerns) +
@@ -208,6 +208,111 @@ an open monitoring stream.
 beats hands, and *then* higher camera FPS helps (tightens the video side from
 ±33 ms at 30 fps to ±8 ms at 120 fps). Still one event per take — strictly worse
 than the buzzer.
+
+### Phase A results — first buzzer runs, 2026-11-06 (desk rig, `microphone_4703`)
+
+**Rig:** TDK PS1240 passive piezo straight on the mic Pi's GPIO17 / GND
+(`sync_pulse: {buzzer_pin: 17, drive: "pwm", tone_hz: 4000}`), both AudioMoths
+(A1 `2474750264200FAD`, A2 `24FCBD0864934CA8`) a few cm from it,
+`mic_distance_m` 0 (≈0.3 ms of flight time left in). 192 kHz, `filter_type`
+none, gain 4, `block_size` = `frame_num` = 32768, idle Pi, PTP-locked. 20
+buzzes per run at 1.2 s, edge bracket ≤ 40 µs.
+
+**Result: audio is placed ~21 ms *after* the sound, steady within a recording
+but moving ±5 ms between recordings, independently per AudioMoth.**
+
+| | A1 median (ms) | A2 median (ms) |
+|---|---|---|
+| run 1 | 22.33 | 18.79 |
+| run 2 | 16.59 | 23.99 |
+| run 3 | 18.75 | 25.45 |
+| run 4 (kept) | 20.29 | 27.72 |
+| run 5 (kept) | 17.99 | 26.48 |
+| run 6 (kept) | 23.02 | 20.78 |
+| run 7 (kept) | 12.77 | 30.83 |
+| run 8 (kept) | 17.47 | 21.97 |
+| run 9 (kept) | 11.41 | 18.49 |
+
+- **Within a run:** all 20 offsets sit inside ~1 ms peak-to-peak (e.g. A1 run 1:
+  21.83–22.75). Onset detection, the buzzer and the block-fit rate (residual p95
+  0.33 ms) are not the problem. Every pulse detected on both mics at ~33 dB SNR.
+- **Between runs (the load-bearing number):** 18 recordings, mean 20.8 ms,
+  sd 5.0 ms, range 11.4–30.8 ms. A1 and A2 in the *same* run differ by up to
+  18 ms and swap order, so this is **per recording (per stream open), not per
+  device**. The "fixed per-device constant" assumption (Background, and the
+  `_block_size_note` in `microphone_config.json`) does not hold below ~±5 ms.
+- **Against the decision gate:** well inside the < ±20 ms gate, so a single
+  constant (subtract ~21 ms in `parse_mic_sidecar`) is viable *now* and takes
+  the error from ~21 ms to ~±5–10 ms (2 sd). Getting below that needs a
+  per-recording measurement (below).
+- **Agrees with Phase B**, whose clap test at 32768 found ~+15 ms. The 150–200 ms
+  in Background predates the block-size change.
+- **An earlier run** with only A1 near the buzzer gave 30 ms at ~20 dB SNR: weak
+  onsets are detected late. Keep the buzzer right against the AudioMoths.
+
+**Which timestamp best predicts the true sample-0 time?** Runs 4–9 kept their
+recordings (`sync_selftest` `keep_audio: true`, via `/facade/send_command`;
+the REST route doesn't pass it). For each of the 12 recordings, true sample 0
+= `STARTED` − measured offset, compared against every stamp the sidecar
+already has:
+
+| candidate anchor | minus true sample 0: mean | sd | range |
+|---|---|---|---|
+| `STARTED` (current) | +20.8 ms | 5.75 | 11.4 … 30.8 |
+| `STARTED` − `RECORDER_ENTER_MS` (stream open) | −9.6 ms | 7.77 | −24.3 … 1.0 |
+| robust fit intercept, blocks 1.. (steady state) | +104.1 ms | 4.54 | 95.8 … 109.8 |
+| block 0 return − one block | +102.6 ms | 4.84 | 94.1 … 108.8 |
+| block 1 start − one block | +103.8 ms | 4.79 | 95.3 … 110.0 |
+
+`corr(offset, FIRST_RECORD_MS)` = −0.82, `corr(offset, RECORDER_ENTER_MS)` = 0.49.
+
+None is much better than `STARTED`. The steady-state fit intercept averages
+hundreds of blocks, so Python scheduling can't be what moves it: the ~±5 ms is
+**variation in the audio stack's own capture-to-delivery latency, fixed for a
+stream's life and different each time a stream opens**. It looks quantised:
+intercepts bunch at ≈ 99 and ≈ 106.5 ms (6 of 12 within 106.2–106.7). No
+host-side "better time to stamp" can recover that; the latency itself has to be
+measured, per recording. (The comparison was a one-off script, not committed; worth
+folding into `tools/analyse_audio_sync.py` as an `anchors` subcommand.)
+
+**Proposed anchor: the stream's own reported latency.** PipeWire (via its
+PulseAudio API; `soundcard` 0.4.6 exposes it as `recorder.latency`, which calls
+`pa_stream_update_timing_info` + `pa_stream_get_latency`) reports, for a record
+stream, how long ago the next unread sample was captured. So right after a
+`record()` returns at wall time `T` with `S` samples read so far:
+
+```
+sample0_wall ≈ T − latency(T) − S / fs
+```
+
+Taken after every block, that gives one estimate per block (~6/s), so the
+per-recording latency is measured, not assumed, and Python jitter at any one
+stamp averages out. It needs no new hardware and no raw ALSA (Phase C's
+`htstamp` spike stays the fallback if PipeWire's figure doesn't track the
+truth). The quantum here is the default (`clock.quantum` 1024, min 32, max
+2048).
+
+Probe first, change the anchor second:
+1. Recorder: after each `record()`, append `LAT <block index> <T> <latency_us>`
+   to the sidecar (a trailer-style line with spaces, so `parse_mic_sidecar`'s
+   current fit ignores it). One `update_timing_info` round trip per block;
+   check it adds no stalls under the Phase B stress run.
+2. Re-run the 6 kept-audio self-tests. Accept the new anchor if
+   `median(T − latency − S/fs)` per recording tracks true sample 0 with
+   sd ≲ 1 ms (vs 5.75 for `STARTED`).
+3. Then `parse_mic_sidecar` prefers the latency anchor when `LAT` lines exist,
+   falling back to `STARTED` (old recordings, and the 131072-block habitat audio).
+   Any fixed remainder (buzzer start-up, USB transport the stream latency doesn't
+   see) is then a genuine per-rig constant, from the same self-test.
+
+**Next: corroborate with a camera (LED).** Wire an LED on the same mic Pi
+(GPIO27, header pin 13, 330 Ω to GND; `sync_pulse.led_pin: 27`) in view of
+`habitat_camera_0fcc`, near the top of its frame, and run the session check in
+`docs/AV_SYNC_TEST.md` (`sync_pulses` during a recording, then
+`tools/av_sync_check.py`). Buzzer and LED fire from one GPIO write on one
+clock, so that run gives audio − edge, frame − edge and audio − video for the
+same instants: whether ~21 ms is what compose actually shows, and how the
+camera's own timestamp offset compares.
 
 ## Phase B — mechanism confirmation: `block_size` / `sample_rate` sweep
 

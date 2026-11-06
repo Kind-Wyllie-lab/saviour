@@ -680,7 +680,7 @@ class AudiomothModule(Module):
         `<prefix>_sync_pulses_(<seg>_<utc>).csv`, which exports with the
         session; tools/av_sync_check.py then compares buzz-in-audio and
         LED-in-video against the edges. Returns immediately."""
-        if not self.is_recording:
+        if not self._recording_active():
             return {"result": "error", "message": "sync_pulses needs an active recording"}
         try:
             pulser = self._get_sync_pulser()
@@ -736,7 +736,7 @@ class AudiomothModule(Module):
         a real segment, fires `pulses` buzzes, times each onset with the
         aligner's own anchor (audio_align.parse_mic_sidecar) and sends a
         `sync_selftest_result` status. Returns immediately."""
-        if self.is_recording:
+        if self._recording_active():
             return {"result": "error", "message": "not while recording -- use sync_pulses"}
         try:
             pulser = self._get_sync_pulser()

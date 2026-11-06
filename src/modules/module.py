@@ -578,6 +578,14 @@ class Module(ABC):
         return {"result": "started", "output": "mend.sh started"}
 
 
+    def _recording_active(self) -> bool:
+        """True while a session records. `self.is_recording` alone is only
+        set by subclasses that manage it themselves (ttl, rfid); camera and
+        microphone modules leave it False and the Recording component's flag
+        is the real one, so guards that must refuse mid-session check both."""
+        component = getattr(self, "recording", None)
+        return bool(self.is_recording or getattr(component, "is_recording", False))
+
     @command()
     def change_module_type(self, new_type: str = "") -> dict:
         """Reprovision this Pi as another module type (the web UI's
@@ -593,7 +601,7 @@ class Module(ABC):
            id (``<new_type>_<mac>``). Outcome in /var/log/saviour-config.log.
         """
         new_type = str(new_type or "").strip()
-        if self.is_recording:
+        if self._recording_active():
             return {"result": "error",
                     "output": "Can't change type while recording -- stop the session first."}
         if not new_type:

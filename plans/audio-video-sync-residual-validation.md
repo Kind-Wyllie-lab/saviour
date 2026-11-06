@@ -332,6 +332,36 @@ Probe first, change the anchor second:
 - Not yet checked: the constants across a reboot and on another day, and
   under load.
 
+**Reboot, load and a real session (2026-11-06 afternoon).** Stream-latency
+anchor − true sample 0, per AudioMoth (STARTED sd in brackets):
+
+| condition | runs | A1 | A2 | STARTED sd |
+|---|---|---|---|---|
+| idle (above) | 6 | −6.27, sd 0.11 | −3.43, sd 0.11 | 4.06 |
+| right after a mic-Pi reboot | 4 | −6.18, sd 0.02 | −3.45, sd 0.08 | 4.58 |
+| `stress-ng` cpu×4 90 % + hdd + vm, load avg 5–8 | 4 | −5.95, sd 0.11 | −2.91, sd 0.32 | 5.27 |
+
+- The constants survive a reboot (within 0.1 ms). Heavy load shifts them by
+  +0.3 / +0.5 ms and widens the per-block spread inside a recording (MAD up
+  to 2.6 ms on A2; the LAT query p95 rises from 1.2 to 1.8–3.1 ms), but the
+  per-recording median stays within ~0.5 ms. Not yet checked: another day.
+- **In a real recording** (`avsync_av1-135947`, camera + mic recording,
+  39 buzzer/LED pulses), with the idle constants (A1 −6.23, A2 −3.44 ms)
+  applied to the session's own sidecar `LAT` lines:
+
+  | | `STARTED` anchor | latency anchor |
+  |---|---|---|
+  | audio onset − GPIO edge, A1 / A2 | +19.58 / +19.54 ms, sd 0.30 | **+0.08 / +0.00 ms**, sd 0.29 |
+  | audio − video (compose) | +15.7 ms, sd 9.1 | **−3.8 ms**, sd 9.1 |
+
+  The remaining −3.8 ms is the camera's own placement (first lit frame
+  +3.9 ms after the edge; frame timestamps mark exposure start). The sd 9 is
+  one 33 ms frame period.
+- Videos (camera + LED zoom + scrolling spectrogram, both AudioMoths muxed,
+  real time and 10× slow motion, one per anchor) are in that session's date
+  dir: `avsync_av1_{started,latency}_{realtime,slow10x}.mkv`. Rendered with
+  a one-row-one-frame mapping, see the compose remap item in the backlog.
+
 **Next (anchor):** step 3 above: `parse_mic_sidecar` prefers the latency
 anchor when `LAT` lines exist, plus a per-AudioMoth constant (keyed by serial,
 from `sync_selftest`), falling back to `STARTED`. Needs a decision on where

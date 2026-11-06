@@ -37,6 +37,34 @@ Suggested pins: buzzer GPIO17 (header pin 11), LED GPIO27 (pin 13), GND
 pin 9. One pin can drive both (set `led_pin` = `buzzer_pin`, or wire the LED
 across the buzzer).
 
+### Ultrasonic buzz (no audible beeps)
+
+A bare piezo (PS1240) driven at **25 kHz** is silent to people and louder on
+an AudioMoth than its 4 kHz resonance (desk rig, buzzer a few cm away, band
+level over the noise: 22 dB at 4 kHz, ~50 dB at 16-25 kHz, 26 dB at 30 kHz,
+38 dB at 50 kHz). gpiozero's software PWM stops at 10 kHz, so give the
+buzzer pin a hardware-timed PIO PWM channel (Pi 5, any GPIO 0-27), then set
+the tone:
+
+```bash
+# on the microphone Pi, once
+echo "dtoverlay=pwm-pio,gpio=17" | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+# then
+curl -X PATCH "http://10.0.0.1:5000/api/v1/modules/microphone_4703/config?wait=15" \
+  -H "Authorization: Bearer $PW" -H "Content-Type: application/json" \
+  -d '{"sync_pulse": {"drive": "pwm", "tone_hz": 25000}}'
+```
+
+`drive: "pwm"` uses the PIO channel whenever the pin has one (the result's
+`pwm_backend` says `"pio"`), at any `tone_hz`; a tone above 10 kHz without
+it is refused with the overlay line to add. The gating still makes a faint
+tick at each pulse's start and end. **Rats and mice hear 25 kHz** (it's in
+their most sensitive range): run the self-test with no animals near, and
+think twice before `sync_pulses` during a session with animals in. The
+piezo starts faster at 25 kHz than at 4 kHz, so **recalibrate** (run the
+self-test twice) after changing the tone.
+
 Placement:
 
 - Buzzer close to the AudioMoth, and measure the distance: sound takes
@@ -60,7 +88,7 @@ curl -X PATCH "http://10.0.0.1:5000/api/v1/modules/microphone_4703/config?wait=1
 | `buzzer_pin` | `null` | BCM pin; `null` = no buzzer |
 | `led_pin` | `null` | BCM pin; `null` = no LED |
 | `drive` | `"dc"` | `"dc"` active buzzer, `"pwm"` passive piezo |
-| `tone_hz` | `4000` | tone for `"pwm"` |
+| `tone_hz` | `4000` | tone for `"pwm"`; above 10 kHz needs the PIO overlay (below) |
 | `pulse_ms` | `50` | default pulse length |
 | `mic_distance_m` | `0.0` | buzzer-to-mic distance, removes flight time |
 

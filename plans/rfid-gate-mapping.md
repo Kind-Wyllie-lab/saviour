@@ -186,7 +186,9 @@ layout-aware frontend.
 
 ## Open questions
 
-1. ~~**Naming.**~~ Decided 2026-11-05: letter = column (A-D left to right),
+1. ~~**Naming.**~~ **Superseded 2026-11-06:** letters are rows, numbers
+   are columns (checked on the rig), matching the researchers' Habitat Hub;
+   geometry rework in `plans/habitat-layout-model.md` phase 1. Was, decided 2026-11-05: letter = column (A-D left to right),
    number = row (1-4 top to bottom), seen from above. A wall is named by its
    two boxes, left or top box first (A1B1, A1A2). The gate order a-d (top to
    bottom along a vertical wall, left to right along a horizontal one) is

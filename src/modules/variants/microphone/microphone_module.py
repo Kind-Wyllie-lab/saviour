@@ -897,6 +897,8 @@ class AudiomothModule(Module):
             "interval_s": interval_s,
             "pulse_ms": pulse_ms,
             "drive": cfg["drive"],
+            "tone_hz": cfg["tone_hz"],
+            "pwm_backend": getattr(pulser, "pwm_backend", None),
             "mic_distance_m": cfg["mic_distance_m"],
             "edge_spread_us_max": round(
                 max((e.on_spread_ns for e in edges), default=0) / 1e3, 1),

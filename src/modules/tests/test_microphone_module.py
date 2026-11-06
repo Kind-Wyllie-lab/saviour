@@ -328,3 +328,30 @@ def test_levels_snapshot_holds_peak_and_skips_stale(tmp_path):
     assert levels[0]["label"] == "audiomoth_AAAA"
     assert levels[0]["peak_db"] == -12.0
     assert m.monitor_data["AAAA"]["peak_acc"] == -200.0
+
+
+# ---------------------------------------------------------------------------
+# Stream latency probe (LAT sidecar lines)
+# ---------------------------------------------------------------------------
+
+class _LatencyRecorder:
+    def __init__(self, latency=0.104, held=0, channels=1, fail=False):
+        self._pending_chunk = np.zeros(held * channels, dtype="float32")
+        self.channels, self._lat, self._fail = channels, latency, fail
+
+    @property
+    def latency(self):
+        if self._fail:
+            raise RuntimeError("no timing info")
+        return self._lat
+
+
+def test_latency_line_counts_samples_soundcard_still_holds():
+    line = mm.stream_latency_line(_LatencyRecorder(latency=0.1042, held=1000), 32768)
+    tag, index, t0, t1, lat_us = line.split()
+    assert tag == "LAT" and int(index) == 33768 and int(lat_us) == 104200
+    assert float(t0) <= float(t1)
+
+
+def test_latency_line_none_when_backend_fails():
+    assert mm.stream_latency_line(_LatencyRecorder(fail=True), 32768) is None

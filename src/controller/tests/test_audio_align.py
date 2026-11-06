@@ -674,3 +674,21 @@ def test_window_inputs_skip_a_segment_that_ended_before_the_window():
     fit = _wfit(10**12, n_blocks=100)                # ~4.3 s long
     assert window_inputs([(AudioStream("m", "a.flac", "a.txt"), fit)],
                          10**12 + 10 * 10**9, 2.0) == ([], [])
+
+
+def test_fit_ignores_latency_probe_lines(tmp_path):
+    """The recorder's LAT lines (stream latency probe) must not change the fit."""
+    plain, probed = tmp_path / "a_timestamps.txt", tmp_path / "b_timestamps.txt"
+    _write_sidecar(plain, 1_700_000_000.0, NOMINAL_RATE, 300, jitter_s=0.001, seed=3)
+    out = []
+    for i, ln in enumerate(plain.read_text().splitlines()):
+        if _is_float(ln):
+            out.append(f"LAT {(i + 1) * FRAME_NUM} {ln} {ln} 104000")
+        out.append(ln)
+    probed.write_text("\n".join(out) + "\n")
+    with patch("src.controller.audio_align._probe_audio",
+               return_value=(300 * FRAME_NUM, NOMINAL_RATE)):
+        a = parse_mic_sidecar(str(plain), "unused.flac")
+        b = parse_mic_sidecar(str(probed), "unused.flac")
+    assert (a.sample0_wall_ns, a.measured_rate_hz, a.n_blocks) == (
+        b.sample0_wall_ns, b.measured_rate_hz, b.n_blocks)

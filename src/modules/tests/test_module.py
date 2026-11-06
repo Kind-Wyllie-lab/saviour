@@ -241,6 +241,32 @@ def test_change_module_type_refuses_while_recording_or_same_type():
     assert ret["result"] == "error" and "Already" in ret["output"] and calls == []
 
 
+def _scan(proc):
+    inst = _retype_instance()
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", side_effect=[proc]) as run:
+        ret = inst.scan_hardware()
+    return ret, run.call_args[0][0], inst.communication.send_status.call_args[0][0]
+
+
+def test_scan_hardware_relays_saviour_config_json():
+    out = ('log noise\n{"items": [{"label": "AudioMoth", "value": "2 connected", '
+           '"present": true, "system": false}], "suggested": ["microphone"]}\n')
+    ret, argv, ack = _scan(MagicMock(returncode=0, stdout=out, stderr=""))
+    assert ret["result"] == "started"
+    assert argv == ["sudo", "/usr/local/bin/saviour-config", "--hardware-scan"]
+    assert ack["command"] == "scan_hardware" and ack["result"] == "success"
+    assert ack["suggested"] == ["microphone"] and ack["current_type"] == "camera"
+    assert ack["items"][0]["value"] == "2 connected"
+
+
+def test_scan_hardware_reports_an_old_saviour_config_as_an_error():
+    """A saviour-config without --hardware-scan opens its TUI and prints no JSON."""
+    ret, _argv, ack = _scan(MagicMock(returncode=1, stdout="", stderr="whiptail"))
+    assert ret["result"] == "started"
+    assert ack["result"] == "error" and "hardware scan failed" in ack["output"]
+
+
 # ---------------------------------------------------------------------------
 # apply_ssh_access -- controller-pushed SSH CA refresh
 # ---------------------------------------------------------------------------

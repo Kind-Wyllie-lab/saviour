@@ -130,3 +130,28 @@ def test_set_leaves_type_alone_when_prepare_fails(rig):
     r = _run(rig, "set_module_type rfid; echo rc=$?")
     assert "rc=2" in r.stdout and "APPLIED" not in r.stdout
     assert _type(rig) == "camera"
+
+
+def test_hardware_scan_json(rig):
+    """--hardware-scan's JSON from hardware_scan's lines (the probes stubbed)."""
+    src = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    funcs = "\n".join(_extract(src, f) for f in ("_hw_suggest", "_hw_line",
+                                                   "hardware_scan_json"))
+    body = f"""HW_REPORT=""; HW_SUGGEST=""; HW_ITEMS=""
+{funcs}
+hardware_scan() {{
+    HW_ITEMS=""; HW_SUGGEST=""
+    _hw_line "CSI camera" "imx477"; _hw_suggest camera habitat_camera camera
+    _hw_line "AudioMoth" "none found"
+    _hw_line "eth0" "up, 1000 Mb/s"
+}}
+hardware_scan_json
+"""
+    r = _run(rig, body)
+    import json
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["suggested"] == ["camera", "habitat_camera"]          # de-duplicated
+    assert out["items"] == [
+        {"label": "CSI camera", "value": "imx477", "present": True, "system": False},
+        {"label": "AudioMoth", "value": "none found", "present": False, "system": False},
+        {"label": "eth0", "value": "up, 1000 Mb/s", "present": True, "system": True}]

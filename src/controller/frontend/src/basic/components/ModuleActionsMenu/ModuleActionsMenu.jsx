@@ -5,6 +5,11 @@ import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./ModuleActionsMenu.css";
 
+// Module types that need no hardware the scan can see (GPIO, or nothing).
+const NO_DETECTABLE_HW = new Set(["ttl", "external_host"]);
+// A module on older code never answers scan_hardware.
+const SCAN_TIMEOUT_MS = 75000;
+
 /**
  * ModuleActionsMenu — the module lifecycle actions (Update / Mend / Change
  * type / Restart / Reboot / Shutdown / Remove) shared between the System page's per-module
@@ -28,6 +33,9 @@ function ModuleActionsMenu({ id, name, isOnline }) {
   const [newType, setNewType] = useState("");
   // null | {stage: "started"|"success"|"error", output, new_module_id}
   const [retype, setRetype] = useState(null);
+  // null while scanning | {ok, items, suggested, output} (module_hardware_scan)
+  const [scan, setScan] = useState(null);
+  const scanTimerRef = useRef(null);
   const shutdownTimerRef = useRef(null);
   // Module ids are "<type>_<last 4 of the MAC>".
   const currentType = id.replace(/_[0-9a-f]{4}$/i, "");
@@ -37,11 +45,19 @@ function ModuleActionsMenu({ id, name, isOnline }) {
     const onRetype = (data) => {
       if (data.module_id === id) setRetype(data);
     };
+    const onScan = (data) => {
+      if (data.module_id !== id) return;
+      clearTimeout(scanTimerRef.current);
+      setScan(data);
+    };
     socket.on("module_types", onTypes);
     socket.on("module_type_change_result", onRetype);
+    socket.on("module_hardware_scan", onScan);
     return () => {
       socket.off("module_types", onTypes);
       socket.off("module_type_change_result", onRetype);
+      socket.off("module_hardware_scan", onScan);
+      clearTimeout(scanTimerRef.current);
     };
   }, [id]);
 
@@ -139,6 +155,11 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
   const openTypeChange = () => {
     socket.emit("get_module_types");
+    setScan(null);
+    socket.emit("send_command", { module_id: id, type: "scan_hardware", params: {} });
+    clearTimeout(scanTimerRef.current);
+    scanTimerRef.current = setTimeout(() => setScan((s) => s ?? {
+      ok: false, output: "no answer (is the module on the latest version?)" }), SCAN_TIMEOUT_MS);
     setNewType("");
     setTypeTarget(true);
     setShowActions(false);
@@ -268,12 +289,20 @@ function ModuleActionsMenu({ id, name, isOnline }) {
         <div className="modal-overlay" onClick={() => setTypeTarget(false)}>
           <div className="modal actions-confirm-modal" onClick={e => e.stopPropagation()}>
             <p>Change <strong>{name}</strong> from <strong>{currentType}</strong> to:</p>
+            <HardwareSummary scan={scan} />
             <select className="module-type-select" value={newType} onChange={e => setNewType(e.target.value)}>
               <option value="">Choose a type…</option>
-              {moduleTypes.filter(t => t.type !== currentType).map(t => (
-                <option key={t.type} value={t.type}>{t.name}{t.description ? ` - ${t.description}` : ""}</option>
+              {typeGroups(moduleTypes, currentType, scan).map(([label, types]) => (
+                <optgroup key={label} label={label}>
+                  {types.map(t => (
+                    <option key={t.type} value={t.type}>{t.name}{t.description ? ` - ${t.description}` : ""}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
+            {hardwareWarning(newType, moduleTypes, scan) && (
+              <p className="module-type-warning">{hardwareWarning(newType, moduleTypes, scan)}</p>
+            )}
             <p className="modal-subtext">
               The module installs anything the new type needs, then reconfigures and restarts
               as <strong>{newType ? `${newType}_${id.slice(-4)}` : "a new module id"}</strong>.
@@ -347,6 +376,43 @@ function ModuleActionsMenu({ id, name, isOnline }) {
       </>, document.body)}
     </span>
   );
+}
+
+// What the module's hardware scan found (saviour-config --hardware-scan),
+// recording hardware only.
+function HardwareSummary({ scan }) {
+  if (!scan) return <p className="module-hw-scan module-hw-scan--pending">Scanning this module&apos;s hardware…</p>;
+  if (!scan.ok) return <p className="module-hw-scan">Couldn&apos;t scan its hardware: {scan.output}</p>;
+  const found = (scan.items ?? []).filter((i) => i.present && !i.system);
+  return (
+    <p className="module-hw-scan">
+      {found.length === 0
+        ? "Found no recording hardware on this Pi."
+        : <>Found: {found.map((i, n) => (
+            <span key={i.label}>{n > 0 && " · "}<strong>{i.label}</strong> {i.value}</span>
+          ))}</>}
+    </p>
+  );
+}
+
+// Types matching the scan first; every type stays selectable (hardware can be
+// plugged in later, and some can't be detected).
+function typeGroups(moduleTypes, currentType, scan) {
+  const others = moduleTypes.filter((t) => t.type !== currentType);
+  const suggested = scan?.ok ? scan.suggested ?? [] : [];
+  if (suggested.length === 0) return [["All types", others]];
+  const rank = (t) => suggested.indexOf(t.type);
+  const match = others.filter((t) => rank(t) >= 0).sort((a, b) => rank(a) - rank(b));
+  const rest = others.filter((t) => rank(t) < 0);
+  return [["Matches this Pi's hardware", match], ["Other types", rest]].filter(([, ts]) => ts.length);
+}
+
+function hardwareWarning(newType, moduleTypes, scan) {
+  if (!newType || !scan?.ok || NO_DETECTABLE_HW.has(newType)) return null;
+  if ((scan.suggested ?? []).includes(newType)) return null;
+  const name = moduleTypes.find((t) => t.type === newType)?.name ?? newType;
+  const gige = newType === "basler_camera" ? " (GigE Basler cameras aren't scanned, so that may be fine)" : "";
+  return `Nothing this Pi has attached suits ${name}${gige}. It will report NOT_READY until its hardware is connected.`;
 }
 
 export default ModuleActionsMenu;

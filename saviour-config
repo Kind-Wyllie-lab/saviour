@@ -521,16 +521,21 @@ credentials_menu() {
 # failure-tolerant -- a missing tool just reads as "not found".
 HW_REPORT=""
 HW_SUGGEST=""
+HW_ITEMS=""                     # "label<TAB>value" lines, for --hardware-scan
 _hw_suggest() {
     local s
     for s in "$@"; do
         case " $HW_SUGGEST " in *" $s "*) ;; *) HW_SUGGEST="${HW_SUGGEST:+$HW_SUGGEST }$s" ;; esac
     done
 }
-_hw_line() { HW_REPORT+="$(printf '  %-14s %s' "$1" "$2")"$'\n'; }
+_hw_line() {
+    HW_REPORT+="$(printf '  %-14s %s' "$1" "$2")"$'\n'
+    HW_ITEMS+="$1"$'\t'"$2"$'\n'
+}
 hardware_scan() {
     HW_REPORT=""
     HW_SUGGEST=""
+    HW_ITEMS=""
     local cams hailo moths basler arduino serial dev model hifi link
 
     # CSI cameras (works while saviour holds the camera; enumerate only)
@@ -592,6 +597,22 @@ hardware_scan() {
         link="no link"
     fi
     _hw_line "eth0" "$link"
+}
+
+# The same scan as JSON, for the web UI's Change type dialog (module command
+# scan_hardware): {"items": [{"label", "value", "present", "system"}],
+# "suggested": [...]}; "system" marks NVMe / eth0, which no module type needs.
+hardware_scan_json() {
+    hardware_scan
+    HW_ITEMS="$HW_ITEMS" HW_SUGGEST="$HW_SUGGEST" python3 -c '
+import json, os
+items = []
+for line in os.environ["HW_ITEMS"].splitlines():
+    label, _, value = line.partition("\t")
+    present = not value.startswith(("none found", "no link"))
+    items.append({"label": label, "value": value, "present": present,
+                  "system": label in ("NVMe", "eth0")})
+print(json.dumps({"items": items, "suggested": os.environ["HW_SUGGEST"].split()}))'
 }
 
 show_hardware_scan() {
@@ -2877,6 +2898,10 @@ if [ "${1:-}" = "--apply" ]; then
 fi
 if [ "${1:-}" = "--prepare-module-type" ]; then
     prepare_module_type "${2:-}"
+    exit $?
+fi
+if [ "${1:-}" = "--hardware-scan" ]; then
+    hardware_scan_json
     exit $?
 fi
 if [ "${1:-}" = "--set-module-type" ]; then

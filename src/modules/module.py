@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import datetime
+import json
 import logging
 import subprocess
 import threading
@@ -639,6 +640,31 @@ class Module(ABC):
         threading.Thread(target=_do_change, daemon=True, name="module-retype").start()
         return {"result": "started",
                 "output": f"Preparing to become a {new_type} module (installing anything it needs)."}
+
+
+    @command()
+    def scan_hardware(self) -> dict:
+        """What's attached to this Pi and which module types that suggests
+        (``saviour-config --hardware-scan``), for the Change type dialog.
+        Read-only. The scan takes up to ~10 s (``rpicam-hello --list-cameras``),
+        so it runs in a thread and the result comes as a second cmd_ack."""
+        def _scan():
+            ack = {"type": "cmd_ack", "command": "scan_hardware",
+                   "current_type": self.module_type}
+            try:
+                run = subprocess.run(["sudo", SAVIOUR_CONFIG, "--hardware-scan"],
+                                     capture_output=True, text=True, timeout=60,
+                                     check=False)
+                scan = json.loads(run.stdout.strip().splitlines()[-1])
+                ack.update(result="success", items=scan.get("items", []),
+                           suggested=scan.get("suggested", []))
+            except Exception as e:      # old saviour-config, timeout, bad JSON
+                self.logger.warning(f"scan_hardware failed: {e}")
+                ack.update(result="error", output=f"hardware scan failed: {e}")
+            self.communication.send_status(ack)
+
+        threading.Thread(target=_scan, daemon=True, name="hardware-scan").start()
+        return {"result": "started"}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

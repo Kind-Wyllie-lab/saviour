@@ -114,3 +114,16 @@
   white-space: normal;
   overflow-wrap: break-word;
 }
+
+/* Change type dialog: what the module's hardware scan found. */
+.module-hw-scan {
+  font-size: 0.85em;
+  margin: 0 0 8px;
+  opacity: 0.85;
+}
+.module-hw-scan--pending { opacity: 0.6; font-style: italic; }
+.module-type-warning {
+  font-size: 0.85em;
+  margin: 6px 0 0;
+  color: var(--warning-color, #d9822b);
+}

@@ -112,6 +112,15 @@ pulse's offset and SNR, the clock-fit quality, and the calibration (below).
 **Positive = the audio places the sound after it happened.** Refused while
 recording (use the session check instead).
 
+**From the web UI:** Settings → the microphone module → **Sync** tab. It
+shows each AudioMoth's calibration ("Calibrated 3 days ago", amber when over
+30 days old or measured at a different sample rate or block size, "Not
+calibrated" otherwise; the tab gets a ⚠ when a connected AudioMoth needs
+one), a **Run self-test** button (signed in, module not recording) with each
+AudioMoth's result, and the buzzer/LED settings. `sync_pulses` is not
+offered there and is refused from the web UI: it fires into a running
+session, so it stays a deliberate REST call.
+
 ### How audio is anchored, and what the self-test calibrates
 
 Every recording's sidecar has a `LAT` line per block: PipeWire's reported
@@ -124,8 +133,8 @@ offset**. Recordings without `LAT` lines (before 2026-11-06) fall back to
 The offset is what the self-test measures. A run that is clean for an
 AudioMoth (≥ 75 % of pulses found, median SNR ≥ 25 dB, offsets within a
 1 ms MAD) stores it in the module's `audiomoth_sync_offsets_ms` (serial →
-ms), and each later recording copies it into its sidecar
-(`LATENCY_OFFSET_MS`). The result shows `anchor`, the `latency_offset_ms`
+ms, with when and under which sample rate, block size and tone), and each
+later recording copies it into its sidecar (`LATENCY_OFFSET_MS`). The result shows `anchor`, the `latency_offset_ms`
 in force, the `measured_offset_ms`, and `calibration_skipped` with the
 reason when a run doesn't qualify. An uncalibrated AudioMoth gets a default
 (−4.8 ms), good to about ±2 ms. Pass `"calibrate": false` to measure only.

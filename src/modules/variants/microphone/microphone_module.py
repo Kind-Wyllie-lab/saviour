@@ -637,10 +637,14 @@ class AudiomothModule(Module):
         }
 
     def _sync_offset_ms(self, serial: str) -> float | None:
-        """This AudioMoth's calibrated anchor offset, or None if uncalibrated."""
+        """This AudioMoth's calibrated anchor offset, or None if uncalibrated.
+        An entry is {"offset_ms", "calibrated_at", ...} (a bare number from
+        the first 2026-11-06 calibrations is accepted too)."""
         offsets = self.config.get("audiomoth_sync_offsets_ms", {}) or {}
         try:
             value = offsets.get(serial) if isinstance(offsets, dict) else None
+            if isinstance(value, dict):
+                value = value.get("offset_ms")
             return None if value is None else float(value)
         except (TypeError, ValueError):
             return None
@@ -677,9 +681,20 @@ class AudiomothModule(Module):
         """Save measured offsets (serial -> ms) and hand the controller the
         new config, so its copy (and any later save from the UI) has them."""
         offsets = dict(self.config.get("audiomoth_sync_offsets_ms", {}) or {})
+        cfg = self._sync_cfg()
+        # What it was measured under, so the UI can say when it's stale: the
+        # offset holds for this sample rate / block size, and includes the
+        # buzzer's start-up at this tone.
+        context = {
+            "calibrated_at": round(time.time(), 1),
+            "sample_rate": int(self.config.get("audiomoth.sample_rate", 192000)),
+            "block_size": int(self.config.get("microphone.block_size", 32768)),
+            "tone_hz": cfg["tone_hz"],
+            "drive": cfg["drive"],
+        }
         for serial, value in calibrated.items():
-            old = offsets.get(serial)
-            offsets[serial] = value
+            old = self._sync_offset_ms(serial)
+            offsets[serial] = {"offset_ms": value, **context}
             self.logger.info(
                 f"sync_selftest: AudioMoth {serial} ({self._label_for(serial)}) "
                 f"offset {old} -> {value} ms")

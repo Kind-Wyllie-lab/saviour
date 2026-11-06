@@ -1526,6 +1526,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 if self.handle_special_command(module_id, command, params):
                     return
 
+                # Sync pulses fire a buzzer (25 kHz: in rodents' best hearing
+                # range) into a running session; only the deliberate REST
+                # route (POST /api/v1/sessions/<name>/sync_pulses) may.
+                if command == "sync_pulses":
+                    self.logger.warning(
+                        f"Refused sync_pulses for {module_id} from the web UI")
+                    self.socketio.emit("command_refused", {
+                        "module_id": module_id, "command": command,
+                        "message": "Sync pulses run only through the REST API "
+                                   "(docs/AV_SYNC_TEST.md)"}, room=request.sid)
+                    return
+
                 if command == "start_recording":
                     params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
 
@@ -4727,6 +4739,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "fetched": status.get("fetched"),
                             "error": status.get("error"),
                         })
+                    elif command == "sync_selftest":
+                        # "started", or the module's refusal (recording, no
+                        # buzzer pin, ultrasonic tone without the overlay).
+                        self.socketio.emit("sync_selftest_state", {
+                            "module_id": module_id,
+                            "result": status.get("result"),
+                            "message": status.get("message", ""),
+                        })
                     elif command == "list_audiomoths":
                         self.socketio.emit("audiomoth_list_response", {
                             "module_id": module_id,
@@ -4801,8 +4821,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # fell to the variant's handle_special_module_status, which
                 # logs "No logic for ..." as a WARNING on every module
                 # (re)connect and export.
+                # The microphone card's Sync tab shows the self-test result
+                # (no secrets in it; the Controller also stores it).
+                case "sync_selftest_result":
+                    self.socketio.emit("sync_selftest_result",
+                                       {**status, "module_id": module_id})
+
                 case ("export_ready" | "export_failed" | "export_progress"
-                      | "sync_selftest_result" | "status" | "streaming_started"
+                      | "status" | "streaming_started"
                       | "streaming_stopped" | "module_config_updated"):
                     # module_config_updated carries the whole config
                     # (share password): adopted in controller.py, never

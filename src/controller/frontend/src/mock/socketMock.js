@@ -406,6 +406,45 @@ const ROUTER = {
       case "start_motor": r.rotating = true; break;
       case "stop_motor": r.rotating = false; break;
       case "reset_pulse_counter": if (!r.shockActivated) { r.attempted = 0; r.delivered = 0; } break;
+      case "list_audiomoths": {
+        const labels = state.modules[payload.module_id]?.config?.audiomoth_labels ?? {};
+        this._fire("audiomoth_list_response", { module_id: payload.module_id,
+          audiomoths: Object.fromEntries(Object.keys(labels).map(s => [s, `mock-${s}`])) });
+        break;
+      }
+      case "sync_selftest": {
+        // ~6 s instead of ~30; every connected AudioMoth calibrates cleanly.
+        const id = payload.module_id;
+        const m = state.modules[id];
+        if (m?.status === "RECORDING") {
+          this._fire("sync_selftest_state", { module_id: id, result: "error",
+            message: "not while recording -- use sync_pulses" });
+          break;
+        }
+        this._fire("sync_selftest_state", { module_id: id, result: "started" });
+        setTimeout(() => {
+          const cfg = m?.config ?? {};
+          const labels = cfg.audiomoth_labels ?? {};
+          const microphones = {}, calibrated = {};
+          const offsets = { ...(cfg.audiomoth_sync_offsets_ms ?? {}) };
+          for (const [serial, label] of Object.entries(labels)) {
+            const median = +(Math.random() * 0.4 - 0.2).toFixed(2);
+            const offset = -3 - Math.random() * 3.5;
+            microphones[label] = { serial, n: 20, detected: 20, median_ms: median,
+              std_ms: 0.31, anchor: "latency", measured_offset_ms: +offset.toFixed(3) };
+            calibrated[label] = +offset.toFixed(3);
+            offsets[serial] = { offset_ms: +offset.toFixed(3), calibrated_at: Date.now() / 1000,
+              sample_rate: cfg.audiomoth?.sample_rate, block_size: cfg.microphone?.block_size,
+              tone_hz: cfg.sync_pulse?.tone_hz, drive: cfg.sync_pulse?.drive };
+          }
+          if (m) m.config = { ...cfg, audiomoth_sync_offsets_ms: offsets };
+          this._fire("modules_update", clone(state.modules));
+          this._fire("sync_selftest_result", { module_id: id, status: "ok",
+            pulses: 20, tone_hz: cfg.sync_pulse?.tone_hz, pwm_backend: "pio",
+            microphones, calibrated });
+        }, 6000);
+        break;
+      }
       case "scan_hardware": {
         // A camera Pi with a Hailo; anything else finds nothing.
         const m = state.modules[payload.module_id];

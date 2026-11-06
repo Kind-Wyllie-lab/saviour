@@ -1220,6 +1220,19 @@ class TestSendCommandDispatch:
 
             facade.send_command.assert_called_once_with("cam1", "get_health", {})
 
+    def test_sync_pulses_are_refused_from_the_web_ui(self):
+        """Buzzer pulses into a running session go through REST only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.get_received()
+            client.emit("send_command", {
+                "type": "sync_pulses", "module_id": "microphone_4703", "params": {}})
+            facade.send_command.assert_not_called()
+            refused = [e for e in client.get_received() if e["name"] == "command_refused"]
+            assert refused and refused[0]["args"][0]["command"] == "sync_pulses"
+
     def test_start_recording_command_appends_timestamp_to_experiment_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             web, facade = _make_web_with_facade()
@@ -2785,6 +2798,20 @@ class TestCropStatusForwarding:
         payload = events[0]["args"][0]
         assert "config" not in payload and "hunter2" not in json.dumps(payload)
         assert payload["width"] == 1088 and payload["module_id"] == "camera_ab12"
+
+    def test_sync_selftest_state_and_result_reach_the_browser(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("microphone_ab12", {
+            "type": "cmd_ack", "command": "sync_selftest", "result": "error",
+            "message": "not while recording -- use sync_pulses"})
+        web.handle_module_status("microphone_ab12", {
+            "type": "sync_selftest_result", "status": "ok",
+            "microphones": {"A1": {"median_ms": 0.1}}})
+        got = {e["name"]: e["args"][0] for e in client.get_received()}
+        assert got["sync_selftest_state"]["result"] == "error"
+        assert got["sync_selftest_state"]["module_id"] == "microphone_ab12"
+        assert got["sync_selftest_result"]["microphones"]["A1"]["median_ms"] == 0.1
 
     def test_module_config_updated_is_never_forwarded(self):
         """sync_selftest's stored offsets arrive with the whole config."""

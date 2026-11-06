@@ -55,6 +55,22 @@ function makeModules() {
       group: "microphones",
       version: "v0.6.1-mock",
       config_sync_status: "SYNCED",
+      // Enough for the Sync tab: one AudioMoth calibrated 3 days ago, one
+      // from the first (bare-number) calibrations, one never calibrated.
+      config: {
+        module: { name: "Ceiling mic", group: "microphones" },
+        audiomoth: { sample_rate: 192000, gain: 2, filter_type: "none" },
+        microphone: { block_size: 32768, frame_num: 32768, latency_probe: true },
+        sync_pulse: { buzzer_pin: 17, led_pin: 27, drive: "pwm", tone_hz: 25000,
+                      pulse_ms: 50, mic_distance_m: 0.0 },
+        audiomoth_labels: { "2474750264200FAD": "A1", "24FCBD0864934CA8": "A2",
+                            "24E1440360AD1F2B": "A3" },
+        audiomoth_sync_offsets_ms: {
+          "2474750264200FAD": { offset_ms: -6.44, calibrated_at: Date.now() / 1000 - 3 * 86400,
+                                sample_rate: 192000, block_size: 32768, tone_hz: 25000, drive: "pwm" },
+          "24FCBD0864934CA8": -3.43,
+        },
+      },
     },
     "ttl-module-7788": {
       id: "ttl-module-7788",

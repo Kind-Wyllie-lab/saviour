@@ -49,6 +49,8 @@
         "_recording_filetype": "ts"
     },
     "habitat_motion": {
+        "always_record": false,
+        "_always_record_note": "true = record the whole session as one clip regardless of motion (testing, calibration, or a box that must be fully covered). No segment rotation yet: one file per session.",
         "algorithm": "frame_diff",
         "activity_threshold": 0.0005,
         "activity_min_duration_s": 0.5,

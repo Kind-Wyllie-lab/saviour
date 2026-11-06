@@ -1221,6 +1221,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               that window.
             </div>
             <div className="form-field">
+              <label>Record everything (ignore motion):</label>
+              <input type="checkbox"
+                checked={formData?.habitat_motion?.always_record ?? false}
+                onChange={e => handleChange(["habitat_motion", "always_record"], e)} />
+            </div>
+            {formData?.habitat_motion?.always_record && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Records the whole session as one clip; the trigger settings
+                below are ignored (the preview still shows the score).
+              </div>
+            )}
+            <div className="form-field">
               <label>Motion algorithm:</label>
               <select value={formData?.habitat_motion?.algorithm ?? "frame_diff"}
                 onChange={e => handleChange(["habitat_motion", "algorithm"], e)}>

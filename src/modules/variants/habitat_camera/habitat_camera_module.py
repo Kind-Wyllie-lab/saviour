@@ -139,6 +139,12 @@ class HabitatCameraModule(CameraBase):
             self.config.get("habitat_motion.pre_roll_secs", 3.0))
         self._motion_ae_settle_s = float(
             self.config.get("habitat_motion.ae_settle_s", 0.75))
+        # Record the whole armed session regardless of motion: the trigger
+        # is held up, so the clip opens at arming and never closes on
+        # inactivity. One clip per session (no segment rotation yet, see
+        # _start_next_recording_segment).
+        self._motion_always_record = bool(
+            self.config.get("habitat_motion.always_record", False))
 
         self._motion_detector = HabitatMotionDetector(
             algorithm=self.config.get("habitat_motion.algorithm", "frame_diff"),
@@ -274,7 +280,8 @@ class HabitatCameraModule(CameraBase):
         # without double-counting -- once a subject stops moving, `occupied`
         # holds the streak True past inactivity_min_duration_s until the
         # classifier stops seeing it.
-        above = motion_above or occupied
+        forced = getattr(self, "_motion_always_record", False)
+        above = motion_above or occupied or forced
 
         # The state machine runs whether or not armed (see _STATE_COLOR_BGR);
         # get_recording_status() below only gates opening a clip file.
@@ -293,7 +300,8 @@ class HabitatCameraModule(CameraBase):
             # trigger's noise-debounce (activity_min_duration_s), so it fires
             # as soon as the fused signal is up.
             triggered = above and (
-                occupied or elapsed_s >= self._motion_activity_min_duration_s)
+                occupied or forced
+                or elapsed_s >= self._motion_activity_min_duration_s)
             if triggered:
                 self._motion_state = "active"
                 if self.facade.get_recording_status():
@@ -447,7 +455,8 @@ class HabitatCameraModule(CameraBase):
         # Already triggered before arming (animal mid-activity at Start): the
         # -> active transition is one-shot and fired while unarmed, so open
         # the clip now rather than after inactivity_min_duration_s + retrigger.
-        if self._motion_state == "active":
+        if self._motion_state == "active" or getattr(self, "_motion_always_record", False):
+            self._motion_state = "active"
             self._open_clip()
         return True
 

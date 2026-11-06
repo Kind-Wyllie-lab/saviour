@@ -406,6 +406,24 @@ const ROUTER = {
       case "start_motor": r.rotating = true; break;
       case "stop_motor": r.rotating = false; break;
       case "reset_pulse_counter": if (!r.shockActivated) { r.attempted = 0; r.delivered = 0; } break;
+      case "scan_hardware": {
+        // A camera Pi with a Hailo; anything else finds nothing.
+        const m = state.modules[payload.module_id];
+        const cam = m?.type?.includes("camera");
+        const mic = m?.type === "microphone";
+        setTimeout(() => this._fire("module_hardware_scan", {
+          module_id: payload.module_id, ok: true, current_type: m?.type,
+          items: [
+            { label: "CSI camera", value: cam ? "imx477" : "none found", present: cam, system: false },
+            { label: "Hailo NPU", value: cam ? "Hailo-8 AI Processor (rev 01)" : "none found", present: cam, system: false },
+            { label: "AudioMoth", value: mic ? "4 connected" : "none found", present: mic, system: false },
+            { label: "eth0", value: "up, 1000 Mb/s", present: true, system: true },
+          ],
+          suggested: cam ? ["hailo_camera", "apa_camera", "lightning_camera", "camera", "habitat_camera", "loom_camera"]
+            : mic ? ["microphone"] : [],
+        }), 1500);
+        break;
+      }
       case "change_module_type": {
         // Prepare, reprovision, come back under the new id (web.py swaps the
         // old entry for the new one when it first reports).

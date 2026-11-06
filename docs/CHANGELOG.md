@@ -11,6 +11,11 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-06
+
+- [x] **Change type is hardware-aware** (1 more bash-harness test in `test_module_type_change.py`, 2 in `test_module.py`, 1 in `test_web.py`; clicked through in `dev:mock`; `--hardware-scan` run on all three desk modules: imx477 + Hailo-8 on `habitat_camera_0fcc`, 2 AudioMoths on `microphone_4703`, two Arduinos on `apa_arduino_2904`). Opening the dialog asks the module for a hardware scan. It shows what it found ("Found: CSI camera imx477 · Hailo NPU …"), lists matching types first under "Matches this Pi's hardware" and warns when the chosen type has nothing to use ("It will report NOT_READY until its hardware is connected"). Every type stays selectable: TTL (GPIO) and `external_host` need nothing detectable, GigE Basler cameras aren't scanned, and hardware may be fitted afterwards.
+  - The scan is `saviour-config`'s existing one (the TUI's "Hardware scan"), now also printed as JSON by `saviour-config --hardware-scan` (`items` with `present` and a `system` flag for NVMe/eth0, plus `suggested` types). The module command `scan_hardware` runs it in a thread (up to ~10 s for `rpicam-hello --list-cameras`) and acks the result; `web.py` relays it as `module_hardware_scan`. A module on older code never answers, so the dialog gives up after 75 s and says so.
+
 ## 2026-11-05
 
 - [x] **Change a module's type from the web UI** (branch `feat/module-type-change`; 11 bash-harness tests in `src/tests/test_module_type_change.py`, 3 in `test_module.py`, 4 in `test_web.py`; clicked through in `dev:mock`; not yet run on a real module). System or Settings → **Actions ▾ → Change type** (admin, module online, not recording) lists the module types in `src/modules/variants/` (template excluded) and confirms with the new id (`<type>_<last 4 of MAC>`) and the fact that settings reset.

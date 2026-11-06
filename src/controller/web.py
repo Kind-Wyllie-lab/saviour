@@ -4749,6 +4749,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                                 "reboot_required": result == "reboot_required",
                                 "output": status.get("output", ""),
                             })
+                    elif command == "scan_hardware":
+                        # "started" is the immediate return; the scan follows.
+                        result = status.get("result")
+                        if result in ("success", "error"):
+                            self.socketio.emit("module_hardware_scan", {
+                                "module_id": module_id,
+                                "ok": result == "success",
+                                "items": status.get("items", []),
+                                "suggested": status.get("suggested", []),
+                                "current_type": status.get("current_type"),
+                                "output": status.get("output", ""),
+                            })
                     elif command == "change_module_type":
                         # "started" (preparing), then "success" (reprovisioning
                         # in a detached unit; the module restarts under

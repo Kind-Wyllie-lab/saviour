@@ -2827,6 +2827,21 @@ class TestModuleTypeChange:
                   if e["name"] == "module_type_change_result"]
         assert stages == ["success", "done"]
 
+    def test_hardware_scan_is_relayed_once_finished(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("apa_arduino_2904", {
+            "type": "cmd_ack", "command": "scan_hardware", "result": "started"})
+        web.handle_module_status("apa_arduino_2904", {
+            "type": "cmd_ack", "command": "scan_hardware", "result": "success",
+            "items": [{"label": "Arduino/ACM", "value": "ttyACM0", "present": True}],
+            "suggested": ["apa_arduino"], "current_type": "apa_arduino"})
+        scans = [e["args"][0] for e in client.get_received()
+                 if e["name"] == "module_hardware_scan"]
+        assert len(scans) == 1
+        assert scans[0]["ok"] and scans[0]["suggested"] == ["apa_arduino"]
+        assert scans[0]["module_id"] == "apa_arduino_2904"
+
     def test_failed_change_keeps_the_module(self):
         web, facade = _make_web_with_facade()
         web.handle_module_status("camera_2904", {

@@ -232,6 +232,14 @@ def test_change_module_type_stops_when_prepare_fails():
     assert acks[-1]["result"] == "error" and "nothing changed" in acks[-1]["output"]
 
 
+def test_change_module_type_refuses_while_the_recording_component_records():
+    """Camera/mic modules leave Module.is_recording False mid-session."""
+    inst = _retype_instance()
+    inst.recording = MagicMock(is_recording=True)
+    ret, calls, _ = _retype(inst)
+    assert ret["result"] == "error" and calls == []
+
+
 def test_change_module_type_refuses_while_recording_or_same_type():
     inst = _retype_instance()
     inst.is_recording = True

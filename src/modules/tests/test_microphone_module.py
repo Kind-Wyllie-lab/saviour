@@ -355,3 +355,23 @@ def test_latency_line_counts_samples_soundcard_still_holds():
 
 def test_latency_line_none_when_backend_fails():
     assert mm.stream_latency_line(_LatencyRecorder(fail=True), 32768) is None
+
+
+def test_sync_commands_follow_the_recording_components_flag(tmp_path):
+    """A real microphone module never sets its own is_recording; the
+    Recording component's flag is what says a session is running (the
+    2026-11-06 desk run: sync_pulses refused mid-session, nothing logged)."""
+    m = _sync_module(tmp_path)
+    m.is_recording = False
+    m.recording = MagicMock(is_recording=True)
+    assert m.sync_selftest()["result"] == "error"           # mid-session: refused
+    m.facade.get_filename_prefix.return_value = str(tmp_path / "sess")
+    m.facade.get_utc_time.return_value = "20261106-130348"
+    m.facade.get_segment_id.return_value = 0
+    with patch.object(mm, "SyncPulser", _FakePulser):
+        assert m.sync_pulses(count=1, interval_s=1.0, pulse_ms=5)["result"] == "started"
+        deadline = time.time() + 10
+        while m._sync_lock.locked() and time.time() < deadline:
+            time.sleep(0.02)
+    m.recording = MagicMock(is_recording=False)
+    assert m.sync_pulses()["result"] == "error"

@@ -368,8 +368,12 @@ when `LAT` lines exist, minus the AudioMoth's offset from its sidecar
 which a clean `sync_selftest` writes), or −4.8 ms uncalibrated; else
 `STARTED`. See CHANGELOG 2026-11-06 and `docs/AV_SYNC_TEST.md`.
 
-**Next (anchor):** calibrate on the rig (one self-test, then a second should
-read ~0 ms), repeat on another day, and calibrate the habitat AudioMoths on
+**Calibrated on the rig (2026-11-06):** first run (default −4.8 ms) read
+−1.4 / +1.5 ms, stored −6.21 / −3.35; the next runs read −0.12 / −0.18 and
+−0.07 / +0.10 ms. Switched to a 25 kHz buzz (PIO PWM): 20/20 pulses at
+38-39 dB, runs read within ±0.25 ms, offsets now ~−6.5 / −3.6 ms.
+
+**Next (anchor):** repeat on another day, and calibrate the habitat AudioMoths on
 the bench before they go in.
 
 **How far to trust the GPIO edge times.** The self-test's truth is the

@@ -327,7 +327,38 @@ stamp. (b) can't be separated from the audio path by the camera run (audio −
 video still contains it); bound it from the kept FLACs by how many cycles the
 onset detector needs before it fires, or compare against a bare piezo disc.
 
-**Next: corroborate with a camera (LED).** Wire an LED on the same mic Pi
+**Camera check, first run (2026-11-06, session `avsync_led4-132647`).** LED on
+GPIO27 (330 Ω, red) about 70% down `habitat_camera_0fcc`'s frame (imx477,
+1920×1080 at 30 fps, AE at its 33 ms ceiling, `habitat_motion.always_record`
+on), 30 pulses of 50 ms at 2 s, `tools/av_sync_check.py`:
+
+| | mean | sd |
+|---|---|---|
+| audio onset − edge, A1 / A2 | +29.7 / +28.9 ms | 3.6 (one +48 ms pulse) |
+| first lit frame timestamp − edge | +4.3 ms | 9.1 |
+| **audio − video (what compose shows)** | **+25.5 / +24.7 ms** | 9.3 |
+
+- The video sd is the frame quantisation (a uniform phase in a 33 ms
+  frame gives 9.6 ms). Lit-fraction fit: intercept −20.7 ms, slope 25.5 ms
+  against a 33 ms exposure. That's consistent with timestamps at the start
+  of exposure plus rolling-shutter delay for an LED 70% down the frame
+  (≈ 12 ms if readout is ≈ 17 ms); moving the LED to the top would test it.
+- The clip has 5 more CSV rows than frames. They can't be at the start (a 5-frame
+  shift would move the video figure by ≈ 167 ms), so they're trailing rows.
+- So in a composite, sound currently lands ~25 ms after the picture, almost
+  all of it the audio anchor (+29 ms this recording); the camera's own
+  placement is ≈ +4 ms on average.
+- Getting this run needed four fixes found along the way: `sync_pulses`
+  refused mid-session (Module.is_recording), habitat clips wrote no CSV rows
+  and the clip open at stop missed its export, the camera needed
+  `always_record`, and `av_sync.led_trace` picked blown-out pixels when the
+  CSV had more rows than decoded frames. See CHANGELOG 2026-11-06.
+
+**Next (camera):** repeat with the LED at the top of the frame and with manual
+exposure (e.g. 5 ms), for a cleaner camera timestamp offset. Then combine
+with the latency anchor once that's validated.
+
+**Corroborate with a camera (LED).** Wire an LED on the same mic Pi
 (GPIO27, header pin 13, 330 Ω to GND; `sync_pulse.led_pin: 27`) in view of
 `habitat_camera_0fcc`, near the top of its frame, and run the session check in
 `docs/AV_SYNC_TEST.md` (`sync_pulses` during a recording, then

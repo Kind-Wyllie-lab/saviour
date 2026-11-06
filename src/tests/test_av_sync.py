@@ -85,7 +85,7 @@ def _led_level(frame_start_ns, on_ns, off_ns):
     return max(0, hi - lo) / EXPOSURE_NS
 
 
-def _write_led_video(path, t0_ns, n_frames, pulses, size=(160, 120)):
+def _write_led_video(path, t0_ns, n_frames, pulses, size=(160, 120), blown=False):
     cv2 = pytest.importorskip("cv2")
     w, h = size
     vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"), FPS, (w, h))
@@ -99,6 +99,8 @@ def _write_led_video(path, t0_ns, n_frames, pulses, size=(160, 120)):
         frame += rng.integers(0, 4, frame.shape, dtype=np.uint8)
         level = max((_led_level(start, on, off) for on, off in pulses), default=0)
         frame[10:22, 120:132] = int(40 + 200 * level)  # the LED
+        if blown:   # a blown-out window, constant 255
+            frame[60:120, 0:80] = 255
         vw.write(frame)
     vw.release()
     return np.asarray(ts, dtype=np.int64)
@@ -141,6 +143,26 @@ def test_led_onsets_and_lit_fraction_fit(tmp_path):
     assert fit is not None
     assert fit["intercept_ms"] == pytest.approx(-EXPOSURE_NS / 1e6, abs=4)
     assert fit["slope_ms"] == pytest.approx(EXPOSURE_NS / 1e6, abs=5)
+
+
+def test_led_mask_ignores_blown_out_pixels(tmp_path):
+    """A constant (blown-out) region must not outrank the LED when the CSV
+    has a few more rows than the video has frames (desk rig 2026-11-06:
+    2462 rows, 2457 frames; the expected pattern was centred over all rows,
+    so a 255 pixel got covariance 255 x 0.3 over a zero variance and took
+    the whole mask)."""
+    t0 = 1_790_000_000_000_000_000
+    edges = [t0 + int((0.5 + 1.1 * i) * FPS) * PERIOD_NS + 2_000_000 for i in range(10)]
+    path = str(tmp_path / "cam.avi")
+    ts = _write_led_video(path, t0, int(12.5 * FPS),
+                          [(e, e + 50_000_000) for e in edges], blown=True)
+    expected = np.concatenate([av_sync.expected_led_state(ts, edges, 50.0),
+                               np.zeros(5)])            # 5 rows with no frame
+    trace, mask = av_sync.led_trace(path, expected)
+    ys, xs = np.nonzero(mask)
+    # 160x120 written, traced at 160x90: the LED is at x 120-132, y ~7-17
+    assert xs.min() >= 110 and ys.max() <= 25
+    assert all(o is not None for o in av_sync.led_onsets(trace, ts, edges))
 
 
 def test_summarise_ignores_missed_pulses():

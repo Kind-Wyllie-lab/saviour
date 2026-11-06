@@ -247,22 +247,27 @@ def led_trace(
     sx = np.zeros((h, w))
     sxx = np.zeros((h, w))
     sxy = np.zeros((h, w))
-    y_mean = float(expected.mean()) if n else 0.0
     count = 0
     for i, g in enumerate(_iter_gray_frames(video_path, size)):
         if i >= n:
             break
-        y = expected[i] - y_mean
         sx += g
         sxx += g * g
-        sxy += g * y
+        sxy += g * expected[i]
         count += 1
     if count < 3:
         raise ValueError(f"{video_path}: only {count} frames decoded")
-    y = expected[:count] - y_mean
+    # Centre over the frames that actually decoded, not all of `expected`:
+    # a video a few frames shorter than its CSV otherwise leaves the pattern
+    # off-centre, and a constant (blown-out) pixel gets a covariance over a
+    # zero variance that outranks the LED.
+    y = expected[:count]
+    var_y = float(np.sum(y * y) - y.sum() ** 2 / count)
+    cov = sxy - sx * float(y.sum()) / count
     var_x = sxx - sx * sx / count
-    var_y = float(np.sum(y * y))
-    corr = sxy / np.sqrt(np.maximum(var_x * var_y, 1e-12))
+    corr = cov / np.sqrt(np.maximum(var_x * var_y, 1e-12))
+    # A pixel that never changes (clipped, or black) can't be the LED.
+    corr[var_x < count * 1.0] = -np.inf
     k = max(4, int(corr.size * top_frac))
     thresh = np.partition(corr.ravel(), -k)[-k]
     mask = corr >= thresh

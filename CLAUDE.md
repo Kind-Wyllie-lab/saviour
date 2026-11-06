@@ -213,7 +213,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Field install feedback (slow compose preview, crop stretching/clear, timestamp position, session list by date + bulk download, live mic spectrogram blip) → `plans/field-install-feedback-2026-10.md`.
 - `saviour-config`/`mend.sh` build the frontend as root (root-owned `dist/`); `clone_prep.sh` clears the wrong active-config path.
 - Post-Process compose layout editor: phases 1-2 (canvas, camera + spectrogram tiles, templates, timeline range + speed) shipped; next event/text tiles, saved templates → `plans/compose-layout-editor.md`. Habitat campaigns (16 cams, sparse clips, box map, jobs issued to the habitat server) are later → `plans/habitat-post-processing.md`.
-- A/V sync residual: buzzer self-test (2026-11-06) puts audio ~21 ms late, ±5 ms per recording (stream latency varies per open, so not a per-device constant); proposed anchor on PipeWire's reported stream latency, LED/camera check next → `plans/audio-video-sync-residual-validation.md`, `docs/AV_SYNC_TEST.md`.
+- A/V sync residual: the `STARTED` anchor puts audio ~21 ms late, ±5 ms per recording; an anchor on PipeWire's reported stream latency (`LAT` sidecar lines) is steady to 0.1 ms per AudioMoth plus a fixed per-device constant (2026-11-06). Wiring it into `parse_mic_sidecar` with per-AudioMoth constants is next; the LED check shows compose currently puts sound ~25 ms after the picture → `plans/audio-video-sync-residual-validation.md`, `docs/AV_SYNC_TEST.md`.
 
 **Maintenance / architecture**
 - One module-status dispatch table (left over from the pre-v1.0 cleanup); the last unsupervised controller threads; gap causes `plan_window`/`ptp_regressed` → `plans/backlog.md`.

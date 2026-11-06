@@ -312,6 +312,32 @@ Probe first, change the anchor second:
    Any fixed remainder (buzzer start-up, USB transport the stream latency doesn't
    see) is then a genuine per-rig constant, from the same self-test.
 
+**Latency anchor validated (2026-11-06, same desk rig, 6 kept self-tests ×
+2 AudioMoths, `tools/audio_anchor_check.py`).** Candidate − true sample 0:
+
+| | A1 | A2 |
+|---|---|---|
+| `STARTED` (current) | +17.3 ms, sd 2.78 (range 6.9) | +21.0 ms, sd 4.48 (range 12.2) |
+| **stream latency** | **−6.27 ms, sd 0.11 (range 0.30)** | **−3.43 ms, sd 0.11 (range 0.29)** |
+
+- Per AudioMoth, `median(t − latency − index/fs)` is steady to 0.11 ms across
+  recordings, 25–40× tighter than `STARTED`. The pass mark (sd ≲ 1 ms) is met.
+- What's left is a **fixed per-AudioMoth constant** (−6.3 / −3.4 ms: the anchor
+  puts sample 0 slightly early, i.e. PipeWire's figure includes a few ms that
+  aren't capture-to-delivery for that device). That's what the self-test
+  measures, so per-device calibration finally makes sense *on this anchor*.
+- Within a recording the per-block estimates agree to a MAD of 0.02–0.7 ms;
+  the reported latency itself sits near 112 ms. The query costs ~1.2 ms
+  (p95) per block, no stalls seen at idle. The Phase B stress run is still owed.
+- Not yet checked: the constants across a reboot and on another day, and
+  under load.
+
+**Next (anchor):** step 3 above: `parse_mic_sidecar` prefers the latency
+anchor when `LAT` lines exist, plus a per-AudioMoth constant (keyed by serial,
+from `sync_selftest`), falling back to `STARTED`. Needs a decision on where
+the constants live (module config `audiomoth_sync_offsets_ms`, written by the
+self-test, is the obvious place).
+
 **How far to trust the GPIO edge times.** The self-test's truth is the
 Python stamp around the gpiozero write (bracket ≤ 40 µs), on the same Pi and
 the same `CLOCK_REALTIME` as the audio stamps, so PTP error can't enter it.

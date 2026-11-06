@@ -9,6 +9,8 @@ import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
 import { HIDDEN_CONFIG_SECTIONS } from "../configUtils";
+import SyncTab from "./SyncTab";
+import { calibrationStatus } from "./syncCalibration";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -131,6 +133,7 @@ const MIC_TABS = [
   { key: "audiomoth", label: "AudioMoth" },
   { key: "monitor",   label: "Monitor"   },
   { key: "labels",    label: "Labels"    },
+  { key: "sync",      label: "Sync"      },
   { key: "export",    label: "Export"    },
 ];
 
@@ -204,6 +207,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     const {
       monitoring: _m, audiomoth: _a, audiomoth_labels: _al,
       module: _mod, export: _exp, recording: _rec, microphone: _mic,
+      sync_pulse: _sp, audiomoth_sync_offsets_ms: _so,
       ...rest
     } = formData;
     for (const k of HIDDEN_CONFIG_SECTIONS) delete rest[k];
@@ -297,8 +301,17 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const allLabelledSerials = Object.keys(formData?.audiomoth_labels ?? {});
   const allSerials = [...new Set([...discoveredSerials, ...allLabelledSerials])];
 
-  // Compute tabBadges: warn on monitor tab if there are validation errors
+  // Compute tabBadges: warn on monitor tab if there are validation errors,
+  // and on Sync if a connected AudioMoth's calibration is missing or stale.
   const tabBadges = (freqError || timeWindowError) ? { monitor: "⚠" } : {};
+  const calCurrent = {
+    sampleRate: Number(module.config?.audiomoth?.sample_rate ?? 0) || null,
+    blockSize: Number(module.config?.microphone?.block_size ?? 0) || null,
+  };
+  if (discoveredSerials.some(s => calibrationStatus(
+      module.config?.audiomoth_sync_offsets_ms?.[s], calCurrent).level !== "ok")) {
+    tabBadges.sync = "⚠";
+  }
 
   // Right side of the card is just the live plot, like every other config
   // card's MJPEG stream. The stream-display controls (Stream / Plot / Range /
@@ -620,6 +633,18 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             </div>
           ))}
         </>
+      )}
+
+      {/* SYNC tab */}
+      {activeTab === "sync" && (
+        <SyncTab
+          module={module}
+          formData={formData}
+          setFormData={setFormData}
+          serials={allSerials}
+          discovered={discoveredSerials}
+          labelFor={serial => formData?.audiomoth_labels?.[serial] || serial}
+        />
       )}
 
       {/* EXPORT */}

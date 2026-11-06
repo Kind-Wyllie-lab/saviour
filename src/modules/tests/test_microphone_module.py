@@ -315,7 +315,10 @@ def test_sync_selftest_calibrates_the_latency_anchor(tmp_path):
     assert r["anchor"] == "latency" and not r["latency_offset_calibrated"], r
     # truth 30 ms buzz delay; the anchor sits BIAS early -> offset 30 - BIAS
     want = SYNC_LATENCY_S * 1e3 - _LatencyClockedRecorder.BIAS_S * 1e3
-    assert abs(cfg["audiomoth_sync_offsets_ms"]["AAAA"] - want) < 1.5, cfg
+    entry = cfg["audiomoth_sync_offsets_ms"]["AAAA"]
+    assert abs(entry["offset_ms"] - want) < 1.5, cfg
+    assert entry["sample_rate"] == SYNC_RATE and entry["block_size"] == 4800
+    assert abs(entry["calibrated_at"] - time.time()) < 60
     assert status["calibrated"] == {"audiomoth_AAAA": r["measured_offset_ms"]}
     assert any(s["type"] == "module_config_updated" for s in sent)
 
@@ -332,6 +335,17 @@ def test_sync_selftest_without_lat_lines_does_not_calibrate(tmp_path):
     assert "LAT" in r["calibration_skipped"] and status["calibrated"] == {}
     m.config.set.assert_not_called()
     assert not any(s["type"] == "module_config_updated" for s in sent)
+
+
+def test_sync_offset_reads_both_entry_formats(tmp_path):
+    m = _sync_module(tmp_path)
+    offsets = {"OLD": -6.4, "NEW": {"offset_ms": -3.5, "calibrated_at": 1.0},
+               "BAD": {"calibrated_at": 1.0}}
+    m.config.get.side_effect = lambda key, default=None: (
+        offsets if key == "audiomoth_sync_offsets_ms" else default)
+    assert m._sync_offset_ms("OLD") == -6.4
+    assert m._sync_offset_ms("NEW") == -3.5
+    assert m._sync_offset_ms("BAD") is None and m._sync_offset_ms("NONE") is None
 
 
 def test_calibration_refuses_a_poor_self_test():

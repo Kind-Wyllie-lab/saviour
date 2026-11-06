@@ -63,3 +63,37 @@ def test_always_record_unarmed_stays_active_without_a_clip():
     m = _module(always_record=True, recording=False)
     _frames(m, 1)
     assert m._motion_state == "active" and m.opened == []
+
+
+def test_open_clip_enables_csv_rows_and_close_stops_them():
+    """CameraBase writes per-frame CSV rows only while _encoder_active; a
+    habitat clip must switch it (every clip CSV was header-only before)."""
+    m = HabitatCameraModule.__new__(HabitatCameraModule)
+    m.logger = MagicMock()
+    m.facade = MagicMock()
+    m.facade.get_filename_prefix.return_value = "/tmp/sess"
+    m.facade.get_utc_time.return_value = "20261106-132015"
+    m.config = MagicMock()
+    m.config.get.side_effect = lambda key, default=None: default
+    m._circular_output = MagicMock()
+    m._clip_open, m._clip_counter, m._encoder_active = False, 0, False
+    m._open_timestamp_csv = MagicMock()
+    m._finish_clip = MagicMock()
+    HabitatCameraModule._open_clip(m)
+    assert m._encoder_active and m._clip_open
+    HabitatCameraModule._close_clip(m)
+    assert not m._encoder_active and not m._clip_open
+
+
+def test_disarm_finishes_the_open_clip_before_returning():
+    """So the clip is staged before the stop's export, not after it."""
+    m = HabitatCameraModule.__new__(HabitatCameraModule)
+    m.logger = MagicMock()
+    m._circular_output = MagicMock()
+    m._clip_open, m._encoder_active = True, True
+    m._clip_h264_path, m.current_video_segment = "/tmp/c.h264", "/tmp/c.ts"
+    m._finish_clip = MagicMock()
+    m._stop_main_encoder = MagicMock()
+    m._close_diagnostic_csv = MagicMock()
+    assert HabitatCameraModule._stop_recording(m)
+    m._finish_clip.assert_called_once_with("/tmp/c.h264", "/tmp/c.ts")

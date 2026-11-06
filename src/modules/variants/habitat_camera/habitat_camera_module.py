@@ -477,7 +477,7 @@ class HabitatCameraModule(CameraBase):
         try:
             self.logger.info("Attempting to stop habitat_camera recording")
             if self._clip_open:
-                self._close_clip()
+                self._close_clip(wait=True)
             self._stop_main_encoder()
             self._circular_output = None
             self._close_diagnostic_csv()
@@ -533,13 +533,22 @@ class HabitatCameraModule(CameraBase):
         self._circular_output.fileoutput = self._clip_h264_path
         self._circular_output.start()
         self._open_timestamp_csv(ts_path)
+        # CameraBase only buffers per-frame CSV rows while _encoder_active
+        # (row i = frame i). Here frames reach a file only while a clip is
+        # open, so the clip is the window. Never set before 2026-11-06, so
+        # every habitat clip CSV since 2026-09-03 was header-only.
+        self._encoder_active = True
         self._clip_open = True
         self.logger.info(f"Motion clip opened: {ts_path}")
 
-    def _close_clip(self) -> None:
+    def _close_clip(self, wait: bool = False) -> None:
         """Stop writing the current clip and finish it on a background
         thread. Callers are the capture pre_callback thread and the command
         thread; neither may block on the CSV join (up to 5 s) or ffmpeg.
+        `wait=True` (disarm only) finishes it inline instead, so the clip and
+        its CSV are staged before the stop's export runs; finished in the
+        background, they landed a moment after it and sat in to_export until
+        the next session.
 
         No lock against a new _open_clip() racing the cleanup: re-entering
         "active" takes at least inactivity_min_duration_s, far longer than
@@ -547,12 +556,16 @@ class HabitatCameraModule(CameraBase):
         """
         if not self._clip_open or self._circular_output is None:
             return
+        self._encoder_active = False      # no rows for frames after the clip
         self._circular_output.stop()
         self._circular_output.fileoutput = None
         self._clip_open = False
 
         h264_path = self._clip_h264_path
         ts_path = self.current_video_segment
+        if wait:
+            self._finish_clip(h264_path, ts_path)
+            return
         threading.Thread(
             target=self._finish_clip, args=(h264_path, ts_path),
             daemon=True, name="habitat-clip-finish",

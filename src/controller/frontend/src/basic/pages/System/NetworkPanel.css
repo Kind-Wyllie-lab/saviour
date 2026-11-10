@@ -1,0 +1,92 @@
+/* System → Network tab. Builds on SyncPanel.css (chips, sections, sparkline
+   strokes) and System.css (table, device-name). */
+
+.net-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.net-tile {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--card-bg-color);
+}
+
+.net-tile--warn {
+  border-color: #d4820a;
+}
+
+.net-tile__k {
+  font-size: 0.8em;
+  color: var(--secondary-text-color, #777);
+}
+
+.net-tile__v {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-tile--warn .net-tile__v {
+  color: #c47700;
+}
+
+.net-tile__sub {
+  font-size: 0.78em;
+  color: var(--secondary-text-color, #777);
+  margin-top: 2px;
+}
+
+.net-filter {
+  margin-bottom: 8px;
+}
+
+.net-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.net-details {
+  white-space: normal;
+  min-width: 260px;
+}
+
+.net-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 3px;
+}
+
+.net-note {
+  font-size: 0.78em;
+  color: #c47700;
+  white-space: nowrap;
+}
+
+.net-hosts td {
+  vertical-align: top;
+}
+
+.net-spark {
+  position: relative;
+  width: 140px;
+  height: 28px;
+}
+
+.net-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.net-spark__lost {
+  stroke: #cc3333;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}

@@ -3601,6 +3601,18 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     'error': str(e)
                 })
 
+        @self.socketio.on('get_network_overview')
+        def handle_get_network_overview(data=None):
+            """System -> Network tab. Read-only; guests may view it, like the
+            rest of the System page. Replies to the asking client only."""
+            try:
+                overview = self.facade.get_network_overview()
+            except Exception as e:
+                self.logger.exception("get_network_overview failed")
+                overview = {"error": str(e)}
+            from flask_socketio import emit as _emit
+            _emit('network_overview', overview)
+
         @self.socketio.on('get_sync_overview')
         def handle_get_sync_overview(data=None):
             """System -> Sync tab. Read-only, so guests may view it like the

@@ -18,10 +18,14 @@ Author: Andrew SG
 import contextlib
 import json
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import urllib.request
+from collections import deque
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -42,6 +46,19 @@ _HEF_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.hef$")
 MAX_HEF_BYTES = 256 * 1024 * 1024
 
 __all__ = ["Detection", "HailoDetector"]  # re-exported for existing importers
+
+
+class TrackSnapshot(NamedTuple):
+    """One tracking result, published by the inference worker and read
+    without a lock by the capture and preview threads (a single attribute
+    assignment swaps it)."""
+    seq: int                       # increments per result
+    det_cx: int | None             # tracked position, main-stream px; None = no track
+    det_cy: int | None
+    in_zone: bool
+    conf: float | None             # detection accepted on the source frame
+    det: Detection | None          # for the overlay's label
+    frame_id: int                  # CSV frame_id of the frame it was computed on
 
 
 # ---------------------------------------------------------------------------
@@ -313,11 +330,38 @@ class APACameraModule(CameraBase):
     # det_cx/det_cy: tracked (filtered) centroid, main-stream px; det_conf:
     # confidence of the detection accepted on this frame, blank when the
     # position is held over from an earlier frame (within lost_timeout_s).
-    CSV_EXTRA_COLUMNS = ["det_cx", "det_cy", "in_zone", "det_conf"]
+    # det_frame_id: the frame those values were computed on. Tracking runs on
+    # its own thread at whatever rate inference allows, so a row repeats the
+    # latest result until a new one lands; det_conf is only on the first row
+    # after each new result.
+    CSV_EXTRA_COLUMNS = ["det_cx", "det_cy", "in_zone", "det_conf", "det_frame_id"]
     _DEFAULT_BITRATE_MB = 2
 
     def __init__(self, module_type="apa_camera"):
         super().__init__(module_type)
+
+        # ── APA: inference worker ───────────────────────────────────────────
+        # Detection used to run inside the capture callback, on every frame:
+        # with the rat HEF on a Hailo-8L at 1000x1000 / 25 fps that callback
+        # sat at ~79% of a core and ~13% of frames were dropped (2026-11-10,
+        # plans/apa-camera-async-detection.md). Now the callback only hands
+        # the newest frame to this worker (one-slot, drop-oldest queue) and
+        # reads the latest TrackSnapshot back.
+        # _det_lock is held around detect() and around any detector swap or
+        # close: closing HailoRT under an in-flight run() is a hard SIGABRT.
+        self._det_lock = threading.Lock()
+        self._infer_q: queue.Queue = queue.Queue(maxsize=1)
+        self._infer_stop = threading.Event()
+        self._infer_worker: threading.Thread | None = None
+        self._infer_every_n = 1
+        self._infer_counter = 0
+        self._track_snapshot: TrackSnapshot | None = None
+        self._snapshot_seq = 0
+        self._csv_snapshot_seq = -1          # last snapshot whose conf went into the CSV
+        self._infer_latency_s: deque = deque(maxlen=250)
+        self._infer_done_t: deque = deque(maxlen=250)
+        self._infer_handed = 0
+        self._infer_stats_t = time.monotonic()
 
         # ── APA: detection state ────────────────────────────────────────────
         self.detector: HailoDetector | None = None
@@ -369,6 +413,7 @@ class APACameraModule(CameraBase):
         # ── Apply APA config ─────────────────────────────────────────────────
         self._configure_mask_and_shock_zone()
         self._configure_object_detection()
+        self._start_inference_worker()
 
 
     # -----------------------------------------------------------------------
@@ -398,13 +443,20 @@ class APACameraModule(CameraBase):
         self.max_jump_frac = float(self.config.get("object_detection.max_jump_frac", 0.15))
         self.jump_confirm_frames = max(1, int(self.config.get("object_detection.jump_confirm_frames", 3)))
         self.lost_timeout_s = float(self.config.get("object_detection.lost_timeout_s", 0.5))
+        self._infer_every_n = max(1, int(self.config.get("object_detection.infer_every_n", 1)))
+        with self._det_lock:
+            self._configure_detector_locked()
 
+    def _configure_detector_locked(self):
+        """Build, swap or close the detector. Caller holds _det_lock, so the
+        inference worker is never inside detect() while this runs."""
         if not self.config.get("object_detection.enabled", False):
             if self.detector is not None:
                 self.detector.close()
                 self.detector = None
                 self._detector_backend = None
             self._detector_sig = None
+            self._track_snapshot = None   # don't leave a stale position on screen
             self._inference_fault = None  # nothing expected
             self._sync_hardware_fault()
             return
@@ -489,8 +541,12 @@ class APACameraModule(CameraBase):
 
     def _start_new_recording(self) -> bool:
         result = super()._start_new_recording()
-        if hasattr(self.detector, 'reset'):
-            self.detector.reset()
+        with self._det_lock:
+            if hasattr(self.detector, 'reset'):
+                self.detector.reset()
+        # frame_id restarts at 0 with the new segment; a snapshot from before
+        # would carry an id from the old numbering into the new CSV.
+        self._track_snapshot = None
         return result
 
 
@@ -499,67 +555,177 @@ class APACameraModule(CameraBase):
     # -----------------------------------------------------------------------
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
+        """Capture thread: no inference here (see the worker in __init__).
+        Hand the frame over, then overlay and fill the CSV from the latest
+        published TrackSnapshot."""
         if self.mask_record:
             self._apply_mask(m)
 
-        det_cx = det_cy = None
-        in_zone = False
         tracking = self.config.get("object_detection.enabled", False)
-
+        snap = None
         if tracking:
-            # Tracking always looks only inside the arena mask, whether or not
-            # the mask is burned into the recording.
-            if self.mask_record:
-                dets = self._detect_objects(m.array)
-            else:
-                dets = self._detect_objects(self._masked_copy(m.array))
-            self._update_track(dets, time.monotonic())
-            if self._track_pos is not None:
-                det_cx, det_cy = (int(v) for v in self._track_pos)
-                in_zone = self._is_in_shock_zone(det_cx, det_cy)
+            self._infer_counter += 1
+            if self._infer_counter % self._infer_every_n == 0:
+                self._hand_to_worker(m.array, timing.timestamp_ns, self._frame_id)
+            snap = self._track_snapshot
 
-            # Losing the animal counts as leaving the zone, so a stale
-            # "entered" can't stand while nothing is tracked.
-            if in_zone != self._prev_in_zone:
-                event = {
-                    "type": "zone_entered" if in_zone else "zone_exited",
-                    "timestamp_ns": timing.timestamp_ns,
-                }
-                if det_cx is None:
-                    event["reason"] = "lost"
-                self.communication.send_status(event)
-                self._prev_in_zone = in_zone
-
-            # Periodic report on top of the edges: the controller holds an
-            # automated shock on only while these keep arriving, so a camera
-            # that crashes mid-zone can't leave it running.
-            now = time.monotonic()
-            if now - self._last_zone_state_t >= self._ZONE_STATE_PERIOD_S:
-                self._last_zone_state_t = now
-                self.communication.send_status({
-                    "type": "zone_state",
-                    "in_zone": in_zone,
-                    "tracking": det_cx is not None,
-                    "det_cx": det_cx,
-                    "det_cy": det_cy,
-                    "det_conf": round(float(self._track_det.conf), 3)
-                                if self._track_det is not None else None,
-                    "timestamp_ns": timing.timestamp_ns,
-                })
-
-        # Recorded overlays go on after detection so they never feed it.
+        # Recorded overlays go on after the hand-off so they never feed detection.
         if self.shock_zone_record:
             self._apply_shock_zone(m)
         if tracking and self.track_record:
             self._draw_detections(m)
 
+        if snap is None:
+            return {"det_cx": "", "det_cy": "", "in_zone": "", "det_conf": "",
+                    "det_frame_id": ""}
+        conf = ""
+        if snap.seq != self._csv_snapshot_seq:
+            self._csv_snapshot_seq = snap.seq
+            if snap.conf is not None:
+                conf = round(snap.conf, 3)
+        tracked = snap.det_cx is not None
         return {
-            "det_cx": det_cx if det_cx is not None else "",
-            "det_cy": det_cy if det_cy is not None else "",
-            "in_zone": int(in_zone) if det_cx is not None else "",
-            "det_conf": round(self._frame_conf, 3)
-                        if tracking and self._frame_conf is not None else "",
+            "det_cx": snap.det_cx if tracked else "",
+            "det_cy": snap.det_cy if tracked else "",
+            "in_zone": int(snap.in_zone) if tracked else "",
+            "det_conf": conf,
+            "det_frame_id": snap.frame_id,
         }
+
+    def _hand_to_worker(self, frame: np.ndarray, timestamp_ns: int, frame_id: int) -> None:
+        """Copy the frame (tracking only looks inside the arena mask, whether
+        or not the mask is burned into the recording) and put it in the
+        one-slot queue, replacing any frame the worker hasn't picked up."""
+        work = frame.copy() if self.mask_record else self._masked_copy(frame)
+        if work is frame:
+            work = frame.copy()
+        try:
+            self._infer_q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self._infer_q.put_nowait((work, timestamp_ns, frame_id))
+            self._infer_handed += 1
+        except queue.Full:
+            pass
+
+    def _track_frame(self, frame: np.ndarray, timestamp_ns: int, frame_id: int) -> None:
+        """Worker thread: detect, update the track, test the zone, send the
+        zone events, publish a TrackSnapshot. Event timestamps are those of
+        the frame that was analysed, not of when the result came out."""
+        dets = self._detect_objects(frame)
+        self._update_track(dets, time.monotonic())
+        det_cx = det_cy = None
+        in_zone = False
+        if self._track_pos is not None:
+            det_cx, det_cy = (int(v) for v in self._track_pos)
+            in_zone = bool(self._is_in_shock_zone(det_cx, det_cy))
+
+        # Losing the animal counts as leaving the zone, so a stale
+        # "entered" can't stand while nothing is tracked.
+        if in_zone != self._prev_in_zone:
+            event = {
+                "type": "zone_entered" if in_zone else "zone_exited",
+                "timestamp_ns": timestamp_ns,
+            }
+            if det_cx is None:
+                event["reason"] = "lost"
+            self.communication.send_status(event)
+            self._prev_in_zone = in_zone
+
+        # Periodic report on top of the edges: the controller holds an
+        # automated shock on only while these keep arriving, so a camera
+        # that crashes mid-zone can't leave it running.
+        now = time.monotonic()
+        if now - self._last_zone_state_t >= self._ZONE_STATE_PERIOD_S:
+            self._last_zone_state_t = now
+            self.communication.send_status({
+                "type": "zone_state",
+                "in_zone": in_zone,
+                "tracking": det_cx is not None,
+                "det_cx": det_cx,
+                "det_cy": det_cy,
+                "det_conf": round(float(self._track_det.conf), 3)
+                            if self._track_det is not None else None,
+                "infer_hz": self._infer_rate_hz(now),
+                "timestamp_ns": timestamp_ns,
+            })
+
+        self._snapshot_seq += 1
+        self._track_snapshot = TrackSnapshot(
+            seq=self._snapshot_seq, det_cx=det_cx, det_cy=det_cy, in_zone=in_zone,
+            conf=float(self._frame_conf) if self._frame_conf is not None else None,
+            det=self._track_det if det_cx is not None else None,
+            frame_id=frame_id,
+        )
+
+    # -----------------------------------------------------------------------
+    # Inference worker
+    # -----------------------------------------------------------------------
+
+    _INFER_STATS_PERIOD_S = 60.0
+
+    def _start_inference_worker(self) -> None:
+        if self._infer_worker and self._infer_worker.is_alive():
+            return
+        self._infer_stop.clear()
+        self._infer_worker = threading.Thread(
+            target=self._inference_worker, daemon=True, name="apa-infer")
+        self._infer_worker.start()
+
+    def _stop_inference_worker(self, timeout: float = 3.0) -> bool:
+        """Signal and join the worker. Must return True before the detector is
+        closed at module stop. False if it didn't stop in time."""
+        self._infer_stop.set()
+        worker = self._infer_worker
+        if worker is None:
+            return True
+        worker.join(timeout)
+        if worker.is_alive():
+            return False
+        self._infer_worker = None
+        return True
+
+    def _inference_worker(self) -> None:
+        self.logger.info("APA inference worker started")
+        while not self._infer_stop.is_set():
+            try:
+                frame, timestamp_ns, frame_id = self._infer_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if not self.config.get("object_detection.enabled", False):
+                continue
+            t0 = time.monotonic()
+            try:
+                self._track_frame(frame, timestamp_ns, frame_id)
+            except Exception as e:
+                self.logger.error(f"APA tracking error: {e}")
+            t1 = time.monotonic()
+            self._infer_latency_s.append(t1 - t0)
+            self._infer_done_t.append(t1)
+            self._maybe_log_infer_stats(t1)
+        self.logger.info("APA inference worker stopped")
+
+    def _infer_rate_hz(self, now: float, window_s: float = 5.0) -> float:
+        recent = [t for t in self._infer_done_t if now - t <= window_s]
+        if len(recent) < 2:
+            return 0.0
+        return round((len(recent) - 1) / max(1e-6, recent[-1] - recent[0]), 1)
+
+    def _maybe_log_infer_stats(self, now: float) -> None:
+        if now - self._infer_stats_t < self._INFER_STATS_PERIOD_S:
+            return
+        self._infer_stats_t = now
+        lat = sorted(self._infer_latency_s)
+        if not lat:
+            return
+        p50 = lat[len(lat) // 2] * 1000
+        p95 = lat[min(len(lat) - 1, int(len(lat) * 0.95))] * 1000
+        self.logger.info(
+            f"APA tracking: {self._infer_rate_hz(now)} Hz, "
+            f"track step p50 {p50:.0f} ms / p95 {p95:.0f} ms, "
+            f"{self._infer_handed} frames handed over since last report")
+        self._infer_handed = 0
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
         if self.mask_display:
@@ -627,11 +793,15 @@ class APACameraModule(CameraBase):
             frame = frame.astype(np.uint8)
         if frame.ndim != 3 or frame.shape[2] != 3:
             return []
-        try:
-            return self.detector.detect(frame, self._labels)[: self._MAX_CANDIDATES]
-        except Exception as e:
-            self.logger.error(f"Hailo inference error: {e}")
-            return []
+        with self._det_lock:
+            detector = self.detector
+            if detector is None:
+                return []
+            try:
+                return detector.detect(frame, self._labels)[: self._MAX_CANDIDATES]
+            except Exception as e:
+                self.logger.error(f"Hailo inference error: {e}")
+                return []
 
     @staticmethod
     def _centre(det: Detection) -> tuple[float, float]:
@@ -699,13 +869,14 @@ class APACameraModule(CameraBase):
 
     def _draw_detections(self, m: MappedArray) -> None:
         try:
-            if self._track_pos is None or self._track_det is None:
+            # The worker owns the tracker; draw its last published result.
+            snap = self._track_snapshot
+            if snap is None or snap.det_cx is None or snap.det is None:
                 return
-            det = self._track_det
+            det = snap.det
             # Tracked (smoothed) position, in main-stream pixel space
-            cx, cy = (int(v) for v in self._track_pos)
-
-            in_zone = self._is_in_shock_zone(cx, cy)
+            cx, cy = snap.det_cx, snap.det_cy
+            in_zone = snap.in_zone
             color = (0, 0, 255) if in_zone else (0, 255, 0)
 
             # Scale to the current frame's dimensions for drawing
@@ -900,9 +1071,16 @@ class APACameraModule(CameraBase):
 
     def stop(self) -> bool:
         try:
-            if self.detector is not None:
-                self.detector.close()
-                self.detector = None
+            if self._stop_inference_worker():
+                with self._det_lock:
+                    if self.detector is not None:
+                        self.detector.close()
+                        self.detector = None
+            else:
+                # Closing HailoRT under an in-flight run() aborts the process;
+                # leave the device to the OS at exit instead.
+                self.logger.error("APA inference worker did not stop; "
+                                  "not closing the detector")
             return super().stop()
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")

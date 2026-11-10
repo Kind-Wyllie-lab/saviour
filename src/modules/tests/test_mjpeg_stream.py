@@ -154,6 +154,66 @@ class TestGenerateFramesPush:
         server.push_frame(b"f2")
         assert next(gen) == MJPEGStreamServer._mjpeg_chunk(b"f2")
 
+    def test_waits_for_a_push_instead_of_polling(self):
+        """A viewer with nothing new sleeps on the Condition and is woken by
+        push_frame(), not by a 5 ms poll (2026-11-10: six viewers polling
+        starved the APA camera's capture callback)."""
+        import threading
+        import time
+
+        server = MJPEGStreamServer(poll_interval=5.0)
+        server.push_frame(b"f1")
+        gen = server._generate_frames_push()
+        assert next(gen) == MJPEGStreamServer._mjpeg_chunk(b"f1")
+
+        got = []
+        t = threading.Thread(target=lambda: got.append(next(gen)))
+        t.start()
+        time.sleep(0.05)
+        assert got == []                      # still waiting, not spinning
+        server.push_frame(b"f2")
+        t.join(timeout=1)
+        assert got == [MJPEGStreamServer._mjpeg_chunk(b"f2")]
+
+    def test_viewer_unregisters_when_generator_closes(self):
+        server = MJPEGStreamServer(poll_interval=0.0)
+        server.push_frame(b"f1")
+        gen = server._generate_frames_push()
+        next(gen)
+        assert server.client_count == 1
+        gen.close()                            # werkzeug does this on disconnect
+        assert server.client_count == 0
+
+    def test_oldest_viewer_evicted_over_cap(self):
+        server = MJPEGStreamServer(poll_interval=0.0, max_clients=2,
+                                   logger=MagicMock())
+        server.push_frame(b"f1")
+        gens = [server._generate_frames_push() for _ in range(3)]
+        for g in gens[:2]:
+            next(g)
+        assert server.client_count == 2
+        next(gens[2])                          # third viewer pushes out the first
+        assert server.client_count == 2
+        server.push_frame(b"f2")
+        assert list(gens[0]) == []             # evicted: stream ends
+        assert next(gens[1]) == MJPEGStreamServer._mjpeg_chunk(b"f2")
+        server.logger.warning.assert_called_once()
+
+    def test_stop_wakes_waiting_viewers(self):
+        import threading
+
+        server = MJPEGStreamServer(poll_interval=5.0)
+        server.push_frame(b"f1")
+        gen = server._generate_frames_push()
+        next(gen)
+        done = []
+        t = threading.Thread(target=lambda: done.append(list(gen)))
+        t.start()
+        server.is_streaming = True
+        server.stop()
+        t.join(timeout=1)
+        assert done == [[]]
+
     def test_dispatches_to_pull_or_push_based_on_render_fn(self):
         pull_server = MJPEGStreamServer(render_fn=lambda: b"x", interval=0.0)
         pull_server.should_stop = True
@@ -218,8 +278,10 @@ class TestRun:
         with patch("src.modules.mjpeg_stream.make_server") as mock_make_server:
             server._run(8080)
 
+        from src.modules.mjpeg_stream import _TimeoutRequestHandler
         mock_make_server.assert_called_once_with(
-            "0.0.0.0", 8080, server.app, threaded=True
+            "0.0.0.0", 8080, server.app, threaded=True,
+            request_handler=_TimeoutRequestHandler,
         )
         mock_make_server.return_value.serve_forever.assert_called_once()
 

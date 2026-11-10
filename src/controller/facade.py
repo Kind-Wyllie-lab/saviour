@@ -85,6 +85,50 @@ class ControllerFacade:
     def export_ptp_history_csv(self, hours: float | None = 24.0):
         return self.controller.health.export_ptp_history_csv(hours)
 
+    def get_sync_overview(self, window_s=None) -> dict:
+        """Read-only fleet timing snapshot for the System -> Sync tab: module +
+        controller PTP (with downsampled history), camera FrameSync roles,
+        recent framesync verdicts. See sync_overview.py."""
+        from src.controller import sync_overview
+
+        controller = self.controller
+        modules = controller.modules
+        cameras = {}
+        for mid, state in self._camera_config_states().items():
+            module = modules._modules.get(mid)
+            cameras[mid] = {
+                "online": bool(module and module.online),
+                "recording": self.is_module_recording(mid),
+                "config_status": str(state.status),
+                "camera": (state.true_config or {}).get("camera", {}),
+                "target_camera": (state.target_config or {}).get("camera", {}),
+            }
+        health = controller.health
+        try:
+            controller_ptp = controller.ptp.get_status()
+            controller_buffer = controller.ptp.get_ptp_buffer()
+        except Exception as e:  # never let the PTP probe sink the whole view
+            self.logger.warning(f"get_sync_overview: controller PTP status failed: {e}")
+            controller_ptp, controller_buffer = None, []
+        rec_cfg = controller.config.get("recording", {}) or {}
+        return sync_overview.build_overview(
+            module_history={mid: list(h) for mid, h
+                            in list(health.module_health_history.items())},
+            module_health=health.get_module_health(),
+            controller_ptp=controller_ptp,
+            controller_buffer=controller_buffer,
+            cameras=cameras,
+            transmitter=self._framesync_transmitter,
+            waiting=self._framesync_waiting,
+            sessions=dict(controller.recording.get_recording_sessions()),
+            thresholds={
+                "ptp_start_gate_us": float(rec_cfg.get("ptp_start_gate_us", 50.0)),
+                "ptp_threshold_us": float(rec_cfg.get("ptp_threshold_us", 1000.0)),
+            },
+            window_s=window_s if window_s is not None
+            else sync_overview.DEFAULT_WINDOW_S,
+        )
+
 
     def get_recording_status(self) -> bool:
         return self.controller.recording.get_recording_status()

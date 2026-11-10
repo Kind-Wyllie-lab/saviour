@@ -8,7 +8,14 @@ import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsM
 import UpdateProgressModal from "../../components/UpdateProgressModal/UpdateProgressModal";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { triggerDownload } from "../Recording/sessionFormat";
+import usePersistedState from "/src/hooks/usePersistedState";
+import SyncPanel from "./SyncPanel";
 import "./System.css";
+
+const TABS = [
+  ["system", "Devices"],
+  ["sync", "Sync"],
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -142,6 +149,7 @@ function activityCell(status) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function System() {
+  const [tab, setTab] = usePersistedState("system.tab", "system");
   const loggedIn = useIsLoggedIn();
   const { moduleHealth, controllerHealth, refresh } = useHealth();
   const { modules, moduleList } = useModules();
@@ -378,7 +386,16 @@ export default function System() {
   return (
     <main className="system-page">
       <div className="system-header">
-        <div className="system-header-actions">
+        <div className="system-tabs" role="tablist">
+          {TABS.map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k}
+                    className={`system-tab ${tab === k ? "system-tab--active" : ""}`}
+                    onClick={() => setTab(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {tab === "system" && <div className="system-header-actions">
           <button className="refresh-btn" type="button" onClick={() => {
             refresh();
             socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
@@ -403,10 +420,12 @@ export default function System() {
           >
             {mendAllStatus === "sent" ? "Mend requested" : "Mend All Modules"}
           </button>
-        </div>
+        </div>}
       </div>
 
-      <div className="system-table-wrapper">
+      {tab === "sync" && <SyncPanel />}
+
+      {tab === "system" && <div className="system-table-wrapper">
         <table className="system-table">
           <thead>
             <tr>
@@ -550,7 +569,7 @@ export default function System() {
             ])}
           </tbody>
         </table>
-      </div>
+      </div>}
       {showUpdateProgress && updateDevices.length > 0 && (
         <UpdateProgressModal
           rows={updateDevices.map(({ id, name }) => ({ id, name, status: deviceStatuses[id] }))}

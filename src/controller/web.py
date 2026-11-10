@@ -3601,6 +3601,20 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     'error': str(e)
                 })
 
+        @self.socketio.on('get_sync_overview')
+        def handle_get_sync_overview(data=None):
+            """System -> Sync tab. Read-only, so guests may view it like the
+            rest of the System page. Replies to the asking client only: the
+            payload carries up to 240 history points per module."""
+            window_s = (data or {}).get("window_s") if isinstance(data, dict) else None
+            try:
+                overview = self.facade.get_sync_overview(window_s)
+            except Exception as e:
+                self.logger.exception("get_sync_overview failed")
+                overview = {"error": str(e)}
+            from flask_socketio import emit as _emit
+            _emit('sync_overview', overview)
+
         @self.socketio.on('get_module_health')
         def handle_get_module_health():
             """Handle request for module health status"""

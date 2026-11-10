@@ -237,6 +237,80 @@ class MockSocket {
 
 // ── request → response routing ──────────────────────────────────────────
 // `this` is the MockSocket; call this._fire(responseEvent, data).
+// System -> Sync tab (backend: src/controller/sync_overview.py). Offsets are a
+// deterministic wobble per module so the sparklines have shape; one module
+// drifts above the 50 µs gate near the end to show the warning state.
+function mockSyncOverview(windowS = 3600) {
+  const t1 = Date.now() / 1000;
+  const window = Math.max(300, Math.min(Number(windowS) || 3600, 86400));
+  const step = Math.max(30, window / 240);
+  const modules = {};
+  Object.entries(state.health).forEach(([id, h], k) => {
+    const history = [];
+    for (let t = t1 - window; t <= t1; t += step) {
+      const base = Math.sin(t / 600 + k) * (800 + k * 600);
+      const spike = k === 1 && t > t1 - window * 0.08 ? 58000 : 0;
+      const v = base + spike;
+      const phc = Math.cos(t / 300 + k) * 300;
+      history.push([Math.round(t), v, v - 400 - k * 200, v + 400 + k * 200, phc, phc - 150, phc + 150]);
+    }
+    const last = history[history.length - 1];
+    modules[id] = {
+      ptp4l_offset_ns: last[1], ptp4l_offset_ns_min: last[2], ptp4l_offset_ns_max: last[3],
+      phc2sys_offset_ns: last[4], phc2sys_offset_ns_min: last[5], phc2sys_offset_ns_max: last[6],
+      ptp4l_freq: -1200 + k * 300, phc2sys_freq: 24000 + k * 1700,
+      ptp_restarts: k === 1 ? 2 : 0, last_ptp_restart: k === 1 ? t1 - 5400 : null,
+      last_heartbeat: h.last_heartbeat ?? t1,
+      history,
+    };
+  });
+  const cameraIds = Object.keys(state.modules).filter((id) => id.includes("camera"));
+  const cameras = {};
+  cameraIds.forEach((id, i) => {
+    cameras[id] = {
+      online: state.modules[id]?.online !== false,
+      recording: state.health[id]?.recording ?? false,
+      framesync_enabled: true,
+      sync_mode: i === 0 ? "server" : "client",
+      expected_role: i === 0 ? "server" : "client",
+      pending_sync_mode: null,
+      fps: 30, sensor_mode_index: 1,
+      waiting_for_server: false, deferred: false,
+    };
+  });
+  const ctrlHistory = [];
+  for (let t = Math.max(t1 - 3600, t1 - window); t <= t1; t += step) {
+    const v = Math.sin(t / 90) * 40;
+    ctrlHistory.push([Math.round(t), v, v - 15, v + 15]);
+  }
+  const recent_verdicts = Object.entries(state.sessions)
+    .filter(([, s]) => s.framesync_verdict?.status)
+    .map(([name, s]) => ({ session_name: name, ...s.framesync_verdict }));
+  if (!recent_verdicts.length) {
+    recent_verdicts.push({
+      session_name: "mock_session_20261109", status: "amber", scope: "session",
+      generated_at: new Date((t1 - 7200) * 1000).toISOString(), sync_mode: "server/client",
+      phase_lock_evaluated: true,
+      reasons: ["camera-module-c3d4: 0.4% frames dropped"],
+      worst: { ptp4l_p95_ns: 4200, detrended_p95_us: 14, max_dropped_frac: 0.004, span_s: 3600 },
+      counts: { cameras: 2 }, report_rel: null,
+    });
+  }
+  return {
+    generated_at: t1, window_s: window,
+    ptp_row_fields: ["t", "ptp4l", "ptp4l_min", "ptp4l_max", "phc2sys", "phc2sys_min", "phc2sys_max"],
+    thresholds: { ptp_start_gate_us: 50, ptp_threshold_us: 1000 },
+    controller: {
+      role: "master", status: "synchronized", ptp4l_service: "active",
+      phc2sys_service: "active", phc2sys_offset_ns: ctrlHistory.at(-1)?.[1] ?? 0,
+      phc2sys_freq: 21345, last_sync: t1, interface: "eth0", history: ctrlHistory,
+    },
+    modules,
+    framesync: { transmitter: cameraIds[0] ?? null, cameras },
+    recent_verdicts,
+  };
+}
+
 const ROUTER = {
   // Habitat Gates page (RFID gate mapping), see gateMapMock.js.
   ...gateMapRoutes,
@@ -246,6 +320,7 @@ const ROUTER = {
   get_modules() { this._fire("modules_update", clone(state.modules)); },
   get_module_health() { this._fire("module_health_update", { module_health: clone(state.health) }); },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
+  get_sync_overview(payload) { this._fire("sync_overview", mockSyncOverview(payload?.window_s)); },
   get_controller_info() {
     this._fire("controller_info_response", {
       ip: "10.0.0.1", version: "v0.6.1-mock", hostname: "mock-controller",

@@ -110,6 +110,26 @@ class ControllerFacade:
             share["ip"] if share["kind"] == "nas" else None,
             controller_ip, network)
 
+    def release_dhcp_lease(self, ip: str, mac: str) -> dict:
+        """Drop a stale DHCP lease (System -> Network tab). Refuses for a
+        registered module, the export share, or a host that still answers;
+        see network_overview.release_lease. Raises LeaseReleaseError."""
+        from src.controller import network_overview as no
+        from src.controller.ping_monitor import ping_once
+
+        share = self._share_info()
+        protected = {m.ip for m in list(self.controller.modules._modules.values())
+                     if m.ip}
+        if share.get("ip"):
+            protected.add(share["ip"])
+        result = no.release_lease(
+            ip, mac, system=no.read_system(), protected_ips=protected,
+            pinger=ping_once, reread=no.read_system)
+        self.logger.info(
+            f"DHCP lease release {ip} {result['mac']} ({result['hostname']}): "
+            f"{result['detail']}")
+        return result
+
     def get_network_overview(self) -> dict:
         """Read-only rig network snapshot for the System -> Network tab: every
         DHCP lease / ARP neighbour / module / NAS on eth0, classified, with

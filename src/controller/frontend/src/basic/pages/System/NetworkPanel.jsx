@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import socket from "/src/socket";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import StatusChip from "./StatusChip";
 import { fmtAgo, fmtClock, fmtSpan } from "./format";
 import "./SyncPanel.css";
@@ -81,6 +82,17 @@ function hostNotes(h) {
   if (h.kind === "unprovisioned") notes.push("run saviour-config to provision");
   if (h.kind === "saviour_unregistered") notes.push("not registered with this controller");
   return notes;
+}
+
+// Release lease: only for a lease that isn't a module or the share. Returns
+// null (no button) or {enabled, reason}. The backend re-checks all of this
+// (network_overview.release_lease) and pings the host again before acting.
+function releaseState(h, loggedIn, available) {
+  if (!h.lease || h.module || h.kind === "share") return null;
+  if (h.reachable) return { enabled: false, reason: "Still answering on the network: unplug or power it off first, or it will just renew" };
+  if (!available) return { enabled: false, reason: "dhcp_release isn't installed on the controller (sudo apt install dnsmasq-utils, or run mend.sh)" };
+  if (!loggedIn) return { enabled: false, reason: "Login required for this action" };
+  return { enabled: true, reason: "Remove this device's DHCP lease from the controller" };
 }
 
 function hostName(h) {
@@ -238,8 +250,53 @@ function Interfaces({ data }) {
   );
 }
 
-function HostsTable({ data }) {
+function ReleaseModal({ host, onCancel, onConfirm }) {
+  const { name } = hostName(host);
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <p className="actions-modal__title">Release DHCP lease?</p>
+        <p className="modal-subtext">
+          Removes the controller's lease for <b>{name}</b> ({host.ip}, <span className="net-mono">{host.mac}</span>),
+          so the address goes back into the pool.
+        </p>
+        <p className="modal-subtext">
+          The controller pings it again first and refuses if it answers. If the device comes back
+          later it just asks for a new lease, possibly with a different address.
+        </p>
+        <div className="modal-buttons">
+          <button className="reset-button" type="button" onClick={onConfirm}>Release lease</button>
+          <button className="save-button" type="button" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HostsTable({ data, onReleased }) {
+  const loggedIn = useIsLoggedIn();
   const [filter, setFilter] = useState("all");
+  const [confirmHost, setConfirmHost] = useState(null);
+  const [releasing, setReleasing] = useState(null); // ip in flight
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    const onResult = (r) => {
+      setReleasing(null);
+      setResult(r);
+      onReleased();
+    };
+    socket.on("release_dhcp_lease_result", onResult);
+    return () => socket.off("release_dhcp_lease_result", onResult);
+  }, [onReleased]);
+
+  const doRelease = () => {
+    const h = confirmHost;
+    setConfirmHost(null);
+    setResult(null);
+    setReleasing(h.ip);
+    socket.emit("release_dhcp_lease", { ip: h.ip, mac: h.mac });
+  };
   const now = data.generated_at;
   const rows = useMemo(() => (data.hosts || []).map((h) => ({ h, notes: hostNotes(h) })), [data.hosts]);
   const shown = rows.filter(({ h, notes }) =>
@@ -255,6 +312,14 @@ function HostsTable({ data }) {
         <h3>Hosts on the rig network</h3>
         <span className="sync-muted">Every DHCP lease and ARP neighbour on eth0, plus registered modules</span>
       </div>
+      {result && (
+        <div className={result.ok ? "net-result net-result--ok" : "sync-error"} role="status">
+          {result.ok ? "✓ " : "✕ "}
+          {result.ok ? `Released the lease for ${result.hostname || result.ip}` : `Couldn't release ${result.ip ?? "the lease"}`}
+          {result.ok ? "" : `: ${result.detail}`}
+          <button type="button" className="net-dismiss" onClick={() => setResult(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
       <div className="sync-window net-filter" role="group" aria-label="Filter hosts">
         {FILTERS.map(([k, label]) => (
           <button key={k} type="button"
@@ -277,11 +342,12 @@ function HostsTable({ data }) {
               <th>Last hour</th>
               <th title="Modules only: eth0 link speed and errors in the last hour">Link</th>
               <th title="Modules only: gap between heartbeats over the last 15 min">Heartbeat</th>
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 && (
-              <tr><td colSpan={9} className="system-table__empty">No hosts match</td></tr>
+              <tr><td colSpan={10} className="system-table__empty">No hosts match</td></tr>
             )}
             {shown.map(({ h, notes }) => {
               const { name, sub } = hostName(h);
@@ -294,6 +360,7 @@ function HostsTable({ data }) {
               const counterIssues = issues.filter((i) => !i.includes("Mb/s") && !i.includes("duplex"));
               const hb = m?.heartbeat;
               const p = h.ping;
+              const rel = releaseState(h, loggedIn, data.dhcp_release_available);
               return (
                 <tr key={h.ip} className={!h.reachable ? "sync-row--stale" : undefined}>
                   <td>
@@ -346,17 +413,32 @@ function HostsTable({ data }) {
                       )}
                     </>}
                   </td>
+                  <td>
+                    {rel && (
+                      <button type="button" className="action-menu-btn"
+                              disabled={!rel.enabled || releasing === h.ip}
+                              title={rel.reason}
+                              onClick={() => setConfirmHost(h)}>
+                        {releasing === h.ip ? "Releasing…" : "Release lease"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+      {confirmHost && (
+        <ReleaseModal host={confirmHost} onCancel={() => setConfirmHost(null)} onConfirm={doRelease} />
+      )}
     </section>
   );
 }
 
 // ── Panel ────────────────────────────────────────────────────────────────────
+
+const askOverview = () => socket.emit("get_network_overview");
 
 export default function NetworkPanel() {
   const [data, setData] = useState(null);
@@ -392,7 +474,7 @@ export default function NetworkPanel() {
       {data && !data.error && <>
         <Summary data={data} />
         <Interfaces data={data} />
-        <HostsTable data={data} />
+        <HostsTable data={data} onReleased={askOverview} />
       </>}
     </div>
   );

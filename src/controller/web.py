@@ -3613,6 +3613,27 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             from flask_socketio import emit as _emit
             _emit('network_overview', overview)
 
+        @self.socketio.on('release_dhcp_lease')
+        def handle_release_dhcp_lease(data=None):
+            """System -> Network tab "Release lease" (admin). Replies to the
+            asking client with release_dhcp_lease_result."""
+            from flask_socketio import emit as _emit
+
+            from src.controller.network_overview import LeaseReleaseError
+            if not self._require_auth('release_dhcp_lease_result',
+                                      {"ok": False, "detail": "Login required for this action"}):
+                return
+            data = data if isinstance(data, dict) else {}
+            ip, mac = data.get("ip"), data.get("mac")
+            try:
+                result = self.facade.release_dhcp_lease(ip, mac)
+            except LeaseReleaseError as e:
+                result = {"ok": False, "ip": ip, "mac": mac, "detail": str(e)}
+            except Exception as e:
+                self.logger.exception("release_dhcp_lease failed")
+                result = {"ok": False, "ip": ip, "mac": mac, "detail": str(e)}
+            _emit('release_dhcp_lease_result', result)
+
         @self.socketio.on('get_sync_overview')
         def handle_get_sync_overview(data=None):
             """System -> Sync tab. Read-only, so guests may view it like the

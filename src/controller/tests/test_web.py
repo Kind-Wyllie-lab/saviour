@@ -2971,3 +2971,27 @@ class TestRfidStatus:
             events = [e for e in client.get_received()
                       if e["name"] == "rfid_db_test_result"]
             assert events[0]["args"][0]["ok"] is False
+
+
+class TestReleaseDhcpLease:
+    def test_guest_is_refused_without_calling_facade(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("release_dhcp_lease", {"ip": "10.0.0.160", "mac": "aa:bb:cc:dd:ee:ff"})
+        rec = client.get_received()
+        assert rec[0]["name"] == "release_dhcp_lease_result"
+        assert rec[0]["args"][0]["ok"] is False
+        facade.release_dhcp_lease.assert_not_called()
+
+    def test_admin_refusal_message_reaches_client(self):
+        from src.controller.network_overview import LeaseReleaseError
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            facade.release_dhcp_lease.side_effect = LeaseReleaseError("answers ping")
+            client.emit("release_dhcp_lease", {"ip": "10.0.0.160", "mac": "aa"})
+            rec = client.get_received()
+        result = next(r for r in rec if r["name"] == "release_dhcp_lease_result")["args"][0]
+        assert result == {"ok": False, "ip": "10.0.0.160", "mac": "aa",
+                          "detail": "answers ping"}

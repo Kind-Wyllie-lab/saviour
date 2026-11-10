@@ -77,7 +77,6 @@ function Sidebar({ navItems }) {
     window.addEventListener("saviour:open-update-modal", handler);
     return () => window.removeEventListener("saviour:open-update-modal", handler);
     // Subscribe once on mount; openUpdateModal only sets state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The currently-mounted ConfigCard's useConfigForm broadcasts its dirty
@@ -235,7 +234,11 @@ function Sidebar({ navItems }) {
   };
 
   const openUpdateModal = () => {
-    if (!loggedIn) {
+    // Read the login live, not the `loggedIn` state: the
+    // "saviour:open-update-modal" listener (System page's Update button)
+    // subscribes once on mount, so its copy of this function would keep the
+    // mount-time value and reopen the login form after a later sign-in.
+    if (!isLoggedIn()) {
       window.dispatchEvent(new Event("saviour:open-login"));
       return;
     }

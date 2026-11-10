@@ -312,3 +312,36 @@ def test_link_stats_window_and_reset(tmp_path):
     (d / "statistics" / "rx_dropped").write_text("1\n")
     s = ls.sample()
     assert s["rx_dropped_1h"] == 0 and s["window_s"] == 0
+
+
+def test_facade_network_paths_with_real_modules(monkeypatch):
+    """Regression: both facade paths once read get_modules() (serialised
+    dicts) as Module objects and crash-looped the ping monitor on hardware."""
+    from src.controller.facade import ControllerFacade
+    from src.controller.models import Module
+    from src.controller.modules import Modules
+
+    system = {"conf": no.parse_dnsmasq_conf(CONF), "conf_found": True,
+              "leases": no.parse_leases(LEASES), "neigh": no.parse_neigh(NEIGH),
+              "interfaces": [{"name": "eth0", "operstate": "UP", "mac": "x",
+                              "ipv4": ["10.0.0.1/16"]}],
+              "default_routes": [], "rig_iface": "eth0"}
+    monkeypatch.setattr(no, "read_system", lambda: system)
+    modules = Modules()
+    modules.facade = None
+    modules.add_module(Module(id="microphone_4703", name="Mic", type="microphone",
+                              version="1", ip="10.0.0.156"))
+    controller = MagicMock()
+    controller.modules = modules
+    controller.config.get.side_effect = lambda k, d=None: d
+    controller.network.ip = "10.0.0.1"
+    controller.health.module_health_history = {}
+    controller.health.get_module_health.return_value = {}
+    controller.link_stats.sample.return_value = None
+    controller.ping_monitor.snapshot.return_value = {}
+    facade = ControllerFacade(controller)
+
+    assert "10.0.0.156" in facade.network_ping_targets()
+    out = facade.get_network_overview()
+    mic = next(h for h in out["hosts"] if h["ip"] == "10.0.0.156")
+    assert mic["kind"] == "module" and mic["module"]["name"] == "Mic"

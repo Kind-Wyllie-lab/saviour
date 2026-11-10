@@ -182,9 +182,10 @@ exactly hflip+vflip, which `libcamera.Transform` (passed to
 `create_video_configuration(transform=…)`) does in the ISP for free.
 90°/270° need a transpose the ISP can't do, so they stay in software.
 
-Built on `fix/camera-isp-rotation-180`, with tests, **not merged or
-deployed**: the arena was dark, so the orientation couldn't be checked. To
-validate with the arena lit:
+Merged to `staging` (2026-11-10), with tests, **not yet deployed**: the
+arena was dark, so the orientation couldn't be checked. The next fleet update
+from `staging` ships it, so validate as part of that update, with the arena
+lit:
 1. Save `/snapshot.jpg`, deploy, save it again. The scene must have the same
    orientation, and the mask and shock zone must sit on the same features.
 2. Re-measure the capture thread, then repeat the stress test.

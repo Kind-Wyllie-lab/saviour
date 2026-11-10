@@ -106,7 +106,7 @@ class ControllerFacade:
         share = self._share_info()
         return no.ping_targets(
             system["leases"], system["neigh"],
-            (m.ip for m in self.get_modules().values()),
+            (m.ip for m in list(self.controller.modules._modules.values())),
             share["ip"] if share["kind"] == "nas" else None,
             controller_ip, network)
 
@@ -122,7 +122,8 @@ class ControllerFacade:
             mid: {"name": m.name, "type": m.type, "ip": m.ip, "online": m.online,
                   "status": str(getattr(m.status, "value", m.status)),
                   "version": m.version}
-            for mid, m in self.get_modules().items()
+            # Module objects, not get_modules()' serialised dicts.
+            for mid, m in list(controller.modules._modules.items())
         }
         health = controller.health
         try:

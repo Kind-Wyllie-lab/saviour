@@ -1,7 +1,8 @@
 # APA camera: take rat detection off the capture thread
 
-**Status:** built on `fix/apa-camera-capture-load` (2026-11-10), with unit
-tests. Not yet run on the rig: the acceptance steps below are still owed.
+**Status:** on `staging` and deployed to the APA rig (2026-11-10, `cae5060`).
+Stress test passed in an unlit arena (below). Still owed: the same test with
+the arena lit and a rat in it, and acceptance steps 3–4.
 
 ## Problem
 
@@ -155,6 +156,42 @@ really do keep unmounted MJPEG streams open.
    `tools/apa_track.py` run offline on the same video (latency to `in_zone`
    ≤ one inference period plus `entry_latency_s`).
 4. Run a session with detection off as a baseline for gap CV.
+
+## Rig results
+
+**2026-11-10, `async_tracking_stress-135729`.** 10 min, 1000×1000 @ 25 fps,
+rat HEF, tracking on, shock mode `dry_run`, six MJPEG viewers held open from
+the controller with `curl`. Results:
+- 15,067 CSV rows, 15,067 encoded frames, `dropped_before_total` 0, every
+  frame gap 40 ms.
+- Tracking at 25.0 Hz (every frame), track step p50 12 ms / p95 13 ms;
+  `det_frame_id` lagged `frame_id` by exactly 1.
+- Capture thread at ~73% of a core while recording (~61% idle; ~56% idle with
+  tracking off), against 77–79% before.
+
+Caveats: the arena was dark ("UNDEREXPOSED 100%") and empty. The detector
+found nothing, and H.264 encoding of black frames is far cheaper than a lit
+arena with a rat in it. Repeat in a lit arena before calling this done.
+
+## Follow-up: 180° rotation in the ISP
+
+The remaining ~56% on the capture thread is camera_base's own per-frame work
+at 1000×1000. One piece of that is `camera.rotation=180` done with
+`np.rot90` on every main frame, plus again on the preview copy. 180° is
+exactly hflip+vflip, which `libcamera.Transform` (passed to
+`create_video_configuration(transform=…)`) does in the ISP for free.
+90°/270° need a transpose the ISP can't do, so they stay in software.
+
+Built on `fix/camera-isp-rotation-180`, with tests, **not merged or
+deployed**: the arena was dark, so the orientation couldn't be checked. To
+validate with the arena lit:
+1. Save `/snapshot.jpg`, deploy, save it again. The scene must have the same
+   orientation, and the mask and shock zone must sit on the same features.
+2. Re-measure the capture thread, then repeat the stress test.
+
+Crop risk: `crop_geometry` ignores flips entirely, for the existing hflip/vflip
+as much as for this. This rig has no crop set. On any rig with rotation 180
+and a crop, check the crop after the change.
 
 ## Rollback
 

@@ -311,6 +311,91 @@ function mockSyncOverview(windowS = 3600) {
   };
 }
 
+// System -> Network tab (backend: src/controller/network_overview.py). Shows
+// every kind of host the controller's DHCP server can see: registered modules
+// (one offline), an unprovisioned Pi, a PC, an expired lease, a NAS on a
+// static IP and a stray device with a randomised MAC.
+function mockNetworkOverview() {
+  const t1 = Date.now() / 1000;
+  const rtt = (base, lossEvery = 0, seed = 1) => {
+    const h = [];
+    for (let i = 0; i < 120; i++) {
+      const t = Math.round(t1 - 3600 + i * 30);
+      const lost = lossEvery && (i * seed) % lossEvery === 0;
+      h.push([t, lost ? null : +(base + Math.abs(Math.sin(i / 7 + seed)) * base * 0.8).toFixed(3)]);
+    }
+    return h;
+  };
+  const ping = (history) => {
+    const replies = history.slice(-30).map(([, r]) => r).filter((r) => r != null).sort((a, b) => a - b);
+    const last = history[history.length - 1];
+    return {
+      last_ms: last[1], last_at: last[0],
+      last_reply_at: [...history].reverse().find(([, r]) => r != null)?.[0] ?? null,
+      median_ms: replies[Math.floor(replies.length / 2)] ?? null,
+      max_ms: replies[replies.length - 1] ?? null,
+      loss_pct: +(100 * (30 - replies.length) / 30).toFixed(1), samples: 30, history,
+    };
+  };
+  const link = (over = {}) => ({
+    iface: "eth0", mac: null, operstate: "up", speed_mbps: 1000, duplex: "full", mtu: 1500,
+    carrier_changes: 1, carrier_changes_1h: 0, rx_errors_1h: 0, tx_errors_1h: 0,
+    rx_dropped_1h: 0, tx_dropped_1h: 0, rx_bytes_1h: 12e6, tx_bytes_1h: 9.4e9, window_s: 3600, ...over,
+  });
+  const hb = { mean_gap_s: 30.02, max_gap_s: 30.4, jitter_s: 0.12, beats: 30 };
+  const lease = (hours) => ({ expiry: Math.round(t1 + hours * 3600), state: hours > 0 ? "active" : "expired" });
+  const modIds = Object.keys(state.modules);
+  const hosts = modIds.map((id, i) => {
+    const m = state.modules[id];
+    const offline = m.online === false;
+    const mac = `2c:cf:67:${(0x10 + i).toString(16)}:${(0x20 + i).toString(16)}:${(0x30 + i).toString(16)}`;
+    return {
+      ip: m.ip && m.ip !== "10.0.0.1" ? m.ip : `10.0.0.${150 + i}`, mac, hostname: `${(m.type || "module").replace(/_/g, "-")}-module-${id.slice(-4)}`,
+      lease: lease(6 + i), neigh_state: offline ? "FAILED" : "REACHABLE",
+      vendor: "Raspberry Pi", randomised: false, kind: "module", reachable: !offline,
+      ping: ping(offline ? rtt(0.2, 1) : rtt(0.2 + i * 0.05, i === 1 ? 23 : 0, i + 1)),
+      module: {
+        id, name: m.name || id, type: m.type, online: !offline, status: m.status, version: m.version,
+        last_heartbeat: offline ? t1 - 1800 : t1 - 4 - i * 3,
+        link: offline ? null : link(i === 1 ? { speed_mbps: 100, rx_errors_1h: 14, carrier_changes_1h: 2 } : { mac }),
+        heartbeat: offline ? null : (i === 1 ? { ...hb, max_gap_s: 71.2, jitter_s: 7.4 } : hb),
+      },
+    };
+  });
+  hosts.push(
+    { ip: "10.0.0.20", mac: "00:11:32:aa:bb:01", hostname: null, lease: null, neigh_state: "STALE",
+      vendor: null, randomised: false, kind: "share", reachable: true, ping: ping(rtt(0.4, 0, 3)), module: null },
+    { ip: "10.0.0.160", mac: "2c:cf:67:aa:bb:cc", hostname: "saviour-unprov-bbcc", lease: lease(11),
+      neigh_state: "REACHABLE", vendor: "Raspberry Pi", randomised: false, kind: "unprovisioned",
+      reachable: true, ping: ping(rtt(0.25, 0, 4)), module: null },
+    { ip: "10.0.0.161", mac: "d8:3a:dd:11:22:33", hostname: "raspberrypi", lease: lease(-0.4),
+      neigh_state: null, vendor: "Raspberry Pi", randomised: false, kind: "raspberry_pi",
+      reachable: false, ping: ping(rtt(0.3, 1)), module: null },
+    { ip: "10.0.0.155", mac: "58:ef:68:7e:e3:11", hostname: "LAB-PC-3051", lease: lease(9),
+      neigh_state: "REACHABLE", vendor: null, randomised: false, kind: "other", reachable: true,
+      ping: ping(rtt(1.1, 0, 5)), module: null },
+    { ip: "10.0.0.170", mac: "9a:3c:00:51:7e:02", hostname: null, lease: lease(2),
+      neigh_state: "REACHABLE", vendor: null, randomised: true, kind: "other", reachable: true,
+      ping: ping(rtt(3.5, 17, 6)), module: null },
+  );
+  const counts = { module: 0, share: 0, saviour_unregistered: 0, unprovisioned: 0, raspberry_pi: 0, other: 0 };
+  hosts.forEach((h) => { counts[h.kind] += 1; });
+  return {
+    generated_at: t1,
+    controller: { ip: "10.0.0.1", network: "10.0.0.0/16", iface: "eth0", link: link({ mac: "2c:cf:67:59:d3:c0" }) },
+    interfaces: [
+      { name: "eth0", operstate: "UP", mac: "2c:cf:67:59:d3:c0", ipv4: ["10.0.0.1/16"], default_route: null, role: "rig" },
+      { name: "wlan0", operstate: "UP", mac: "2c:cf:67:59:d3:c1", ipv4: ["10.126.18.7/16"], default_route: "10.126.255.254", role: "uplink" },
+    ],
+    dhcp: { start: "10.0.0.128", end: "10.0.0.255", size: 128, in_use: hosts.filter((h) => h.lease?.state === "active").length,
+            lease_time: "12h", netmask: "255.255.0.0", gateway: "10.0.0.1", dns: null, authoritative: true },
+    dhcp_conf_found: true,
+    share: { kind: "nas", ip: "10.0.0.20", path: "saviour", health: { status: "ok", error: null } },
+    firewall: { ok: true, detail: "Firewall active on wlan0", exposed: [] },
+    hosts, counts,
+  };
+}
+
 const ROUTER = {
   // Habitat Gates page (RFID gate mapping), see gateMapMock.js.
   ...gateMapRoutes,
@@ -320,6 +405,7 @@ const ROUTER = {
   get_modules() { this._fire("modules_update", clone(state.modules)); },
   get_module_health() { this._fire("module_health_update", { module_health: clone(state.health) }); },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
+  get_network_overview() { this._fire("network_overview", mockNetworkOverview()); },
   get_sync_overview(payload) { this._fire("sync_overview", mockSyncOverview(payload?.window_s)); },
   get_controller_info() {
     this._fire("controller_info_response", {

@@ -16,6 +16,7 @@ import time
 import psutil
 
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
+from src.shared.netlink import LinkStats
 from src.shared.supervised import REGISTRY, supervise
 
 
@@ -35,6 +36,8 @@ class Health:
         self.heartbeat_interval = self.config.get("module.heartbeat_interval", 30)
         self.heartbeats_active = False
         self._heartbeat_stop = threading.Event()
+        # eth0 link state + error counters for the System -> Network tab.
+        self._link_stats = LinkStats("eth0")
 
     def start_heartbeats(self) -> bool:
         """Start sending periodic heartbeats to the controller
@@ -136,8 +139,16 @@ class Health:
             version=self.facade.get_saviour_version(),
             supervised_threads=REGISTRY.snapshot(),
             rfid_db=self.facade.get_rfid_db_status(),
+            link=self._read_link(),
         )
         return snapshot.to_dict()
+
+    def _read_link(self) -> dict | None:
+        try:
+            return self._link_stats.sample()
+        except Exception as e:  # never let a sysfs glitch drop a heartbeat
+            self.logger.debug(f"link stats unavailable: {e}")
+            return None
 
     def get_cpu_temp(self):
         """Get CPU temperature"""

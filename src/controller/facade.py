@@ -85,6 +85,68 @@ class ControllerFacade:
     def export_ptp_history_csv(self, hours: float | None = 24.0):
         return self.controller.health.export_ptp_history_csv(hours)
 
+    def _share_info(self) -> dict:
+        """Where exports go: a separate NAS (export.share_ip) or this controller."""
+        cfg = self.controller.config
+        nas_ip = cfg.get("export.share_ip", "")
+        if nas_ip:
+            return {"kind": "nas", "ip": nas_ip,
+                    "path": cfg.get("export.share_path", "")}
+        return {"kind": "controller", "ip": self.controller.network.ip,
+                "path": cfg.get("samba.share_name", "controller_share")}
+
+    def network_ping_targets(self) -> set:
+        """PingMonitor's target list, re-read every round: every leased, ARP-
+        visible or registered address on the rig network, plus the NAS."""
+        from src.controller import network_overview as no
+
+        system = no.read_system()
+        controller_ip, network = no.rig_network(
+            system["interfaces"], system["rig_iface"])
+        share = self._share_info()
+        return no.ping_targets(
+            system["leases"], system["neigh"],
+            (m.ip for m in self.get_modules().values()),
+            share["ip"] if share["kind"] == "nas" else None,
+            controller_ip, network)
+
+    def get_network_overview(self) -> dict:
+        """Read-only rig network snapshot for the System -> Network tab: every
+        DHCP lease / ARP neighbour / module / NAS on eth0, classified, with
+        ping RTT and module link counters. See network_overview.py."""
+        from src.controller import network_overview as no
+        from src.controller.firewall_status import firewall_status
+
+        controller = self.controller
+        modules = {
+            mid: {"name": m.name, "type": m.type, "ip": m.ip, "online": m.online,
+                  "status": str(getattr(m.status, "value", m.status)),
+                  "version": m.version}
+            for mid, m in self.get_modules().items()
+        }
+        health = controller.health
+        try:
+            controller_link = controller.link_stats.sample()
+        except Exception:
+            controller_link = None
+        try:
+            firewall = firewall_status()
+        except Exception:
+            firewall = None
+        ping_monitor = getattr(controller, "ping_monitor", None)
+        return no.build_overview(
+            system=no.read_system(),
+            modules=modules,
+            module_health=health.get_module_health(),
+            module_history={mid: list(h) for mid, h
+                            in list(health.module_health_history.items())},
+            pings=ping_monitor.snapshot() if ping_monitor else {},
+            share={**self._share_info(),
+                   "health": getattr(controller.web, "_nas_health", None)},
+            controller_link=controller_link,
+            firewall=firewall,
+        )
+
     def get_sync_overview(self, window_s=None) -> dict:
         """Read-only fleet timing snapshot for the System -> Sync tab: module +
         controller PTP (with downsampled history), camera FrameSync roles,

@@ -5,6 +5,8 @@ import useModules from "/src/hooks/useModules";
 import {
   SYNC_CLASS, SYNC_LABEL, SYNC_TITLE, worstSummary, reportDownloadUrl,
 } from "../Recording/syncFormat";
+import StatusChip from "./StatusChip";
+import { fmtAgo, fmtClock } from "./format";
 import "./SyncPanel.css";
 
 // System → Sync tab. Read-only view over `get_sync_overview`
@@ -28,21 +30,6 @@ function fmtNs(ns) {
   if (abs >= 1e6) return `${(ns / 1e6).toFixed(2)} ms`;
   if (abs >= 1000) return `${(ns / 1000).toFixed(abs >= 1e5 ? 0 : 1)} µs`;
   return `${Math.round(ns)} ns`;
-}
-
-function fmtAgo(epoch) {
-  if (!epoch) return "–";
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-
-function fmtClock(epoch) {
-  return new Date(epoch * 1000).toLocaleTimeString([], {
-    hour: "2-digit", minute: "2-digit",
-  });
 }
 
 function fmtIso(iso) {
@@ -75,10 +62,6 @@ function ptpStatus(worstNs, gateNs, warnNs, stale) {
 }
 
 const SEVERITY = { danger: 3, warn: 2, idle: 1, ok: 0 };
-
-function StatusChip({ cls, label, title }) {
-  return <span className={`sync-chip sync-chip--${cls}`} title={title}>{label}</span>;
-}
 
 // ── Sparkline ────────────────────────────────────────────────────────────────
 

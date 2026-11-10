@@ -96,6 +96,10 @@ class ModuleHealthSnapshot:
     # rfid_db_status): state, backlog, oldest_unsynced_age_s, last_error, ...
     # The controller alerts when the oldest unsynced read gets old.
     rfid_db: dict | None = None
+    # eth0 link (src/shared/netlink.py LinkStats.sample): mac, speed_mbps,
+    # duplex, carrier_changes, rx/tx errors/dropped/bytes, each also as a
+    # *_1h growth figure. For the System -> Network tab.
+    link: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

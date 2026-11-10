@@ -53,10 +53,12 @@ from src.controller.health import Health
 from src.controller.modules import Modules
 from src.controller.network import Network
 from src.controller.notify import Notifier
+from src.controller.ping_monitor import PingMonitor
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.web import Web
 from src.shared import sd_watchdog
+from src.shared.netlink import LinkStats
 
 
 def resolve_listen_host(listen_on: str | None, lan_ip: str) -> str:
@@ -133,6 +135,9 @@ class Controller(ABC):
         self.sync_selftest_results: dict = {}
         self.notifier = Notifier(self.config)
         self.facade = ControllerFacade(self)
+        # RTT to every host on the rig network (System -> Network tab).
+        self.ping_monitor = PingMonitor(targets=self.facade.network_ping_targets)
+        self.link_stats = LinkStats("eth0")
 
         # Register facade/callbacks
         self.network.facade = self.facade
@@ -486,6 +491,7 @@ class Controller(ABC):
             # Stop health monitoring
             self.logger.info("Stopping health monitoring")
             self.health.stop_monitoring()
+            self.ping_monitor.stop()
 
             # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
@@ -571,6 +577,8 @@ class Controller(ABC):
                 self.web.update_modules(self.modules.get_modules())
 
         self._check_firewall()
+
+        self.ping_monitor.start()
 
 
         # Start the modules manager

@@ -10,11 +10,13 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { triggerDownload } from "../Recording/sessionFormat";
 import usePersistedState from "/src/hooks/usePersistedState";
 import SyncPanel from "./SyncPanel";
+import NetworkPanel from "./NetworkPanel";
 import "./System.css";
 
 const TABS = [
   ["system", "Devices"],
   ["sync", "Sync"],
+  ["network", "Network"],
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -424,6 +426,7 @@ export default function System() {
       </div>
 
       {tab === "sync" && <SyncPanel />}
+      {tab === "network" && <NetworkPanel />}
 
       {tab === "system" && <div className="system-table-wrapper">
         <table className="system-table">

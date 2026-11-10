@@ -78,6 +78,8 @@ Account/settings actions on github.com, recorded here so they aren't lost:
 - **Controller: `Error parsing status data for module … 'APAController' object has no attribute 'web'`** — logged 6× on the APA controller on 2026-11-10 (camera and arduino status). Some status handler reaches `self.web` on the APA controller before or without it being set; find which status type and guard or wire it.
 - **Self-update silently discards uncommitted edits in the controller's checkout** — `POST /api/v1/system/update` (and the web UI update) hard-resets to `origin/<branch>`. On 2026-11-10 it wiped an uncommitted `install.sh` change on the APA controller (an accidental overwrite, as it turned out, so nothing was lost). The pre-update snapshot in `/var/lib/saviour/controller_backups/` held it, but only the last 3 are kept. Fix: check `git status --porcelain` before resetting, and refuse (or stash, naming the stash in the response) when the tree is dirty.
 
+- **System → Network tab leftovers** (tab shipped 2026-11-10, CHANGELOG). (1) MAC vendor is only "Raspberry Pi" (by OUI) or "randomised"; a trimmed OUI list for common NIC/NAS/PC vendors would name more "Other device" rows. `98:fe:54` (two desk-rig Pis) isn't in the Raspberry Pi list; check whose prefix it is. (2) An unknown host on the rig switch only shows on the page; decide whether it should raise a fault alert. (3) No `GET /api/v1/network` mirror for external tooling. (4) The share row uses the NAS monitor's status rather than its own SMB-port probe.
+
 ## Low priority — observability / maintenance
 
 

@@ -76,7 +76,9 @@ class PTP:
 
         # Unified offset buffer for storing all PTP values by timestamp
         self.ptp_buffer = []
-        self.max_buffer_size = 100  # Store last 100 timestamp entries
+        # ~1 h at phc2sys's 1 Hz: the System → Sync tab plots the controller's
+        # offset over the same window as the modules' (sync_overview.py).
+        self.max_buffer_size = 3600
 
         # Track latest values for each service
         self.latest_ptp4l_offset = None

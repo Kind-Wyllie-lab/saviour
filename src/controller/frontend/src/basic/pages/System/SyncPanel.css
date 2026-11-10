@@ -1,0 +1,251 @@
+/* System → Sync tab. Reuses System.css's table, device-name and val-- classes. */
+
+.system-tabs {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.system-tab {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 0.88em;
+}
+
+.system-tab--active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: var(--bg-color);
+}
+
+.sync-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.sync-window {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sync-window__btn {
+  border: none;
+  background: var(--bg-color);
+  color: var(--text-color);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.sync-window__btn + .sync-window__btn {
+  border-left: 1px solid var(--border-color);
+}
+
+.sync-window__btn--active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+}
+
+.sync-section {
+  margin-bottom: 28px;
+}
+
+.sync-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.sync-section__head h3 {
+  margin: 0;
+  font-size: 1em;
+}
+
+.sync-muted {
+  color: var(--secondary-text-color, #777);
+  font-size: 0.85em;
+}
+
+.sync-footnote {
+  margin: 6px 0 0;
+}
+
+.sync-table td {
+  vertical-align: middle;
+}
+
+.sync-row--stale td {
+  opacity: 0.55;
+}
+
+.sync-svc b,
+.sync-muted b {
+  font-weight: 600;
+}
+
+/* Status chips: symbol + word carry the meaning; colour reinforces it. */
+.sync-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.82em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sync-chip--ok     { background: rgba(45, 158, 79, 0.12); color: #2d9e4f; }
+.sync-chip--warn   { background: rgba(212, 130, 10, 0.12); color: #c47700; }
+.sync-chip--danger { background: rgba(204, 51, 51, 0.12); color: #cc3333; }
+.sync-chip--idle   { background: rgba(128, 128, 128, 0.1); color: var(--secondary-text-color, #888); font-weight: 500; }
+
+.sync-role {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.sync-role--server { font-weight: 700; }
+.sync-role--none   { opacity: 0.55; }
+
+/* Sparkline: one series (ptp4l offset) in the accent colour, recessive guides. */
+.sync-spark {
+  position: relative;
+  width: 220px;
+  max-width: 100%;
+  height: 40px;
+}
+
+.sync-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.sync-spark__zero {
+  stroke: var(--border-color);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.sync-spark__gate {
+  stroke: var(--secondary-text-color, #888);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.sync-spark__band {
+  fill: var(--accent-color);
+  opacity: 0.18;
+}
+
+.sync-spark__line {
+  fill: none;
+  stroke: var(--accent-color);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.sync-spark__cursor {
+  stroke: var(--text-color);
+  stroke-width: 1;
+  opacity: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.sync-spark__tip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 0.78em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  z-index: 5;
+}
+
+.sync-verdicts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sync-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sync-verdict .config-sync-badge {
+  flex: none;
+  font-size: 0.78em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.sync-verdict__body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sync-verdict__body a,
+.sync-link {
+  color: var(--accent-color);
+}
+
+.sync-verdict__reason {
+  font-size: 0.85em;
+  margin-top: 2px;
+}
+
+.sync-verdict__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+.sync-error {
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: rgba(204, 51, 51, 0.1);
+  color: #cc3333;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 640px) {
+  .system-page { padding: 12px 16px; }
+  .sync-verdict { flex-wrap: wrap; }
+  .sync-verdict__meta { flex-direction: row; align-items: center; gap: 10px; }
+  .sync-spark { width: 140px; }
+}
+
+/* Verdict badge colours, repeated from SessionDetailPage.css so this tab
+   doesn't depend on that stylesheet being loaded. */
+.sync-verdict .config-sync-badge--green { background: var(--success-color, #2e7d32); color: #fff; }
+.sync-verdict .config-sync-badge--amber { background: #b26a00; color: #fff; }
+.sync-verdict .config-sync-badge--red   { background: var(--error-color, #c62828); color: #fff; }
+.sync-verdict .config-sync-badge--muted { background: var(--text-muted, #999); color: #fff; }

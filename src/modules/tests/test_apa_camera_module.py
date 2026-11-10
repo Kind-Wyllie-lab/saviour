@@ -276,44 +276,40 @@ class TestFrameConfidence:
 
 class TestZoneState:
     """zone_state at ~5 Hz while tracking: the controller's auto shocking
-    holds a shock only while these keep arriving."""
+    holds a shock only while these keep arriving. Sent from the inference
+    worker's _track_frame, stamped with the analysed frame's timestamp."""
 
     def _apa(self):
         from unittest.mock import MagicMock
 
         import numpy as np
-        m = _tracker(at=(500, 500), _prev_in_zone=False, _last_zone_state_t=0.0,
-                     mask_record=True, shock_zone_record=False, track_record=False,
-                     mask_radius=None, _frame_conf=None,
-                     config=_Cfg({"object_detection.enabled": True}),
-                     communication=MagicMock())
-        m._apply_mask = lambda arr: None
+        m = _worker_apa(at=(500, 500), communication=MagicMock())
         m._detect_objects = lambda frame: [_det(500, 500, conf=0.8)]
         m._is_in_shock_zone = lambda cx, cy: True
-        timing = MagicMock(timestamp_ns=123)
-        return m, _Arr(np.zeros((10, 10, 3), dtype=np.uint8)), timing
+        return m, np.zeros((10, 10, 3), dtype=np.uint8)
 
     def _sent(self, m):
         return [c.args[0] for c in m.communication.send_status.call_args_list]
 
     def test_reports_throttled_to_period(self):
         from unittest.mock import patch
-        m, frame, timing = self._apa()
+        m, frame = self._apa()
         with patch("src.modules.variants.apa_camera.apa_camera_module.time.monotonic") as mono:
             for t in (1.0, 1.03, 1.06, 1.1, 1.21):
                 mono.return_value = t
-                m._process_main_frame(frame, timing)
+                m._track_frame(frame, 123, 0)
         states = [s for s in self._sent(m) if s["type"] == "zone_state"]
         assert len(states) == 2                    # at 1.0 and 1.21
         assert states[0]["in_zone"] is True and states[0]["tracking"] is True
         assert states[0]["det_conf"] == 0.8
+        assert states[0]["timestamp_ns"] == 123
+        assert "infer_hz" in states[0]
         assert self._sent(m)[0]["type"] == "zone_entered"   # the edge goes first
 
-    def test_no_reports_when_tracking_off(self):
-        m, frame, timing = self._apa()
-        m.config = _Cfg({"object_detection.enabled": False})
-        m._process_main_frame(frame, timing)
-        assert self._sent(m) == []
+    def test_edge_carries_the_analysed_frames_timestamp(self):
+        m, frame = self._apa()
+        m._track_frame(frame, 987654321, 42)
+        assert self._sent(m)[0] == {"type": "zone_entered", "timestamp_ns": 987654321}
 
     def test_report_is_json_serialisable_in_zone(self):
         """The real zone test returns numpy types; json.dumps in send_status
@@ -323,7 +319,7 @@ class TestZoneState:
         from unittest.mock import patch
 
         import numpy as np
-        m, frame, timing = self._apa()
+        m, frame = self._apa()
         del m._is_in_shock_zone          # use the real geometry
         m.mask_radius = 0.5
         m.mask_center_x_offset = m.mask_center_y_offset = 0
@@ -336,7 +332,155 @@ class TestZoneState:
         m._track_seen_t = 5.0
         with patch("src.modules.variants.apa_camera.apa_camera_module.time.monotonic",
                    return_value=5.0):
-            m._process_main_frame(frame, timing)
+            m._track_frame(frame, 1, 0)
         states = [s for s in self._sent(m) if s["type"] == "zone_state"]
         assert states and states[0]["in_zone"] is True
         json.dumps(states[0])
+        json.dumps(m._track_snapshot.conf)
+
+
+def _worker_apa(at=(500, 500), **attrs):
+    """An APA module with the inference-worker state, tracking on, its track
+    last seen just now (the worker uses the real monotonic clock)."""
+    import queue
+    import threading
+    import time
+    from collections import deque
+    from unittest.mock import MagicMock
+    m = _tracker(at=at, seen=time.monotonic(), _prev_in_zone=False, _last_zone_state_t=0.0,
+                 mask_record=True, shock_zone_record=False, track_record=False,
+                 mask_radius=None, _frame_conf=None, _frame_id=0,
+                 config=_Cfg({"object_detection.enabled": True}),
+                 communication=MagicMock(), logger=MagicMock(),
+                 _det_lock=threading.Lock(), _infer_q=queue.Queue(maxsize=1),
+                 _infer_stop=threading.Event(), _infer_worker=None,
+                 _infer_every_n=1, _infer_counter=0, _track_snapshot=None,
+                 _snapshot_seq=0, _csv_snapshot_seq=-1,
+                 _infer_latency_s=deque(maxlen=250), _infer_done_t=deque(maxlen=250),
+                 _infer_handed=0, _infer_stats_t=0.0)
+    m._apply_mask = lambda arr: None
+    for k, v in attrs.items():
+        setattr(m, k, v)
+    return m
+
+
+class TestCaptureHandOff:
+    """The capture callback never runs inference: it hands the newest frame
+    to the worker and fills the CSV from the last published snapshot
+    (2026-11-10: inline Hailo detection cost ~13% of frames at 25 fps)."""
+
+    def _frame(self):
+        import numpy as np
+        return _Arr(np.zeros((10, 10, 3), dtype=np.uint8))
+
+    def test_capture_never_calls_the_detector(self):
+        from unittest.mock import MagicMock
+        m = _worker_apa()
+        m._detect_objects = MagicMock(side_effect=AssertionError("inline detect"))
+        m._process_main_frame(self._frame(), MagicMock(timestamp_ns=5))
+        assert m._infer_q.qsize() == 1
+
+    def test_queue_keeps_only_the_newest_frame(self):
+        from unittest.mock import MagicMock
+        m = _worker_apa()
+        for i in range(3):
+            m._frame_id = i
+            m._process_main_frame(self._frame(), MagicMock(timestamp_ns=100 + i))
+        _, ts, fid = m._infer_q.get_nowait()
+        assert (ts, fid) == (102, 2)
+        assert m._infer_q.empty()
+
+    def test_handed_frame_is_a_copy(self):
+        from unittest.mock import MagicMock
+        m = _worker_apa()
+        f = self._frame()
+        m._process_main_frame(f, MagicMock(timestamp_ns=1))
+        work, _, _ = m._infer_q.get_nowait()
+        f.array[:] = 255                 # later overlays / reuse of the buffer
+        assert work.max() == 0
+
+    def test_infer_every_n(self):
+        from unittest.mock import MagicMock
+        m = _worker_apa(_infer_every_n=3)
+        handed = 0
+        for _ in range(6):
+            m._process_main_frame(self._frame(), MagicMock(timestamp_ns=1))
+            if not m._infer_q.empty():
+                m._infer_q.get_nowait()
+                handed += 1
+        assert handed == 2
+
+    def test_csv_blank_until_first_result(self):
+        from unittest.mock import MagicMock
+        m = _worker_apa()
+        row = m._process_main_frame(self._frame(), MagicMock(timestamp_ns=1))
+        assert row == {"det_cx": "", "det_cy": "", "in_zone": "", "det_conf": "",
+                       "det_frame_id": ""}
+
+    def test_csv_repeats_position_but_conf_only_once_per_result(self):
+        from unittest.mock import MagicMock
+
+        from src.modules.variants.apa_camera.apa_camera_module import TrackSnapshot
+        m = _worker_apa()
+        m._track_snapshot = TrackSnapshot(seq=1, det_cx=10, det_cy=20, in_zone=True,
+                                          conf=0.8123, det=_det(10, 20),
+                                          frame_id=7)
+        timing = MagicMock(timestamp_ns=1)
+        first = m._process_main_frame(self._frame(), timing)
+        second = m._process_main_frame(self._frame(), timing)
+        assert first == {"det_cx": 10, "det_cy": 20, "in_zone": 1,
+                         "det_conf": 0.812, "det_frame_id": 7}
+        assert second == dict(first, det_conf="")
+
+    def test_worker_publishes_snapshot(self):
+        import numpy as np
+        m = _worker_apa(at=(100, 100))
+        m._detect_objects = lambda frame: [_det(104, 100, conf=0.7)]
+        m._is_in_shock_zone = lambda cx, cy: False
+        m._track_frame(np.zeros((10, 10, 3), dtype=np.uint8), 55, 9)
+        snap = m._track_snapshot
+        assert snap.seq == 1 and snap.frame_id == 9
+        assert (snap.det_cx, snap.det_cy) == (102, 100)    # smoothing 0.5
+        assert snap.conf == 0.7 and snap.in_zone is False
+
+    def test_worker_thread_tracks_handed_frames(self):
+        import time
+        from unittest.mock import MagicMock
+        m = _worker_apa(at=(100, 100))
+        m._detect_objects = lambda frame: [_det(100, 100, conf=0.9)]
+        m._is_in_shock_zone = lambda cx, cy: False
+        m._start_inference_worker()
+        try:
+            m._frame_id = 3
+            m._process_main_frame(self._frame(), MagicMock(timestamp_ns=1))
+            deadline = time.monotonic() + 2
+            while m._track_snapshot is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert m._track_snapshot is not None
+            assert m._track_snapshot.frame_id == 3
+        finally:
+            assert m._stop_inference_worker() is True
+
+    def test_stop_joins_worker_before_closing_detector(self):
+        from unittest.mock import MagicMock, patch
+
+        CameraBase = APACameraModule.__mro__[1]   # the module imports it as modules.camera_base
+        order = []
+        m = _worker_apa()
+        m._stop_inference_worker = lambda: order.append("join") or True
+        m.detector = MagicMock()
+        m.detector.close.side_effect = lambda: order.append("close")
+        with patch.object(CameraBase, "stop", return_value=True):
+            assert m.stop() is True
+        assert order == ["join", "close"]
+
+    def test_stop_leaves_detector_open_if_worker_is_stuck(self):
+        from unittest.mock import MagicMock, patch
+
+        CameraBase = APACameraModule.__mro__[1]   # the module imports it as modules.camera_base
+        m = _worker_apa()
+        m._stop_inference_worker = lambda: False
+        det = m.detector = MagicMock()
+        with patch.object(CameraBase, "stop", return_value=True):
+            m.stop()
+        det.close.assert_not_called()

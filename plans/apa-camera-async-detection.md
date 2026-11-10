@@ -1,6 +1,7 @@
 # APA camera: take rat detection off the capture thread
 
-**Status:** planned (2026-11-10). Not started.
+**Status:** built on `fix/apa-camera-capture-load` (2026-11-10), with unit
+tests. Not yet run on the rig: the acceptance steps below are still owed.
 
 ## Problem
 
@@ -24,6 +25,20 @@ Evidence:
 - PTP was fine (±10 µs, gate 50 µs). It's the only framesync camera, so there's
   no client to lag. Although the warnings mention "sync", this is not a sync
   problem.
+
+Yesterday's habituation sessions (2026-11-09) had no drop warnings with the
+same software, camera config, tracking on and the arena rotating. Today's
+camera process had ~6 extra threads at ~3% CPU each mid-session: MJPEG
+viewers, all from 10.0.0.192 (the operator watches remotely through an
+`ssh -D` SOCKS tunnel to that Pi, and the browser connects straight to
+`<camera>:8080`). Each push-mode viewer polled the frame mailbox every 5 ms
+(`mjpeg_stream.py`), i.e. ~1,200 GIL grabs a second competing with a capture
+thread already at ~77%. The likely story: the inline detection only just
+fitted in 40 ms, and today's extra viewers tipped it over. Not proven, since
+the number of viewers per session wasn't recorded. Suspected source of the
+extra viewers: Chromium browsers may keep an MJPEG `<img>` downloading after
+React unmounts it (fullscreen open/close, page changes, error reconnects),
+unless its `src` is cleared first. Unverified.
 
 Cause: `ApaCameraModule._process_main_frame`
 (`src/modules/variants/apa_camera/apa_camera_module.py`) runs the whole
@@ -92,6 +107,20 @@ Copy the `hailo_camera` pattern and adapt it to tracking.
    tracking is too slow for the shock timeout.
 7. **Blob backend** (`backend=blob`) uses the same worker. It's CPU-only and
    still shouldn't sit on the capture thread.
+
+## Built alongside: MJPEG viewer load (`src/modules/mjpeg_stream.py`)
+
+- Push-mode viewers wait on a `Condition` that `push_frame()` notifies,
+  instead of polling every 5 ms.
+- Viewers are capped (`max_clients`, default 8). A new viewer over the cap
+  evicts the oldest, because the frontend retries a refused stream at once.
+- Each viewer's socket has a 15 s send timeout, so a peer that vanished
+  without closing frees its thread.
+
+Applies to every module with a monitoring stream (cameras, mic, TTL, RFID).
+
+Still open: the frontend clearing `img.src` on unmount, if Edge/Chrome
+really do keep unmounted MJPEG streams open.
 
 ## Out of scope
 

@@ -191,6 +191,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - FrameSync sticky election, server-before-client restarts, and the wedged-camera `stop()` guard: built, awaiting validation on the APA rig → `plans/framesync-sticky-election-and-ordered-restarts.md`.
 - Sync-client camera lags the server in compose (CSV rows for discarded pre-`SyncReady` frames) → `plans/multicam-frame-alignment-and-sync-provenance.md`.
 - `habitat_camera`: shipped motion-trigger defaults catch 0/28 real events; a clip mid-trigger at session start exports with the next session.
+- APA camera with Hailo tracking on drops ~13% of frames (22 of 25 fps) and stalls the livestream: detection runs synchronously in the capture callback. Move it to a worker thread → `plans/apa-camera-async-detection.md`.
 
 **Security (closed-LAN caveats; see threat model)**
 - Web UI: one shared plaintext password, no lockout, `cors_allowed_origins="*"` → `plans/remote-access-auth-hardening.md`.

@@ -806,6 +806,16 @@ class CameraBase(Module):
         logging.shutdown()
         os._exit(1)
 
+    @staticmethod
+    def _split_orientation(hflip: bool, vflip: bool, rotation: int) -> tuple[bool, bool, int]:
+        """(ISP hflip, ISP vflip, software rotation) for the configured flips
+        and rotation. 180° becomes an ISP hflip+vflip, combined with the
+        user's flips by XOR; 90°/270° need a transpose the ISP can't do, so
+        they stay in software."""
+        if rotation == 180:
+            return (not hflip, not vflip, 0)
+        return (hflip, vflip, rotation)
+
     def _configure_camera(self):
         """Configure the camera with current settings — shared by every camera variant."""
         try:
@@ -933,11 +943,18 @@ class CameraBase(Module):
             rotation = int(self.config.get("camera.rotation", 0))
             if rotation not in (0, 90, 180, 270):
                 rotation = 0
-            self._rotation = rotation
             self._rotation_logged = False  # reset so post_callback logs the first rotated frame
-            # hflip/vflip are supported by the ISP; rotation is done in the
-            # frame callback because the ISP drops the transpose component of
-            # rot90/rot270, producing a plain flip instead of a true rotation.
+            # hflip/vflip are supported by the ISP. 180° is exactly hflip+vflip,
+            # so it goes to the ISP too (XOR with the user's flips): rotating a
+            # 1000x1000 frame with np.rot90 on the capture thread, plus the
+            # preview copy, cost the APA camera several ms a frame (2026-11-10).
+            # 90°/270° stay in the frame callback because the ISP drops the
+            # transpose component of rot90/rot270, producing a plain flip
+            # instead of a true rotation.
+            if rotation == 180:
+                self.logger.info("Rotation 180° done in the ISP (hflip+vflip)")
+            hflip, vflip, rotation = self._split_orientation(hflip, vflip, rotation)
+            self._rotation = rotation
             transform = Transform(hflip=hflip, vflip=vflip)
             if hflip or vflip:
                 self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip}")

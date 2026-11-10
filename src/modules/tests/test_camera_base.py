@@ -1124,3 +1124,19 @@ class TestWedgedCameraGuard:
             cam._start_picam()
         cam.picam2.start.assert_called_once()
         assert cam._camera_started_mono == 42.0
+
+
+class TestSplitOrientation:
+    """180° is done in the ISP as hflip+vflip (free) instead of np.rot90 on
+    the capture thread; 90°/270° need a transpose and stay in software."""
+
+    @pytest.mark.parametrize("hflip,vflip,rotation,expected", [
+        (False, False, 0,   (False, False, 0)),
+        (False, False, 180, (True,  True,  0)),
+        (True,  False, 180, (False, True,  0)),
+        (True,  True,  180, (False, False, 0)),
+        (False, True,  90,  (False, True,  90)),
+        (False, False, 270, (False, False, 270)),
+    ])
+    def test_split(self, hflip, vflip, rotation, expected):
+        assert CameraBase._split_orientation(hflip, vflip, rotation) == expected

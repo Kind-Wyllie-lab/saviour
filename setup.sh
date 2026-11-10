@@ -69,6 +69,8 @@ SYSTEM_PACKAGES=(
     cifs-utils
     # DHCP server dependency
     dnsmasq
+    # dhcp_release: System -> Network tab's "Release lease"
+    dnsmasq-utils
     # mDNS
     avahi-daemon
     iptables-persistent

@@ -315,6 +315,8 @@ function mockSyncOverview(windowS = 3600) {
 // every kind of host the controller's DHCP server can see: registered modules
 // (one offline), an unprovisioned Pi, a PC, an expired lease, a NAS on a
 // static IP and a stray device with a randomised MAC.
+const MOCK_RELEASED = new Set();
+
 function mockNetworkOverview() {
   const t1 = Date.now() / 1000;
   const rtt = (base, lossEvery = 0, seed = 1) => {
@@ -378,6 +380,7 @@ function mockNetworkOverview() {
       neigh_state: "REACHABLE", vendor: null, randomised: true, kind: "other", reachable: true,
       ping: ping(rtt(3.5, 17, 6)), module: null },
   );
+  for (let i = hosts.length - 1; i >= 0; i--) if (MOCK_RELEASED.has(hosts[i].ip)) hosts.splice(i, 1);
   const counts = { module: 0, share: 0, saviour_unregistered: 0, unprovisioned: 0, raspberry_pi: 0, other: 0 };
   hosts.forEach((h) => { counts[h.kind] += 1; });
   return {
@@ -392,7 +395,7 @@ function mockNetworkOverview() {
     dhcp_conf_found: true,
     share: { kind: "nas", ip: "10.0.0.20", path: "saviour", health: { status: "ok", error: null } },
     firewall: { ok: true, detail: "Firewall active on wlan0", exposed: [] },
-    hosts, counts,
+    hosts, counts, dhcp_release_available: true,
   };
 }
 
@@ -406,6 +409,15 @@ const ROUTER = {
   get_module_health() { this._fire("module_health_update", { module_health: clone(state.health) }); },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
   get_network_overview() { this._fire("network_overview", mockNetworkOverview()); },
+  release_dhcp_lease({ ip, mac } = {}) {
+    const h = mockNetworkOverview().hosts.find((x) => x.ip === ip && x.mac === mac);
+    let r;
+    if (!h || !h.lease) r = { ok: false, ip, mac, detail: `No lease for ${ip} / ${mac} (already gone?)` };
+    else if (h.module || h.kind === "share") r = { ok: false, ip, mac, detail: `${ip} belongs to a registered module or the export share` };
+    else if (h.reachable) r = { ok: false, ip, mac, detail: `${ip} answers ping. Unplug or power off the device first, or it will just renew.` };
+    else { MOCK_RELEASED.add(ip); r = { ok: true, ip, mac, hostname: h.hostname, detail: "Lease released" }; }
+    setTimeout(() => this._fire("release_dhcp_lease_result", r), 1200);
+  },
   get_sync_overview(payload) { this._fire("sync_overview", mockSyncOverview(payload?.window_s)); },
   get_controller_info() {
     this._fire("controller_info_response", {

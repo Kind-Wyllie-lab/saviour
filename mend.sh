@@ -138,6 +138,7 @@ SYSTEM_PACKAGES=(
     samba-common-bin
     cifs-utils
     dnsmasq
+    dnsmasq-utils
     avahi-daemon
     iptables-persistent
     libusb-1.0-0-dev

@@ -379,7 +379,86 @@ def read_system(run=subprocess.run, conf_path: str = DNSMASQ_CONF,
         "default_routes": [{"dev": r.get("dev"), "gateway": r.get("gateway")}
                            for r in routes],
         "rig_iface": iface,
+        "dhcp_release_available": dhcp_release_available(),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Releasing a stale lease                                                     #
+# --------------------------------------------------------------------------- #
+
+class LeaseReleaseError(ValueError):
+    """A release refused before anything was sent; the message is for the user."""
+
+
+def dhcp_release_available(which=None) -> bool:
+    import shutil
+    return (which or shutil.which)("dhcp_release") is not None
+
+
+def release_lease(ip: str, mac: str, *, system: Mapping[str, Any],
+                  protected_ips: Iterable[str], pinger, reread,
+                  run=subprocess.run, which=None, settle_s: float = 1.0,
+                  sleep=time.sleep) -> dict:
+    """Drop one DHCP lease via ``dhcp_release`` (dnsmasq-utils).
+
+    dnsmasq keeps leases in memory and rewrites the file itself, so editing the
+    lease file under it doesn't stick; ``dhcp_release`` sends a DHCPRELEASE on
+    the client's behalf and dnsmasq removes the lease and rewrites the file.
+
+    Refuses unless the lease is current for exactly this ip+mac, the address
+    isn't a registered module or the export share (``protected_ips``), and the
+    host doesn't answer ping or ARP right now: releasing an address a device is
+    still using would let dnsmasq hand it to a second device. A device that
+    comes back later just asks for a new lease.
+
+    ``reread()`` returns fresh ``read_system()`` output, to confirm the lease
+    is gone. Returns {"ok", "ip", "mac", "hostname", "detail"}.
+    """
+    mac = (mac or "").lower()
+    if not _is_ipv4(ip or ""):
+        raise LeaseReleaseError(f"Not an IPv4 address: {ip!r}")
+    if not dhcp_release_available(which):
+        raise LeaseReleaseError(
+            "dhcp_release isn't installed on the controller "
+            "(sudo apt install dnsmasq-utils, or run mend.sh)")
+    lease = next((lease for lease in system.get("leases", [])
+                  if lease["ip"] == ip and lease["mac"] == mac), None)
+    if lease is None:
+        raise LeaseReleaseError(f"No lease for {ip} / {mac} (already gone?)")
+    if ip in set(protected_ips):
+        raise LeaseReleaseError(
+            f"{ip} belongs to a registered module or the export share")
+    neigh = system.get("neigh", {}).get(ip)
+    if neigh and neigh.get("state") in ("REACHABLE", "DELAY", "PROBE", "PERMANENT"):
+        raise LeaseReleaseError(
+            f"{ip} is still on the network (ARP {neigh['state'].lower()}). "
+            "Unplug or power off the device first, or it will just renew.")
+    if any(pinger(ip) is not None for _ in range(2)):
+        raise LeaseReleaseError(
+            f"{ip} answers ping. Unplug or power off the device first, "
+            "or it will just renew.")
+
+    iface = system.get("rig_iface") or RIG_IFACE
+    args = ["dhcp_release", iface, ip, mac]
+    if lease.get("client_id"):
+        args.append(lease["client_id"])
+    try:
+        res = run(args, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"ok": False, "ip": ip, "mac": mac, "hostname": lease["hostname"],
+                "detail": f"dhcp_release failed to run: {e}"}
+    if res.returncode != 0:
+        return {"ok": False, "ip": ip, "mac": mac, "hostname": lease["hostname"],
+                "detail": f"dhcp_release exited {res.returncode}: "
+                          f"{(res.stderr or res.stdout).strip()[:200]}"}
+    sleep(settle_s)  # dnsmasq rewrites the lease file asynchronously
+    still = any(lease["ip"] == ip and lease["mac"] == mac
+                for lease in reread().get("leases", []))
+    return {"ok": not still, "ip": ip, "mac": mac, "hostname": lease["hostname"],
+            "detail": ("Lease released" if not still else
+                       "dhcp_release ran but dnsmasq still lists the lease "
+                       "(client-id mismatch?)")}
 
 
 def build_overview(*, system: Mapping[str, Any], modules: Mapping[str, Mapping[str, Any]],
@@ -422,4 +501,5 @@ def build_overview(*, system: Mapping[str, Any], modules: Mapping[str, Mapping[s
         "firewall": firewall,
         "hosts": hosts,
         "counts": counts,
+        "dhcp_release_available": system.get("dhcp_release_available", False),
     }

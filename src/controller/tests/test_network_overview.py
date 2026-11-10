@@ -345,3 +345,68 @@ def test_facade_network_paths_with_real_modules(monkeypatch):
     out = facade.get_network_overview()
     mic = next(h for h in out["hosts"] if h["ip"] == "10.0.0.156")
     assert mic["kind"] == "module" and mic["module"]["name"] == "Mic"
+
+
+# --------------------------------------------------------------------------- #
+# release_lease                                                               #
+# --------------------------------------------------------------------------- #
+
+class TestReleaseLease:
+    MAC = "2c:cf:67:aa:bb:cc"
+
+    def _system(self, neigh=""):
+        return {"leases": no.parse_leases(LEASES), "neigh": no.parse_neigh(neigh),
+                "rig_iface": "eth0"}
+
+    def _call(self, ip="10.0.0.160", mac=MAC, *, system=None, protected=(),
+              pinger=lambda ip: None, after=None, run=None, which=lambda _: "/x"):
+        run = run or MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+        after = after if after is not None else {"leases": []}
+        result = no.release_lease(
+            ip, mac, system=system or self._system(), protected_ips=protected,
+            pinger=pinger, reread=lambda: after, run=run, which=which,
+            sleep=lambda s: None)
+        return result, run
+
+    def test_releases_and_confirms(self):
+        result, run = self._call(mac=self.MAC.upper())
+        assert result["ok"] is True and result["hostname"] == "saviour-unprov-bbcc"
+        assert run.call_args.args[0] == ["dhcp_release", "eth0", "10.0.0.160", self.MAC]
+
+    def test_passes_client_id_when_lease_has_one(self):
+        _, run = self._call(ip="10.0.0.155", mac="58:ef:68:7e:e3:11")
+        assert run.call_args.args[0][-1] == "01:58:ef:68:7e:e3:11"
+
+    def test_reports_failure_when_lease_survives(self):
+        result, _ = self._call(after={"leases": no.parse_leases(LEASES)})
+        assert result["ok"] is False and "still lists" in result["detail"]
+
+    def test_reports_nonzero_exit(self):
+        bad = MagicMock(return_value=MagicMock(returncode=1, stdout="", stderr="denied"))
+        result, _ = self._call(run=bad)
+        assert result["ok"] is False and "denied" in result["detail"]
+
+    def _refused(self, match, **kw):
+        import pytest
+        run = MagicMock()
+        with pytest.raises(no.LeaseReleaseError, match=match):
+            self._call(run=run, **kw)
+        run.assert_not_called()
+
+    def test_refuses_unknown_or_mismatched_lease(self):
+        self._refused("No lease", mac="00:00:00:00:00:00")
+        self._refused("No lease", ip="10.0.0.99")
+
+    def test_refuses_protected_address(self):
+        self._refused("registered module", protected={"10.0.0.160"})
+
+    def test_refuses_host_that_answers(self):
+        self._refused("answers ping", pinger=lambda ip: 0.3)
+        self._refused("still on the network",
+                      system=self._system(f"10.0.0.160 lladdr {self.MAC} REACHABLE"))
+
+    def test_refuses_without_dhcp_release(self):
+        self._refused("isn't installed", which=lambda _: None)
+
+    def test_refuses_bad_ip(self):
+        self._refused("Not an IPv4", ip="10.0.0.160; rm -rf /")

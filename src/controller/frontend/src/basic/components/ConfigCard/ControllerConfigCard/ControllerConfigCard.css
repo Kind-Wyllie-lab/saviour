@@ -410,3 +410,42 @@
   color: #cc3333;
   border-color: #cc3333;
 }
+
+/* "Appearance for: This browser | Rig default" */
+.appearance-scope {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.appearance-scope-btn {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.appearance-scope-btn + .appearance-scope-btn {
+  border-left: 1px solid var(--border-color);
+}
+
+.appearance-scope-btn.selected {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  font-weight: 600;
+}
+
+.appearance-scope-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.appearance-scope-note .theme-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

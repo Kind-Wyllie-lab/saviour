@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import socket from "../socket";
 import { frontendTheme, THEME_TOKENS } from "/src/basic/utils/themes";
 import { fontFaceCss, frontendFonts } from "/src/basic/utils/fonts";
+import { effectiveFrontend, loadAppearance, onAppearanceChange } from "/src/basic/utils/appearance";
 import { setConfiguredDarkMode } from "./useLiveThemePreview";
 
 const STYLE_TAG_ID = "controller-theme-override";
@@ -18,10 +19,11 @@ function styleTag(id) {
 }
 
 /**
- * Applies the controller-configured colour theme and dark/light mode.
+ * Applies the colour theme, dark/light mode and fonts.
  * Mounted once from main.jsx (via ThemedApp) so it runs regardless of which
- * frontend variant is active, and every browser viewing this controller
- * shows the same theme rather than a per-browser preference.
+ * frontend variant is active. The controller config holds the rig default;
+ * this browser's own choices (basic/utils/appearance.js, localStorage) go on
+ * top, key by key, and are re-applied the moment they change.
  *
  * config.frontend carries `theme_id` (see basic/utils/themes.js for the
  * catalogue) and `dark_mode`, both edited on the Frontend tab in Controller
@@ -61,8 +63,13 @@ export default function useControllerTheme() {
   useEffect(() => {
     socket.emit("get_controller_config");
 
-    const handleConfig = (data) => {
-      const { tokens, darkMode } = frontendTheme(data?.config?.frontend);
+    let rigFe;
+    let choices = loadAppearance();
+
+    const paint = () => {
+      if (!rigFe) return;
+      const fe = effectiveFrontend(rigFe, choices);
+      const { tokens, darkMode } = frontendTheme(fe);
       // Sets body.dark-mode, unless an unsaved theme preview is showing
       // (useLiveThemePreview), which keeps its own mode until it closes.
       setConfiguredDarkMode(darkMode);
@@ -74,14 +81,25 @@ export default function useControllerTheme() {
 
       styleTag(STYLE_TAG_ID).textContent = `:root, body.dark-mode { ${decls} }`;
 
-      const fe = data?.config?.frontend;
       const fonts = frontendFonts(fe);
       styleTag(FONT_TAG_ID).textContent = `${fontFaceCss(fe?.custom_fonts)}
 `
         + `:root { --font-body: ${fonts.body}; --font-heading: ${fonts.heading}; }`;
     };
 
+    const handleConfig = (data) => {
+      rigFe = data?.config?.frontend || {};
+      paint();
+    };
+    const stopWatching = onAppearanceChange((next) => {
+      choices = next;
+      paint();
+    });
+
     socket.on("controller_config_response", handleConfig);
-    return () => socket.off("controller_config_response", handleConfig);
+    return () => {
+      socket.off("controller_config_response", handleConfig);
+      stopWatching();
+    };
   }, []);
 }

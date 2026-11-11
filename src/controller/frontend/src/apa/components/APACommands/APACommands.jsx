@@ -287,14 +287,21 @@ function APACommands( {modules} ) {
                                 {arduinoState.grid_live ? "Live" : "Not live"}
                             </dd>
                             <dt>Table</dt>
-                            <dd>
-                                {arduinoState.rotating ? "Rotating" : "Stationary"} {fmt(arduinoState.rpm, 2, "rpm")}
-                                {" "}(target: {fmt(arduinoState.target_rpm, 2, "rpm")})
+                            <dd>{arduinoState.rotating ? "Rotating" : "Stationary"}</dd>
+                            <dt>Speed</dt>
+                            <dd className="apa-state-speed">
+                                {fmt(arduinoState.rpm, 2, "rpm")} (target {fmt(arduinoState.target_rpm, 2, "rpm")})
                             </dd>
                         </dl>
-                        {arduinoState.speed_error && (
-                            <p className="apa-state-warning">⚠ Motor {arduinoState.speed_error}</p>
-                        )}
+                        {/* Always laid out, so a speed hovering at the tolerance edge
+                            doesn't make the card jump as the warning comes and goes. */}
+                        <p
+                            className={`apa-state-warning apa-state-speed-error${arduinoState.speed_error ? "" : " is-clear"}`}
+                            title={arduinoState.speed_error ? `Motor ${arduinoState.speed_error}` : undefined}
+                            aria-live="polite"
+                        >
+                            {arduinoState.speed_error ? `⚠ Motor ${arduinoState.speed_error}` : " "}
+                        </p>
                     </>
                 )}
             </div>

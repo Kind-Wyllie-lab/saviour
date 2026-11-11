@@ -1821,7 +1821,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         def download_sessions_zip():
             """Several sessions as one streamed zip, each under its own
             top-level folder -- the session list's tick-to-download
-            (plans/field-install-feedback-2026-10.md, item 7). ?names=a,b,c.
+            (docs/CHANGELOG.md, "Session list grouped by day"). ?names=a,b,c.
             Sessions with no folder on the share are skipped; 404 if none
             has one."""
             if not self._check_download_token(request.args.get("token")):

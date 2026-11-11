@@ -2711,7 +2711,7 @@ class TestKnownStatusTypesDontReachVariantFallback:
 class TestMultiSessionDownload:
     """GET /api/sessions/zip?names=... and the get_sessions_size event,
     behind the session list's tick-to-download
-    (plans/field-install-feedback-2026-10.md, item 7)."""
+    (docs/CHANGELOG.md, "Session list grouped by day")."""
 
     def _share(self, tmpdir):
         for name, files in {

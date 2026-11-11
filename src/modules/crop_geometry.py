@@ -13,7 +13,7 @@ Found 2026-10-09 on an IMX477 (4:3 sensor mode, 16:9 output): the old code
 treated the mode's full 4:3 area as "uncropped", but libcamera's default for
 a 16:9 output is a centred 16:9 band -- so a whole-frame crop squashed the
 picture, and "clear crop" restored the squashed 4:3 area instead of the
-original view (plans/field-install-feedback-2026-10.md, items 3 and 5).
+original view (docs/CHANGELOG.md, "Crop editor rework").
 """
 
 from __future__ import annotations

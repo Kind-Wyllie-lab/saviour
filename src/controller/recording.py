@@ -850,7 +850,7 @@ class Recording:
         running/scheduled sessions are refused, and ones with unresolved or
         failed exports are skipped unless `force`. One request instead of a
         burst of single deletes, which returned spurious "Unknown session"
-        404s (plans/session-list-multi-select-delete.md)."""
+        404s (see plans/backlog.md)."""
         deleted, skipped, errors = [], [], []
         for name in dict.fromkeys(names or []):   # de-dup, keep order
             result = self.delete_session(name, delete_files=delete_files, force=force)

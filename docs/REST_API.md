@@ -421,7 +421,13 @@ optional: `{"pulses": 10, "interval_s": 1.2, "pulse_ms": 50, "calibrate":
 true}`. Returns `202` immediately; the module records to a scratch folder for
 ~`4 + pulses x interval_s` seconds. A clean run (most pulses found, loud,
 tight) stores each AudioMoth's audio anchor offset, which later recordings
-use; `"calibrate": false` only measures. `400` `wrong_module_type` if not a
+use; `"calibrate": false` only measures. `"mic_input"`: `"internal"`
+(default) moves any AudioMoth on an external mic to its internal one for the
+test and back after; `"current"` leaves each on its active mic, to compare
+the inputs. Only internal-mic results are stored as calibration (external
+ones carry `calibration_skipped`). `"external_distance_m"` (0-100) is the
+buzzer-to-mic distance whose flight time is removed for units on the
+external mic, in place of `sync_pulse.mic_distance_m`. `400` `wrong_module_type` if not a
 microphone, `404` unknown module. The module refuses (logged) while
 recording or with no `sync_pulse.buzzer_pin` configured.
 

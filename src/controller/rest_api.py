@@ -631,7 +631,7 @@ def create_api_blueprint(web) -> Blueprint:
     def start_sync_selftest(module_id):
         """Run the microphone module's buzz->audio delay self-test (no
         session needed). Body (all optional): {"pulses", "interval_s",
-        "pulse_ms", "calibrate"}. A clean run stores each AudioMoth's audio
+        "pulse_ms", "calibrate", "mic_input", "external_distance_m"}. A clean run stores each AudioMoth's audio
         anchor offset unless "calibrate" is false. Returns 202; the result
         arrives as a `sync_selftest_result` event and from GET on this
         path."""
@@ -649,6 +649,18 @@ def create_api_blueprint(web) -> Blueprint:
             if not isinstance(body["calibrate"], bool):
                 return _error("invalid_request", "'calibrate' must be true or false", 400)
             params["calibrate"] = body["calibrate"]
+        if "mic_input" in body:
+            if body["mic_input"] not in ("internal", "current"):
+                return _error("invalid_request",
+                              "'mic_input' must be 'internal' or 'current'", 400)
+            params["mic_input"] = body["mic_input"]
+        if "external_distance_m" in body:
+            d = body["external_distance_m"]
+            if (isinstance(d, bool) or not isinstance(d, (int, float))
+                    or not 0 <= d <= 100):
+                return _error("invalid_request",
+                              "'external_distance_m' must be a number 0-100", 400)
+            params["external_distance_m"] = float(d)
         web.facade.send_command(module_id, "sync_selftest", params)
         return jsonify({"module_id": module_id, "dispatched": True, **params}), 202
 

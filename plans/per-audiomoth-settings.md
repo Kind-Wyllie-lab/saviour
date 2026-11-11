@@ -98,6 +98,15 @@ AudioMoths list shows "external mic" / "internal mic". Tests in
 `test_microphone_module.py`. A no-op `microphone int <serial>` on a desk unit
 showed no USB disconnect in the kernel log.
 
+On the rig (2026-11-11, EM258 on `2474750264200FAD`): the unit switched to
+`(ext)` on its own when the mic was plugged in (firmware, not SAVIOUR); the
+self-test moved it to internal and back with no USB re-enumeration (check 1
+below: seamless) and measured 8/8, sd 0.33 ms, as before.
+
+`sync_selftest` takes `mic_input: "current"` (leave units on their active
+mic) and `external_distance_m` (flight time for external-mic units) for
+check 2; external-mic results are never stored as calibration.
+
 Original design notes:
 
 Use case (2026-11-11): a rig whose AudioMoths record through an external mic

@@ -71,7 +71,7 @@
     },
     "audiomoth_labels": {},
     "audiomoth_settings": {},
-    "_audiomoth_settings_note": "Per-AudioMoth overrides, serial -> {gain: 0-4}. An AudioMoth with no entry (or no gain) uses audiomoth.gain. Applied with a non-disruptive per-serial gain update after the module-wide config. Sample rate and filter are still module-wide (plans/per-audiomoth-settings.md).",
+    "_audiomoth_settings_note": "Per-AudioMoth overrides, serial -> {gain: 0-4}. An AudioMoth with no entry (or no gain) uses audiomoth.gain, which the UI no longer shows (it's only the starting gain for a never-set AudioMoth). update_gain sets each connected AudioMoth by serial; configure_audiomoth applies overrides after the module-wide config. Sample rate and filter are still module-wide (plans/per-audiomoth-settings.md).",
     "audiomoth_sync_offsets_ms": {},
     "_audiomoth_sync_offsets_ms_note": "Per-AudioMoth audio anchor offset, serial -> ms: how far the stream-latency anchor places sample 0 from the truth. Written by sync_selftest (buzzer next to the AudioMoth); the recorder copies it into each sidecar (LATENCY_OFFSET_MS) and audio_align subtracts it. Missing = audio_align's default. See docs/AV_SYNC_TEST.md.",
     "_recording_folder": "rec",

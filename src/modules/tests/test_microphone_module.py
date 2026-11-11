@@ -575,7 +575,7 @@ def test_invalid_gain_overrides_are_skipped(tmp_path):
     assert m.logger.warning.call_count == 2
 
 
-def test_update_gain_sets_module_gain_then_each_connected_override(tmp_path):
+def test_update_gain_sets_each_connected_audiomoth_by_serial(tmp_path):
     m = _gain_module(tmp_path, {"AAAA": {"gain": 4}, "ZZZZ": {"gain": 0}}, gain=2)
     calls = []
 
@@ -585,17 +585,28 @@ def test_update_gain_sets_module_gain_then_each_connected_override(tmp_path):
 
     m._run_audiomoth = run
     result = m.update_gain()
-    assert result["result"] == "Success"
-    # Module-wide first, then AAAA by serial; ZZZZ isn't connected.
-    assert calls == [["update", "gain", "2"], ["update", "gain", "4", "AAAA"]]
+    assert result == {"result": "Success", "gains": {"AAAA": 4, "BBBB": 2}}
+    # One targeted update per connected AudioMoth (ZZZZ isn't connected),
+    # never an untargeted one that would briefly set every unit alike.
+    assert calls == [["update", "gain", "4", "AAAA"], ["update", "gain", "2", "BBBB"]]
 
 
-def test_update_gain_reports_a_failed_override(tmp_path):
+def test_update_gain_with_nothing_scanned_falls_back_to_one_update(tmp_path):
+    m = _gain_module(tmp_path, {}, gain=3)
+    m.audiomoths = {}
+    calls = []
+    m._run_audiomoth = lambda args: (calls.append(args), (0, "ok"))[1]
+    assert m.update_gain()["result"] == "Success"
+    assert calls == [["update", "gain", "3"]]
+
+
+def test_update_gain_reports_a_failed_unit(tmp_path):
     m = _gain_module(tmp_path, {"AAAA": {"gain": 4}})
     m._run_audiomoth = lambda args: (1, "[ERROR] Could not find device ID") \
-        if len(args) == 4 else (0, "ok")
+        if args[-1] == "AAAA" else (0, "ok")
     result = m.update_gain()
     assert result["result"] == "Error" and "AAAA" in result["error"]
+    assert result["gains"] == {"BBBB": 2}
 
 
 def test_per_device_gain_change_while_streaming_is_non_disruptive(tmp_path):

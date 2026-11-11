@@ -548,3 +548,66 @@ def test_monitor_bands_mode_without_bands_is_grey(tmp_path):
         tmp_path, {"colour_mode": "bands", "colormap": "inferno", "call_bands": []})
     b, g, r = cell[row_of(25000), px0 + 100].astype(int)
     assert b == g == r and b > 150
+
+
+# ---------------------------------------------------------------------------
+# Per-AudioMoth gain (audiomoth_settings)
+# ---------------------------------------------------------------------------
+
+def _gain_module(tmp_path, settings, gain=2):
+    m, _ = _make(tmp_path)
+    cfg = {"audiomoth.gain": gain, "audiomoth_settings": settings}
+    m.config.get.side_effect = lambda key, default=None: cfg.get(key, default)
+    return m
+
+
+def test_gain_for_uses_the_override_else_the_module_gain(tmp_path):
+    m = _gain_module(tmp_path, {"AAAA": {"gain": 4}, "BBBB": {}}, gain=1)
+    assert m._gain_for("AAAA") == 4
+    assert m._gain_for("BBBB") == 1          # entry without a gain
+    assert m._gain_for("CCCC") == 1          # no entry
+
+
+def test_invalid_gain_overrides_are_skipped(tmp_path):
+    m = _gain_module(tmp_path, {"AAAA": {"gain": 9}, "BBBB": {"gain": "x"},
+                                "CCCC": {"gain": 0}})
+    assert m._gain_overrides() == {"CCCC": 0}
+    assert m.logger.warning.call_count == 2
+
+
+def test_update_gain_sets_module_gain_then_each_connected_override(tmp_path):
+    m = _gain_module(tmp_path, {"AAAA": {"gain": 4}, "ZZZZ": {"gain": 0}}, gain=2)
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return 0, "ok"
+
+    m._run_audiomoth = run
+    result = m.update_gain()
+    assert result["result"] == "Success"
+    # Module-wide first, then AAAA by serial; ZZZZ isn't connected.
+    assert calls == [["update", "gain", "2"], ["update", "gain", "4", "AAAA"]]
+
+
+def test_update_gain_reports_a_failed_override(tmp_path):
+    m = _gain_module(tmp_path, {"AAAA": {"gain": 4}})
+    m._run_audiomoth = lambda args: (1, "[ERROR] Could not find device ID") \
+        if len(args) == 4 else (0, "ok")
+    result = m.update_gain()
+    assert result["result"] == "Error" and "AAAA" in result["error"]
+
+
+def test_per_device_gain_change_while_streaming_is_non_disruptive(tmp_path):
+    m = _gain_module(tmp_path, {"AAAA": {"gain": 3}})
+    m.is_streaming = True
+    m.update_gain = MagicMock()
+    m.configure_audiomoth = MagicMock()
+    m.configure_module_special(["audiomoth_settings"])
+    m.update_gain.assert_called_once()
+    m.configure_audiomoth.assert_not_called()
+    m.update_gain.reset_mock()
+    m.configure_module_special(["audiomoth.gain", "audiomoth_settings"])
+    m.update_gain.assert_called_once()
+    m.configure_module_special(["audiomoth.sample_rate", "audiomoth_settings"])
+    m.configure_audiomoth.assert_called_once()

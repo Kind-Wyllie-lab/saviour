@@ -67,9 +67,9 @@ function makeModules() {
                       colour_mode: "bands",
                       call_bands: [
                         { id: "rat_alarm", label: "Alarm (22 kHz)", lo_hz: 18000,
-                          hi_hz: 32000, palette: "alarm_blue", enabled: true },
+                          hi_hz: 32000, palette: "band_orange", enabled: true },
                         { id: "rat_appetitive", label: "Appetitive (50 kHz)", lo_hz: 45000,
-                          hi_hz: 96000, palette: "appetitive_orange", enabled: true },
+                          hi_hz: 96000, palette: "band_blue", enabled: true },
                       ] },
         sync_pulse: { buzzer_pin: 17, led_pin: 27, drive: "pwm", tone_hz: 25000,
                       pulse_ms: 50, mic_distance_m: 0.0 },

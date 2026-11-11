@@ -45,8 +45,12 @@ def _doc() -> dict:
 
 
 def builtin_palettes() -> dict[str, list[list]]:
-    """name -> stops, for every built-in palette."""
-    return {p["name"]: p["stops"] for p in _doc()["palettes"]}
+    """name -> stops, for every built-in palette (old aliased names included,
+    so a saved setting that uses one keeps working)."""
+    stops = {p["name"]: p["stops"] for p in _doc()["palettes"]}
+    for old, new in _doc().get("aliases", {}).items():
+        stops.setdefault(old, stops[new])
+    return stops
 
 
 def default_palette() -> str:

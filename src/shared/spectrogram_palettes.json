@@ -614,26 +614,8 @@
    ]
   },
   {
-   "name": "alarm_blue",
-   "label": "Alarm blue",
-   "stops": [
-    [
-     0.0,
-     "#000000"
-    ],
-    [
-     0.55,
-     "#2b6cff"
-    ],
-    [
-     1.0,
-     "#cfe0ff"
-    ]
-   ]
-  },
-  {
-   "name": "appetitive_orange",
-   "label": "Appetitive orange",
+   "name": "band_orange",
+   "label": "Band orange",
    "stops": [
     [
      0.0,
@@ -648,22 +630,44 @@
      "#fff0c0"
     ]
    ]
+  },
+  {
+   "name": "band_blue",
+   "label": "Band blue",
+   "stops": [
+    [
+     0.0,
+     "#000000"
+    ],
+    [
+     0.55,
+     "#2b6cff"
+    ],
+    [
+     1.0,
+     "#cfe0ff"
+    ]
+   ]
   }
  ],
+ "aliases": {
+  "alarm_blue": "band_blue",
+  "appetitive_orange": "band_orange"
+ },
  "band_presets": [
   {
    "id": "rat_alarm",
    "label": "Alarm (22 kHz)",
    "lo_hz": 18000,
    "hi_hz": 32000,
-   "palette": "alarm_blue"
+   "palette": "band_orange"
   },
   {
    "id": "rat_appetitive",
    "label": "Appetitive (50 kHz)",
    "lo_hz": 45000,
    "hi_hz": 96000,
-   "palette": "appetitive_orange"
+   "palette": "band_blue"
   }
  ]
 }

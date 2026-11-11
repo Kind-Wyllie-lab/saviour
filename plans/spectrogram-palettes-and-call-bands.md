@@ -103,7 +103,8 @@ Pure numpy, no cv2 needed; modules and the controller both have numpy.
   `cividis`, `turbo` (≈ 9–16 stops each, sampled from matplotlib's
   tables, enough that you can't see the steps), plus `jet` / `hot` /
   `bone` / `ocean` so current monitor configs keep working, plus the two
-  band ramps (`alarm_blue`, `appetitive_orange`).
+  band ramps (`band_orange`, `band_blue`; the first names `alarm_blue` /
+  `appetitive_orange` stay as aliases for their original colours).
 - `LEGACY_FFMPEG_ALIASES`: ffmpeg colour name → nearest SAVIOUR palette.
   Same-name maps (`magma`, `viridis`, `plasma`, `cividis`) are 1:1;
   `intensity` → `inferno` (also the new default); `fire` / `fiery` → `hot`;
@@ -129,10 +130,12 @@ Pure numpy, no cv2 needed; modules and the controller both have numpy.
 
 | Preset | Range | Palette | Label |
 |---|---|---|---|
-| `rat_alarm` | 18–32 kHz | `alarm_blue` (black → #2b6cff → #cfe0ff) | "Alarm (22 kHz)" |
-| `rat_appetitive` | 45–96 kHz | `appetitive_orange` (black → #ff8a00 → #fff0c0) | "Appetitive (50 kHz)" |
+| `rat_alarm` | 18–32 kHz | `band_orange` (black → #ff8a00 → #fff0c0) | "Alarm (22 kHz)" |
+| `rat_appetitive` | 45–96 kHz | `band_blue` (black → #2b6cff → #cfe0ff) | "Appetitive (50 kHz)" |
 
-Blue against orange, not red against green (colour-blind safe). Rows
+Alarm is orange (the usual warning colour, and the brighter of the two, so
+it draws the eye); appetitive is blue. Swapped from the first version on
+2026-11-11. Blue against orange, not red against green (colour-blind safe). Rows
 outside both bands are grey. The labels describe the usual meaning of each
 band, but the colouring is still by frequency only (see Goals). Mouse
 presets later if anyone asks.

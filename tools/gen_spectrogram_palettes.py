@@ -42,25 +42,32 @@ SAMPLED: dict[str, tuple[str, int]] = {
 # Hand-defined palettes: name -> (label, stops)
 DEFINED: dict[str, tuple[str, list[tuple[float, str]]]] = {
     "grayscale": ("Greyscale", [(0.0, "#000000"), (1.0, "#ffffff")]),
-    # Call-band ramps: blue against orange stays distinct for red/green
-    # colour-blind viewers. Both start at black so silence looks the same
-    # inside and outside a band.
-    "alarm_blue": ("Alarm blue",
-                   [(0.0, "#000000"), (0.55, "#2b6cff"), (1.0, "#cfe0ff")]),
-    "appetitive_orange": ("Appetitive orange",
-                          [(0.0, "#000000"), (0.55, "#ff8a00"), (1.0, "#fff0c0")]),
+    # Call-band ramps, named by colour so a preset can use either: blue
+    # against orange stays distinct for red/green colour-blind viewers. Both
+    # start at black so silence looks the same inside and outside a band.
+    "band_orange": ("Band orange",
+                    [(0.0, "#000000"), (0.55, "#ff8a00"), (1.0, "#fff0c0")]),
+    "band_blue": ("Band blue",
+                  [(0.0, "#000000"), (0.55, "#2b6cff"), (1.0, "#cfe0ff")]),
 }
 
 BAND_PRESETS = [
     {"id": "rat_alarm", "label": "Alarm (22 kHz)",
-     "lo_hz": 18000, "hi_hz": 32000, "palette": "alarm_blue"},
+     "lo_hz": 18000, "hi_hz": 32000, "palette": "band_orange"},
     {"id": "rat_appetitive", "label": "Appetitive (50 kHz)",
-     "lo_hz": 45000, "hi_hz": 96000, "palette": "appetitive_orange"},
+     "lo_hz": 45000, "hi_hz": 96000, "palette": "band_blue"},
 ]
 
 ORDER = ["inferno", "magma", "plasma", "viridis", "cividis", "turbo",
          "grayscale", "jet", "hot", "bone", "ocean",
-         "alarm_blue", "appetitive_orange"]
+         "band_orange", "band_blue"]
+
+# Old palette names -> current ones, so saved settings keep working. The
+# first band ramps were named after their band (alarm blue, appetitive
+# orange); 2026-11-11 the presets swapped colours (alarm = orange, the usual
+# warning colour) and the ramps were renamed by colour. An alias keeps the
+# colour it always drew.
+ALIASES = {"alarm_blue": "band_blue", "appetitive_orange": "band_orange"}
 
 
 def _reduce(lut: np.ndarray) -> list[int]:
@@ -96,6 +103,7 @@ def main() -> None:
         "version": 1,
         "default": "inferno",
         "palettes": [palettes[n] for n in ORDER],
+        "aliases": ALIASES,
         "band_presets": BAND_PRESETS,
     }
     out = os.path.join(os.path.dirname(__file__), "..", "src", "shared",

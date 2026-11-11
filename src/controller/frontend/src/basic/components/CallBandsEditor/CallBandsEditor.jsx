@@ -40,7 +40,7 @@ export default function CallBandsEditor({ bands, onChange, nyquistHz, plotLoHz, 
     || (Number(b.lo_hz) === p.lo_hz && Number(b.hi_hz) === p.hi_hz));
   const addPreset = (p) => onChange([...list, { ...p, enabled: true }]);
   const addCustom = () => onChange([...list, {
-    label: "Band", lo_hz: 20000, hi_hz: 30000, palette: "alarm_blue", enabled: true,
+    label: "Band", lo_hz: 20000, hi_hz: 30000, palette: "band_orange", enabled: true,
   }]);
   const problems = bandProblems(list);
   const anyOn = list.some((b) => b.enabled !== false);

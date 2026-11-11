@@ -10,9 +10,12 @@ export const BAND_PRESETS = doc.band_presets;    // [{ id, label, lo_hz, hi_hz, 
 export const MAX_BANDS = 4;                      // spectrogram_palette.MAX_BANDS
 
 const BY_NAME = Object.fromEntries(PALETTES.map((p) => [p.name, p]));
+// Old palette names (e.g. "alarm_blue") still resolve to the colour they drew.
+const ALIASES = doc.aliases ?? {};
 
 export function paletteByName(name) {
-  return BY_NAME[String(name ?? "").toLowerCase()] ?? BY_NAME[DEFAULT_PALETTE];
+  const key = String(name ?? "").toLowerCase();
+  return BY_NAME[key] ?? BY_NAME[ALIASES[key]] ?? BY_NAME[DEFAULT_PALETTE];
 }
 
 // CSS gradient for a stop list, left (quiet) to right (loud).

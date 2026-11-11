@@ -10,9 +10,9 @@ import pytest
 from src.shared import spectrogram_palette as sp
 
 ALARM = {"label": "Alarm (22 kHz)", "lo_hz": 18000, "hi_hz": 32000,
-         "palette": "alarm_blue"}
+         "palette": "band_orange"}
 APPETITIVE = {"label": "Appetitive (50 kHz)", "lo_hz": 45000, "hi_hz": 96000,
-              "palette": "appetitive_orange"}
+              "palette": "band_blue"}
 
 
 def test_every_builtin_palette_is_valid_and_default_exists():
@@ -25,6 +25,8 @@ def test_every_builtin_palette_is_valid_and_default_exists():
 
 def test_presets_use_builtin_palettes_and_the_agreed_edges():
     presets = {p["id"]: p for p in sp.band_presets()}
+    assert presets["rat_alarm"]["palette"] == "band_orange"
+    assert presets["rat_appetitive"]["palette"] == "band_blue"
     assert (presets["rat_alarm"]["lo_hz"], presets["rat_alarm"]["hi_hz"]) == (18000, 32000)
     assert (presets["rat_appetitive"]["lo_hz"],
             presets["rat_appetitive"]["hi_hz"]) == (45000, 96000)
@@ -107,10 +109,10 @@ def test_colourise_bands_coloured_and_outside_grey():
     def at(khz):
         return out[int(np.argmin(np.abs(row_hz - khz * 1000))), 0].astype(int)
 
-    b, g, r = at(25)                    # alarm: blue dominant
-    assert b > r and b > g
-    b, g, r = at(60)                    # appetitive: orange (red > green > blue)
+    b, g, r = at(25)                    # alarm: orange (red > green > blue)
     assert r > g > b
+    b, g, r = at(60)                    # appetitive: blue dominant
+    assert b > r and b > g
     for khz in (10, 38, 40):           # outside both bands: grey
         b, g, r = at(khz)
         assert b == g == r
@@ -148,3 +150,13 @@ def test_resolve_colouring_modes():
     base, bands, problem = sp.resolve_colouring(
         "bands", "magma", None, [ALARM, {**APPETITIVE, "lo_hz": 30000}])
     assert bands == [] and "overlap" in problem
+
+
+def test_old_band_palette_names_keep_their_colours():
+    """Bands saved before the 2026-11-11 swap name alarm_blue /
+    appetitive_orange; they must still parse and draw what they always did."""
+    pal = sp.builtin_palettes()
+    assert pal["alarm_blue"] == pal["band_blue"]
+    assert pal["appetitive_orange"] == pal["band_orange"]
+    bands = sp.parse_bands([{**ALARM, "palette": "alarm_blue"}])
+    assert bands[0].stops == sp.validate_stops(pal["band_blue"])

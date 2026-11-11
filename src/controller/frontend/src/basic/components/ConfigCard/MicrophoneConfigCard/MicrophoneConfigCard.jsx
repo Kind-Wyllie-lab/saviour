@@ -158,6 +158,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const freqLoKhz     = freqLo / 1000;
   const freqHiKhz     = freqHi / 1000;
   const timeWindow    = Number(mon.time_window_s ?? 3.0);
+  // Any enabled call band replaces the spectrogram colour: rows outside the
+  // bands are drawn grey (src/shared/spectrogram_palette.py).
+  const bandsOn       = (mon.call_bands ?? []).some(b => b.enabled !== false);
 
   // Stream display prefs — persisted in monitoring config, not local state
   const plotMode     = mon.plot_mode  ?? "spectrogram";
@@ -520,10 +523,16 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               value={mon.peak_hold_s ?? 2.0}
               onChange={e => handleChange(["monitoring", "peak_hold_s"], e)} />
           </div>
-          <div className="mic-colormap-picker">
+          <div className={`mic-colormap-picker${bandsOn ? " mic-colormap-picker--disabled" : ""}`}>
             <span className="mic-colormap-picker__label">
               Spectrogram colour: <strong>{paletteByName(mon.colormap).label}</strong>
             </span>
+            {bandsOn && (
+              <span className="mic-colormap-picker__note">
+                Not used while call bands are on: outside the bands the spectrogram is grey.
+                Turn every band off to use this colour.
+              </span>
+            )}
             <div className="mic-colormap-picker__swatches">
               {PALETTES.map((p) => (
                 <button
@@ -537,6 +546,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                   title={p.label}
                   aria-label={p.label}
                   style={{ background: gradientCss(p.stops) }}
+                  disabled={bandsOn}
                   onClick={() => {
                     setMonitorPref("colormap", p.name);
                     setMonitorPref("colormap_stops", []);

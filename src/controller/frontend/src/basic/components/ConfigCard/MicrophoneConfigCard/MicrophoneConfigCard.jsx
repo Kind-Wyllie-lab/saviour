@@ -300,7 +300,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     });
   };
 
-  // Per-AudioMoth settings (audiomoth_settings: serial -> { gain }). The
+  // Per-AudioMoth settings (audiomoth_settings: serial -> { gain, input }). The
   // module-wide audiomoth.gain isn't shown any more: it's only the starting
   // gain for an AudioMoth that has never been set.
   const amSettings = formData?.audiomoth_settings ?? {};
@@ -312,6 +312,17 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       entry.gain = Number(value);
       if (Object.keys(entry).length) all[serial] = entry;
       else delete all[serial];
+      cloned.audiomoth_settings = all;
+      return cloned;
+    });
+  };
+  // Microphone input. Nothing stored = external when the unit has one, so
+  // the dropdown shows what's in use until it's changed.
+  const handleDeviceInputChange = (serial, value) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      const all = { ...(cloned.audiomoth_settings ?? {}) };
+      all[serial] = { ...(all[serial] ?? {}), input: value };
       cloned.audiomoth_settings = all;
       return cloned;
     });
@@ -456,11 +467,17 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                   <div className="mic-moths__row mic-moths__row--header">
                     <span />
                     <span>Name</span>
+                    <span>Microphone</span>
                     <span>Gain</span>
                   </div>
                   {allSerials.map(serial => {
                     const connected = discoveredSerials.includes(serial);
                     const gain = amSettings[serial]?.gain ?? amGain;
+                    const inputs = mothInputs[serial];
+                    const hasExternal = !!inputs?.external;
+                    const chosenInput = amSettings[serial]?.input;
+                    const inputValue = chosenInput
+                      || (inputs ? inputs.active : (connected ? "internal" : "external"));
                     return (
                       <div key={serial} className="mic-moths__row">
                         <span className={`mic-moths__dot${connected ? " mic-moths__dot--on" : ""}`}
@@ -473,15 +490,19 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                             onChange={e => handleLabelChange(serial, e.target.value)} />
                           <span className="mic-moths__serial">
                             {serial}{connected ? "" : " · not connected"}
-                            {connected && mothInputs[serial] && (
-                              <span title={mothInputs[serial].external
-                                ? "Has an external microphone: records through it (the sync self-test uses the internal one)"
-                                : "Onboard microphone (no external input on this unit)"}>
-                                {" · "}{mothInputs[serial].active === "external" ? "external mic" : "internal mic"}
-                              </span>
-                            )}
+                            {connected && inputs && chosenInput === "external" && !hasExternal
+                              && " · no external mic found, using internal"}
                           </span>
                         </span>
+                        <select value={inputValue} aria-label={`Microphone for AudioMoth ${serial}`}
+                          title={"Which microphone this AudioMoth records through. "
+                            + "The sync self-test always uses the internal one (next to the buzzer)."}
+                          onChange={e => handleDeviceInputChange(serial, e.target.value)}>
+                          <option value="internal">Internal</option>
+                          <option value="external" disabled={connected && !hasExternal}>
+                            {connected && !hasExternal ? "External (none)" : "External"}
+                          </option>
+                        </select>
                         <select value={gain} aria-label={`Gain for AudioMoth ${serial}`}
                           onChange={e => handleDeviceGainChange(serial, e.target.value)}>
                           {GAIN_LABELS.map((label, i) => (
@@ -493,7 +514,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                   })}
                   <div className="sensor-mode-info sensor-mode-info--muted">
                     Names are used in recording file names, the live monitor, the Sync tab and
-                    the habitat dashboard. Changing a gain doesn&apos;t interrupt the live monitor.
+                    the habitat dashboard. Changing a gain or microphone doesn&apos;t interrupt
+                    the live monitor; a microphone change waits until a recording ends. An
+                    external mic is used by default when one is plugged in.
                   </div>
                 </>
               )}

@@ -150,8 +150,10 @@ near 0.
 
 ### External microphones
 
-An AudioMoth with an external mic records through it (SAVIOUR switches it
-over; the firmware also does when one is plugged in). The self-test moves it
+An AudioMoth with an external mic records through it unless its
+**Microphone** is set to Internal on the AudioMoth tab (the firmware also
+switches to a mic as it's plugged in; the module puts each unit back on its
+chosen input). The self-test moves it
 to its **internal** mic for the run, since the buzzer sits next to the
 AudioMoth, and back afterwards; results and stored offsets carry `input`.
 To measure on the external mic instead, pass `"mic_input": "current"` (each

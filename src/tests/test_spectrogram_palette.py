@@ -129,3 +129,22 @@ def test_json_is_what_the_generator_writes():
     with open(path) as f:
         doc = json.load(f)
     assert doc["version"] == 1 and "gen_spectrogram_palettes.py" in doc["_note"]
+
+
+def test_resolve_colouring_modes():
+    grey = sp.validate_stops(sp.builtin_palettes()["grayscale"])
+    magma = sp.resolve_stops("magma")
+    base, bands, problem = sp.resolve_colouring("palette", "magma", None, [ALARM])
+    assert (base, bands, problem) == (magma, [], None)      # bands kept, not drawn
+    base, bands, _ = sp.resolve_colouring("bands", "magma", None, [ALARM])
+    assert base == grey and len(bands) == 1
+    base, bands, _ = sp.resolve_colouring("bands", "magma", None, [])
+    assert base == grey and bands == []                     # all grey, no bands
+    # Unset mode: bands if any are on, else the palette.
+    assert len(sp.resolve_colouring(None, "magma", None, [ALARM])[1]) == 1
+    assert sp.resolve_colouring(None, "magma", None,
+                                [{**ALARM, "enabled": False}])[0] == magma
+    # Bad bands never raise; the problem is reported.
+    base, bands, problem = sp.resolve_colouring(
+        "bands", "magma", None, [ALARM, {**APPETITIVE, "lo_hz": 30000}])
+    assert bands == [] and "overlap" in problem

@@ -422,29 +422,30 @@ min-width: 300px;
   border-color: var(--accent-color, #3f7cac);
 }
 
-.mic-colormap-picker__note {
-  display: block;
-  font-size: 0.8em;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+.mic-colour-mode {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
-.mic-colormap-picker--disabled .mic-colormap-picker__label,
-.mic-colormap-picker--disabled .mic-colormap-picker__swatches {
-  opacity: 0.4;
+.mic-colour-mode__option {
+  padding: 3px 10px;
+  font-size: 0.85em;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--text-color);
+  cursor: pointer;
 }
 
-.mic-colormap-picker--disabled .mic-colormap-picker__swatch {
-  cursor: not-allowed;
+.mic-colour-mode__option + .mic-colour-mode__option {
+  border-left: 1px solid var(--border-color);
 }
 
-.mic-colormap-picker--disabled .mic-colormap-picker__swatch:hover {
-  border-color: transparent;
-}
-
-.mic-colormap-picker--disabled .mic-colormap-picker__swatch--active,
-.mic-colormap-picker--disabled .mic-colormap-picker__swatch--active:hover {
-  border-color: var(--accent-color, #3f7cac);
+.mic-colour-mode__option--active {
+  background: var(--accent-color, #3f7cac);
+  color: #fff;
 }
 
 /* Save + Reset button row */

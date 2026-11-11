@@ -63,8 +63,8 @@ export default function CallBandsEditor({ bands, onChange, nyquistHz, plotLoHz, 
 
       {list.length === 0 ? (
         <div className="call-bands__hint">
-          No bands: the whole spectrogram uses the colour palette above. Add a band to
-          draw a frequency range (e.g. rat alarm or appetitive calls) in its own colours.
+          No bands yet, so the spectrogram is all grey. Add a band to draw a frequency
+          range (e.g. rat alarm or appetitive calls) in its own colours.
         </div>
       ) : (
         <>
@@ -100,12 +100,11 @@ export default function CallBandsEditor({ bands, onChange, nyquistHz, plotLoHz, 
               </div>
             );
           })}
-          {anyOn && (
-            <div className="call-bands__hint">
-              Outside the bands the spectrogram is grey. Colour goes by frequency only:
-              any sound in a band, noise included, gets that band&apos;s colour.
-            </div>
-          )}
+          <div className="call-bands__hint">
+            {anyOn ? "Outside the bands" : "With every band off, the whole spectrogram"} is
+            grey. Colour goes by frequency only: any sound in a band, noise included, gets
+            that band&apos;s colour.
+          </div>
         </>
       )}
       {problems.map((p) => (

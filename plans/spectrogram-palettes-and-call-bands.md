@@ -62,6 +62,13 @@ numpy STFT and no change to how loudness maps to brightness.
 - **Grey outside the bands:** while any band is on, rows outside every
   band are drawn in `grayscale`, so only the bands are in colour. With no
   bands on, the chosen palette covers the whole image.
+- **Explicit colour mode** (added after phase 1): `colour_mode` is
+  `"palette"` (one palette, whole image; saved bands kept but not drawn) or
+  `"bands"` (bands in their palettes, grey elsewhere, all grey with none
+  on). Unset = bands if any are on. The UI is a two-button toggle,
+  **One palette | Frequency bands**, showing only the controls that apply.
+  Resolved by `spectrogram_palette.resolve_colouring`, which compose tiles
+  use too (phase 2: `SpectrogramOpts.colour_mode`).
 - **Custom palettes can be exported** (and imported) as JSON, so they
   move between rigs.
 - **ffmpeg colour schemes go away.** Every post-processing path uses the

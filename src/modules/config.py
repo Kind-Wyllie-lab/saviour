@@ -32,10 +32,11 @@ class Config:
     # transparently by get()/get_all()/set()/set_all(), so nothing outside
     # Config has to know. Currently AudioMoth serial->port labels, the APA
     # motor's learned feedforward per setpoint, and each AudioMoth's measured
-    # sync offset (sync_selftest); export.* credentials and
+    # sync offset (sync_selftest) and per-AudioMoth setting overrides
+    # (audiomoth_settings, e.g. gain); export.* credentials and
     # camera.crop_rect are candidates to move here.
     _SIDECAR_SECTIONS = ("audiomoth_labels", "motor_learned_output",
-                         "audiomoth_sync_offsets_ms")
+                         "audiomoth_sync_offsets_ms", "audiomoth_settings")
     _SIDECAR_FILENAME = "runtime_state.json"
 
     # Configuration that should be loaded from environment variables

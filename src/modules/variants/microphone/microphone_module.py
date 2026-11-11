@@ -154,6 +154,7 @@ class AudiomothModule(Module):
                 self.logger.error(f"AudioMoth config failed: {msg}")
                 return {"result": "Error", "error": msg}
             self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
+            override_errors = self._apply_gain_overrides()
 
             # LED is a separate top-level operation, not a config flag
             led_enabled = self.config.get("audiomoth.led_enabled", True)
@@ -161,6 +162,9 @@ class AudiomothModule(Module):
             if led_rc != 0:
                 self.logger.warning(f"AudioMoth LED set failed: {led_msg}")
 
+            if override_errors:
+                return {"result": "Error", "output": msg,
+                        "error": "; ".join(override_errors)}
             return {"result": "Success", "output": msg}
         except FileNotFoundError:
             self.logger.error(f"AudioMoth binary not found at {AUDIOMOTH_CMD}")
@@ -171,24 +175,77 @@ class AudiomothModule(Module):
             return {"result": "Error", "error": str(e)}
 
 
+    # -- Per-AudioMoth gain (audiomoth_settings) ---------------------------
+
+    def _gain_overrides(self) -> dict[str, int]:
+        """serial -> gain for every AudioMoth with a valid per-device gain in
+        `audiomoth_settings`. Invalid entries are logged and skipped, so one
+        bad value can't stop the rest being applied."""
+        raw = self.config.get("audiomoth_settings", {}) or {}
+        out: dict[str, int] = {}
+        if not isinstance(raw, dict):
+            return out
+        for serial, settings in raw.items():
+            if not isinstance(settings, dict) or settings.get("gain") in (None, ""):
+                continue
+            try:
+                gain = int(settings["gain"])
+            except (TypeError, ValueError):
+                gain = -1
+            if 0 <= gain <= 4:
+                out[serial] = gain
+            else:
+                self.logger.warning(
+                    f"audiomoth_settings.{serial}.gain {settings['gain']!r} ignored "
+                    "(must be 0-4)")
+        return out
+
+    def _gain_for(self, serial: str) -> int:
+        """The gain an AudioMoth runs at: its override, else audiomoth.gain."""
+        return self._gain_overrides().get(
+            serial, int(self.config.get("audiomoth.gain", 2)))
+
+    def _run_audiomoth(self, args: list[str]) -> tuple[int, str]:
+        r = subprocess.run([AUDIOMOTH_CMD, *args], capture_output=True, text=True,
+                           timeout=10)
+        # The binary writes errors to stdout (puts()), not stderr
+        return r.returncode, (r.stdout.strip() or r.stderr.strip())
+
+    def _apply_gain_overrides(self) -> list[str]:
+        """Set each connected AudioMoth that has a per-device gain, by serial,
+        with the non-disruptive `update gain` (the stream keeps running).
+        Returns error messages (empty when all applied)."""
+        errors = []
+        for serial, gain in self._gain_overrides().items():
+            if serial not in self.audiomoths:
+                continue  # not connected; applied when it is next configured
+            rc, msg = self._run_audiomoth(["update", "gain", str(gain), serial])
+            if rc == 0:
+                self.logger.info(f"AudioMoth {serial} gain set to {gain} (per-device)")
+            else:
+                errors.append(f"{serial}: {msg}")
+                self.logger.error(f"AudioMoth {serial} gain update failed: {msg}")
+        return errors
+
     @command()
     def update_gain(self, gain=None):
-        """Update AudioMoth gain without interrupting the audio stream."""
+        """Update AudioMoth gain without interrupting the audio stream: the
+        module-wide gain on every AudioMoth, then any per-device gains
+        (audiomoth_settings) on top."""
         if gain is None:
             gain = int(self.config.get("audiomoth.gain", 2))
         gain = int(gain)
 
         try:
-            result = subprocess.run(
-                [AUDIOMOTH_CMD, "update", "gain", str(gain)],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                self.logger.info(f"AudioMoth gain updated to {gain}")
-                return {"result": "Success", "gain": gain}
-            else:
-                self.logger.error(f"AudioMoth gain update failed: {result.stderr.strip()}")
-                return {"result": "Error", "error": result.stderr.strip()}
+            rc, msg = self._run_audiomoth(["update", "gain", str(gain)])
+            if rc != 0:
+                self.logger.error(f"AudioMoth gain update failed: {msg}")
+                return {"result": "Error", "error": msg}
+            self.logger.info(f"AudioMoth gain updated to {gain}")
+            errors = self._apply_gain_overrides()
+            if errors:
+                return {"result": "Error", "gain": gain, "error": "; ".join(errors)}
+            return {"result": "Success", "gain": gain}
         except FileNotFoundError:
             return {"result": "Error", "error": "Binary not found — run setup.sh to install"}
         except subprocess.TimeoutExpired:
@@ -432,6 +489,9 @@ class AudiomothModule(Module):
                     # was captured.  Used for post-hoc alignment with video.
                     actual_start = time.time()
                     timestamps_writer.write(f"STARTED {actual_start:.6f}\n")
+                    # Provenance: the gain this AudioMoth ran at (per-device
+                    # override or audiomoth.gain).
+                    timestamps_writer.write(f"GAIN {self._gain_for(serial)}\n")
                     if sync_offset_ms is not None:
                         # This AudioMoth's calibrated latency-anchor offset
                         # (sync_selftest), applied by parse_mic_sidecar.
@@ -1068,7 +1128,7 @@ class AudiomothModule(Module):
         wins when set. `call_bands` that don't parse are logged once and
         ignored, so a bad setting never blanks the monitor. Cached on the
         raw settings."""
-        mode = self.config.get("monitoring.colour_mode")
+        mode = self.config.get("monitoring.colour_mode", "")  # unset = auto
         name = self.config.get("monitoring.colormap", palette.default_palette())
         stops = self.config.get("monitoring.colormap_stops") or None
         raw_bands = self.config.get("monitoring.call_bands") or []
@@ -1758,11 +1818,13 @@ class AudiomothModule(Module):
                 self._sync_pulser = None
             finally:
                 self._sync_lock.release()
-        audiomoth_keys = {k for k in updated_keys if k.startswith("audiomoth.")}
+        audiomoth_keys = {k for k in updated_keys
+                          if k.startswith("audiomoth.") or k == "audiomoth_settings"}
         if not audiomoth_keys:
             return
-        # Gain-only change while streaming: use non-disruptive update
-        if audiomoth_keys == {"audiomoth.gain"} and self.is_streaming:
+        # Gain-only change (module-wide and/or per-device) while streaming:
+        # use the non-disruptive update.
+        if audiomoth_keys <= {"audiomoth.gain", "audiomoth_settings"} and self.is_streaming:
             self.update_gain()
         else:
             self.configure_audiomoth()

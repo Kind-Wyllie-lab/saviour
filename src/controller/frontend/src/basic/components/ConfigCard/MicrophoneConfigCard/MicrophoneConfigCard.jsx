@@ -126,6 +126,8 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [activeTab, setActiveTab]               = useHashTab("basic", MIC_TABS.map(t => t.key));
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
+  // serial -> { external, active } from the module's MICROPHONE query.
+  const [mothInputs, setMothInputs] = useState({});
   const [streamEnabled, setStreamEnabled] = useState(true);
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
@@ -244,6 +246,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     const onAudiomothList = (data) => {
       if (data.module_id === module.id) {
         setDiscoveredSerials(Object.keys(data.audiomoths ?? {}));
+        setMothInputs(data.inputs ?? {});
       }
     };
     socket.on("audiomoth_list_response", onAudiomothList);
@@ -470,6 +473,13 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                             onChange={e => handleLabelChange(serial, e.target.value)} />
                           <span className="mic-moths__serial">
                             {serial}{connected ? "" : " · not connected"}
+                            {connected && mothInputs[serial] && (
+                              <span title={mothInputs[serial].external
+                                ? "Has an external microphone: records through it (the sync self-test uses the internal one)"
+                                : "Onboard microphone (no external input on this unit)"}>
+                                {" · "}{mothInputs[serial].active === "external" ? "external mic" : "internal mic"}
+                              </span>
+                            )}
                           </span>
                         </span>
                         <select value={gain} aria-label={`Gain for AudioMoth ${serial}`}

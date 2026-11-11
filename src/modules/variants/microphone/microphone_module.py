@@ -52,6 +52,10 @@ class AudiomothModule(Module):
         # surfaced the same way as CameraBase.hardware_fault -- readiness
         # check + every health heartbeat.
         self.hardware_fault: str | None = None
+        # serial -> {"external": bool, "active": "internal"|"external"} from
+        # the AudioMoth tool's MICROPHONE query (_refresh_inputs).
+        self.audiomoth_inputs: dict[str, dict] = {}
+        self._inputs_for: frozenset = frozenset()
         self._find_audiomoths() # Discover any and all connected microphones
 
         # Per-segment recording threads and state
@@ -155,6 +159,7 @@ class AudiomothModule(Module):
                 return {"result": "Error", "error": msg}
             self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
             override_errors = self._apply_gain_overrides()
+            self._ensure_external_inputs()
 
             # LED is a separate top-level operation, not a config flag
             led_enabled = self.config.get("audiomoth.led_enabled", True)
@@ -227,6 +232,74 @@ class AudiomothModule(Module):
                 self.logger.error(f"AudioMoth {serial} gain update failed: {msg}")
         return errors
 
+    # -- Microphone input (internal MEMS / external) ------------------------
+    # AudioMoth hardware >= 1.2.1 (USB Microphone firmware >= 1.3.2) can take
+    # an external microphone. A unit that offers one always records through
+    # it; sync_selftest moves it to the internal mic for the test (the buzzer
+    # sits next to the AudioMoth) and back. plans/per-audiomoth-settings.md.
+
+    _INPUT_LINE = re.compile(r"^([0-9A-Fa-f]{16}) - (.*)$")
+
+    @classmethod
+    def _parse_inputs(cls, text: str) -> dict[str, dict]:
+        """`MICROPHONE` output -> serial -> {external, active}. Each unit lists
+        `int`, plus `ext` when an external mic is available, with the one in
+        use in parentheses, e.g. `2474750264200FAD - int (ext)`."""
+        out = {}
+        for line in text.splitlines():
+            m = cls._INPUT_LINE.match(line.strip())
+            if not m:
+                continue
+            tokens = m.group(2).lower().split()
+            external = any(t.strip("()") == "ext" for t in tokens)
+            active = "external" if "(ext)" in tokens else "internal"
+            out[m.group(1).upper()] = {"external": external, "active": active}
+        return out
+
+    def _refresh_inputs(self) -> dict[str, dict]:
+        """Ask every AudioMoth which inputs it has (read-only). Older firmware
+        that doesn't know MICROPHONE leaves the map empty (= internal only)."""
+        try:
+            rc, msg = self._run_audiomoth(["microphone"])
+        except Exception as e:  # binary missing, timeout
+            self.logger.debug(f"AudioMoth microphone query failed: {e}")
+            return self.audiomoth_inputs
+        if rc == 0:
+            self.audiomoth_inputs = self._parse_inputs(msg)
+        else:
+            self.logger.debug(f"AudioMoth microphone query failed: {msg}")
+        return self.audiomoth_inputs
+
+    def _set_input(self, serial: str, which: str) -> bool:
+        """Switch one AudioMoth to `which` ("internal"/"external")."""
+        rc, msg = self._run_audiomoth(
+            ["microphone", "ext" if which == "external" else "int", serial])
+        if rc != 0:
+            self.logger.error(f"AudioMoth {serial}: switching to the {which} "
+                              f"microphone failed: {msg}")
+            return False
+        self.logger.info(f"AudioMoth {serial}: using the {which} microphone")
+        return True
+
+    def _ensure_external_inputs(self) -> list[str]:
+        """Switch every connected AudioMoth that offers an external microphone
+        to it. Returns the serials switched (device IDs are refreshed after,
+        in case the switch re-enumerates the USB device)."""
+        switched = []
+        for serial, inp in self._refresh_inputs().items():
+            if (serial in self.audiomoths and inp["external"]
+                    and inp["active"] != "external"
+                    and self._set_input(serial, "external")):
+                switched.append(serial)
+        if switched:
+            self._refresh_inputs()
+            self._find_audiomoths()
+        self._inputs_for = frozenset(self.audiomoths)
+        return switched
+
+    def _input_for(self, serial: str) -> str:
+        return self.audiomoth_inputs.get(serial, {}).get("active", "internal")
+
     @command()
     def update_gain(self, gain=None):
         """Update AudioMoth gain without interrupting the audio stream: each
@@ -266,8 +339,11 @@ class AudiomothModule(Module):
 
     @command()
     def list_audiomoths(self):
-        """Returns dict containing list of audiomoths"""
-        return {"result": "Success", "audiomoths": self.audiomoths}
+        """Connected AudioMoths (serial -> device ID) and each one's
+        microphone input (serial -> {external, active})."""
+        self._find_audiomoths()
+        return {"result": "Success", "audiomoths": self.audiomoths,
+                "inputs": self._refresh_inputs()}
 
 
     @command()
@@ -343,6 +419,11 @@ class AudiomothModule(Module):
         self._find_audiomoths()
         if not self.audiomoths:
             return False, self.hardware_fault
+        if frozenset(self.audiomoths) != self._inputs_for:
+            # A unit was plugged in or removed: put any with an external
+            # microphone on it (not mid-recording: a switch may re-enumerate).
+            if not getattr(self, "is_recording", False):
+                self._ensure_external_inputs()
         return True, f"{len(self.audiomoths)} audiomoth(s) connected"
 
 
@@ -502,6 +583,7 @@ class AudiomothModule(Module):
                     # Provenance: the gain this AudioMoth ran at (per-device
                     # override or audiomoth.gain).
                     timestamps_writer.write(f"GAIN {self._gain_for(serial)}\n")
+                    timestamps_writer.write(f"INPUT {self._input_for(serial)}\n")
                     if sync_offset_ms is not None:
                         # This AudioMoth's calibrated latency-anchor offset
                         # (sync_selftest), applied by parse_mic_sidecar.
@@ -748,7 +830,9 @@ class AudiomothModule(Module):
         }
         for serial, value in calibrated.items():
             old = self._sync_offset_ms(serial)
-            offsets[serial] = {"offset_ms": value, **context}
+            # Called mid-test, so this is the input the offset was measured on.
+            offsets[serial] = {"offset_ms": value, **context,
+                               "input": self._input_for(serial)}
             self.logger.info(
                 f"sync_selftest: AudioMoth {serial} ({self._label_for(serial)}) "
                 f"offset {old} -> {value} ms")
@@ -900,12 +984,35 @@ class AudiomothModule(Module):
     def _run_sync_selftest(self, pulser: SyncPulser, pulses: int, interval_s: float,
                            pulse_ms: float, lead_s: float, keep_audio: bool,
                            calibrate: bool = True) -> dict:
-        from src.controller.audio_align import parse_mic_sidecar
-        from src.shared import av_sync
-
         self._find_audiomoths()
         if not self.audiomoths:
             return {"status": "error", "message": "No AudioMoth microphones detected"}
+        # Units recording through an external mic are tested on their
+        # internal one, which sits next to the buzzer (no flight time to
+        # guess); they go back to external afterwards, whatever happens.
+        to_internal = [s for s, inp in self._refresh_inputs().items()
+                       if s in self.audiomoths and inp["active"] == "external"]
+        switched = [s for s in to_internal if self._set_input(s, "internal")]
+        if switched:
+            time.sleep(1.0)
+            self._refresh_inputs()
+            self._find_audiomoths()
+        try:
+            return self._sync_selftest_body(
+                pulser, pulses, interval_s, pulse_ms, lead_s, keep_audio, calibrate)
+        finally:
+            for s in switched:
+                self._set_input(s, "external")
+            if switched:
+                self._refresh_inputs()
+                self._find_audiomoths()
+
+    def _sync_selftest_body(self, pulser: SyncPulser, pulses: int, interval_s: float,
+                            pulse_ms: float, lead_s: float, keep_audio: bool,
+                            calibrate: bool) -> dict:
+        from src.controller.audio_align import parse_mic_sidecar
+        from src.shared import av_sync
+
         cfg = self._sync_cfg()
         scratch = tempfile.mkdtemp(prefix="saviour-sync-selftest-")
         seg_stop, rec_stop = threading.Event(), threading.Event()
@@ -942,6 +1049,7 @@ class AudiomothModule(Module):
                 mic_distance_m=cfg["mic_distance_m"])
             per_mic[label] = {
                 "serial": serial,
+                "input": self._input_for(serial),
                 **av_sync.summarise([o.offset_ms if o else None for o in onsets]),
                 "offsets_ms": [round(o.offset_ms, 2) if o else None for o in onsets],
                 "snr_db": [round(o.snr_db, 1) if o else None for o in onsets],
@@ -1856,6 +1964,7 @@ class AudiomothModule(Module):
         try:
             if not super().start():
                 return False
+            self._ensure_external_inputs()  # before streaming opens the devices
             self.start_streaming()
             return True
         except Exception as e:

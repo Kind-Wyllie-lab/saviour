@@ -4861,6 +4861,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                         self.socketio.emit("audiomoth_list_response", {
                             "module_id": module_id,
                             "audiomoths": status.get("audiomoths", {}),
+                            # serial -> {external, active} microphone input
+                            "inputs": status.get("inputs", {}),
                         })
                     elif command == "update_saviour":
                         result = status.get("result")

@@ -1,8 +1,10 @@
 # Per-AudioMoth settings
 
 - **Status:** in progress: phase 1 (per-AudioMoth gain) built 2026-11-11 and on
-  the desk rig; device command syntax confirmed, UI save not yet tried;
-  phases 2-3 not started
+  the desk rig; device command syntax confirmed, UI save not yet tried.
+  Phase 3 (external mic when available, internal for the self-test) built
+  2026-11-11, untested on a unit with an external input (the desk units have
+  none). Phase 2 not started.
 - **Created:** 2026-11-11
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -79,7 +81,24 @@ Harder, because the module assumes one rate:
 - UI: per-device rate/filter next to gain, per-device file-size estimate;
   the clip warning threshold stays module-wide.
 
-## Phase 3: microphone input (internal MEMS / external)
+## Phase 3: microphone input (internal MEMS / external) -- built
+
+**Decided 2026-11-11:** no setting. A unit that offers an external input
+always records through it; the self-test uses the internal mic.
+
+Built: `_refresh_inputs` (read-only `MICROPHONE` query, parsed per serial);
+`_ensure_external_inputs` at module start (before streaming opens the
+devices), after `configure_audiomoth`, and from `_check_audiomoths` whenever
+the set of connected units changes (not while recording); device IDs are
+re-scanned after any switch. `_run_sync_selftest` switches external units to
+internal, runs the test, and switches back in a `finally`; the result and the
+stored calibration carry `input`. Each recording sidecar gets
+`INPUT internal|external`. `list_audiomoths` returns `inputs` and the
+AudioMoths list shows "external mic" / "internal mic". Tests in
+`test_microphone_module.py`. A no-op `microphone int <serial>` on a desk unit
+showed no USB disconnect in the kernel log.
+
+Original design notes:
 
 Use case (2026-11-11): a rig whose AudioMoths record through an external mic
 placed far from the AudioMoth, while the A/V-sync buzzer sits next to the

@@ -69,6 +69,7 @@ def _make(tmp_path):
         0 if key == "recording.mic_throughput_log_secs" else default)
     m.facade = MagicMock()
     m.audiomoths = {s: f"mic-{s}" for s in SERIALS}
+    m.audiomoth_inputs, m._inputs_for = {}, frozenset(SERIALS)
     m.audiomoth_threads = []
     m.current_recording_files = {}
     m._segment_stop_event = threading.Event()
@@ -622,3 +623,95 @@ def test_per_device_gain_change_while_streaming_is_non_disruptive(tmp_path):
     m.update_gain.assert_called_once()
     m.configure_module_special(["audiomoth.sample_rate", "audiomoth_settings"])
     m.configure_audiomoth.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Microphone input: external when available, internal for the self-test
+# ---------------------------------------------------------------------------
+
+def test_parse_inputs_reads_the_microphone_query():
+    text = ("AudioMoth-USB-Microphone 1.0.2\n"
+            "2474750264200FAD - (int)\n"
+            "24FCBD0864934CA8 - int (ext)\n"
+            "24e1440360ad1f2b - (int) ext\n")
+    assert mm.AudiomothModule._parse_inputs(text) == {
+        "2474750264200FAD": {"external": False, "active": "internal"},
+        "24FCBD0864934CA8": {"external": True, "active": "external"},
+        "24E1440360AD1F2B": {"external": True, "active": "internal"},
+    }
+
+
+class _FakeMoths:
+    """Stands in for the AudioMoth tool: tracks each unit's active input."""
+
+    def __init__(self, units):  # serial -> (external available, active)
+        self.units = dict(units)
+        self.calls = []
+
+    def __call__(self, args):
+        self.calls.append(args)
+        if args == ["microphone"]:
+            lines = []
+            for serial, (ext, active) in self.units.items():
+                i = "(int)" if active == "internal" else "int"
+                e = ("(ext)" if active == "external" else "ext") if ext else ""
+                lines.append(f"{serial} - {i} {e}".rstrip())
+            return 0, "\n".join(lines)
+        if args[0] == "microphone" and len(args) == 3:
+            ext, _ = self.units[args[2]]
+            self.units[args[2]] = (ext, "external" if args[1] == "ext" else "internal")
+            return 0, f"Sent MICROPHONE command to device ID {args[2]}."
+        return 0, "ok"
+
+
+def _input_module(tmp_path, units):
+    m, _ = _make(tmp_path)
+    m.audiomoth_inputs, m._inputs_for = {}, frozenset()
+    m.audiomoths = {s: f"mic-{s}" for s in units}
+    fake = _FakeMoths(units)
+    m._run_audiomoth = fake
+    return m, fake
+
+
+def test_units_with_an_external_mic_are_switched_to_it(tmp_path):
+    m, fake = _input_module(tmp_path, {"AAAA000000000001": (True, "internal"),
+                                       "BBBB000000000002": (False, "internal")})
+    assert m._ensure_external_inputs() == ["AAAA000000000001"]
+    assert fake.units["AAAA000000000001"][1] == "external"
+    assert fake.units["BBBB000000000002"][1] == "internal"
+    assert m._input_for("AAAA000000000001") == "external"
+    # Already right: no switch the second time.
+    fake.calls.clear()
+    assert m._ensure_external_inputs() == []
+    assert fake.calls == [["microphone"]]
+
+
+def test_selftest_runs_on_the_internal_mic_and_switches_back(tmp_path):
+    m, fake = _input_module(tmp_path, {"AAAA000000000001": (True, "external"),
+                                       "BBBB000000000002": (False, "internal")})
+    seen = {}
+
+    def body(*_a, **_k):
+        seen.update({s: u[1] for s, u in fake.units.items()})
+        raise RuntimeError("boom")             # switch-back must still happen
+
+    m._sync_selftest_body = body
+    with patch.object(mm.time, "sleep"):
+        try:
+            m._run_sync_selftest(MagicMock(), 3, 1.0, 50, 2.0, False)
+        except RuntimeError:
+            pass
+    assert seen == {"AAAA000000000001": "internal", "BBBB000000000002": "internal"}
+    assert fake.units["AAAA000000000001"][1] == "external"
+    assert ["microphone", "ext", "BBBB000000000002"] not in fake.calls
+
+
+def test_new_unit_on_the_bus_gets_its_external_mic(tmp_path):
+    m, fake = _input_module(tmp_path, {"AAAA000000000001": (True, "internal")})
+    m._find_audiomoths = lambda: None
+    m.is_recording = False
+    ok, _ = m._check_audiomoths()
+    assert ok and fake.units["AAAA000000000001"][1] == "external"
+    fake.calls.clear()
+    m._check_audiomoths()                      # same units: no query at all
+    assert fake.calls == []

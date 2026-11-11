@@ -365,6 +365,15 @@ class AudiomothModule(Module):
     def _input_for(self, serial: str) -> str:
         return self.audiomoth_inputs.get(serial, {}).get("active", "internal")
 
+    def _input_tag(self, serial: str) -> str:
+        """Live-monitor tag in the AudioMoth tool's own notation, "(ext)" or
+        "(int)"; empty when the unit hasn't answered the MICROPHONE query
+        (older firmware)."""
+        inp = self.audiomoth_inputs.get(serial)
+        if not inp:
+            return ""
+        return "(ext)" if inp.get("active") == "external" else "(int)"
+
     @command()
     def update_gain(self, gain=None):
         """Update AudioMoth gain without interrupting the audio stream: each
@@ -1426,6 +1435,8 @@ class AudiomothModule(Module):
 
         # ── Header ──────────────────────────────────────────────────────────
         display_name  = self._label_for(serial)
+        if tag := self._input_tag(serial):
+            display_name = f"{display_name} {tag}"
         header_colour = (80, 80, 80) if is_stale else (200, 200, 200)
         hdr = f"{display_name}  RMS {level_db:.1f} dBFS  Peak {peak_db:.1f} dBFS"
         cv2.putText(cell, hdr, (PADDING, 22),
@@ -1833,6 +1844,8 @@ class AudiomothModule(Module):
                 peak_db  = data.get('peak_db',  DB_MIN)
                 is_stale = (now - data.get('timestamp', 0)) > 0.5
                 label    = self._label_for(serial)
+                if tag := self._input_tag(serial):
+                    label = f"{label} {tag}"
 
                 # ── Label ─────────────────────────────────────────────────
                 (tw, _), _ = cv2.getTextSize(

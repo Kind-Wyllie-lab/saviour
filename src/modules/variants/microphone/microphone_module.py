@@ -941,7 +941,9 @@ class AudiomothModule(Module):
     @command()
     def sync_selftest(self, pulses: int = 10, interval_s: float = 1.2,
                       pulse_ms: float | None = None, lead_s: float = 4.0,
-                      keep_audio: bool = False, calibrate: bool = True) -> dict:
+                      keep_audio: bool = False, calibrate: bool = True,
+                      mic_input: str = "internal",
+                      external_distance_m: float | None = None) -> dict:
         """Measure buzz edge -> audio onset on every AudioMoth, outside a
         session: records to a scratch dir through the same recorder code as
         a real segment, fires `pulses` buzzes, times each onset with the
@@ -950,7 +952,26 @@ class AudiomothModule(Module):
 
         With `calibrate`, each AudioMoth with a clean result gets its
         anchor offset (audiomoth_sync_offsets_ms) updated, so later
-        recordings place its audio on the measured truth."""
+        recordings place its audio on the measured truth.
+
+        `mic_input`: "internal" (default) moves units on an external mic to
+        their internal one for the test (next to the buzzer) and back after;
+        "current" leaves every unit on its active mic, to compare inputs.
+        Only internal-mic results are stored as calibration. With
+        `external_distance_m`, units on the external mic have that
+        buzzer-to-mic flight time removed instead of
+        `sync_pulse.mic_distance_m`."""
+        if mic_input not in ("internal", "current"):
+            return {"result": "error",
+                    "message": "mic_input must be 'internal' or 'current'"}
+        if external_distance_m is not None:
+            try:
+                external_distance_m = float(external_distance_m)
+            except (TypeError, ValueError):
+                external_distance_m = -1.0
+            if not 0 <= external_distance_m <= 100:
+                return {"result": "error",
+                        "message": "external_distance_m must be 0-100 m"}
         if self._recording_active():
             return {"result": "error", "message": "not while recording -- use sync_pulses"}
         try:
@@ -968,7 +989,8 @@ class AudiomothModule(Module):
             try:
                 result = self._run_sync_selftest(
                     pulser, pulses, interval_s, pulse_ms,
-                    max(2.0, float(lead_s)), bool(keep_audio), bool(calibrate))
+                    max(2.0, float(lead_s)), bool(keep_audio), bool(calibrate),
+                    mic_input, external_distance_m)
             except Exception as e:
                 self.logger.error(f"sync_selftest failed: {e}", exc_info=True)
                 result = {"status": "error", "message": str(e)}
@@ -979,27 +1001,34 @@ class AudiomothModule(Module):
 
         threading.Thread(target=_run, daemon=True, name="sync-selftest").start()
         return {"result": "started", "pulses": pulses, "interval_s": interval_s,
-                "pulse_ms": pulse_ms}
+                "pulse_ms": pulse_ms, "mic_input": mic_input}
 
     def _run_sync_selftest(self, pulser: SyncPulser, pulses: int, interval_s: float,
                            pulse_ms: float, lead_s: float, keep_audio: bool,
-                           calibrate: bool = True) -> dict:
+                           calibrate: bool = True, mic_input: str = "internal",
+                           external_distance_m: float | None = None) -> dict:
         self._find_audiomoths()
         if not self.audiomoths:
             return {"status": "error", "message": "No AudioMoth microphones detected"}
         # Units recording through an external mic are tested on their
         # internal one, which sits next to the buzzer (no flight time to
         # guess); they go back to external afterwards, whatever happens.
-        to_internal = [s for s, inp in self._refresh_inputs().items()
-                       if s in self.audiomoths and inp["active"] == "external"]
+        # mic_input="current" leaves them be (comparing the two inputs).
+        inputs = self._refresh_inputs()
+        to_internal = [] if mic_input == "current" else [
+            s for s, inp in inputs.items()
+            if s in self.audiomoths and inp["active"] == "external"]
         switched = [s for s in to_internal if self._set_input(s, "internal")]
         if switched:
             time.sleep(1.0)
             self._refresh_inputs()
             self._find_audiomoths()
         try:
-            return self._sync_selftest_body(
-                pulser, pulses, interval_s, pulse_ms, lead_s, keep_audio, calibrate)
+            result = self._sync_selftest_body(
+                pulser, pulses, interval_s, pulse_ms, lead_s, keep_audio, calibrate,
+                external_distance_m)
+            result["mic_input"] = mic_input
+            return result
         finally:
             for s in switched:
                 self._set_input(s, "external")
@@ -1009,7 +1038,8 @@ class AudiomothModule(Module):
 
     def _sync_selftest_body(self, pulser: SyncPulser, pulses: int, interval_s: float,
                             pulse_ms: float, lead_s: float, keep_audio: bool,
-                            calibrate: bool) -> dict:
+                            calibrate: bool,
+                            external_distance_m: float | None = None) -> dict:
         from src.controller.audio_align import parse_mic_sidecar
         from src.shared import av_sync
 
@@ -1044,12 +1074,17 @@ class AudiomothModule(Module):
                 per_mic[label] = {"serial": serial, "error": "no recording produced"}
                 continue
             fit = parse_mic_sidecar(sidecar, path)
+            mic_input = self._input_for(serial)
+            distance = cfg["mic_distance_m"]
+            if mic_input == "external" and external_distance_m is not None:
+                distance = external_distance_m
             onsets = av_sync.audio_onsets(
                 path, fit.sample0_wall_ns, fit.measured_rate_hz, edge_ns,
-                mic_distance_m=cfg["mic_distance_m"])
+                mic_distance_m=distance)
             per_mic[label] = {
                 "serial": serial,
-                "input": self._input_for(serial),
+                "input": mic_input,
+                "mic_distance_m": distance,
                 **av_sync.summarise([o.offset_ms if o else None for o in onsets]),
                 "offsets_ms": [round(o.offset_ms, 2) if o else None for o in onsets],
                 "snr_db": [round(o.snr_db, 1) if o else None for o in onsets],
@@ -1061,6 +1096,10 @@ class AudiomothModule(Module):
                 "latency_offset_calibrated": fit.latency_offset_calibrated,
             }
             new_offset, why_not = self._calibration(fit, onsets)
+            if not why_not and mic_input == "external":
+                # Stored offsets come from the internal mic (the default
+                # test) until the two inputs are shown to agree.
+                why_not = "measured on the external mic (calibration uses the internal mic)"
             per_mic[label]["measured_offset_ms"] = new_offset
             if why_not:
                 per_mic[label]["calibration_skipped"] = why_not

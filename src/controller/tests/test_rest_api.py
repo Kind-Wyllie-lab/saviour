@@ -1279,6 +1279,19 @@ class TestSyncRig:
         assert client.post(url, json={"calibrate": "no"},
                            headers=_auth(password)).status_code == 400
 
+    def test_selftest_passes_mic_input_and_external_distance(self):
+        web, password = self._web()
+        client = web.app.test_client()
+        url = "/api/v1/modules/microphone_4703/sync_selftest"
+        body = {"mic_input": "current", "external_distance_m": 0.5}
+        assert client.post(url, json=body, headers=_auth(password)).status_code == 202
+        web.facade.send_command.assert_called_once_with(
+            "microphone_4703", "sync_selftest", body)
+        for bad in ({"mic_input": "external"}, {"external_distance_m": -1},
+                    {"external_distance_m": True}, {"external_distance_m": "1"}):
+            assert client.post(url, json=bad,
+                               headers=_auth(password)).status_code == 400
+
     def test_selftest_rejects_non_microphone_and_bad_numbers(self):
         web, password = self._web()
         client = web.app.test_client()

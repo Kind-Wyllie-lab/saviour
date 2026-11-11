@@ -277,7 +277,7 @@ class _LatencyClockedRecorder(_ClockedRecorder):
         return time.time() - (self.t0 + self.n / SYNC_RATE) + self.BIAS_S
 
 
-def _run_selftest(m, recorder_cls):
+def _run_selftest(m, recorder_cls, **kwargs):
     from src.controller import audio_align
 
     _FakePulser.instances, _FakePulser.all_edges = [], []
@@ -288,7 +288,7 @@ def _run_selftest(m, recorder_cls):
         soundcard.get_microphone.return_value.recorder.side_effect = (
             lambda **_kw: recorder_cls(_FakePulser.all_edges))
         assert m.sync_selftest(pulses=3, interval_s=1.0, pulse_ms=20,
-                               lead_s=2.0)["result"] == "started"
+                               lead_s=2.0, **kwargs)["result"] == "started"
         deadline = time.time() + 40
         while time.time() < deadline:
             sent = [c[0][0] for c in m.facade.send_status.call_args_list]
@@ -326,6 +326,37 @@ def test_sync_selftest_calibrates_the_latency_anchor(tmp_path):
     status, _ = _run_selftest(m, _LatencyClockedRecorder)
     r = status["microphones"]["audiomoth_AAAA"]
     assert r["latency_offset_calibrated"] and abs(r["median_ms"]) < 1.5, r
+
+
+def test_sync_selftest_on_the_external_mic_measures_but_does_not_calibrate(tmp_path):
+    """mic_input="current" leaves a unit on its external mic; the result
+    uses external_distance_m for its flight time and is never stored."""
+    m = _sync_module(tmp_path)
+    cfg = {k: m.config.get(k) for k in (
+        "recording.mic_throughput_log_secs", "audiomoth.sample_rate",
+        "microphone.frame_num", "microphone.block_size",
+        "sync_pulse.buzzer_pin", "sync_pulse.led_pin")}
+    m.config.get.side_effect = lambda key, default=None: cfg.get(key, default)
+    m.config.set.side_effect = lambda key, value, persist=True: cfg.__setitem__(key, value)
+    m.audiomoth_inputs = {"AAAA": {"external": True, "active": "external"}}
+    m._refresh_inputs = lambda: m.audiomoth_inputs
+    m._set_input = MagicMock(return_value=True)
+
+    status, _ = _run_selftest(m, _LatencyClockedRecorder, mic_input="current",
+                              external_distance_m=1.0)
+    m._set_input.assert_not_called()
+    r = status["microphones"]["audiomoth_AAAA"]
+    assert status["mic_input"] == "current"
+    assert r["input"] == "external" and r["mic_distance_m"] == 1.0, r
+    assert r["measured_offset_ms"] is not None
+    assert "external" in r["calibration_skipped"]
+    assert status["calibrated"] == {} and "audiomoth_sync_offsets_ms" not in cfg
+
+
+def test_sync_selftest_rejects_a_bad_mic_input(tmp_path):
+    m = _sync_module(tmp_path)
+    assert m.sync_selftest(mic_input="ext")["result"] == "error"
+    assert m.sync_selftest(external_distance_m=-1)["result"] == "error"
 
 
 def test_sync_selftest_without_lat_lines_does_not_calibrate(tmp_path):
@@ -704,6 +735,18 @@ def test_selftest_runs_on_the_internal_mic_and_switches_back(tmp_path):
     assert seen == {"AAAA000000000001": "internal", "BBBB000000000002": "internal"}
     assert fake.units["AAAA000000000001"][1] == "external"
     assert ["microphone", "ext", "BBBB000000000002"] not in fake.calls
+
+
+def test_selftest_mic_input_current_leaves_the_external_mic_on(tmp_path):
+    m, fake = _input_module(tmp_path, {"AAAA000000000001": (True, "external")})
+    seen = {}
+    m._sync_selftest_body = lambda *_a, **_k: seen.update(
+        {s: u[1] for s, u in fake.units.items()}) or {}
+    with patch.object(mm.time, "sleep"):
+        r = m._run_sync_selftest(MagicMock(), 3, 1.0, 50, 2.0, False,
+                                 mic_input="current")
+    assert seen == {"AAAA000000000001": "external"} and r["mic_input"] == "current"
+    assert not [c for c in fake.calls if c[1:2] in (["int"], ["ext"])]
 
 
 def test_new_unit_on_the_bus_gets_its_external_mic(tmp_path):

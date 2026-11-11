@@ -106,6 +106,8 @@ class Health:
         # module_id -> "warning" | "error": the RFID DB backlog level already
         # alerted, so a persisting backlog alerts once per level, not per cycle.
         self._rfid_db_alerted: dict[str, str] = {}
+        # module_id -> the lighting problem already alerted (see _check_lighting)
+        self._lighting_alerted: dict[str, str] = {}
 
         # Modules explicitly force-offlined (e.g. mDNS goodbye). These must not
         # be re-marked online by stale ZMQ messages or the heartbeat monitor loop;
@@ -473,6 +475,7 @@ class Health:
                 self._check_ptp_health()
                 self._check_supervised_threads()
                 self._check_rfid_db_sync()
+                self._check_lighting()
 
             stop_event.wait(self.monitor_interval)
 
@@ -935,6 +938,57 @@ class Health:
             )
         for module_id in set(self._rfid_db_alerted) - seen:
             del self._rfid_db_alerted[module_id]
+
+    # A lighting module still waiting for a trusted clock after this long is
+    # worth a warning: its lights are on the decoders' DMX-loss behaviour.
+    LIGHTING_CLOCK_WARN_S = 10 * 60
+
+    def _check_lighting(self) -> None:
+        """Alert on a DMX lighting module whose lights are not under
+        control: widget missing/failed, a config it refused to apply, or no
+        trusted clock yet. An animal-welfare problem, not a recording one."""
+        seen = set()
+        for module_id, h in list(self.module_health.items()):
+            lt = h.get("lighting")
+            if h.get("status") != "online" or not isinstance(lt, dict):
+                continue
+            seen.add(module_id)
+            clock = lt.get("clock") or {}
+            problem = None
+            if lt.get("config_error"):
+                problem = ("config", "error",
+                           f"Lighting config on {module_id} was not applied: "
+                           f"{lt['config_error']}. The previous schedule keeps running.")
+            elif lt.get("fault"):
+                problem = ("fault", "error",
+                           f"{lt['fault']}. The lights on {module_id} are not "
+                           "being driven: the DMX decoders do their own signal-"
+                           "loss behaviour (hold or dark) until it is back.")
+            elif (not clock.get("trusted")
+                  and (clock.get("waiting_s") or 0) >= self.LIGHTING_CLOCK_WARN_S):
+                problem = ("clock", "warning",
+                           f"{module_id} has waited {clock['waiting_s'] / 60:.0f} min "
+                           "for a trusted clock (PTP or NTP) and is not driving the "
+                           "lights yet.")
+            previous = self._lighting_alerted.get(module_id)
+            if problem is None:
+                if previous:
+                    self.logger.info(f"Lighting on {module_id} back under control")
+                    del self._lighting_alerted[module_id]
+                continue
+            kind, severity, message = problem
+            if previous == kind:
+                continue
+            self._lighting_alerted[module_id] = kind
+            self.logger.warning(f"Lighting: {message}")
+            self.facade.send_alert(
+                key=f"lighting_{module_id}_{kind}",
+                title=f"Habitat lighting not under control — {module_id}",
+                message=message,
+                severity=severity,
+            )
+        for module_id in set(self._lighting_alerted) - seen:
+            del self._lighting_alerted[module_id]
 
     def start_monitoring(self):
         """Start the health monitoring thread"""

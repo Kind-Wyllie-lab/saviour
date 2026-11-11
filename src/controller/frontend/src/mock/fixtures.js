@@ -10,12 +10,18 @@
 // session mid-recording, a full disk, ...). Nothing here ships in a real
 // build -- socketMock.js is only imported when VITE_MOCK=1.
 
+import { LIGHTING_ID, lightingState, makeLightingModule } from "./lightingMock";
+
 const now = () => Date.now() / 1000;
 
 // ── Modules ────────────────────────────────────────────────────────────────
 // status: READY | RECORDING | NOT_READY | OFFLINE | FAULT
 function makeModules() {
   return {
+    // Habitat lights: in the habitat and basic builds (the basic build is
+    // the default dev:mock one).
+    ...(["habitat", "basic", undefined].includes(import.meta.env.VITE_VARIANT)
+      ? { [LIGHTING_ID]: makeLightingModule() } : {}),
     "camera-module-a1b2": {
       id: "camera-module-a1b2",
       name: "Home",
@@ -143,6 +149,12 @@ function makeApaRig() {
 // ── Per-module health (ModuleHealthSnapshot-ish) ──────────────────────────
 function makeHealth() {
   return {
+    // The heartbeat's lighting block, so guests (who can't poll) see it too.
+    [LIGHTING_ID]: {
+      cpu_usage: 4.1, cpu_temp: 41.2, memory_usage: 18.0, status: "READY",
+      recording: false, hardware_fault: null, last_heartbeat: now(),
+      version: "v0.6.1-mock", lighting: lightingState(makeLightingModule()),
+    },
     "camera-module-a1b2": {
       cpu_usage: 34.2, cpu_temp: 52.1, memory_usage: 41.0,
       memory_total_gb: 8, disk_space: 38.0, disk_used_gb: 45.0, disk_total_gb: 118.0,

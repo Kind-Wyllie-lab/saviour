@@ -96,6 +96,11 @@ class ModuleHealthSnapshot:
     # rfid_db_status): state, backlog, oldest_unsynced_age_s, last_error, ...
     # The controller alerts when the oldest unsynced read gets old.
     rfid_db: dict | None = None
+    # DMX lighting only (DmxLightingModule.lighting_status): mode, schedule
+    # phase and next change, per-box levels, overrides, widget, clock. The
+    # controller alerts on a widget fault, a config error or a clock it
+    # can't trust.
+    lighting: dict | None = None
     # eth0 link (src/shared/netlink.py LinkStats.sample): mac, speed_mbps,
     # duplex, carrier_changes, rx/tx errors/dropped/bytes, each also as a
     # *_1h growth figure. For the System -> Network tab.

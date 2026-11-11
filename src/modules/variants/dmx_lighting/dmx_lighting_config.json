@@ -1,0 +1,34 @@
+{
+    "module": {
+        "group": "lighting"
+    },
+    "dmx_lighting": {
+        "serial_port": "",
+        "timezone": "",
+        "schedule": {
+            "lights_on": "07:00",
+            "lights_off": "19:00",
+            "sunrise_minutes": 30,
+            "sunset_minutes": 30,
+            "curve": "perceptual",
+            "day_level": 100,
+            "night_level": 0
+        },
+        "ir": {
+            "mode": "constant",
+            "level": 100
+        },
+        "channel_bits": 8,
+        "compartments": [],
+        "slew_full_scale_s": 60,
+        "max_override_minutes": 240,
+        "require_synced_clock": true,
+        "mock": {
+            "enabled": false
+        },
+        "_send_hz": 10,
+        "_keepalive_s": 2,
+        "_event_log_days": 60,
+        "_state_dir": "/var/lib/saviour/lighting"
+    }
+}

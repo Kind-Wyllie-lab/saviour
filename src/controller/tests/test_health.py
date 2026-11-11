@@ -860,3 +860,53 @@ class TestRfidDbSyncAlerts:
         kwargs = facade.send_alert.call_args.kwargs
         assert kwargs["severity"] == "error"
         assert "PermissionError" in kwargs["message"]
+
+
+# ---------------------------------------------------------------------------
+# DMX lighting: lights not under control
+# ---------------------------------------------------------------------------
+
+class TestLightingAlerts:
+    def _with(self, health, status="online", **lighting):
+        lt = {"mode": "day", "fault": None, "config_error": None,
+              "clock": {"trusted": True, "waiting_s": None}}
+        lt.update(lighting)
+        health.module_health["dmx_lighting_ab12"] = {"status": status, "lighting": lt}
+
+    def test_healthy_is_quiet(self):
+        health, facade = _make_health()
+        self._with(health)
+        health._check_lighting()
+        facade.send_alert.assert_not_called()
+
+    def test_fault_alerts_once_and_again_after_recovery(self):
+        health, facade = _make_health()
+        self._with(health, fault="DMX widget disconnected (write failed)")
+        health._check_lighting()
+        health._check_lighting()
+        assert facade.send_alert.call_count == 1
+        kw = facade.send_alert.call_args.kwargs
+        assert kw["severity"] == "error" and "write failed" in kw["message"]
+        self._with(health)
+        health._check_lighting()
+        self._with(health, fault="No Enttec DMX USB Pro found")
+        health._check_lighting()
+        assert facade.send_alert.call_count == 2
+
+    def test_clock_wait_warns_after_ten_minutes(self):
+        health, facade = _make_health()
+        self._with(health, clock={"trusted": False, "waiting_s": 120})
+        health._check_lighting()
+        facade.send_alert.assert_not_called()
+        self._with(health, clock={"trusted": False, "waiting_s": 700})
+        health._check_lighting()
+        assert facade.send_alert.call_args.kwargs["severity"] == "warning"
+
+    def test_config_error_and_offline(self):
+        health, facade = _make_health()
+        self._with(health, status="offline", fault="x")
+        health._check_lighting()
+        facade.send_alert.assert_not_called()
+        self._with(health, config_error="Channel bits must be 8 or 16")
+        health._check_lighting()
+        assert "not applied" in facade.send_alert.call_args.kwargs["message"]

@@ -147,7 +147,7 @@ The frontend variant (basic / loom / apa / habitat / acoustic_startle) is select
 
 ### Module types
 
-`camera`, `microphone`, `ttl`, `rfid`, `apa_camera`, `apa_arduino`, `sound`, `lightning_camera`, `habitat_camera`, `hailo_camera`, `basler_camera` — each under `src/modules/variants/<type>/`.
+`camera`, `microphone`, `ttl`, `rfid`, `apa_camera`, `apa_arduino`, `sound`, `lightning_camera`, `habitat_camera`, `hailo_camera`, `basler_camera`, `dmx_lighting` — each under `src/modules/variants/<type>/`.
 
 ## Driving the live fleet (agents)
 
@@ -218,7 +218,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Habitat layout model (folding in the researchers' Habitat Hub): box naming is now letter = row, number = column (2026-11-06), so `gate_map.py`'s column-letter naming and in-line gates must be reworked before the first mapping run; then animal/tag registry, tunnels/beams/open panels/one-way doors, dated layouts with Hub-format export → `plans/habitat-layout-model.md`.
 - Habitat dashboard: live map (cameras, every gate read, per-box AudioMoth meters) and Placement panel (camera name = box, mic module name = column, AudioMoth label = box in that column; bulk import, change log; `variants/habitat/placement.py`). Built; `audio_levels` seen on the desk rig, no placement saved on hardware yet.
 - APA automated shocking: the grid's armed/disarmed state (arms at recording start) and the shock mode (manual/auto/dry_run) live on the controller (`variants/apa/shock_automation.py`), the `apa_arduino` module only pulses while told to. Built, not yet run on the rig; detector accuracy work and protocol placeholders → `plans/apa-rat-detector.md`.
-- Habitat DMX lighting module (`dmx_lighting`): Enttec DMX USB Pro driving 32 dimmed LED strips (visible + IR per compartment), day/night cycle with sunrise/sunset ramps, schedule + patch edited in the frontend, runs independently of sessions and the controller (joins sessions only to log health and light status). Proposed; decoder details needed from the installer → `plans/dmx-lighting-module.md`.
+- Habitat DMX lighting module (`dmx_lighting`): Enttec DMX USB Pro driving 32 dimmed LED strips (visible + IR per compartment), day/night cycle with sunrise/sunset ramps, schedule + patch edited in the frontend, runs independently of sessions and the controller (joins sessions only to log a lighting CSV; config editable while recording), waits for a trusted clock, overrides always expire. Built and tested against a mock widget; not yet on hardware, and the patch waits on decoder details from the installer → `plans/dmx-lighting-module.md`.
 - APA shock current: a free number field; values off the 0.02 mA grid are floored and values over the 1.0 mA firmware cap keep the old setpoint, all silently → `plans/apa-shock-setpoint-validation.md`.
 - System page **Sync** and **Network** tabs (PTP + framesync; every DHCP lease/ARP host with ping, module link counters): built, not yet viewed on the rig; live client lock state (`SyncTimer`) isn't in the heartbeat yet; Network leftovers in `plans/backlog.md`.
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.

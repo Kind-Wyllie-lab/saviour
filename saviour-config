@@ -536,7 +536,7 @@ hardware_scan() {
     HW_REPORT=""
     HW_SUGGEST=""
     HW_ITEMS=""
-    local cams hailo moths basler arduino serial dev model hifi link
+    local cams hailo moths basler arduino serial dmx dev model vendor hifi link
 
     # CSI cameras (works while saviour holds the camera; enumerate only)
     cams=$(timeout 10 rpicam-hello --list-cameras 2>/dev/null \
@@ -567,19 +567,27 @@ hardware_scan() {
         _hw_line "Basler (USB)" "none found (GigE cameras aren't scanned)"
     fi
 
-    # Serial: Arduino-style ACM devices, USB-serial adapters (RFID readers)
+    # Serial: Arduino-style ACM devices, the Enttec DMX USB Pro (an FTDI
+    # device, picked out by its udev model), other USB-serial adapters (RFID
+    # readers)
     arduino=""
     serial=""
+    dmx=""
     for dev in /dev/ttyACM* /dev/ttyUSB*; do
         [ -e "$dev" ] || continue
         model=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_MODEL=//p' | head -1)
-        case "$dev" in
-            /dev/ttyACM*) arduino="${arduino:+$arduino, }${dev#/dev/}${model:+ ($model)}" ;;
-            *)            serial="${serial:+$serial, }${dev#/dev/}${model:+ ($model)}" ;;
+        vendor=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_VENDOR=//p' | head -1)
+        case "$dev:$vendor:$model" in
+            /dev/ttyACM*)     arduino="${arduino:+$arduino, }${dev#/dev/}${model:+ ($model)}" ;;
+            *DMX_USB_PRO*|*:ENTTEC:*)
+                              dmx="${dmx:+$dmx, }${dev#/dev/}${model:+ ($model)}" ;;
+            *)                serial="${serial:+$serial, }${dev#/dev/}${model:+ ($model)}" ;;
         esac
     done
     _hw_line "Arduino/ACM" "${arduino:-none found}"
     [ -n "$arduino" ] && _hw_suggest apa_arduino
+    _hw_line "DMX (Enttec)" "${dmx:-none found}"
+    [ -n "$dmx" ] && _hw_suggest dmx_lighting
     _hw_line "USB serial" "${serial:-none found}"
     [ -n "$serial" ] && _hw_suggest rfid
 

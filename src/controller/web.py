@@ -725,11 +725,33 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         ids = candidates if candidates is not None else list(self.facade.get_modules().keys())
         return [mid for mid in ids if self.facade.is_module_recording(mid)]
 
+    # Module types whose settings stay editable while they record: the DMX
+    # lighting schedule runs the animals' day whatever is recording, and the
+    # module logs each change in its session lighting CSV.
+    CONFIG_EDITABLE_WHILE_RECORDING = frozenset({"dmx_lighting"})
+    # dmx_lighting commands whose reply carries the lighting state.
+    LIGHTING_COMMANDS = frozenset({"get_lighting_state", "set_override", "blackout",
+                                   "test_strip", "clear_override"})
+
+    def _config_locked_module_ids(self, candidates=None) -> list:
+        """The recording modules among *candidates* whose config may not
+        change now: every recording module except the types in
+        CONFIG_EDITABLE_WHILE_RECORDING."""
+        modules = self.facade.get_modules()
+
+        def _type(mid):
+            m = modules.get(mid) if isinstance(modules, dict) else None
+            t = m.get("type") if isinstance(m, dict) else None
+            return t if isinstance(t, str) else (mid.rsplit("_", 1)[0] if "_" in mid else mid)
+
+        return [mid for mid in self._recording_module_ids(candidates)
+                if _type(mid) not in self.CONFIG_EDITABLE_WHILE_RECORDING]
+
     def _reject_config_change_if_recording(self, candidates=None, module_id=None) -> bool:
-        """If any target module is recording, emit module_config_error and
-        return True (caller should return). Returns False when it's safe to
-        proceed."""
-        busy = self._recording_module_ids(candidates)
+        """If any target module is recording (and locked, see
+        _config_locked_module_ids), emit module_config_error and return True
+        (caller should return). Returns False when it's safe to proceed."""
+        busy = self._config_locked_module_ids(candidates)
         if not busy:
             return False
         self.logger.warning(f"Rejected config change: modules recording: {busy}")
@@ -2513,7 +2535,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             module_id = data['id']
             config = _filter_private_keys(data.get("config", {}))
 
-            if self.facade.is_module_recording(module_id):
+            if self._config_locked_module_ids([module_id]):
                 self.logger.warning(
                     f"Rejected config save for {module_id}: module is recording"
                 )
@@ -4960,6 +4982,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 case "loom_roi_updated":
                     self.socketio.emit('module_status', {**status, 'module_id': module_id})
 
+                case "lighting_state":
+                    # DMX lighting pushes this on every event (phase change,
+                    # override, fault, config change).
+                    self.socketio.emit("lighting_state", {
+                        "module_id": module_id, "state": status.get("state")})
+
                 case "heartbeat":
                     version = status.get("version")
                     if version:
@@ -4974,6 +5002,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "sensor_modes": status.get("sensor_modes", []),
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
+                        })
+                    elif command in self.LIGHTING_COMMANDS:
+                        self.socketio.emit("lighting_state", {
+                            "module_id": module_id,
+                            "command": command,
+                            "result": status.get("result"),
+                            "error": status.get("error"),
+                            "state": status.get("state"),
                         })
                     elif command == "rfid_db_test":
                         self.socketio.emit("rfid_db_test_result", {

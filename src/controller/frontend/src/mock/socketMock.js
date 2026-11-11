@@ -16,6 +16,7 @@ import { state, reset } from "./fixtures";
 import { gateMapRoutes } from "./gateMapMock";
 import { placementRoutes } from "./placementMock";
 import { ephysRoutes } from "./ephysMock";
+import { lightingCommand, lightingSave } from "./lightingMock";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
@@ -565,6 +566,7 @@ const ROUTER = {
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
   },
   save_module_config(payload) {
+    if (lightingSave(this, payload, state, clone)) return;
     const id = payload?.id;
     if (id) state.moduleConfigs[id] = payload.config || {};
     this._fire("module_status", { module_id: id, type: "config_saved" });
@@ -590,6 +592,7 @@ const ROUTER = {
   },
   // Generic module command. Only the APA rig's commands do anything here.
   send_command(payload) {
+    if (lightingCommand(this, payload, state)) return;
     const r = state.apa;
     const t = Date.now();
     switch (payload?.type) {

@@ -1,6 +1,6 @@
 # DMX lighting module (habitat day/night cycle via Enttec DMX USB Pro)
 
-- **Status:** proposed
+- **Status:** built 2026-11-11 (branch `feat/dmx-lighting-module`), not yet run on hardware; the patch waits on the installer (open questions below)
 - **Created:** 2026-11-11
 - **Owner:** Andrew SG
 - **CLAUDE.md ref:** Reliability / UX - "DMX lighting module"
@@ -11,6 +11,38 @@ light/dark cycle with a sunrise and sunset ramp. It runs continuously in the
 background, independent of recording sessions and of the controller being
 up. It joins sessions only to report its health and light status. The
 schedule and the strip patch are edited from the frontend.
+
+## Built (2026-11-11)
+
+Write-up in `docs/CHANGELOG.md` (2026-11-11). Everything in this spec exists
+as described, tested against the mock widget only. Where it differs:
+
+- **One new Socket.IO event, `lighting_state`.** The heartbeat (30 s) is too
+  slow for an override countdown, so `web.py` relays the module's pushed
+  state (every phase change, override, fault, config change) and the
+  replies to the lighting commands. The heartbeat still carries the
+  `lighting` block (guests can't send commands, so it's their source).
+- **Session file** is `<prefix>_lighting_(<seg>_<time>).csv` like every
+  other per-segment file, rotated with segments. Columns: `timestamp_ns`,
+  `timestamp_utc`, `mode`, `phase`, `event`, `detail`, then
+  `<box>_visible`/`<box>_ir` levels (percent, before trim). The schedule
+  and patch reach the session through the existing `config.json` export.
+- **`mode`** (shown in the UI and the CSV) is the schedule phase unless
+  something else is in charge: `override`, `blackout`, `test`, `fault` (no
+  widget), `waiting_for_clock`, `config_error`.
+- **IR mode `off`** added beside `constant` / `night_only`.
+- **Compact status** went on the habitat dashboard (a Lighting card in the
+  left column, with "Lights on 30 min" / "Blackout 30 min" / End for
+  admins), not the legacy `ModuleCard`.
+- **Clock trust** = PTP offsets (ptp4l and phc2sys) within 1 ms over the last
+  10 s, or `timedatectl` NTPSynchronized; latched for the life of the
+  process. The widget is opened (and a missing one reported) while waiting.
+- **Controller alert** (`health.py` `_check_lighting`): error on a widget
+  fault or a refused config, warning after 10 min without a trusted clock.
+- `dialout`: not needed, `saviour.service` runs as root.
+
+Not done: hardware acceptance (the list under "Testing and acceptance");
+lights on the habitat live map; dated schedule changes (out of scope).
 
 ## Background: DMX channels
 

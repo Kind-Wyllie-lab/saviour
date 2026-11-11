@@ -1,0 +1,11 @@
+.habitat-lighting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.habitat-lighting__head { display: flex; align-items: baseline; justify-content: space-between; }
+.habitat-lighting__head h3 { margin: 0; font-size: 1rem; }
+.habitat-lighting__link { font-size: 0.8rem; color: var(--accent-color); }
+.habitat-lighting__ov { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.85rem; }
+.habitat-lighting__actions { display: flex; flex-wrap: wrap; gap: 6px; }

@@ -99,6 +99,11 @@ class ModuleFacade:
         fn = getattr(self.module, "rfid_db_status", None)
         return fn() if callable(fn) else None
 
+    def get_lighting_status(self) -> dict | None:
+        """DMX lighting only: the lighting block; None for other types."""
+        fn = getattr(self.module, "lighting_status", None)
+        return fn() if callable(fn) else None
+
     def get_hardware_fault(self) -> str | None:
         """Human-readable reason a module's expected sensor/peripheral
         hardware is missing or failed to initialise, or None when healthy.

@@ -7,6 +7,7 @@ import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/Healt
 import HabitatLiveMap from "../../components/HabitatLiveMap/HabitatLiveMap";
 import HabitatModuleStatusList from "../../components/HabitatModuleStatusList/HabitatModuleStatusList";
 import PlacementPanel from "../../components/PlacementPanel/PlacementPanel";
+import HabitatLightingWidget from "../../components/HabitatLightingWidget/HabitatLightingWidget";
 
 function HabitatDashboard() {
   const { modules } = useModules();
@@ -24,6 +25,7 @@ function HabitatDashboard() {
           ) : (
             <>
               <HealthSummaryWidget />
+              <HabitatLightingWidget modules={modules} />
               <HabitatModuleStatusList modules={modules} sessions={sessionList} />
             </>
           )}

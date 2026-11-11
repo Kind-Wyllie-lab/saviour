@@ -497,7 +497,7 @@ def create_api_blueprint(web) -> Blueprint:
                 "compute a partial update. Retry shortly.",
                 409)
 
-        if web._recording_module_ids([module_id]):
+        if web._config_locked_module_ids([module_id]):
             return _error(
                 "module_recording",
                 "Cannot change config while this module is recording -- stop "

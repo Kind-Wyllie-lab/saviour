@@ -5,6 +5,7 @@ import CameraConfigCard       from "./CameraConfigCard/CameraConfigCard";
 import MicrophoneConfigCard   from "./MicrophoneConfigCard/MicrophoneConfigCard";
 import ControllerConfigCard   from './ControllerConfigCard/ControllerConfigCard';
 import TTLConfigCard          from './TTLConfigCard/TTLConfigCard';
+import DmxLightingConfigCard  from './DmxLightingConfigCard/DmxLightingConfigCard';
 
 function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   if (id === "controller") {
@@ -12,6 +13,11 @@ function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   }
   if (!module) {
     return <div className="config-card"><p style={{ padding: "12px", opacity: 0.5 }}>Loading module…</p></div>;
+  }
+  // Exact match: "lightning_camera" is a different module, and the
+  // substring tests below would be an easy trap for a lighting type.
+  if (module.type === "dmx_lighting") {
+    return <DmxLightingConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   }
   if (module.type?.includes("camera")) {
     return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} syncServerModule={syncServerModule} />;

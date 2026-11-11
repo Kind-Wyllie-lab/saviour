@@ -3191,3 +3191,58 @@ class TestReleaseDhcpLease:
         result = next(r for r in rec if r["name"] == "release_dhcp_lease_result")["args"][0]
         assert result == {"ok": False, "ip": "10.0.0.160", "mac": "aa",
                           "detail": "answers ping"}
+
+
+class TestDmxLighting:
+    """dmx_lighting: config stays editable while it records (the schedule
+    runs the animals' day), and its state reaches the frontend."""
+
+    def test_config_save_allowed_while_lighting_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = True
+            facade.get_modules.return_value = {
+                "dmx_lighting_ab12": {"type": "dmx_lighting"}}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            cfg = {"dmx_lighting": {"schedule": {"lights_on": "06:30"}}}
+            client.emit("save_module_config", {"id": "dmx_lighting_ab12", "config": cfg})
+            facade.send_command.assert_called_once_with(
+                "dmx_lighting_ab12", "set_config", cfg)
+
+    def test_other_recording_modules_still_locked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = True
+            facade.get_modules.return_value = {"camera_a": {"type": "camera"}}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_module_config", {"id": "camera_a", "config": {}})
+            facade.send_command.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+    def test_type_falls_back_to_the_id(self):
+        web, facade = _make_web_with_facade()
+        facade.is_module_recording.return_value = True
+        facade.get_modules.return_value = {}
+        assert web._config_locked_module_ids(
+            ["dmx_lighting_ab12", "camera_cd34"]) == ["camera_cd34"]
+
+    def test_pushed_state_relayed(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("dmx_lighting_ab12", {
+            "type": "lighting_state", "state": {"mode": "sunrise"}})
+        ev = [e for e in client.get_received() if e["name"] == "lighting_state"]
+        assert ev[0]["args"][0] == {"module_id": "dmx_lighting_ab12",
+                                    "state": {"mode": "sunrise"}}
+
+    def test_command_reply_relayed(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        web.handle_module_status("dmx_lighting_ab12", {
+            "type": "cmd_ack", "command": "set_override", "result": "error",
+            "error": "unknown compartment(s): Z9", "state": {"mode": "day"}})
+        ev = [e for e in client.get_received() if e["name"] == "lighting_state"]
+        assert ev[0]["args"][0]["error"] == "unknown compartment(s): Z9"
+        assert ev[0]["args"][0]["command"] == "set_override"

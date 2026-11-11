@@ -1348,3 +1348,16 @@ class TestSyncRig:
                         headers=_auth(password))
         assert r.status_code == 404
         web.facade.send_command.assert_not_called()
+
+
+class TestLightingConfigPatchWhileRecording:
+    def test_dmx_lighting_patch_allowed_while_recording(self):
+        web, password = _web()
+        web.facade.get_modules.return_value = {
+            "dmx_lighting_ab12": {"type": "dmx_lighting"}}
+        web.facade.is_module_recording.return_value = True
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/dmx_lighting_ab12/config",
+            json={"dmx_lighting": {"schedule": {"lights_on": "06:30"}}},
+            headers=_auth(password))
+        assert resp.status_code != 409

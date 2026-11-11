@@ -233,6 +233,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Fixed-width digits and no wrapping: the live rpm changes every update. */
+.apa-state-speed {
+  white-space: nowrap;
+}
+
+.apa-state-speed-error {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.apa-state-speed-error.is-clear {
+  visibility: hidden;
+}
+
 .apa-state-grid--stale {
   opacity: 0.45;
 }

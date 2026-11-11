@@ -2655,6 +2655,104 @@ class TestEphysHandlers:
                 "/api/ephys/upload?session=bad%20name", data={})
         assert resp.status_code == 400
 
+    @staticmethod
+    def _upload(share):
+        from src.controller.tests.test_ephys_accel import make_recording
+        ephys = os.path.join(share, "sess", "_ephys")
+        make_recording(ephys, "exp1/recording1", 1_000_000, [(0, 0)] * 3)
+        return ephys
+
+    def test_get_ephys_info_lists_recordings_and_results(self):
+        with tempfile.TemporaryDirectory() as share:
+            ephys = self._upload(share)
+            os.makedirs(os.path.join(ephys, "accel", "A1"))
+            with open(os.path.join(ephys, "accel", "A1", "summary.json"), "w") as f:
+                json.dump({"port": "A1", "aligned": False}, f)
+            web, _ = _make_web_with_facade(**{"export.mount_path": share})
+            client = _connected_client(web)
+            client.emit("get_ephys_info", {"session_name": "sess"})
+            info = _last(client.get_received(), "ephys_info")
+        assert info["uploaded"] is True
+        assert [r["rel"] for r in info["recordings"]] == ["exp1/recording1"]
+        assert info["recordings"][0]["aux_ports"] == ["A1"]
+        # no TTL log in this session, but a single recording is accepted
+        assert info["matched"]["rel"] == "exp1/recording1"
+        assert info["accel"]["A1"]["port"] == "A1"
+
+    def test_get_ephys_info_without_upload(self):
+        with tempfile.TemporaryDirectory() as share:
+            web, _ = _make_web_with_facade(**{"export.mount_path": share})
+            client = _connected_client(web)
+            client.emit("get_ephys_info", {"session_name": "sess"})
+            info = _last(client.get_received(), "ephys_info")
+        assert info["uploaded"] is False and info["recordings"] == []
+
+    def test_run_ephys_accel_requires_login(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("run_ephys_accel", {"session_name": "sess"})
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def _run_accel(self, share, tmpdir, params):
+        """Emit run_ephys_accel with the job thread run inline and the
+        subprocess faked; returns (updates, the command it would run)."""
+        web, _ = _make_web_with_facade(**{"export.mount_path": share})
+        client = _connected_client(web)
+        _login(web, client, tmpdir)
+        done = MagicMock(returncode=0, stderr="",
+                         stdout=json.dumps({"ok": True, "aligned": False,
+                                            "calibration": "auto"}))
+
+        class _Inline:
+            def __init__(self, target, **_kw):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with patch("src.controller.web.subprocess.run", return_value=done) as run, \
+             patch("src.controller.web.threading.Thread", _Inline):
+            client.emit("run_ephys_accel", {"session_name": "sess", **params})
+            rec = client.get_received()
+        updates = [r["args"][0] for r in rec if r["name"] == "ephys_accel_update"]
+        return updates, (run.call_args[0][0] if run.called else None)
+
+    def test_run_ephys_accel_runs_the_module(self):
+        with tempfile.TemporaryDirectory() as share, \
+             tempfile.TemporaryDirectory() as tmpdir:
+            self._upload(share)
+            updates, cmd = self._run_accel(
+                share, tmpdir, {"recording": "exp1/recording1", "port": "A1"})
+        assert cmd[1:3] == ["-m", "src.controller.ephys_accel"]
+        assert cmd[cmd.index("--recording") + 1] == "exp1/recording1"
+        assert cmd[cmd.index("--port") + 1] == "A1"
+        assert [u["state"] for u in updates] == ["running", "done"]
+        assert "ephys time only" in updates[-1]["stage"]
+
+    def test_run_ephys_accel_rejects_unknown_recording_and_bad_port(self):
+        with tempfile.TemporaryDirectory() as share, \
+             tempfile.TemporaryDirectory() as tmpdir:
+            self._upload(share)
+            u1, cmd1 = self._run_accel(share, tmpdir, {"recording": "../etc"})
+            u2, cmd2 = self._run_accel(share, tmpdir, {"port": "A1; rm"})
+        assert cmd1 is None and u1[-1]["error"] == "unknown recording"
+        assert cmd2 is None and u2[-1]["error"] == "invalid port"
+
+    def test_get_ephys_accel_plot(self):
+        with tempfile.TemporaryDirectory() as share:
+            d = os.path.join(share, "sess", "_ephys", "accel", "A1")
+            os.makedirs(d)
+            with open(os.path.join(d, "plot.json"), "w") as f:
+                json.dump({"t_s": [0.0], "series": {}}, f)
+            web, _ = _make_web_with_facade(**{"export.mount_path": share})
+            client = _connected_client(web)
+            client.emit("get_ephys_accel_plot", {"session_name": "sess", "port": "A1"})
+            ok = _last(client.get_received(), "ephys_accel_plot")
+            client.emit("get_ephys_accel_plot", {"session_name": "sess", "port": "../x"})
+            bad = _last(client.get_received(), "ephys_accel_plot")
+        assert ok["plot"]["t_s"] == [0.0]
+        assert bad["error"] == "invalid request"
+
 
 class TestSessionDiagnosticsHandler:
     def test_requires_login(self):

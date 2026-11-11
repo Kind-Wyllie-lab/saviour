@@ -1194,51 +1194,41 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 )
             self._compose_preview_queue.submit(request.sid, data or {})
 
-        @self.socketio.on("run_ephys_align")
-        def handle_run_ephys_align(data=None):
-            if not self._require_auth("session_error",
-                                      {"error": "Login required for this action"}):
-                return
-            import re
-            import shlex
-            session_name = (data or {}).get("session_name", "")
-            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
-                self.socketio.emit("ephys_align_update",
-                                   {"session_name": session_name,
-                                    "state": "error", "error": "invalid session"})
-                return
+        # -- Post-Process: ephys (uploaded Open Ephys data in <session>/_ephys) --
+
+        repo_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+
+        def _ephys_paths(session_name):
+            """(session_dir, ephys_dir), or None for an unsafe name."""
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name or ""):
+                return None
             share = self.config.get("export.mount_path",
                                     "/home/pi/controller_share")
             session_dir = os.path.join(share, session_name)
-            ephys_dir = os.path.join(session_dir, "_ephys")
-            repo_root = os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            )
-            cli = os.path.join(repo_root, "tools", "ephys", "align_cli.py")
-            # env2 carries pandas (the align tool needs it); fall back to
-            # whatever's running this process.
-            env2_py = os.path.join(repo_root, "env2", "bin", "python")
-            py = env2_py if os.path.exists(env2_py) else sys.executable
+            return session_dir, os.path.join(session_dir, "_ephys")
+
+        def _ephys_recordings(ephys_dir):
+            from src.controller import ephys_data
+            return (ephys_data.list_recordings(ephys_dir)
+                    if os.path.isdir(ephys_dir) else [])
+
+        def _run_ephys_job(event, session_name, cmd, stage, done_stage, name):
+            """Run a subprocess that prints a one-line JSON result
+            (align_cli / ephys_accel) and report progress on `event`."""
+            import shlex
 
             def _run():
-                self.socketio.emit("ephys_align_update",
-                                   {"session_name": session_name,
-                                    "state": "running", "stage": "fitting model"})
-                if not os.path.isdir(ephys_dir):
-                    self.socketio.emit("ephys_align_update",
-                                       {"session_name": session_name,
-                                        "state": "error",
-                                        "error": "no uploaded ephys dataset"})
-                    return
-                cmd = [py, cli, "--oe", ephys_dir, "--session", session_dir]
-                self.logger.info("ephys align: %s", shlex.join(cmd))
+                self.socketio.emit(event, {"session_name": session_name,
+                                           "state": "running", "stage": stage})
+                self.logger.info("%s: %s", name, shlex.join(cmd))
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True,
-                                          timeout=1800)
+                                          timeout=1800, cwd=repo_root)
                 except Exception as exc:  # noqa: BLE001
-                    self.socketio.emit("ephys_align_update",
-                                       {"session_name": session_name,
-                                        "state": "error", "error": str(exc)})
+                    self.socketio.emit(event, {"session_name": session_name,
+                                               "state": "error", "error": str(exc)})
                     return
                 out = (proc.stdout or "").strip().splitlines()
                 payload = {"session_name": session_name}
@@ -1248,19 +1238,171 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     payload["raw"] = (proc.stdout or "") + (proc.stderr or "")
                 if proc.returncode == 0 and payload.get("ok"):
                     payload["state"] = "done"
-                    payload["stage"] = (
-                        f"R2 {payload.get('r2', 0):.7f}, "
-                        f"residual max {payload.get('residual_max_ms', '?')} ms"
-                    )
+                    payload["stage"] = done_stage(payload)
                 else:
                     payload["state"] = "error"
                     payload.setdefault(
                         "error",
-                        (proc.stderr or proc.stdout or "align failed").strip()[-400:],
+                        (proc.stderr or proc.stdout or f"{name} failed").strip()[-400:],
                     )
-                self.socketio.emit("ephys_align_update", payload)
+                self.socketio.emit(event, payload)
 
-            threading.Thread(target=_run, daemon=True, name="ephys-align").start()
+            threading.Thread(target=_run, daemon=True, name=name).start()
+
+        @self.socketio.on("get_ephys_info")
+        def handle_get_ephys_info(data=None):
+            """What's uploaded for a session: its recordings (with AUX
+            ports), which one matches the session, the clock model and any
+            accelerometer results."""
+            from flask_socketio import emit as _emit
+
+            from src.controller import ephys_data
+            session_name = (data or {}).get("session_name", "")
+            paths = _ephys_paths(session_name)
+            if paths is None:
+                _emit("ephys_info", {"session_name": session_name,
+                                     "error": "invalid session"})
+                return
+            session_dir, ephys_dir = paths
+            info = {"session_name": session_name,
+                    "uploaded": os.path.isdir(ephys_dir), "recordings": [],
+                    "accel": {}}
+            try:
+                recs = _ephys_recordings(ephys_dir)
+                info["recordings"] = [r.summary() for r in recs]
+                if recs:
+                    try:
+                        rec, why = ephys_data.pick_recording(
+                            recs, ephys_data.saviour_span(session_dir))
+                        info["matched"] = {"rel": rec.rel, "reason": why}
+                    except ephys_data.EphysSelectionError as exc:
+                        info["matched"] = {"rel": None, "reason": str(exc)}
+                model_path = os.path.join(ephys_dir, "model.json")
+                if os.path.exists(model_path):
+                    with open(model_path, encoding="utf-8") as f:
+                        m = json.load(f)
+                    info["model"] = {k: m.get(k) for k in (
+                        "r2", "residual_max_ms", "drift_ms", "edges_used",
+                        "oe_recording", "pc_clock_offset_s", "pin_number")}
+                accel_root = os.path.join(ephys_dir, "accel")
+                if os.path.isdir(accel_root):
+                    for port in sorted(os.listdir(accel_root)):
+                        sp = os.path.join(accel_root, port, "summary.json")
+                        if os.path.exists(sp):
+                            with open(sp, encoding="utf-8") as f:
+                                info["accel"][port] = json.load(f)
+            except Exception as exc:  # noqa: BLE001 -- shown in the panel
+                self.logger.warning("get_ephys_info %s: %s", session_name, exc)
+                info["error"] = f"{type(exc).__name__}: {exc}"
+            _emit("ephys_info", info)
+
+        @self.socketio.on("run_ephys_align")
+        def handle_run_ephys_align(data=None):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            session_name = data.get("session_name", "")
+            paths = _ephys_paths(session_name)
+
+            def _err(msg):
+                self.socketio.emit("ephys_align_update",
+                                   {"session_name": session_name,
+                                    "state": "error", "error": msg})
+
+            if paths is None:
+                return _err("invalid session")
+            session_dir, ephys_dir = paths
+            if not os.path.isdir(ephys_dir):
+                return _err("no uploaded ephys dataset")
+            cli = os.path.join(repo_root, "tools", "ephys", "align_cli.py")
+            # env2 carries pandas (the align tool needs it); fall back to
+            # whatever's running this process.
+            env2_py = os.path.join(repo_root, "env2", "bin", "python")
+            py = env2_py if os.path.exists(env2_py) else sys.executable
+            cmd = [py, cli, "--oe", ephys_dir, "--session", session_dir]
+            recording = data.get("recording")
+            if recording:
+                if recording not in {r.rel for r in _ephys_recordings(ephys_dir)}:
+                    return _err("unknown recording")
+                cmd += ["--recording", recording]
+            if data.get("pin") not in (None, ""):
+                try:
+                    cmd += ["--pin", str(int(data["pin"]))]
+                except (TypeError, ValueError):
+                    return _err("invalid pin")
+
+            def _done(p):
+                off = p.get("pc_clock_offset_s")
+                return (f"R2 {p.get('r2', 0):.9f}, residual max "
+                        f"{p.get('residual_max_ms', '?')} ms"
+                        + (f", ephys PC clock {off:+.1f} s" if off is not None else ""))
+
+            _run_ephys_job("ephys_align_update", session_name, cmd,
+                           "fitting model", _done, "ephys-align")
+
+        @self.socketio.on("run_ephys_accel")
+        def handle_run_ephys_accel(data=None):
+            """Process one headstage's accelerometer (src/controller/
+            ephys_accel.py) into <session>/_ephys/accel/<port>/."""
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            session_name = data.get("session_name", "")
+            paths = _ephys_paths(session_name)
+
+            def _err(msg):
+                self.socketio.emit("ephys_accel_update",
+                                   {"session_name": session_name,
+                                    "state": "error", "error": msg})
+
+            if paths is None:
+                return _err("invalid session")
+            session_dir, ephys_dir = paths
+            recs = _ephys_recordings(ephys_dir)
+            if not recs:
+                return _err("no uploaded ephys recording")
+            cmd = [sys.executable, "-m", "src.controller.ephys_accel",
+                   "--ephys", ephys_dir, "--session", session_dir]
+            recording = data.get("recording")
+            if recording:
+                if recording not in {r.rel for r in recs}:
+                    return _err("unknown recording")
+                cmd += ["--recording", recording]
+            port = data.get("port")
+            if port:
+                if not re.fullmatch(r"[A-Z]\d{0,2}", str(port)):
+                    return _err("invalid port")
+                cmd += ["--port", str(port)]
+
+            def _done(p):
+                cal = p.get("calibration")
+                return ("aligned to session time" if p.get("aligned")
+                        else "ephys time only (no matching clock model)") + (
+                    f"; {cal} calibration" if cal else "")
+
+            _run_ephys_job("ephys_accel_update", session_name, cmd,
+                           "reading accelerometer", _done, "ephys-accel")
+
+        @self.socketio.on("get_ephys_accel_plot")
+        def handle_get_ephys_accel_plot(data=None):
+            from flask_socketio import emit as _emit
+            data = data or {}
+            session_name = data.get("session_name", "")
+            port = str(data.get("port", ""))
+            paths = _ephys_paths(session_name)
+            reply = {"session_name": session_name, "port": port}
+            if paths is None or not re.fullmatch(r"[A-Z]\d{0,2}", port):
+                _emit("ephys_accel_plot", {**reply, "error": "invalid request"})
+                return
+            path = os.path.join(paths[1], "accel", port, "plot.json")
+            try:
+                with open(path, encoding="utf-8") as f:
+                    reply["plot"] = json.load(f)
+            except (OSError, ValueError) as exc:
+                reply["error"] = f"no accelerometer plot: {exc}"
+            _emit("ephys_accel_plot", reply)
 
 
     # ------------------------------------------------------------------ #

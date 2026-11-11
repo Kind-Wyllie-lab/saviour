@@ -121,3 +121,232 @@
   cursor: pointer;
   margin-bottom: 8px;
 }
+
+/* ---- Ephys panel: buttons, fields, accelerometer ------------------------ */
+
+/* .btn / .btn-secondary / .btn-link have no global style; scoped here the
+   same way the compose panel scopes its own. */
+.ephys-panel .btn,
+.ephys-panel .btn-secondary,
+.ephys-panel .btn-link {
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.4rem 1rem;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ephys-panel .btn {
+  border: none;
+  background-color: var(--accent-color, #3f7cac);
+  color: #fff;
+}
+.ephys-panel .btn:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--accent-color, #3f7cac) 82%, #000);
+}
+.ephys-panel .btn-secondary {
+  background: none;
+  color: var(--text-color);
+  border: 1px solid var(--border-color, #bbb);
+}
+.ephys-panel .btn-secondary:hover:not(:disabled) {
+  color: var(--accent-color, #4a90d9);
+  border-color: var(--accent-color, #4a90d9);
+}
+.ephys-panel .btn-link {
+  background: none;
+  border: none;
+  color: var(--accent-color, #4a90d9);
+  padding: 0.4rem 0.2rem;
+}
+.ephys-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ephys-panel__run {
+  flex-wrap: wrap;
+}
+.ephys-panel__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 0;
+}
+.ephys-panel__field select {
+  max-width: min(520px, 70vw);
+  font-weight: 400;
+}
+.ephys-panel__model {
+  font-size: 0.82rem;
+  color: var(--secondary-text-color);
+}
+.ephys-panel__warnings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+  color: var(--secondary-text-color);
+}
+
+.ephys-accel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.ephys-accel h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.ephys-accel__result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ephys-accel__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 18px;
+  margin: 0;
+  font-size: 0.82rem;
+}
+.ephys-accel__facts dt {
+  color: var(--secondary-text-color);
+  font-size: 0.75rem;
+}
+.ephys-accel__facts dd {
+  margin: 0;
+}
+
+/* Chart series colours: categorical slots 1-6, stepped separately for the
+   dark surface (validated palette, not an automatic flip). */
+.accel-chart {
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  position: relative;
+  width: 100%;
+  font-size: 0.75rem;
+  user-select: none;
+}
+body.dark-mode .accel-chart {
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+}
+.accel-chart svg {
+  display: block;
+  overflow: visible;
+}
+.accel-chart__legend {
+  position: absolute;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  height: 18px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.accel-chart__title {
+  font-weight: 600;
+  color: var(--text-color);
+}
+.accel-chart__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--secondary-text-color);
+}
+.accel-chart__key i,
+.accel-chart__tip-row i {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+.accel-chart__grid {
+  stroke: var(--border-color);
+  stroke-width: 1;
+}
+.accel-chart__zero {
+  stroke: var(--secondary-text-color);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.accel-chart__tick {
+  fill: var(--secondary-text-color);
+  font-size: 11px;
+}
+.accel-chart__cursor {
+  stroke: var(--text-color);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.accel-chart__dot {
+  stroke: var(--card-bg-color);
+  stroke-width: 2;
+}
+.accel-chart__tip {
+  position: absolute;
+  top: 20px;
+  min-width: 170px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  z-index: 2;
+}
+.accel-chart__tip-time {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.accel-chart__tip-time span {
+  font-weight: 400;
+  color: var(--secondary-text-color);
+}
+.accel-chart__tip-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.5;
+}
+.accel-chart__tip-row span {
+  color: var(--secondary-text-color);
+}
+.accel-chart__tip-row b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.accel-chart__axis-label {
+  text-align: center;
+  color: var(--secondary-text-color);
+  margin-top: 2px;
+}
+.ephys-panel__stage {
+  font-size: 0.82rem;
+  color: var(--secondary-text-color);
+}
+.ephys-panel__stage--running,
+.ephys-panel__stage--queued {
+  color: var(--accent-color, #4a90d9);
+}
+.ephys-panel__stage--done {
+  color: var(--success-color, #2e7d32);
+}
+.ephys-panel__stage--error {
+  color: var(--error-color, #c62828);
+}

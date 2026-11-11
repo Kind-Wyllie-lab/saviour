@@ -1,6 +1,6 @@
 # Ephys headstage accelerometer (Post-Process)
 
-- **Status:** proposed
+- **Status:** in progress (recording choice + phase 1 built 2026-11-11; phases 2-3 open)
 - **Created:** 2026-11-10
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (Post-Process).
@@ -47,75 +47,55 @@ repo) produced a summary PNG and a 3D orientation video from it.
   matches experiment 1. The recording that goes with experiment 2 isn't in the
   dataset.
 
-## Prerequisite: pick the right recording (affects alignment today)
+## Built: recording choice + phase 1 (2026-11-11, branch `feat/ephys-accelerometer`)
 
-`tool1_fit_alignment.find_oe_ttl_dir` returns the first TTL folder that
-`os.walk` happens to reach. With a two-experiment upload, `run_ephys_align` can
-fit the session against the wrong experiment, and nothing flags it: the fit
-can still look acceptable if the pulse train is similar.
+Write-up in `docs/CHANGELOG.md` (2026-11-11). In short:
 
-Fix in `align_cli.py` (not the vendored GUI module):
-- List every `recordingN` under `_ephys/` with its start time
-  (`sync_messages.txt` software time) and duration (samples / rate).
-- Choose the one whose span overlaps the session's TTL CSV span the most. If
-  none overlaps, or two overlap about equally, stop with an error that lists the
-  candidates.
-- Write the chosen recording's path into `model.json` (`oe_recording`). The
-  accelerometer step reads it from there rather than discovering the recording
-  again.
-- Allow a manual override (`--recording`, plus a selector in the panel).
+- **Recording choice** (`src/controller/ephys_data.py`, used by
+  `tools/ephys/align_cli.py` and the accelerometer step). It lists every
+  recording in the upload and picks the one whose span overlaps the session's
+  TTL log. No overlap, or two about equal, is an error that lists the
+  candidates; `--recording` / the panel's selector override it. `model.json`
+  records `oe_recording`, and the accelerometer step reads it from there.
+  Natalie's upload: `openfield-2-123850` → experiment 1, 135 of 135 s.
+- **Sync pin**: `align_cli` defaulted to TTL pin 1 and the page never passed
+  a pin, so alignment from the page could never have fitted a rig whose sync
+  train is on another pin (Natalie's: pin 19). It now uses the pin logged in
+  `pseudorandom` mode, else the only pin (`ephys_data.sync_pin`).
+- **Ephys PC clock**: alignment reports `pc_clock_offset_s`, how far the
+  acquisition PC's clock was from PTP at the first sample. Natalie's PC was
+  10.85 s fast. The recording choice leans on that clock, so it is coarse: fine
+  for telling sessions minutes apart, not seconds. (This also corrects an
+  earlier reading: the ~13 pulses missing from experiment 1 are at the end,
+  where ephys stopped ~10 s before SAVIOUR, not the start.)
+- **`src/controller/ephys_accel.py`** (numpy only) → `<session>/_ephys/accel/
+  <port>/accel.csv` (100 Hz), `summary.json`, `plot.json`, as planned. Gravity
+  is a 1 s boxcar applied twice (zero phase). Calibration falls back to
+  `DEFAULT_CALIBRATION` (this headstage's fit) when the auto fit fails a gate
+  (0.2-0.6 V/g, residual ≤ 3 % of 1 g, ≥ 25° spread of still orientations),
+  flagged as "default" with a warning. A clock model fitted on a different
+  recording is not applied (output stays in ephys time, with a warning).
+- **Web**: `get_ephys_info` (recordings + AUX ports, match, model, results),
+  `run_ephys_accel` → `ephys_accel_update`, `get_ephys_accel_plot`;
+  `run_ephys_align` takes `recording` / `pin`. Jobs share one subprocess
+  runner.
+- **Panel**: reads what is already on disk (it used to forget an upload when
+  you left the page), recording selector, clock-model line, Accelerometer
+  section with calibration/quality facts, the three-chart SVG with a hover
+  readout, Download CSV. `dev:mock` covers it (`src/mock/ephysMock.js`).
 
-Accept: on the Natalie upload, `openfield-2-123850` picks experiment 1 and says
-so in the result.
+Acceptance, as measured:
+- Experiment 2: offset 0.496 / 0.498 / 0.492 V, 0.332 V/g (auto) ✓. The 219 s
+  burst is masked where clipping dominates and stays within ±1.5 g; it still
+  shows as a ~1.9 g ODBA spike, which looks like a genuine knock that saturated
+  the sensor, so it is flagged rather than removed.
+- Experiment 1 (headstage at rest): the auto fit fails its gates (0.0066 V/g)
+  → default calibration, Z 0.976 g ✓.
+- Synthetic recordings (`test_ephys_accel.py`): pitch/roll within 1°, offsets
+  within 0.01 V, dips ignored, burst flagged and filled ✓.
 
-## Phase 1: process and plot (Ephys panel)
-
-**Backend: `src/controller/ephys_accel.py`** (numpy only; the controller env has
-no scipy or matplotlib).
-- `find_aux_channels(oebin)`: AUX channels grouped by headstage port (`A1`,
-  `B1`, ...). Empty means the panel says "no accelerometer channels recorded".
-- `load_aux(recording, port)`: memmap with stride 4 → mask ceiling / below 0 V
-  → 10 ms median bins → interpolate gaps. Returns 100 Hz volts, an invalid
-  mask, and OE timestamps.
-- `calibrate(v)`: sphere fit as above, with a quality check (orientation spread
-  and fit residual). If it fails, use the stored calibration (phase 3) and warn.
-- Derived signals: acceleration in g; gravity (a numpy low-pass at 1 Hz, e.g.
-  forward-backward moving average or FFT; it doesn't need to be a Butterworth);
-  pitch and roll; ODBA (sum of absolute dynamic acceleration, 0.5 s mean).
-- Time: OE seconds come from `timestamps.npy`. When `model.json` exists, SAVIOUR
-  time = `(oe_s − offset) / scale + sv_t0` (the inverse of tool3's
-  `saviour_ns_to_oe_seconds`), so each row also carries `timestamp_ns`.
-- **Outputs** in `<session>/_ephys/accel/<port>/`:
-  - `accel.csv`: 100 Hz; `timestamp_ns` (blank if not aligned), `oe_s`,
-    `ax_g, ay_g, az_g`, `pitch_deg, roll_deg`, `odba_g`, `invalid`.
-  - `summary.json`: recording, port, calibration (offset_V, V_per_g, method,
-    fit quality), clip ceiling in g, invalid fraction per axis, duration, and
-    whether it's aligned.
-  - `plot.json`: a reduced copy for the browser (min/max per bucket, about 2000
-    buckets per series).
-- Runs as a background job like `run_ephys_align`: socket `run_ephys_accel` →
-  `ephys_accel_update` (queued/running/done/error, stage).
-
-**Frontend: an "Accelerometer" section in `EphysAlignPanel`** (or a sibling
-panel once the upload exists).
-- Recording + port selectors (pre-filled from `model.json` / detection), a Run
-  button, the job state.
-- The summary chart, drawn by hand as React SVG from `plot.json` (the frontend
-  has no charting library and this doesn't justify one). Three stacked charts on
-  one time axis: X/Y/Z in g; pitch and roll; ODBA. Hover crosshair with values,
-  legend + direct labels, categorical slots 1-3, light and dark themes. The time
-  axis is session time when aligned, ephys time otherwise (labelled as such).
-- Calibration and data-quality line from `summary.json` (offset, V/g, invalid
-  %, "heading not measurable"), plus Download CSV.
-
-Accept:
-- On the Natalie upload: experiment 2 gives offset 0.49 ± 0.01 V and 0.34 ± 0.01
-  V/g; the 219 s burst doesn't appear in the chart; experiment 1 gives a total
-  of 1.00 ± 0.03 g at rest.
-- A synthetic `continuous.dat` fixture in pytest (known orientations, injected
-  clipped and below-0 V samples) round-trips to the right pitch/roll within 1°.
-
-*About two days.*
+Not yet done: run on a controller (the jobs, upload size, timing on a Pi 5);
+the chart at phone width wasn't viewed (the test browser wouldn't resize).
 
 ## Phase 2: compose tiles (layout editor)
 

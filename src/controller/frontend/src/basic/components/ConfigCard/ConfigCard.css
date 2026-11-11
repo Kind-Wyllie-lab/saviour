@@ -422,23 +422,6 @@ min-width: 300px;
   border-color: var(--accent-color, #3f7cac);
 }
 
-.mic-colormap-picker__swatch img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.mic-colormap-picker__swatch-fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  font-size: 0.55rem;
-  line-height: 1;
-}
-
 /* Save + Reset button row */
 .config-action-buttons {
   display: flex;

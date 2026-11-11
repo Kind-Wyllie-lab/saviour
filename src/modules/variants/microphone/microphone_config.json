@@ -52,7 +52,10 @@
         "plot_mode": "spectrogram",
         "freq_range": "band",
         "layout": "stacked",
-        "colormap": "inferno"
+        "colormap": "inferno",
+        "colormap_stops": [],
+        "call_bands": [],
+        "_palette_note": "colormap: a built-in palette name (src/shared/spectrogram_palettes.json). colormap_stops: [[pos 0-1, '#rrggbb'], ...] for a custom palette, written by the controller; overrides colormap when set. call_bands: [{label, lo_hz, hi_hz, palette, enabled}] -- each band drawn in its own palette, everything outside the bands grey. See plans/spectrogram-palettes-and-call-bands.md."
     },
     "recording": {
         "_recording_filetype": "flac"

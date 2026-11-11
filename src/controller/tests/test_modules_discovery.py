@@ -129,3 +129,30 @@ class TestModuleDiscoveryRefreshesNetworkIdentity:
         # Non-identity state must still be preserved
         assert tracked.status == ModuleStatus.RECORDING
         assert tracked.config == {"camera": {"fps": 30}}
+
+    def test_blank_version_is_filled_by_the_mdns_announcement(self):
+        """Seen after a fleet deploy (2026-11-11): the microphone's config reply
+        reached the restarted controller before its mDNS announcement, so it was
+        auto-registered with version "" and the announcement only refreshed the
+        IP -- the module showed no version until the next controller restart."""
+        mgr = _make_modules()
+        existing = Module(id="microphone_4703", name="microphone_4703",
+                          type="microphone", version="", ip="")
+        mgr.add_module(existing)
+        existing.status = ModuleStatus.RECORDING
+        mgr.module_discovery(Module(
+            id="microphone_4703", name="A", type="microphone",
+            version="v0.9-826-g4bbd8315", ip="10.0.0.156",
+        ))
+        tracked = mgr._modules["microphone_4703"]
+        assert tracked.version == "v0.9-826-g4bbd8315"
+        assert tracked.ip == "10.0.0.156"
+        assert tracked.status == ModuleStatus.RECORDING
+        assert tracked is existing
+
+    def test_announcement_without_a_version_keeps_the_known_one(self):
+        mgr = _make_modules()
+        existing = _register(mgr)  # version="1.0"
+        mgr.module_discovery(Module(id="camera_abc", name="camera_abc",
+                                    type="camera", version="", ip="10.0.0.2"))
+        assert existing.version == "1.0"

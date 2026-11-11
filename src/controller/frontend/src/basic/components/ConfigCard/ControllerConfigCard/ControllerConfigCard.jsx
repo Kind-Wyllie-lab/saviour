@@ -12,6 +12,10 @@ import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
 import useLiveThemePreview from "/src/hooks/useLiveThemePreview";
+import FontImportModal from "/src/basic/components/FontImportModal/FontImportModal";
+import useLiveFontPreview from "/src/hooks/useLiveFontPreview";
+import { BUILTIN_FONTS, DEFAULT_FONT_ID, frontendFonts } from "/src/basic/utils/fonts";
+import { formatBytes } from "/src/basic/pages/Recording/sessionFormat";
 import {
   listThemes, themeTokens, frontendTheme, DEFAULT_THEME_ID, BUILTIN_THEMES,
 } from "/src/basic/utils/themes";
@@ -87,6 +91,7 @@ function ControllerConfigCard() {
   // null == closed; "new" == the blank import flow; a theme object == editing
   // that custom theme.
   const [themeModal, setThemeModal] = useState(null);
+  const [fontModal, setFontModal] = useState(false);
   const saveTimerRef = useRef(null);
 
   // The theme tile and dark mode toggle preview on the whole page as soon as
@@ -96,6 +101,10 @@ function ControllerConfigCard() {
   const previewFe = formData?.frontend;
   const livePreview = useMemo(() => (previewFe ? frontendTheme(previewFe) : null), [previewFe]);
   useLiveThemePreview(livePreview?.tokens ?? null, livePreview?.darkMode ?? true);
+  // Same for the font pickers.
+  useLiveFontPreview(previewFe ?? null);
+  const customFonts = previewFe?.custom_fonts ?? [];
+  const previewFonts = frontendFonts(previewFe);
 
   useEffect(() => {
     socket.emit("get_controller_config");
@@ -480,6 +489,88 @@ function ControllerConfigCard() {
                     has its own light and dark variant.
                   </span>
                 </div>
+                <div className="form-field frontend-font-field">
+                  <label>Fonts:</label>
+                  <div className="font-picker">
+                    <div className="font-picker-selects">
+                      {[
+                        { key: "font_body", label: "Body text", same: false },
+                        { key: "font_heading", label: "Headings", same: true },
+                      ].map(({ key, label, same }) => (
+                        <label key={key} className="font-picker-select" htmlFor={`frontend-${key}`}>
+                          <span>{label}</span>
+                          <select
+                            id={`frontend-${key}`}
+                            value={formData?.frontend?.[key] ?? (same ? "" : DEFAULT_FONT_ID)}
+                            onChange={e => handleChange(["frontend", key], e)}
+                          >
+                            {same && <option value="">Same as body text</option>}
+                            <optgroup label="On each device">
+                              {BUILTIN_FONTS.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                            </optgroup>
+                            {customFonts.length > 0 && (
+                              <optgroup label="Added fonts">
+                                {customFonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                              </optgroup>
+                            )}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="font-sample">
+                      <span className="font-sample-head" style={{ fontFamily: previewFonts.heading }}>
+                        Recording sessions
+                      </span>
+                      <span style={{ fontFamily: previewFonts.body }}>
+                        Session 1TS-1627 · camera_d074 · 30 fps · PTP offset 12 µs
+                      </span>
+                    </div>
+                    {customFonts.length > 0 && (
+                      <ul className="font-list">
+                        {customFonts.map(f => (
+                          <li key={f.id}>
+                            <span className="font-list-name" style={{ fontFamily: `"${f.name}", sans-serif` }}>{f.name}</span>
+                            <span className="font-list-meta">
+                              {f.faces.length} file{f.faces.length === 1 ? "" : "s"}, {formatBytes(f.bytes)}
+                              {f.source?.kind === "google" ? " · Google Fonts" : " · uploaded files"}
+                            </span>
+                            {loggedIn && (
+                              <button
+                                type="button"
+                                className="font-list-delete"
+                                title={`Delete "${f.name}"`}
+                                onClick={() => {
+                                  if (window.confirm(`Delete the "${f.name}" font? Anywhere it's used falls back to System.`)) {
+                                    socket.emit("delete_custom_font", { id: f.id });
+                                  }
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="theme-picker-actions">
+                      <button
+                        type="button"
+                        className="teams-test-btn"
+                        onClick={() => setFontModal(true)}
+                        disabled={!loggedIn}
+                        title={loggedIn ? undefined : "Login required for this action"}
+                      >
+                        + Add font
+                      </button>
+                    </div>
+                  </div>
+                  <span className="frontend-accent-hint">
+                    Choices preview on this page; Save applies them across every dashboard
+                    variant. &quot;On each device&quot; fonts use what each computer has
+                    installed, so they can differ between computers. Added fonts are stored
+                    on the controller and look the same everywhere, with no internet needed.
+                  </span>
+                </div>
               </>
             )}
           </div>
@@ -496,6 +587,18 @@ function ControllerConfigCard() {
           </div>
         </div>
       </div>
+
+      {fontModal && (
+        <FontImportModal
+          onClose={() => setFontModal(false)}
+          onSaved={font => {
+            if (!font) return;
+            // Pick the new font for body text (unsaved, previewed) so the
+            // operator sees it straight away; Save keeps it.
+            setFormData(fd => ({ ...fd, frontend: { ...(fd?.frontend || {}), font_body: font.id } }));
+          }}
+        />
+      )}
 
       {themeModal && (
         <ThemeImportModal

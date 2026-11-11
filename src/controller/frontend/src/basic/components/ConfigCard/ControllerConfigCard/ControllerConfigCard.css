@@ -304,3 +304,109 @@
   color: var(--recording-color);
   border-color: var(--recording-color);
 }
+
+/* Frontend tab -> Fonts: stacked like the theme field. */
+.frontend-font-field {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.frontend-font-field > label:first-child {
+  flex: none;
+  margin-bottom: 4px;
+}
+
+.font-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.font-picker-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.font-picker-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 0.85em;
+}
+
+.font-picker-select > span {
+  opacity: 0.7;
+}
+
+.font-picker-select select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+}
+
+.font-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg-color);
+  overflow-wrap: anywhere;
+}
+
+.font-sample-head {
+  font-size: 1.3em;
+  font-weight: 600;
+}
+
+.font-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.font-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.font-list-name {
+  font-weight: 600;
+}
+
+.font-list-meta {
+  flex: 1;
+  font-size: 0.8em;
+  opacity: 0.65;
+}
+
+.font-list-delete {
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 17px;
+  background: var(--card-bg-color);
+  color: var(--secondary-text-color);
+  cursor: pointer;
+}
+
+.font-list-delete:hover,
+.font-list-delete:focus-visible {
+  color: #cc3333;
+  border-color: #cc3333;
+}

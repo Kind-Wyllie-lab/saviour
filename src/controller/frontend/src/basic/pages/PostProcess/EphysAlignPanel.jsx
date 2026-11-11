@@ -1,28 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import socket from "/src/socket";
 import { formatBytes } from "../Recording/sessionFormat";
-
-// Short-lived token for the plain-HTTP upload (same mechanism the file
-// downloads use — the endpoint has no Socket.IO session of its own).
-function getUploadToken() {
-  return new Promise((resolve, reject) => {
-    const done = (fn) => (d) => {
-      socket.off("download_token", ok);
-      socket.off("auth_required", no);
-      clearTimeout(t);
-      fn(d);
-    };
-    const ok = done((d) => resolve(d.token));
-    const no = done(() => reject(new Error("Login required to upload")));
-    const t = setTimeout(
-      () => done(() => reject(new Error("Timed out requesting upload token")))(),
-      8000,
-    );
-    socket.on("download_token", ok);
-    socket.on("auth_required", no);
-    socket.emit("request_download_token");
-  });
-}
+import { getUploadToken } from "/src/basic/utils/uploadToken";
 
 export default function EphysAlignPanel({ sessionName }) {
   const [dragOver, setDragOver] = useState(false);

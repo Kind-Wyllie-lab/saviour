@@ -1,9 +1,21 @@
 import { useEffect } from "react";
 import socket from "../socket";
 import { frontendTheme, THEME_TOKENS } from "/src/basic/utils/themes";
+import { fontFaceCss, frontendFonts } from "/src/basic/utils/fonts";
 import { setConfiguredDarkMode } from "./useLiveThemePreview";
 
 const STYLE_TAG_ID = "controller-theme-override";
+const FONT_TAG_ID = "controller-font-override";
+
+function styleTag(id) {
+  let tag = document.getElementById(id);
+  if (!tag) {
+    tag = document.createElement("style");
+    tag.id = id;
+    document.head.appendChild(tag);
+  }
+  return tag;
+}
 
 /**
  * Applies the controller-configured colour theme and dark/light mode.
@@ -36,6 +48,10 @@ const STYLE_TAG_ID = "controller-theme-override";
  * Unsaved themes (the Frontend settings tab, ThemeImportModal) are previewed
  * over this by useLiveThemePreview.
  *
+ * Fonts ride along in a second tag: @font-face rules for every added font
+ * (config.frontend.custom_fonts, served from /fonts/) and the --font-body /
+ * --font-heading variables index.css reads (basic/utils/fonts.js).
+ *
  * Uses a named handler so cleanup removes exactly this listener via
  * socket.off(event, handler) -- ControllerConfigCard.jsx listens on the same
  * "controller_config_response" event, and the bare socket.off(event) form
@@ -56,13 +72,13 @@ export default function useControllerTheme() {
         .map((key) => `${key}: ${tokens[key]};`)
         .join(" ");
 
-      let styleTag = document.getElementById(STYLE_TAG_ID);
-      if (!styleTag) {
-        styleTag = document.createElement("style");
-        styleTag.id = STYLE_TAG_ID;
-        document.head.appendChild(styleTag);
-      }
-      styleTag.textContent = `:root, body.dark-mode { ${decls} }`;
+      styleTag(STYLE_TAG_ID).textContent = `:root, body.dark-mode { ${decls} }`;
+
+      const fe = data?.config?.frontend;
+      const fonts = frontendFonts(fe);
+      styleTag(FONT_TAG_ID).textContent = `${fontFaceCss(fe?.custom_fonts)}
+`
+        + `:root { --font-body: ${fonts.body}; --font-heading: ${fonts.heading}; }`;
     };
 
     socket.on("controller_config_response", handleConfig);

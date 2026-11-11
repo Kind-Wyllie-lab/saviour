@@ -47,6 +47,9 @@ from src.controller import compose, framesync_check, rest_api
 from src.controller import system_update as su
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
+from src.controller.fonts import MAX_UPLOAD_BYTES as FONT_MAX_UPLOAD_BYTES
+from src.controller.fonts import MIME_BY_EXT as FONT_MIME_BY_EXT
+from src.controller.fonts import FontError, FontStore
 from src.controller.storage_forecast import fill_forecast
 from src.controller.themes import ThemeError, ThemeStore
 from src.shared.cifs import cifs_mount_cmd, unmount
@@ -280,6 +283,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         # into every controller_config_response as frontend.custom_themes.
         self.theme_store = ThemeStore(
             os.path.join(os.path.dirname(self.config.active_config_path), "themes"),
+            logger=self.logger,
+        )
+
+        # Operator-added fonts (uploaded by a browser, served from /fonts/ so
+        # browsers without internet get them). Injected into every
+        # controller_config_response as frontend.custom_fonts.
+        self.font_store = FontStore(
+            os.path.join(os.path.dirname(self.config.active_config_path), "fonts"),
             logger=self.logger,
         )
 
@@ -682,12 +693,15 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         self.socketio.emit("clients_update", self._clients_payload())
 
     def _controller_config_payload(self) -> dict:
-        """facade.get_config() with frontend.custom_themes populated from the
-        on-disk ThemeStore -- the frontend treats that list as part of the
-        config, but it's never persisted to active_config.json (see
-        handle_save_controller_config, which strips it back out)."""
+        """facade.get_config() with frontend.custom_themes and
+        frontend.custom_fonts populated from the on-disk ThemeStore and
+        FontStore -- the frontend treats both lists as part of the config,
+        but they're never persisted to active_config.json (see
+        handle_save_controller_config, which strips them back out)."""
         config = self.facade.get_config()
-        config.setdefault("frontend", {})["custom_themes"] = self.theme_store.list()
+        frontend = config.setdefault("frontend", {})
+        frontend["custom_themes"] = self.theme_store.list()
+        frontend["custom_fonts"] = self.font_store.list()
         return config
 
 
@@ -1893,6 +1907,40 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             )
             return jsonify({"files": written, "bytes": total, "dir": dest_root})
 
+        @self.app.route("/fonts/<font_id>/<filename>")
+        def serve_font(font_id, filename):
+            """An added font's file (FontStore). No auth: fonts aren't
+            sensitive and every viewer, signed in or not, needs them. Names
+            are content hashes, so a long immutable cache is safe."""
+            path = self.font_store.file_path(font_id, filename)
+            if not path:
+                return "Not found", 404
+            resp = send_file(path, mimetype=FONT_MIME_BY_EXT[filename.rsplit(".", 1)[1]])
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return resp
+
+        @self.app.route("/api/fonts", methods=["POST"])
+        def upload_font():
+            """Multipart upload of one font from the Frontend settings tab: a
+            `meta` JSON field (see FontStore.save) plus one file field per
+            face. The browser fetched the files (from Google Fonts, or files
+            dropped on the page), so the controller needs no internet. Same
+            short-lived token auth as the session downloads."""
+            if not self._check_download_token(request.args.get("token")):
+                return jsonify({"error": "Login required to add fonts"}), 401
+            if (request.content_length or 0) > FONT_MAX_UPLOAD_BYTES:
+                return jsonify({"error": "Font upload is too large"}), 413
+            try:
+                meta = json.loads(request.form.get("meta") or "{}")
+                files = {key: f.read(FONT_MAX_UPLOAD_BYTES + 1)
+                         for key, f in request.files.items()}
+                saved = self.font_store.save(meta, files)
+            except ValueError as e:   # FontError, or malformed meta JSON
+                return jsonify({"error": str(e)}), 400
+            self.socketio.emit("controller_config_response",
+                               {"config": self._controller_config_payload()})
+            return jsonify({"font": saved})
+
         @self.app.route("/api/ptp_history.csv")
         def download_ptp_history():
             if not self._check_download_token(request.args.get("token")):
@@ -2533,6 +2581,20 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             self.socketio.emit("controller_config_response",
                                {"config": self._controller_config_payload()})
 
+        @self.socketio.on('delete_custom_font')
+        def handle_delete_custom_font(data):
+            if not self._require_auth("custom_font_error",
+                                      {"error": "Login required for this action"}):
+                return
+            try:
+                self.font_store.delete((data or {}).get("id", ""))
+            except FontError as e:
+                self.socketio.emit("custom_font_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.socketio.emit("controller_config_response",
+                               {"config": self._controller_config_payload()})
+
         @self.socketio.on('delete_custom_theme')
         def handle_delete_custom_theme(data):
             if not self._require_auth("custom_theme_error",
@@ -2596,11 +2658,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             old_export = old_config.get("export", {})
             old_rfid_db = old_config.get("rfid_db", {})
             new_config = _filter_private_keys(data.get("config", {}))
-            # custom_themes rides in the config payload for the frontend's
-            # convenience but lives only as on-disk theme files -- never let a
-            # save round-trip it into active_config.json.
+            # custom_themes / custom_fonts ride in the config payload for the
+            # frontend's convenience but live only as on-disk files -- never
+            # let a save round-trip them into active_config.json.
             if isinstance(new_config.get("frontend"), dict):
                 new_config["frontend"].pop("custom_themes", None)
+                new_config["frontend"].pop("custom_fonts", None)
             self.facade.set_config(new_config)
             self.socketio.emit("controller_config_response", {
                 "config": self._controller_config_payload()

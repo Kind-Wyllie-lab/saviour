@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from src.controller.dashboard_views import DashboardViewStore
+from src.controller.fonts import FontStore
 from src.controller.recording import RecordingSession
 from src.controller.web import (
     Web,
@@ -655,11 +656,108 @@ class TestReadOnlySocketIOHandlers:
         received = client.get_received()
         assert received[0]["name"] == "controller_config_response"
         # _controller_config_payload() always injects the on-disk custom
-        # themes list (empty here) alongside the persisted config.
+        # themes and fonts lists (empty here) alongside the persisted config.
         assert received[0]["args"][0]["config"] == {
             "interface": {"web_interface_port": 5000},
-            "frontend": {"custom_themes": []},
+            "frontend": {"custom_themes": [], "custom_fonts": []},
         }
+
+
+class TestFonts:
+    """/api/fonts upload, /fonts/<id>/<file> serving, delete_custom_font."""
+
+    WOFF2 = b"wOF2" + bytes(60)
+
+    def _web(self, tmpdir):
+        web, facade = _make_web_with_facade()
+        facade.get_config.return_value = {}
+        web.font_store = FontStore(os.path.join(tmpdir, "fonts"))
+        return web
+
+    def _upload(self, web, meta, files, token=True):
+        data = {"meta": json.dumps(meta)}
+        for key, blob in files.items():
+            data[key] = (io.BytesIO(blob), f"{key}.woff2")
+        qs = _download_qs(web) if token else ""
+        return web.app.test_client().post(f"/api/fonts{qs}", data=data,
+                                          content_type="multipart/form-data")
+
+    def test_upload_requires_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            resp = self._upload(web, {"name": "Inter", "faces": [{"field": "f0"}]},
+                                {"f0": self.WOFF2}, token=False)
+            assert resp.status_code == 401
+            assert web.font_store.list() == []
+
+    def test_upload_saves_and_broadcasts_then_serves_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            resp = self._upload(web, {"name": "Inter", "faces": [
+                {"field": "f0", "weight": "100 900"}]}, {"f0": self.WOFF2})
+            assert resp.status_code == 200
+            font = resp.get_json()["font"]
+            assert font["id"] == "inter"
+
+            pushed = [m for m in client.get_received()
+                      if m["name"] == "controller_config_response"]
+            assert pushed[-1]["args"][0]["config"]["frontend"]["custom_fonts"][0]["id"] == "inter"
+
+            served = web.app.test_client().get(f"/fonts/inter/{font['faces'][0]['file']}")
+            try:
+                assert served.status_code == 200
+                assert served.data == self.WOFF2
+                assert served.mimetype == "font/woff2"
+                assert "immutable" in served.headers["Cache-Control"]
+            finally:
+                served.close()
+
+    def test_upload_rejects_invalid_font_with_message(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            resp = self._upload(web, {"name": "Inter", "faces": [{"field": "f0"}]},
+                                {"f0": b"<html>nope</html>"})
+            assert resp.status_code == 400
+            assert "Not a font file" in resp.get_json()["error"]
+
+    def test_upload_rejects_malformed_meta(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            resp = web.app.test_client().post(
+                f"/api/fonts{_download_qs(web)}", data={"meta": "{not json"},
+                content_type="multipart/form-data")
+            assert resp.status_code == 400
+
+    def test_serve_unknown_font_404s(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            resp = web.app.test_client().get("/fonts/inter/0123456789abcdef.woff2")
+            assert resp.status_code == 404
+
+    def test_delete_requires_login_then_removes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            web.font_store.save({"name": "Inter", "faces": [{"field": "f0"}]},
+                                {"f0": self.WOFF2})
+            client = _connected_client(web)
+            client.emit("delete_custom_font", {"id": "inter"})
+            assert client.get_received()[0]["name"] == "custom_font_error"
+            assert len(web.font_store.list()) == 1
+
+            _login(web, client, tmpdir)
+            client.emit("delete_custom_font", {"id": "inter"})
+            assert web.font_store.list() == []
+
+    def test_save_controller_config_never_persists_custom_fonts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = self._web(tmpdir)
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("save_controller_config", {"config": {"frontend": {
+                "font_body": "inter", "custom_fonts": [{"id": "x"}]}}})
+            web.facade.set_config.assert_called_once_with(
+                {"frontend": {"font_body": "inter"}})
 
 
 class TestAuthGatedHandlers:

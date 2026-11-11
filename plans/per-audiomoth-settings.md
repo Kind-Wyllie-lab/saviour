@@ -2,9 +2,9 @@
 
 - **Status:** in progress: phase 1 (per-AudioMoth gain) built 2026-11-11 and on
   the desk rig; device command syntax confirmed, UI save not yet tried.
-  Phase 3 (external mic when available, internal for the self-test) built
-  2026-11-11, untested on a unit with an external input (the desk units have
-  none). Phase 2 not started.
+  Phase 3 (external mic when available, internal for the self-test) done
+  and checked on the rig with an EM258, 2026-11-11 (written up in
+  CHANGELOG). Phase 2 not started.
 - **Created:** 2026-11-11
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -107,6 +107,12 @@ below: seamless) and measured 8/8, sd 0.33 ms, as before.
 mic) and `external_distance_m` (flight time for external-mic units) for
 check 2; external-mic results are never stored as calibration.
 
+Check 2, same day: with the EM258 the same distance from the buzzer as the
+internal mic, alternating measure-only runs read internal +0.24 / −0.20 ms,
+external −0.18 / −0.28 ms (control unit −0.08 to −0.34 ms). The inputs agree
+within the test's run-to-run drift, so the internal-mic calibration serves
+the external mic (`docs/AV_SYNC_TEST.md` → External microphones).
+
 Original design notes:
 
 Use case (2026-11-11): a rig whose AudioMoths record through an external mic
@@ -127,7 +133,7 @@ microphone right at the buzzer, so the acoustic flight time is ~0 and
   with the calibration (`audiomoth_sync_offsets_ms.<serial>.input`).
 - Recording sidecar: `INPUT internal|external` next to `GAIN`.
 
-**To check before relying on it**, on a unit with an external mic:
+**Checked 2026-11-11 (both below, see above)**, on a unit with an external mic:
 1. Whether `MICROPHONE` switching re-enumerates the USB device (like a
    sample-rate change) or is seamless; that decides whether the monitor
    stream needs a restart and the stored device ID a refresh.

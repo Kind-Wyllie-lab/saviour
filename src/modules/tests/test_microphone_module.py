@@ -514,20 +514,20 @@ def test_monitor_call_bands_colour_each_band_and_grey_the_rest(tmp_path):
         tmp_path, {"colormap": "inferno", "call_bands": bands},
         lines_hz=(25000, 60000, 40000))
     x = px0 + 100
-    b, g, r = cell[row_of(25000), x].astype(int)      # alarm line: blue
-    assert b > r and b > g
-    b, g, r = cell[row_of(60000), x].astype(int)      # appetitive line: orange
+    b, g, r = cell[row_of(25000), x].astype(int)      # alarm line: orange
     assert r > g > b
+    b, g, r = cell[row_of(60000), x].astype(int)      # appetitive line: blue
+    assert b > r and b > g
     b, g, r = cell[row_of(40000), x].astype(int)      # 40 kHz line: grey
     assert b == g == r and b > 150
     # Key bar on the plot's left edge, in the band colour.
     b, g, r = cell[row_of(25000), px0 + 1].astype(int)
-    assert b > r
+    assert r > b
 
 
 def test_monitor_bad_call_bands_are_ignored_not_fatal(tmp_path):
-    overlapping = [{"lo_hz": 18000, "hi_hz": 50000, "palette": "alarm_blue"},
-                   {"lo_hz": 45000, "hi_hz": 96000, "palette": "appetitive_orange"}]
+    overlapping = [{"lo_hz": 18000, "hi_hz": 50000, "palette": "band_orange"},
+                   {"lo_hz": 45000, "hi_hz": 96000, "palette": "band_blue"}]
     cell, row_of, px0 = _render_spectrogram(
         tmp_path, {"colormap": "grayscale", "call_bands": overlapping})
     b, g, r = cell[row_of(25000), px0 + 100].astype(int)

@@ -63,6 +63,14 @@ python3 src/controller/video_compose.py /path/to/session/date_dir [--output out.
 # track.csv, summary.json (time in zone, entries, latency, max avoid, pulses
 # in/out of zone), trajectory.png, timeline.png, debug_frames.jpg
 python3 tools/apa_track.py /home/pi/controller_share/<session>/<DATE> [...] [--out DIR] [--skip-s N]
+
+# Rat USVs: first-look call detector on a session's AudioMoth FLACs (main env;
+# numpy + soundfile + matplotlib, no ffmpeg; needs 192 kHz). Whitened,
+# smoothed spectrogram; a frame counts when loud, tonal and narrow (peak vs
+# both ±8 kHz sides); 50 kHz calls searched 35-95 kHz, 22 kHz calls only as
+# long steady tones (movement noise fills 18-30 kHz) → <out>/<mic>_calls.csv
+# (incl. PTP wall time), _summary.json, _timeline.png, _gallery.png, _busiest.png
+python3 tools/usv_detect.py /path/to/session/<DATE> [--out DIR] [--contrast-db 8.5] [--window START END]
 ```
 
 ```bash

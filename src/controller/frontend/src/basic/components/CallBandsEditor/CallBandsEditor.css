@@ -51,11 +51,29 @@
 }
 
 .call-bands__swatch {
-  display: inline-block;
-  width: 48px;
-  height: 16px;
+  display: block;
   border-radius: 3px;
   border: 1px solid var(--border-color);
+}
+
+.call-bands__preview {
+  margin-bottom: 6px;
+}
+
+.call-bands__preview canvas {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.call-bands__preview-caption {
+  display: block;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .call-bands__remove {

@@ -1,6 +1,7 @@
 import {
-  BAND_PRESETS, MAX_BANDS, PALETTES, bandProblems, gradientCss, paletteByName,
+  BAND_PRESETS, MAX_BANDS, PALETTES, bandProblems, paletteByName,
 } from "/src/basic/utils/spectrogramPalettes";
+import { BandPreview, PaletteSwatch } from "/src/basic/components/SpectrogramSwatch/SpectrogramSwatch";
 import "./CallBandsEditor.css";
 
 const khz = (hz) => +(Number(hz) / 1000).toFixed(2);
@@ -61,6 +62,17 @@ export default function CallBandsEditor({ bands, onChange, nyquistHz, plotLoHz, 
         </div>
       </div>
 
+      {plotLoHz != null && plotHiHz > plotLoHz && (
+        <div className="call-bands__preview">
+          <BandPreview bands={list} loHz={plotLoHz} hiHz={Math.min(plotHiHz, nyquistHz || plotHiHz)}
+            width={360} height={80} />
+          <span className="call-bands__preview-caption">
+            Example calls, {khz(plotLoHz)}–{khz(Math.min(plotHiHz, nyquistHz || plotHiHz))} kHz:
+            how the monitor will colour them
+          </span>
+        </div>
+      )}
+
       {list.length === 0 ? (
         <div className="call-bands__hint">
           No bands yet, so the spectrogram is all grey. Add a band to draw a frequency
@@ -90,8 +102,8 @@ export default function CallBandsEditor({ bands, onChange, nyquistHz, plotLoHz, 
                   onChange={(e) => set(i, { palette: e.target.value })}>
                   {PALETTES.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
                 </select>
-                <span className="call-bands__swatch"
-                  style={{ background: gradientCss(paletteByName(b.palette).stops) }} />
+                <PaletteSwatch className="call-bands__swatch"
+                  stops={paletteByName(b.palette).stops} width={56} height={18} />
                 <button type="button" className="call-bands__remove" title="Remove band"
                   aria-label="Remove band" onClick={() => remove(i)}>×</button>
                 {warnings.map((w) => (

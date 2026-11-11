@@ -12,7 +12,8 @@ import { HIDDEN_CONFIG_SECTIONS } from "../configUtils";
 import SyncTab from "./SyncTab";
 import { calibrationStatus } from "./syncCalibration";
 import CallBandsEditor from "/src/basic/components/CallBandsEditor/CallBandsEditor";
-import { PALETTES, gradientCss, paletteByName } from "/src/basic/utils/spectrogramPalettes";
+import { PALETTES, paletteByName } from "/src/basic/utils/spectrogramPalettes";
+import { PaletteSwatch } from "/src/basic/components/SpectrogramSwatch/SpectrogramSwatch";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -170,6 +171,11 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const plotMode     = mon.plot_mode  ?? "spectrogram";
   const freqRange    = mon.freq_range ?? "band";
   const streamLayout = mon.layout     ?? "stacked";
+  // Which settings each plot type uses (microphone_module._render_cell).
+  const isSpectrogram = plotMode === "spectrogram" || plotMode === "spectrogram_compact";
+  const usesRange     = isSpectrogram || plotMode === "spectrum";
+  const usesBand      = (usesRange && freqRange === "band") || plotMode === "band_power";
+  const usesPeakHold  = plotMode === "spectrogram" || plotMode === "spectrum" || plotMode === "peaks";
 
   const setMonitorPref = (key, value) => {
     setFormData(prev => {
@@ -305,16 +311,28 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     tabBadges.sync = "⚠";
   }
 
-  // Right side of the card is just the live plot, like every other config
-  // card's MJPEG stream. The stream-display controls (Stream / Plot / Range /
-  // Layout) live only on the Monitor tab — they still drive what renders here.
+  // Right side of the card is the live plot, like every other config card's
+  // MJPEG stream, with a Pause/Resume button for this browser's view only.
+  // The plot settings (Plot / Range / Layout / colouring) live on the
+  // Monitor tab and drive what renders here.
   const sidebar = !monEnabled ? (
-    <div className="monitor-stream-paused">Monitoring disabled</div>
-  ) : streamEnabled ? (
-    <MicrophoneStream ip={module.ip} port={streamPort}
-      plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+    <div className="monitor-stream-paused">
+      Live monitor is off on this module (Monitor tab)
+    </div>
   ) : (
-    <div className="monitor-stream-paused">Stream paused</div>
+    <div>
+      {streamEnabled ? (
+        <MicrophoneStream ip={module.ip} port={streamPort}
+          plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+      ) : (
+        <div className="monitor-stream-paused">View paused</div>
+      )}
+      <button type="button" className="mic-stream-pause"
+        title="Only stops the picture in this browser tab; the module keeps running the live monitor."
+        onClick={() => setStreamEnabled(v => !v)}>
+        {streamEnabled ? "Pause view" : "Resume view"}
+      </button>
+    </div>
   );
 
   return (
@@ -477,155 +495,165 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       {/* MONITOR tab */}
       {activeTab === "monitor" && (
         <>
-          <div className="form-field">
-            <label title="Runs the server-side monitoring stream — a second recorder kept open on every AudioMoth for the module's lifetime. Turn off for deployments that don't need the live view, or to isolate first-read latency in A/V-sync tests. Separate from the display toggle below (that only pauses this browser's view).">
-              Monitoring stream (server):
-            </label>
-            <input type="checkbox" checked={monEnabled}
-              onChange={e => handleChange(["monitoring", "enabled"], e)} />
-          </div>
-          {!monEnabled && (
+          {/* 1. Module setting: whether the live monitor runs at all. */}
+          <div className="mic-monitor-section">
+            <div className="mic-monitor-section__title">Live monitor</div>
+            <div className="form-field">
+              <label>Run on this module:</label>
+              <input type="checkbox" checked={monEnabled}
+                onChange={e => handleChange(["monitoring", "enabled"], e)} />
+            </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Monitoring is off — no live spectrogram, and the CLIP indicator and
-              rolling clip % are unavailable. Recording is unaffected.
-            </div>
-          )}
-          <div className="config-section-divider" />
-          <div className="form-field">
-            <label>Freq low (kHz):</label>
-            <input type="number" min="0" max={nyquistKhz} step="0.5"
-              value={freqLoKhz}
-              onChange={e => handleKhzChange(["monitoring", "freq_lo_hz"], e.target.value)} />
-          </div>
-          <div className="form-field">
-            <label>Freq high (kHz):</label>
-            <input type="number" min="0" max={nyquistKhz} step="0.5"
-              value={freqHiKhz}
-              onChange={e => handleKhzChange(["monitoring", "freq_hi_hz"], e.target.value)} />
-          </div>
-          {freqError && (
-            <div className="form-field">
-              <label></label>
-              <span className="config-sync-badge config-sync-badge--failed">{freqError}</span>
-            </div>
-          )}
-          <div className="form-field">
-            <label>Time window (s):</label>
-            <input type="number" min="0.5" max="60" step="0.5"
-              value={timeWindow}
-              onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
-          </div>
-          {timeWindowError && (
-            <div className="form-field">
-              <label></label>
-              <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
-            </div>
-          )}
-          <div className="form-field">
-            <label>Peak hold (s):</label>
-            <input type="number" min="0.1" max="30" step="0.1"
-              value={mon.peak_hold_s ?? 2.0}
-              onChange={e => handleChange(["monitoring", "peak_hold_s"], e)} />
-          </div>
-          <div className="form-field">
-            <label>Colouring:</label>
-            <div className="mic-colour-mode" role="radiogroup" aria-label="Spectrogram colouring">
-              {[
-                ["palette", "One palette", "The whole spectrogram in one colour palette"],
-                ["bands", "Frequency bands", "Each frequency band in its own colours, grey everywhere else"],
-              ].map(([value, label, title]) => (
-                <button type="button" key={value} role="radio" title={title}
-                  aria-checked={colourMode === value}
-                  className={`mic-colour-mode__option${colourMode === value ? " mic-colour-mode__option--active" : ""}`}
-                  onClick={() => setMonitorPref("colour_mode", value)}>
-                  {label}
-                </button>
-              ))}
+              {monEnabled
+                ? "Keeps a second recorder open on every AudioMoth for the live plot, the CLIP indicator and the dashboard level meters. Recording is unaffected. Turn off to save CPU, or to isolate first-read latency in A/V-sync tests."
+                : "Off: no live plot, CLIP indicator, rolling clip % or dashboard level meters. Recording is unaffected."}
             </div>
           </div>
-          {colourMode === "palette" ? (
-            <div className="mic-colormap-picker">
-              <span className="mic-colormap-picker__label">
-                Palette: <strong>{paletteByName(mon.colormap).label}</strong>
-              </span>
-              <div className="mic-colormap-picker__swatches">
-                {PALETTES.map((p) => (
-                  <button
-                    type="button"
-                    key={p.name}
-                    className={`mic-colormap-picker__swatch${
-                      paletteByName(mon.colormap).name === p.name
-                        ? " mic-colormap-picker__swatch--active"
-                        : ""
-                    }`}
-                    title={p.label}
-                    aria-label={p.label}
-                    style={{ background: gradientCss(p.stops) }}
-                    onClick={() => {
-                      setMonitorPref("colormap", p.name);
-                      setMonitorPref("colormap_stops", []);
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <CallBandsEditor
-              bands={mon.call_bands ?? []}
-              onChange={(bands) => setMonitorPref("call_bands", bands)}
-              nyquistHz={nyquist}
-              plotLoHz={freqRange === "full" ? 0 : freqLo}
-              plotHiHz={freqRange === "full" ? nyquist : freqHi}
-            />
-          )}
-          <div className="sensor-mode-info" style={{ marginTop: "8px" }}>
-            Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
-          </div>
-          <div className="config-section-divider" />
 
-          {/* Stream display controls — drive the live plot shown on the right
-              of the card. Same select/label style as every other config field;
-              no stream <img> is rendered here, the sidebar owns that. */}
-          <div className="form-field">
-            <label>Stream:</label>
-            <select value={streamEnabled ? "on" : "off"}
-              onChange={e => setStreamEnabled(e.target.value === "on")}>
-              <option value="on">On</option>
-              <option value="off">Off</option>
-            </select>
-          </div>
-          <div className="form-field">
-            <label>Plot:</label>
-            <select value={plotMode}
-              onChange={e => setMonitorPref("plot_mode", e.target.value)}>
-              <option value="spectrogram">Spectrogram</option>
-              <option value="spectrogram_compact">Spectrogram (no meter)</option>
-              <option value="spectrum">Spectrum</option>
-              <option value="peaks">Peaks</option>
-              <option value="waveform">Waveform</option>
-              <option value="history">History</option>
-              <option value="band_power">Band Power</option>
-            </select>
-          </div>
-          {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
-            <div className="form-field">
-              <label>Range:</label>
-              <select value={freqRange}
-                onChange={e => setMonitorPref("freq_range", e.target.value)}>
-                <option value="band">Band</option>
-                <option value="full">Full</option>
-              </select>
-            </div>
-          )}
-          {discoveredSerials.length > 1 && (
-            <div className="form-field">
-              <label>Layout:</label>
-              <select value={streamLayout}
-                onChange={e => setMonitorPref("layout", e.target.value)}>
-                <option value="stacked">Stacked</option>
-                <option value="grid">Grid</option>
-              </select>
-            </div>
+          {monEnabled && (
+            <>
+              {/* 2. What the plot shows. Each setting appears only for the
+                  plot types that use it. */}
+              <div className="mic-monitor-section">
+                <div className="mic-monitor-section__title">Plot</div>
+                <div className="form-field">
+                  <label>Type:</label>
+                  <select value={plotMode}
+                    onChange={e => setMonitorPref("plot_mode", e.target.value)}>
+                    <option value="spectrogram">Spectrogram</option>
+                    <option value="spectrogram_compact">Spectrogram (no meter)</option>
+                    <option value="spectrum">Spectrum</option>
+                    <option value="peaks">Peaks</option>
+                    <option value="waveform">Waveform</option>
+                    <option value="history">History</option>
+                    <option value="band_power">Band Power</option>
+                  </select>
+                </div>
+                {discoveredSerials.length > 1 && (
+                  <div className="form-field">
+                    <label>Layout:</label>
+                    <select value={streamLayout}
+                      onChange={e => setMonitorPref("layout", e.target.value)}>
+                      <option value="stacked">Stacked</option>
+                      <option value="grid">Grid</option>
+                    </select>
+                  </div>
+                )}
+                {usesRange && (
+                  <div className="form-field">
+                    <label>Frequency range:</label>
+                    <select value={freqRange}
+                      onChange={e => setMonitorPref("freq_range", e.target.value)}>
+                      <option value="band">Band (set below)</option>
+                      <option value="full">Full (0–{nyquistKhz.toFixed(0)} kHz)</option>
+                    </select>
+                  </div>
+                )}
+                {usesBand && (
+                  <>
+                    <div className="form-field">
+                      <label>{plotMode === "band_power" ? "Target band low (kHz):" : "Band low (kHz):"}</label>
+                      <input type="number" min="0" max={nyquistKhz} step="0.5"
+                        value={freqLoKhz}
+                        onChange={e => handleKhzChange(["monitoring", "freq_lo_hz"], e.target.value)} />
+                    </div>
+                    <div className="form-field">
+                      <label>{plotMode === "band_power" ? "Target band high (kHz):" : "Band high (kHz):"}</label>
+                      <input type="number" min="0" max={nyquistKhz} step="0.5"
+                        value={freqHiKhz}
+                        onChange={e => handleKhzChange(["monitoring", "freq_hi_hz"], e.target.value)} />
+                    </div>
+                    <div className="sensor-mode-info sensor-mode-info--muted">
+                      Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
+                    </div>
+                  </>
+                )}
+                {freqError && (
+                  <div className="form-field">
+                    <label></label>
+                    <span className="config-sync-badge config-sync-badge--failed">{freqError}</span>
+                  </div>
+                )}
+                {isSpectrogram && (
+                  <div className="form-field">
+                    <label>Time window (s):</label>
+                    <input type="number" min="0.5" max="60" step="0.5"
+                      value={timeWindow}
+                      onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
+                  </div>
+                )}
+                {timeWindowError && (
+                  <div className="form-field">
+                    <label></label>
+                    <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
+                  </div>
+                )}
+                {usesPeakHold && (
+                  <div className="form-field">
+                    <label>Peak hold (s):</label>
+                    <input type="number" min="0.1" max="30" step="0.1"
+                      value={mon.peak_hold_s ?? 2.0}
+                      onChange={e => handleChange(["monitoring", "peak_hold_s"], e)} />
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Spectrogram colouring: only spectrogram plots use it. */}
+              {isSpectrogram && (
+                <div className="mic-monitor-section">
+                  <div className="mic-monitor-section__title">Spectrogram colouring</div>
+                  <div className="mic-colour-mode" role="radiogroup" aria-label="Spectrogram colouring">
+                    {[
+                      ["palette", "One palette", "The whole spectrogram in one colour palette"],
+                      ["bands", "Frequency bands", "Each frequency band in its own colours, grey everywhere else"],
+                    ].map(([value, label, title]) => (
+                      <button type="button" key={value} role="radio" title={title}
+                        aria-checked={colourMode === value}
+                        className={`mic-colour-mode__option${colourMode === value ? " mic-colour-mode__option--active" : ""}`}
+                        onClick={() => setMonitorPref("colour_mode", value)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {colourMode === "palette" ? (
+                    <div className="mic-colormap-picker">
+                      <span className="mic-colormap-picker__label">
+                        Palette: <strong>{paletteByName(mon.colormap).label}</strong>
+                      </span>
+                      <div className="mic-colormap-picker__swatches">
+                        {PALETTES.map((p) => (
+                          <button
+                            type="button"
+                            key={p.name}
+                            className={`mic-colormap-picker__swatch${
+                              paletteByName(mon.colormap).name === p.name
+                                ? " mic-colormap-picker__swatch--active"
+                                : ""
+                            }`}
+                            title={p.label}
+                            aria-label={p.label}
+                            onClick={() => {
+                              setMonitorPref("colormap", p.name);
+                              setMonitorPref("colormap_stops", []);
+                            }}
+                          >
+                            <PaletteSwatch stops={p.stops} width={100} height={28} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <CallBandsEditor
+                      bands={mon.call_bands ?? []}
+                      onChange={(bands) => setMonitorPref("call_bands", bands)}
+                      nyquistHz={nyquist}
+                      plotLoHz={freqRange === "full" ? 0 : freqLo}
+                      plotHiHz={freqRange === "full" ? nyquist : freqHi}
+                    />
+                  )}
+                </div>
+              )}
+            </>
           )}
         </>
       )}

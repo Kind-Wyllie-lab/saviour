@@ -368,8 +368,8 @@ min-width: 300px;
   margin-bottom: 4px;
 }
 
-/* Monitor stream "paused" placeholder (shown on the card's right side when the
-   Monitor tab's Stream dropdown is set to Off). */
+/* Monitor stream placeholder on the card's right side: view paused (the
+   Pause view button) or the live monitor turned off on the module. */
 .monitor-stream-paused {
   text-align: center;
   padding: 18px 0;
@@ -403,8 +403,8 @@ min-width: 300px;
 }
 
 .mic-colormap-picker__swatch {
-  width: 52px;
-  height: 26px;
+  width: auto;
+  height: auto;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 4px;
@@ -420,6 +420,39 @@ min-width: 300px;
 
 .mic-colormap-picker__swatch--active {
   border-color: var(--accent-color, #3f7cac);
+}
+
+.mic-colormap-picker__swatch canvas {
+  display: block;
+}
+
+.mic-colormap-picker {
+  margin-top: 8px;
+}
+
+.mic-monitor-section {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mic-monitor-section:last-child {
+  border-bottom: none;
+}
+
+.mic-monitor-section__title {
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.mic-stream-pause {
+  margin-top: 6px;
+  font-size: 0.8em;
+  padding: 2px 10px;
 }
 
 .mic-colour-mode {

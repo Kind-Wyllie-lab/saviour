@@ -23,12 +23,18 @@ and some setups may want a different rate or filter per device.
   the desk rig (2026-11-11): `update gain 3 24FCBD0864934CA8` → "Sent UPDATE
   command to device ID 24FCBD0864934CA8", and `read` showed only that unit at
   gain 3. `config ... <serial>` (needed for phase 2) not yet tried.
-- Its keyword table (`strings` on the 1.0.2 binary) includes `MICROPHONE`
-  with `INTERNAL`/`INT` and `EXTERNAL`/`EXT`, next to `GAIN`, `LPF`, `LGR`
-  etc., and `read` output formats `(int) ext` / `int (ext)`. So the tool can
-  choose the onboard MEMS mic or an external one. Our `read` output shows no
-  input field, which may mean the hardware/firmware on the desk AudioMoths
-  doesn't offer it. Exact syntax and hardware support unverified.
+- **Microphone input** (Open Acoustic Devices application note "Configuring
+  the AudioMoth USB Microphone from the Command Line"): `MICROPHONE` on its
+  own lists each unit's inputs, `int` always, plus `ext` "when an external
+  microphone is available", with parentheses round the one in use.
+  `MICROPHONE INTERNAL|INT|I` / `EXTERNAL|EXT|E` switches. Like every
+  command it takes trailing device IDs. Needs USB Microphone firmware
+  ≥ 1.3.2 and hardware ≥ AudioMoth 1.2.1, AudioMoth Dev 1.0.0 or AudioMoth
+  USB Microphone 1.0.0. A separate command from `CONFIG`; `CONFIG`/`UPDATE`
+  set a *temporary* configuration (`PERSIST` writes it to the unit).
+- Desk rig (read-only checks, 2026-11-11): both units run firmware 1.3.2,
+  and `microphone` reports `(int)` only, so neither offers an external input
+  (hardware older than 1.2.1, or no external mic detected).
 
 ## Phase 1: per-AudioMoth gain (built)
 
@@ -75,7 +81,30 @@ Harder, because the module assumes one rate:
 
 ## Phase 3: microphone input (internal MEMS / external)
 
-If the hardware supports it (see above): `audiomoth_settings.<serial>.input`
-(`internal`/`external`), passed on that device's `config`. First confirm the
-syntax and which AudioMoth revisions/firmware accept it, on a unit with an
-external mic fitted.
+Use case (2026-11-11): a rig whose AudioMoths record through an external mic
+placed far from the AudioMoth, while the A/V-sync buzzer sits next to the
+AudioMoth. Switching to the internal mic for `sync_selftest` puts the
+microphone right at the buzzer, so the acoustic flight time is ~0 and
+`mic_distance_m` doesn't need measuring.
+
+- Discovery: run `MICROPHONE` (read-only) with the AudioMoth scan; record
+  per serial whether `ext` is available and which input is active. Show an
+  Input column on the AudioMoths list only for units that have `ext`.
+- Setting: `audiomoth_settings.<serial>.input` (`internal`/`external`),
+  applied with `MICROPHONE <INT|EXT> <serial>` after `CONFIG` (CONFIG is
+  temporary, so re-apply on every configure, like the gains).
+- Self-test: a `sync_selftest` option "use the internal microphone"
+  (default on for units with `ext`): note each unit's active input, switch to
+  internal, run the test, switch back in a `finally`. Store the input used
+  with the calibration (`audiomoth_sync_offsets_ms.<serial>.input`).
+- Recording sidecar: `INPUT internal|external` next to `GAIN`.
+
+**To check before relying on it**, on a unit with an external mic:
+1. Whether `MICROPHONE` switching re-enumerates the USB device (like a
+   sample-rate change) or is seamless; that decides whether the monitor
+   stream needs a restart and the stored device ID a refresh.
+2. That the calibration offset carries across inputs: run the self-test on
+   both inputs with the external mic at a measured distance and compare after
+   removing flight time. The digital path (ADC → USB → PipeWire) is shared,
+   so they should agree; the analog front ends differ, so measure rather
+   than assume.

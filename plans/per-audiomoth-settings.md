@@ -1,7 +1,8 @@
 # Per-AudioMoth settings
 
-- **Status:** in progress: phase 1 (per-AudioMoth gain) built 2026-11-11 on
-  `feat/per-audiomoth-gain`, not yet confirmed on the rig; phases 2-3 not started
+- **Status:** in progress: phase 1 (per-AudioMoth gain) built 2026-11-11 and on
+  the desk rig; device command syntax confirmed, UI save not yet tried;
+  phases 2-3 not started
 - **Created:** 2026-11-11
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -18,9 +19,10 @@ and some setups may want a different rate or filter per device.
 
 - A trailing serial number targets one device: `read 2474750264200FAD`
   printed only that AudioMoth; an unknown serial gives `[ERROR] Could not
-  find device ID ...`. Not yet confirmed for `config` / `update` (the
-  permission checker refused a write from an agent session). Confirm with
-  `AudioMoth-USB-Microphone update gain 4 <serial>` then `read`.
+  find device ID ...`. **`update gain <g> <serial>` confirmed** by hand on
+  the desk rig (2026-11-11): `update gain 3 24FCBD0864934CA8` → "Sent UPDATE
+  command to device ID 24FCBD0864934CA8", and `read` showed only that unit at
+  gain 3. `config ... <serial>` (needed for phase 2) not yet tried.
 - Its keyword table (`strings` on the 1.0.2 binary) includes `MICROPHONE`
   with `INTERNAL`/`INT` and `EXTERNAL`/`EXT`, next to `GAIN`, `LPF`, `LGR`
   etc., and `read` output formats `(int) ext` / `int (ext)`. So the tool can
@@ -46,10 +48,9 @@ and some setups may want a different rate or filter per device.
 - Tests: `test_microphone_module.py` (`_gain_for`, invalid overrides,
   ordering, failed override, non-disruptive path).
 
-**Open on the rig:** that `update gain <g> <serial>` is the right syntax
-(if not, the module logs `AudioMoth <serial> gain update failed` and the
-config card save reports the error), and that a gain read back with `read`
-matches.
+**Open on the rig:** the command syntax is confirmed (above); still to do
+is a save from the AudioMoth tab, a `read` showing the per-device gain, and a
+recording whose sidecar carries the matching `GAIN` line.
 
 ## Phase 2: per-AudioMoth sample rate and filter
 

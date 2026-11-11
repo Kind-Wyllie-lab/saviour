@@ -44,3 +44,26 @@ export function bandProblems(bands) {
   }
   return problems;
 }
+
+// 256-entry RGB lookup table (Uint8ClampedArray, r,g,b per entry) for a stop
+// list -- the same linear interpolation as spectrogram_palette.lut().
+const LUT_CACHE = new Map();
+export function lutRgb(stops) {
+  const key = JSON.stringify(stops);
+  if (LUT_CACHE.has(key)) return LUT_CACHE.get(key);
+  const pts = stops.map(([pos, hex]) => [
+    pos * 255,
+    parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16),
+  ]);
+  const lut = new Uint8ClampedArray(256 * 3);
+  let j = 0;
+  for (let i = 0; i < 256; i++) {
+    while (j < pts.length - 2 && i > pts[j + 1][0]) j++;
+    const [x0, ...c0] = pts[j];
+    const [x1, ...c1] = pts[j + 1];
+    const t = x1 > x0 ? Math.min(1, Math.max(0, (i - x0) / (x1 - x0))) : 0;
+    for (let c = 0; c < 3; c++) lut[i * 3 + c] = Math.round(c0[c] + (c1[c] - c0[c]) * t);
+  }
+  LUT_CACHE.set(key, lut);
+  return lut;
+}

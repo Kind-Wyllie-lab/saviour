@@ -1,0 +1,117 @@
+.offline-runner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  width: min(680px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.offline-runner > * {
+  pointer-events: auto;
+}
+
+.offline-runner__status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-size: 0.88em;
+}
+
+.offline-runner__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-color-alt, #f0a030);
+  animation: offline-runner-pulse 1.2s ease-in-out infinite;
+}
+
+.offline-runner__status.is-back .offline-runner__dot {
+  background: var(--accent-color);
+  animation: none;
+}
+
+@keyframes offline-runner-pulse {
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offline-runner__dot { animation: none; }
+}
+
+.offline-runner__btn {
+  border: 1px solid var(--accent-color);
+  background: transparent;
+  color: var(--accent-color);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.offline-runner__close {
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  opacity: 0.6;
+  font-size: 1.2em;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.offline-runner__close:hover {
+  opacity: 1;
+}
+
+.offline-runner__game {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.offline-runner__close--game {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+}
+
+.runner-game__bar {
+  display: flex;
+  gap: 18px;
+  font-size: 0.85em;
+  margin: 0 28px 6px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.runner-game__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.runner-game__hint {
+  margin: 6px 0 0;
+  font-size: 0.8em;
+  opacity: 0.7;
+}

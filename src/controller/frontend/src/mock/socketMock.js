@@ -534,6 +534,29 @@ const ROUTER = {
     this._fire("custom_theme_saved", { theme: { id } });
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
   },
+  // Mock stand-in for POST /api/fonts (basic/utils/fonts.js uploadFont):
+  // faces carry blob: URLs instead of controller-served files.
+  mock_upload_font(payload) {
+    const fe = (state.controllerConfig.frontend ||= {});
+    fe.custom_fonts ||= [];
+    const base = (payload?.name || "font").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "font";
+    let id = base;
+    for (let n = 2; fe.custom_fonts.some((f) => f.id === id); n += 1) id = `${base}-${n}`;
+    const faces = (payload?.faces || []).map((f, i) => ({
+      file: `${i}.woff2`, format: f.format || "woff2", weight: f.weight, style: f.style,
+      unicode_range: f.unicodeRange || null, bytes: f.bytes || 0, url: f.url,
+    }));
+    const font = { id, name: payload.name, faces, bytes: faces.reduce((a, f) => a + f.bytes, 0),
+      source: payload.source };
+    fe.custom_fonts = [...fe.custom_fonts, font];
+    this._fire("mock_font_uploaded", { font });
+    this._fire("controller_config_response", { config: clone(state.controllerConfig) });
+  },
+  delete_custom_font(payload) {
+    const fe = state.controllerConfig.frontend;
+    if (fe?.custom_fonts) fe.custom_fonts = fe.custom_fonts.filter((f) => f.id !== payload?.id);
+    this._fire("controller_config_response", { config: clone(state.controllerConfig) });
+  },
   delete_custom_theme(payload) {
     const fe = state.controllerConfig.frontend;
     if (fe?.custom_themes) fe.custom_themes = fe.custom_themes.filter((t) => t.id !== payload?.id);

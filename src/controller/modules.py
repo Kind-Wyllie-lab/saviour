@@ -169,15 +169,20 @@ class Modules:
             # Known module re-announcing (avahi refresh, or the first mDNS
             # sighting of one auto-registered with ip=""). Replacing it with
             # this mostly-default Module would undo module_rediscovered()'s
-            # preserved RECORDING status, so refresh only the network
-            # identity, which mDNS is the sole source of.
+            # preserved RECORDING status, so refresh only what the announcement
+            # is the source of: the network identity, and the version (a
+            # module auto-registered from its config reply before mDNS
+            # arrived -- the usual order right after a fleet deploy -- has
+            # version "" until this).
             existing = self._modules[module.id]
-            identity = (existing.ip, existing.port, existing.zeroconf_name)
-            new_identity = (module.ip, module.port, module.zeroconf_name)
+            version = module.version or existing.version
+            identity = (existing.ip, existing.port, existing.zeroconf_name, existing.version)
+            new_identity = (module.ip, module.port, module.zeroconf_name, version)
             if identity != new_identity:
                 existing.ip = module.ip
                 existing.port = module.port
                 existing.zeroconf_name = module.zeroconf_name
+                existing.version = version
                 self.logger.info(
                     f"{module.id} re-announced via mDNS — refreshed network identity "
                     f"({identity} -> {new_identity})"

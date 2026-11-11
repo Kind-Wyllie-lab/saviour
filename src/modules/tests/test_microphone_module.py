@@ -70,6 +70,7 @@ def _make(tmp_path):
     m.facade = MagicMock()
     m.audiomoths = {s: f"mic-{s}" for s in SERIALS}
     m.audiomoth_inputs, m._inputs_for = {}, frozenset(SERIALS)
+    m._inputs_checked_at = mm.time.monotonic()
     m.audiomoth_threads = []
     m.current_recording_files = {}
     m._segment_stop_event = threading.Event()
@@ -657,7 +658,8 @@ def test_per_device_gain_change_while_streaming_is_non_disruptive(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Microphone input: external when available, internal for the self-test
+# Microphone input: chosen per unit (default external when available),
+# internal for the self-test
 # ---------------------------------------------------------------------------
 
 def test_parse_inputs_reads_the_microphone_query():
@@ -695,8 +697,10 @@ class _FakeMoths:
         return 0, "ok"
 
 
-def _input_module(tmp_path, units):
+def _input_module(tmp_path, units, settings=None):
     m, _ = _make(tmp_path)
+    cfg = {"audiomoth_settings": settings or {}}
+    m.config.get.side_effect = lambda key, default=None: cfg.get(key, default)
     m.audiomoth_inputs, m._inputs_for = {}, frozenset()
     m.audiomoths = {s: f"mic-{s}" for s in units}
     fake = _FakeMoths(units)
@@ -707,14 +711,62 @@ def _input_module(tmp_path, units):
 def test_units_with_an_external_mic_are_switched_to_it(tmp_path):
     m, fake = _input_module(tmp_path, {"AAAA000000000001": (True, "internal"),
                                        "BBBB000000000002": (False, "internal")})
-    assert m._ensure_external_inputs() == ["AAAA000000000001"]
+    assert m._apply_inputs() == ["AAAA000000000001"]
     assert fake.units["AAAA000000000001"][1] == "external"
     assert fake.units["BBBB000000000002"][1] == "internal"
     assert m._input_for("AAAA000000000001") == "external"
     # Already right: no switch the second time.
     fake.calls.clear()
-    assert m._ensure_external_inputs() == []
+    assert m._apply_inputs() == []
     assert fake.calls == [["microphone"]]
+
+
+def test_a_unit_set_to_internal_stays_on_it(tmp_path):
+    """input: internal keeps a unit off its external mic, and puts it back
+    when the firmware switches to a newly plugged-in mic."""
+    serial = "AAAA000000000001"
+    m, fake = _input_module(tmp_path, {serial: (True, "external")},
+                            {serial: {"input": "internal"}})
+    assert m._apply_inputs() == [serial]
+    assert fake.units[serial][1] == "internal"
+    fake.units[serial] = (True, "external")    # mic re-plugged: firmware flips
+    m._find_audiomoths = lambda: None
+    m._check_audiomoths()                      # inside the recheck window
+    assert fake.units[serial][1] == "external"
+    m._inputs_checked_at -= mm.AudiomothModule._INPUT_RECHECK_S + 1
+    m._check_audiomoths()
+    assert fake.units[serial][1] == "internal"
+
+
+def test_external_chosen_but_absent_and_bad_values_leave_the_unit_alone(tmp_path):
+    m, fake = _input_module(tmp_path, {"AAAA000000000001": (False, "internal"),
+                                       "BBBB000000000002": (True, "external")},
+                            {"AAAA000000000001": {"input": "external"},
+                             "BBBB000000000002": {"input": "ext"}})
+    assert m._apply_inputs() == []
+    assert fake.calls == [["microphone"]]
+    assert m._input_pref("BBBB000000000002") is None   # invalid -> default
+
+
+def test_inputs_are_not_switched_while_recording_or_mid_selftest(tmp_path):
+    serial = "AAAA000000000001"
+    m, fake = _input_module(tmp_path, {serial: (True, "internal")})
+    m.is_recording = True
+    assert m._apply_inputs() == [] and fake.calls == []
+    m.is_recording = False
+    with m._sync_lock:
+        assert m._apply_inputs() == [] and fake.calls == []
+    assert m._apply_inputs() == [serial]
+
+
+def test_an_input_change_while_streaming_is_applied_without_a_reconfigure(tmp_path):
+    m, _ = _input_module(tmp_path, {})
+    m.is_streaming = True
+    m.update_gain, m.configure_audiomoth, m._apply_inputs = (
+        MagicMock(), MagicMock(), MagicMock())
+    m.configure_module_special(["audiomoth_settings"])
+    m._apply_inputs.assert_called_once()
+    m.configure_audiomoth.assert_not_called()
 
 
 def test_selftest_runs_on_the_internal_mic_and_switches_back(tmp_path):

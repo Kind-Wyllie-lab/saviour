@@ -83,11 +83,19 @@ Harder, because the module assumes one rate:
 
 ## Phase 3: microphone input (internal MEMS / external) -- built
 
-**Decided 2026-11-11:** no setting. A unit that offers an external input
-always records through it; the self-test uses the internal mic.
+**Decided 2026-11-11:** a unit that offers an external input records
+through it by default; the self-test uses the internal mic. **Revised the
+same day:** a per-unit **Microphone** dropdown (Internal / External, External
+disabled when the unit has none) on the AudioMoths list, stored as
+`audiomoth_settings.<serial>.input`. No entry keeps the default (external
+when present). Because the firmware switches to a mic as it's plugged in,
+`_check_audiomoths` re-applies the choice every 15 s (`_INPUT_RECHECK_S`)
+as well as when units come and go; `_apply_inputs` never switches
+mid-recording or during a sync test. A changed input takes the
+non-disruptive path (no AudioMoth reconfigure).
 
 Built: `_refresh_inputs` (read-only `MICROPHONE` query, parsed per serial);
-`_ensure_external_inputs` at module start (before streaming opens the
+`_apply_inputs` (was `_ensure_external_inputs`) at module start (before streaming opens the
 devices), after `configure_audiomoth`, and from `_check_audiomoths` whenever
 the set of connected units changes (not while recording); device IDs are
 re-scanned after any switch. `_run_sync_selftest` switches external units to

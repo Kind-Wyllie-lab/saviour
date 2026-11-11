@@ -56,6 +56,7 @@ class AudiomothModule(Module):
         # the AudioMoth tool's MICROPHONE query (_refresh_inputs).
         self.audiomoth_inputs: dict[str, dict] = {}
         self._inputs_for: frozenset = frozenset()
+        self._inputs_checked_at = 0.0
         self._find_audiomoths() # Discover any and all connected microphones
 
         # Per-segment recording threads and state
@@ -159,7 +160,7 @@ class AudiomothModule(Module):
                 return {"result": "Error", "error": msg}
             self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
             override_errors = self._apply_gain_overrides()
-            self._ensure_external_inputs()
+            self._apply_inputs()
 
             # LED is a separate top-level operation, not a config flag
             led_enabled = self.config.get("audiomoth.led_enabled", True)
@@ -234,9 +235,13 @@ class AudiomothModule(Module):
 
     # -- Microphone input (internal MEMS / external) ------------------------
     # AudioMoth hardware >= 1.2.1 (USB Microphone firmware >= 1.3.2) can take
-    # an external microphone. A unit that offers one always records through
-    # it; sync_selftest moves it to the internal mic for the test (the buzzer
-    # sits next to the AudioMoth) and back. plans/per-audiomoth-settings.md.
+    # an external microphone. Each unit records through the input chosen in
+    # audiomoth_settings.<serial>.input; with none chosen, the external one
+    # when it has one. sync_selftest moves it to the internal mic for the
+    # test (the buzzer sits next to the AudioMoth) and back.
+    # plans/per-audiomoth-settings.md.
+
+    _INPUT_RECHECK_S = 15.0  # firmware switches to a newly plugged-in mic
 
     _INPUT_LINE = re.compile(r"^([0-9A-Fa-f]{16}) - (.*)$")
 
@@ -281,20 +286,42 @@ class AudiomothModule(Module):
         self.logger.info(f"AudioMoth {serial}: using the {which} microphone")
         return True
 
-    def _ensure_external_inputs(self) -> list[str]:
-        """Switch every connected AudioMoth that offers an external microphone
-        to it. Returns the serials switched (device IDs are refreshed after,
-        in case the switch re-enumerates the USB device)."""
+    def _input_pref(self, serial: str) -> str | None:
+        """The input chosen for this AudioMoth ("internal"/"external"), or
+        None when none is (= external when it has one)."""
+        raw = (self.config.get("audiomoth_settings", {}) or {}).get(serial)
+        want = raw.get("input") if isinstance(raw, dict) else None
+        if want in (None, ""):
+            return None
+        if want not in ("internal", "external"):
+            self.logger.warning(
+                f"audiomoth_settings.{serial}.input {want!r} ignored "
+                "(want internal or external)")
+            return None
+        return want
+
+    def _apply_inputs(self) -> list[str]:
+        """Put every connected AudioMoth on its chosen input (external when
+        none is chosen and it has one; internal when the chosen external mic
+        isn't there). Not while recording or during a sync test. Returns the
+        serials switched (device IDs are refreshed after, in case a switch
+        re-enumerates the USB device)."""
+        if getattr(self, "is_recording", False) or self._sync_lock.locked():
+            return []
         switched = []
         for serial, inp in self._refresh_inputs().items():
-            if (serial in self.audiomoths and inp["external"]
-                    and inp["active"] != "external"
-                    and self._set_input(serial, "external")):
+            if serial not in self.audiomoths:
+                continue
+            want = self._input_pref(serial) or "external"
+            if want == "external" and not inp["external"]:
+                continue  # nothing to switch to; it's on internal already
+            if inp["active"] != want and self._set_input(serial, want):
                 switched.append(serial)
         if switched:
             self._refresh_inputs()
             self._find_audiomoths()
         self._inputs_for = frozenset(self.audiomoths)
+        self._inputs_checked_at = time.monotonic()
         return switched
 
     def _input_for(self, serial: str) -> str:
@@ -419,11 +446,12 @@ class AudiomothModule(Module):
         self._find_audiomoths()
         if not self.audiomoths:
             return False, self.hardware_fault
-        if frozenset(self.audiomoths) != self._inputs_for:
-            # A unit was plugged in or removed: put any with an external
-            # microphone on it (not mid-recording: a switch may re-enumerate).
-            if not getattr(self, "is_recording", False):
-                self._ensure_external_inputs()
+        if (frozenset(self.audiomoths) != self._inputs_for
+                or time.monotonic() - self._inputs_checked_at > self._INPUT_RECHECK_S):
+            # A unit was plugged in or removed, or a mic plugged into one (the
+            # firmware switches to it): put each back on its chosen input.
+            # _apply_inputs skips this mid-recording and during a sync test.
+            self._apply_inputs()
         return True, f"{len(self.audiomoths)} audiomoth(s) connected"
 
 
@@ -1983,6 +2011,8 @@ class AudiomothModule(Module):
         # use the non-disruptive update.
         if audiomoth_keys <= {"audiomoth.gain", "audiomoth_settings"} and self.is_streaming:
             self.update_gain()
+            if "audiomoth_settings" in audiomoth_keys:
+                self._apply_inputs()  # a changed input (skipped mid-recording)
         else:
             self.configure_audiomoth()
             # Sample rate change re-enumerates the USB device with a new name,
@@ -2003,7 +2033,7 @@ class AudiomothModule(Module):
         try:
             if not super().start():
                 return False
-            self._ensure_external_inputs()  # before streaming opens the devices
+            self._apply_inputs()  # before streaming opens the devices
             self.start_streaming()
             return True
         except Exception as e:

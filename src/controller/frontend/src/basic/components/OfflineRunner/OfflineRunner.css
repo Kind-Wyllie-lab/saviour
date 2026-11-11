@@ -115,3 +115,32 @@
   font-size: 0.8em;
   opacity: 0.7;
 }
+
+.runner-game__mute {
+  margin-left: auto;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.runner-game__mute.is-muted {
+  opacity: 0.6;
+}
+
+.game-music {
+  margin-top: 8px;
+}
+
+.game-music.is-idle {
+  display: none;
+}
+
+.game-music__player iframe {
+  display: block;
+  border: 0;
+  border-radius: 12px;
+}

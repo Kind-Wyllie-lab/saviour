@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import GameMusic from "./GameMusic";
+import { DEFAULT_GAME_MUSIC, spotifyUri } from "./spotifyEmbed";
 
 // A small endless runner: a rat runs along the bench and jumps PoE cables
 // and switches. Space / ↑ / tap to jump (hold for a higher jump), Esc
@@ -14,6 +16,15 @@ const HOLD_GRAVITY = 0.6; // gravity multiplier while jump is held and rising
 const START_SPEED = 260; // px/s
 const MAX_SPEED = 720;
 const BEST_KEY = "saviour.runnerBest";
+const MUTE_KEY = "saviour.runnerMuted";
+const MUSIC_URI = spotifyUri(DEFAULT_GAME_MUSIC);
+
+function loadMuted() {
+  try { return window.localStorage.getItem(MUTE_KEY) === "1"; } catch { return false; }
+}
+function storeMuted(v) {
+  try { window.localStorage.setItem(MUTE_KEY, v ? "1" : "0"); } catch { /* storage blocked */ }
+}
 
 function loadBest() {
   try { return Number(window.localStorage.getItem(BEST_KEY)) || 0; } catch { return 0; }
@@ -134,6 +145,11 @@ export default function RunnerGame({ onClose }) {
   const [best, setBest] = useState(loadBest);
   const [score, setScore] = useState(0);
   const [phase, setPhase] = useState("ready"); // ready | running | over
+  // Music starts with the first jump (Spotify's embed, see GameMusic) and
+  // plays on between runs; a hidden tab (phase back to "ready") pauses it.
+  const [muted, setMuted] = useState(loadMuted);
+  const musicPlaying = phase !== "ready";
+  const toggleMute = () => setMuted((m) => { storeMuted(!m); return !m; });
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
 
@@ -256,6 +272,7 @@ export default function RunnerGame({ onClose }) {
   useEffect(() => {
     const down = (e) => {
       if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "m" || e.key === "M") { toggleMute(); return; }
       if (e.code === "Space" || e.key === "ArrowUp") {
         e.preventDefault();
         if (!e.repeat) jump();
@@ -282,6 +299,17 @@ export default function RunnerGame({ onClose }) {
       <div className="runner-game__bar">
         <span>Score <b>{score}</b></span>
         <span>Best <b>{best}</b></span>
+        {MUSIC_URI && (
+          <button
+            type="button"
+            className={`runner-game__mute${muted ? " is-muted" : ""}`}
+            aria-pressed={muted}
+            title={muted ? "Unmute music (M)" : "Mute music (M)"}
+            onClick={toggleMute}
+          >
+            {muted ? "♪ off" : "♪ on"}
+          </button>
+        )}
       </div>
       <canvas
         ref={canvasRef}
@@ -296,6 +324,7 @@ export default function RunnerGame({ onClose }) {
         {phase === "running" && "Jump the cables and switches."}
         {phase === "over" && `Tangled at ${score}. Space or tap to go again.`}
       </p>
+      <GameMusic uri={MUSIC_URI} playing={musicPlaying} muted={muted} />
     </div>
   );
 }

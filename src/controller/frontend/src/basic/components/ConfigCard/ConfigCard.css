@@ -422,6 +422,31 @@ min-width: 300px;
   border-color: var(--accent-color, #3f7cac);
 }
 
+.mic-colormap-picker__note {
+  display: block;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.mic-colormap-picker--disabled .mic-colormap-picker__label,
+.mic-colormap-picker--disabled .mic-colormap-picker__swatches {
+  opacity: 0.4;
+}
+
+.mic-colormap-picker--disabled .mic-colormap-picker__swatch {
+  cursor: not-allowed;
+}
+
+.mic-colormap-picker--disabled .mic-colormap-picker__swatch:hover {
+  border-color: transparent;
+}
+
+.mic-colormap-picker--disabled .mic-colormap-picker__swatch--active,
+.mic-colormap-picker--disabled .mic-colormap-picker__swatch--active:hover {
+  border-color: var(--accent-color, #3f7cac);
+}
+
 /* Save + Reset button row */
 .config-action-buttons {
   display: flex;

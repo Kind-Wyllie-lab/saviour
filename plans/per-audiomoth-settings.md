@@ -92,7 +92,12 @@ when present). Because the firmware switches to a mic as it's plugged in,
 `_check_audiomoths` re-applies the choice every 15 s (`_INPUT_RECHECK_S`)
 as well as when units come and go; `_apply_inputs` never switches
 mid-recording or during a sync test. A changed input takes the
-non-disruptive path (no AudioMoth reconfigure).
+non-disruptive path (no AudioMoth reconfigure). The 15 s recheck runs on its
+own thread (`_input_watch`): `@check` methods only run on readiness
+validation. Firmware quirk found while testing it: a switch right after an
+`update gain` plus a query is dropped, so `MICROPHONE` commands wait 1 s
+after an update and `_set_input` confirms the switch, resending once
+(`docs/HARDWARE_NOTES.md`).
 
 Built: `_refresh_inputs` (read-only `MICROPHONE` query, parsed per serial);
 `_apply_inputs` (was `_ensure_external_inputs`) at module start (before streaming opens the

@@ -738,6 +738,43 @@ def test_a_unit_set_to_internal_stays_on_it(tmp_path):
     assert fake.units[serial][1] == "internal"
 
 
+class _LaggyMoths(_FakeMoths):
+    """The first switch is dropped, like firmware 1.3.2 after an UPDATE."""
+
+    def __init__(self, units):
+        super().__init__(units)
+        self.drop = 1
+
+    def __call__(self, args):
+        if args[0] == "microphone" and len(args) == 3 and self.drop:
+            self.drop -= 1
+            self.calls.append(args)
+            return 0, "Sent MICROPHONE command"
+        return super().__call__(args)
+
+
+def test_a_dropped_switch_is_resent_and_confirmed(tmp_path):
+    serial = "AAAA000000000001"
+    m, _ = _input_module(tmp_path, {serial: (True, "internal")})
+    fake = _LaggyMoths({serial: (True, "internal")})
+    m._run_audiomoth = fake
+    with patch.object(mm.time, "sleep"):
+        assert m._set_input(serial, "external")
+    assert fake.units[serial][1] == "external"
+    assert [c for c in fake.calls if len(c) == 3] == [["microphone", "ext", serial]] * 2
+
+
+def test_microphone_commands_wait_after_an_update(tmp_path):
+    m, _ = _make(tmp_path)
+    slept = []
+    with patch.object(mm.subprocess, "run") as run, \
+         patch.object(mm.time, "sleep", side_effect=slept.append):
+        run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        m._run_audiomoth(["update", "gain", "2", "AAAA"])
+        m._run_audiomoth(["microphone"])
+    assert slept and 0.5 < slept[0] <= 1.0
+
+
 def test_external_chosen_but_absent_and_bad_values_leave_the_unit_alone(tmp_path):
     m, fake = _input_module(tmp_path, {"AAAA000000000001": (False, "internal"),
                                        "BBBB000000000002": (True, "external")},

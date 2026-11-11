@@ -482,18 +482,11 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                       <div key={serial} className="mic-moths__row">
                         <span className={`mic-moths__dot${connected ? " mic-moths__dot--on" : ""}`}
                           title={connected ? "Connected" : "Not connected"} />
-                        <span className="mic-moths__name">
-                          <input type="text" maxLength={32}
-                            value={formData?.audiomoth_labels?.[serial] ?? ""}
-                            placeholder="Name, e.g. A1"
-                            aria-label={`Name for AudioMoth ${serial}`}
-                            onChange={e => handleLabelChange(serial, e.target.value)} />
-                          <span className="mic-moths__serial">
-                            {serial}{connected ? "" : " · not connected"}
-                            {connected && inputs && chosenInput === "external" && !hasExternal
-                              && " · no external mic found, using internal"}
-                          </span>
-                        </span>
+                        <input type="text" maxLength={32} className="mic-moths__name"
+                          value={formData?.audiomoth_labels?.[serial] ?? ""}
+                          placeholder="Name, e.g. A1"
+                          aria-label={`Name for AudioMoth ${serial}`}
+                          onChange={e => handleLabelChange(serial, e.target.value)} />
                         <select value={inputValue} aria-label={`Microphone for AudioMoth ${serial}`}
                           title={"Which microphone this AudioMoth records through. "
                             + "The sync self-test always uses the internal one (next to the buzzer)."}
@@ -509,6 +502,11 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                             <option key={i} value={i}>{i} - {label}</option>
                           ))}
                         </select>
+                        <span className="mic-moths__serial">
+                          {serial}{connected ? "" : " · not connected"}
+                          {connected && inputs && chosenInput === "external" && !hasExternal
+                            && " · no external mic found, using internal"}
+                        </span>
                       </div>
                     );
                   })}

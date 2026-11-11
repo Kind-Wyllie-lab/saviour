@@ -57,6 +57,7 @@ class AudiomothModule(Module):
         self.audiomoth_inputs: dict[str, dict] = {}
         self._inputs_for: frozenset = frozenset()
         self._inputs_checked_at = 0.0
+        self._input_watch_stop = threading.Event()
         self._find_audiomoths() # Discover any and all connected microphones
 
         # Per-segment recording threads and state
@@ -149,6 +150,7 @@ class AudiomothModule(Module):
 
         def _run(c):
             r = subprocess.run(c, capture_output=True, text=True, timeout=10)
+            self._audiomoth_quiet_after = time.monotonic() + self._AFTER_UPDATE_S
             # The binary writes errors to stdout (puts()), not stderr
             msg = (r.stdout.strip() or r.stderr.strip())
             return r.returncode, msg
@@ -211,9 +213,21 @@ class AudiomothModule(Module):
         return self._gain_overrides().get(
             serial, int(self.config.get("audiomoth.gain", 2)))
 
+    # A MICROPHONE switch sent soon after a CONFIG/UPDATE, with a query in
+    # between, is dropped by the firmware (1.3.2): the unit lands one switch
+    # behind (found on the desk rig 2026-11-11). Waiting ~1 s after the
+    # update avoids it, so MICROPHONE commands wait for this.
+    _AFTER_UPDATE_S = 1.0
+
     def _run_audiomoth(self, args: list[str]) -> tuple[int, str]:
+        if args and args[0] == "microphone":
+            wait = getattr(self, "_audiomoth_quiet_after", 0.0) - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
         r = subprocess.run([AUDIOMOTH_CMD, *args], capture_output=True, text=True,
                            timeout=10)
+        if args and args[0] in ("update", "config"):
+            self._audiomoth_quiet_after = time.monotonic() + self._AFTER_UPDATE_S
         # The binary writes errors to stdout (puts()), not stderr
         return r.returncode, (r.stdout.strip() or r.stderr.strip())
 
@@ -276,15 +290,39 @@ class AudiomothModule(Module):
         return self.audiomoth_inputs
 
     def _set_input(self, serial: str, which: str) -> bool:
-        """Switch one AudioMoth to `which` ("internal"/"external")."""
-        rc, msg = self._run_audiomoth(
-            ["microphone", "ext" if which == "external" else "int", serial])
-        if rc != 0:
-            self.logger.error(f"AudioMoth {serial}: switching to the {which} "
-                              f"microphone failed: {msg}")
-            return False
-        self.logger.info(f"AudioMoth {serial}: using the {which} microphone")
-        return True
+        """Switch one AudioMoth to `which` ("internal"/"external") and wait
+        for it to report the change (~0.7 s); resend once if it doesn't."""
+        for attempt in (1, 2):
+            rc, msg = self._run_audiomoth(
+                ["microphone", "ext" if which == "external" else "int", serial])
+            if rc != 0:
+                self.logger.error(f"AudioMoth {serial}: switching to the {which} "
+                                  f"microphone failed: {msg}")
+                return False
+            deadline = time.monotonic() + 3.0
+            while True:
+                if self._refresh_inputs().get(serial, {}).get("active") == which:
+                    self.logger.info(f"AudioMoth {serial}: using the {which} microphone")
+                    return True
+                if time.monotonic() > deadline:
+                    break
+                time.sleep(0.25)
+            self.logger.warning(f"AudioMoth {serial}: still not on the {which} "
+                                f"microphone after attempt {attempt}")
+        self.logger.error(f"AudioMoth {serial}: switching to the {which} "
+                          "microphone didn't take")
+        return False
+
+    def _input_watch(self) -> None:
+        """Re-apply each AudioMoth's chosen input every _INPUT_RECHECK_S (the
+        firmware switches to a mic as it's plugged in). _apply_inputs skips
+        recordings and sync tests itself."""
+        while not self._input_watch_stop.wait(self._INPUT_RECHECK_S):
+            try:
+                if self.audiomoths:
+                    self._apply_inputs()
+            except Exception as e:
+                self.logger.debug(f"input watch: {e}")
 
     def _input_pref(self, serial: str) -> str | None:
         """The input chosen for this AudioMoth ("internal"/"external"), or
@@ -2034,6 +2072,9 @@ class AudiomothModule(Module):
             if not super().start():
                 return False
             self._apply_inputs()  # before streaming opens the devices
+            self._input_watch_stop.clear()
+            threading.Thread(target=self._input_watch, daemon=True,
+                             name="audiomoth-inputs").start()
             self.start_streaming()
             return True
         except Exception as e:
@@ -2044,6 +2085,7 @@ class AudiomothModule(Module):
     def stop(self) -> bool:
         """Stop the module and cleanup."""
         try:
+            self._input_watch_stop.set()
             if self.is_streaming:
                 self.stop_streaming()
             return super().stop()

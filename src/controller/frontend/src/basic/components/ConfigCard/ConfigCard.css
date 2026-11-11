@@ -916,12 +916,23 @@ min-width: 300px;
   padding: 2px 10px;
 }
 
+/* dot | name | microphone | gain, with the serial on a second line under
+   the name. Fixed widths for the dropdowns so they don't stretch. */
 .mic-moths__row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  grid-template-columns: 14px minmax(0, 1fr) 8.5rem 10rem;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 4px 0;
+}
+
+.mic-moths__row > select,
+.mic-moths__row > input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
 }
 
 .mic-moths__row--header {
@@ -941,20 +952,27 @@ min-width: 300px;
   background: #3fb950;
 }
 
-.mic-moths__name {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.mic-moths__name input {
-  width: 100%;
-}
-
 .mic-moths__serial {
+  grid-column: 2 / -1;
   font-size: 0.72em;
   color: var(--text-muted);
   font-family: ui-monospace, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Phones: name on its own line, the two dropdowns side by side under it. */
+@media (max-width: 480px) {
+  .mic-moths__row {
+    grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+  .mic-moths__row > .mic-moths__name {
+    grid-column: 2 / -1;
+  }
+  .mic-moths__row > select:first-of-type {
+    grid-column: 2;
+  }
+  .mic-moths__row--header {
+    display: none;
+  }
 }

@@ -35,23 +35,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
 from modules.sync_pulser import SyncPulser
-
-# Colour palette for the monitoring spectrogram, selectable via
-# `monitoring.colormap`. Value None => plain grayscale (no colormap).
-_SPEC_COLORMAPS = {
-    "inferno":   cv2.COLORMAP_INFERNO,
-    "magma":     cv2.COLORMAP_MAGMA,
-    "plasma":    cv2.COLORMAP_PLASMA,
-    "viridis":   cv2.COLORMAP_VIRIDIS,
-    "jet":       cv2.COLORMAP_JET,
-    "hot":       cv2.COLORMAP_HOT,
-    "bone":      cv2.COLORMAP_BONE,
-    "ocean":     cv2.COLORMAP_OCEAN,
-    "grayscale": None,
-}
-if hasattr(cv2, "COLORMAP_TURBO"):  # OpenCV >= 4.1.2
-    _SPEC_COLORMAPS["turbo"] = cv2.COLORMAP_TURBO
-_SPEC_COLORMAP_DEFAULT = "inferno"
+from src.shared import spectrogram_palette as palette
 
 
 class AudiomothModule(Module):
@@ -1074,6 +1058,51 @@ class AudiomothModule(Module):
     # Cell renderer (shared between stacked and grid layouts)
     # -----------------------------------------------------------------------
 
+    def _monitor_palette(self) -> tuple[tuple, list]:
+        """(base palette stops, call bands) from the monitoring config.
+
+        `monitoring.colormap` names a built-in palette; `colormap_stops`
+        (written by the controller for a custom palette) wins when set.
+        `call_bands` that don't parse are logged once and ignored, so a bad
+        setting never blanks the monitor. Cached on the raw settings."""
+        name = self.config.get("monitoring.colormap", palette.default_palette())
+        stops = self.config.get("monitoring.colormap_stops") or None
+        raw_bands = self.config.get("monitoring.call_bands") or []
+        key = json.dumps([name, stops, raw_bands], sort_keys=True, default=str)
+        cached = getattr(self, "_palette_cache", None)
+        if cached and cached[0] == key:
+            return cached[1], cached[2]
+        base = palette.resolve_stops(name, stops)
+        try:
+            bands = palette.parse_bands(raw_bands)
+        except palette.PaletteError as exc:
+            self.logger.warning(f"monitoring.call_bands ignored: {exc}")
+            bands = []
+        self._palette_cache = (key, base, bands)
+        return base, bands
+
+    @staticmethod
+    def _draw_band_key(cell: np.ndarray, bands: list, px0: int, py0: int,
+                       plot_h: int, lo_hz: float, hi_hz: float) -> None:
+        """A coloured bar down the plot's left edge over each call band's
+        rows, and the band's label at its top when there's room: the
+        colour key for band colouring, always on screen."""
+        span = hi_hz - lo_hz
+        if span <= 0:
+            return
+        for band in bands:
+            b_lo, b_hi = max(band.lo_hz, lo_hz), min(band.hi_hz, hi_hz)
+            if b_hi <= b_lo:
+                continue  # band entirely outside the plotted range
+            y_top = py0 + int((hi_hz - b_hi) / span * plot_h)
+            y_bot = py0 + int((hi_hz - b_lo) / span * plot_h)
+            colour = palette.band_key_colour(band)
+            cv2.rectangle(cell, (px0, y_top), (px0 + 2, max(y_top, y_bot - 1)),
+                          colour, -1)
+            if band.label and y_bot - y_top >= 14:
+                cv2.putText(cell, band.label, (px0 + 6, y_top + 11),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.33, colour, 1)
+
     def _render_cell(self, cell_w: int, cell_h: int, serial: str, data: dict,
                      mode: str, freq_range: str, sample_rate: int) -> np.ndarray:
         """Render one AudioMoth panel onto a (cell_h, cell_w, 3) uint8 array.
@@ -1348,15 +1377,12 @@ class AudiomothModule(Module):
                 spec_img = np.flipud(spec_img)
                 spec_norm    = np.clip((spec_img - DB_MIN) / (DB_MAX - DB_MIN) * 255,
                                        0, 255).astype(np.uint8)
-                cmap_name = str(self.config.get(
-                    "monitoring.colormap", _SPEC_COLORMAP_DEFAULT)).lower()
-                cmap = _SPEC_COLORMAPS.get(
-                    cmap_name, _SPEC_COLORMAPS[_SPEC_COLORMAP_DEFAULT])
-                if cmap is None:  # 'grayscale'
-                    spec_colored = cv2.cvtColor(spec_norm, cv2.COLOR_GRAY2BGR)
-                else:
-                    spec_colored = cv2.applyColorMap(spec_norm, cmap)
-                cell[py0:py1, px0:px1] = spec_colored
+                base, bands = self._monitor_palette()
+                row_hz = palette.linear_row_hz(PLOT_H, plot_lo_hz, plot_hi_hz)
+                cell[py0:py1, px0:px1] = palette.colourise(
+                    spec_norm, base, bands, row_hz)
+                self._draw_band_key(cell, bands, px0, py0, PLOT_H,
+                                    plot_lo_hz, plot_hi_hz)
 
             cv2.rectangle(cell, (px0, py0), (px1, py1), (60, 60, 60), 1)
 

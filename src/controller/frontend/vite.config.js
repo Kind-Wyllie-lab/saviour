@@ -57,6 +57,9 @@ export default defineConfig(({ mode }) => {
         // as the old single-hardcoded-import approach. A broken/unmaintained
         // variant can't break a build that doesn't select it.
         'virtual:active-app': path.resolve(__dirname, `src/${variant}/App.jsx`),
+        // Data shared with the Python side (e.g. spectrogram_palettes.json),
+        // so the frontend and the renderers can't drift apart.
+        '@saviour-shared': path.resolve(__dirname, '../../shared'),
       },
     },
     server: {

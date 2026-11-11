@@ -11,6 +11,8 @@ import ConfigCardShell from "../ConfigCardShell";
 import { HIDDEN_CONFIG_SECTIONS } from "../configUtils";
 import SyncTab from "./SyncTab";
 import { calibrationStatus } from "./syncCalibration";
+import CallBandsEditor from "/src/basic/components/CallBandsEditor/CallBandsEditor";
+import { PALETTES, gradientCss, paletteByName } from "/src/basic/utils/spectrogramPalettes";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -96,27 +98,10 @@ function MicrophoneStream({ ip, port }) {
   );
 }
 
-const MIC_COLORMAPS = [
-  "inferno", "magma", "plasma", "viridis", "turbo",
-  "jet", "hot", "bone", "ocean", "grayscale",
-];
-
 // Selectable recorder block sizes (powers of two). 32768 is the default
 // (settled 2026-09-07 for A/V-sync latency vs xrun headroom); smaller values
 // cut first-read latency further but risk xruns at 192 kHz on a loaded Pi.
 const MIC_BLOCK_SIZES = [8192, 16384, 32768, 65536, 131072, 262144];
-
-// Committed swatch PNGs, one per colour map (tools/gen_microphone_colormap_swatches.py).
-// { "inferno": "/assets/.../inferno.png", ... }
-const MIC_COLORMAP_SWATCHES = Object.fromEntries(
-  Object.entries(
-    import.meta.glob("/src/assets/mic-colormap-swatches/*.png", {
-      eager: true,
-      query: "?url",
-      import: "default",
-    }),
-  ).map(([path, url]) => [path.split("/").pop().replace(".png", ""), url]),
-);
 
 const TAB_COPY_SECTION = {
   basic:     { key: "module",     label: "Basic"     },
@@ -537,31 +522,36 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           </div>
           <div className="mic-colormap-picker">
             <span className="mic-colormap-picker__label">
-              Spectrogram colour: <strong>{mon.colormap ?? "inferno"}</strong>
+              Spectrogram colour: <strong>{paletteByName(mon.colormap).label}</strong>
             </span>
             <div className="mic-colormap-picker__swatches">
-              {MIC_COLORMAPS.map((c) => (
+              {PALETTES.map((p) => (
                 <button
                   type="button"
-                  key={c}
+                  key={p.name}
                   className={`mic-colormap-picker__swatch${
-                    (mon.colormap ?? "inferno") === c
+                    paletteByName(mon.colormap).name === p.name
                       ? " mic-colormap-picker__swatch--active"
                       : ""
                   }`}
-                  title={c}
-                  aria-label={c}
-                  onClick={() => setMonitorPref("colormap", c)}
-                >
-                  {MIC_COLORMAP_SWATCHES[c] ? (
-                    <img src={MIC_COLORMAP_SWATCHES[c]} alt="" />
-                  ) : (
-                    <span className="mic-colormap-picker__swatch-fallback">{c}</span>
-                  )}
-                </button>
+                  title={p.label}
+                  aria-label={p.label}
+                  style={{ background: gradientCss(p.stops) }}
+                  onClick={() => {
+                    setMonitorPref("colormap", p.name);
+                    setMonitorPref("colormap_stops", []);
+                  }}
+                />
               ))}
             </div>
           </div>
+          <CallBandsEditor
+            bands={mon.call_bands ?? []}
+            onChange={(bands) => setMonitorPref("call_bands", bands)}
+            nyquistHz={nyquist}
+            plotLoHz={freqRange === "full" ? 0 : freqLo}
+            plotHiHz={freqRange === "full" ? nyquist : freqHi}
+          />
           <div className="sensor-mode-info" style={{ marginTop: "8px" }}>
             Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
           </div>

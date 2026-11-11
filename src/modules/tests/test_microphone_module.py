@@ -472,3 +472,63 @@ def test_sync_commands_follow_the_recording_components_flag(tmp_path):
             time.sleep(0.02)
     m.recording = MagicMock(is_recording=False)
     assert m.sync_pulses()["result"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Monitor spectrogram palette + call bands
+# ---------------------------------------------------------------------------
+
+def _render_spectrogram(tmp_path, monitoring: dict, lines_hz=(25000, 60000)):
+    """Render one spectrogram cell over 0-96 kHz with a loud horizontal
+    line at each frequency in `lines_hz`; returns (cell, row_of(hz), px0)."""
+    m, _ = _make(tmp_path)
+    cfg = {"monitoring.freq_lo_hz": 0, "monitoring.freq_hi_hz": 96000,
+           **{f"monitoring.{k}": v for k, v in monitoring.items()}}
+    m.config.get.side_effect = lambda key, default=None: cfg.get(key, default)
+    m.peak_hold_data = {}
+    n_bins = 960                                 # 100 Hz per bin
+    frame = np.full(n_bins, -80.0, dtype=np.float32)
+    for hz in lines_hz:
+        frame[int(hz / 100) - 3:int(hz / 100) + 3] = -5.0
+    data = {"spec_buffer": [frame] * 50, "timestamp": time.time(),
+            "level_db": -30.0, "peak_db": -20.0}
+    cell = m._render_cell(640, 300, "AAAA", data, "spectrogram", "band", 192000)
+    plot_h, py0 = 300 - 45, 30
+
+    def row_of(hz):
+        return py0 + int((96000 - hz) / 96000 * plot_h)
+
+    return cell, row_of, 12 + 28
+
+
+def test_monitor_spectrogram_uses_the_configured_palette(tmp_path):
+    cell, row_of, px0 = _render_spectrogram(tmp_path, {"colormap": "grayscale"})
+    b, g, r = cell[row_of(25000), px0 + 100].astype(int)
+    assert b == g == r and b > 150
+
+
+def test_monitor_call_bands_colour_each_band_and_grey_the_rest(tmp_path):
+    from src.shared import spectrogram_palette as sp
+    bands = sp.band_presets()
+    cell, row_of, px0 = _render_spectrogram(
+        tmp_path, {"colormap": "inferno", "call_bands": bands},
+        lines_hz=(25000, 60000, 40000))
+    x = px0 + 100
+    b, g, r = cell[row_of(25000), x].astype(int)      # alarm line: blue
+    assert b > r and b > g
+    b, g, r = cell[row_of(60000), x].astype(int)      # appetitive line: orange
+    assert r > g > b
+    b, g, r = cell[row_of(40000), x].astype(int)      # 40 kHz line: grey
+    assert b == g == r and b > 150
+    # Key bar on the plot's left edge, in the band colour.
+    b, g, r = cell[row_of(25000), px0 + 1].astype(int)
+    assert b > r
+
+
+def test_monitor_bad_call_bands_are_ignored_not_fatal(tmp_path):
+    overlapping = [{"lo_hz": 18000, "hi_hz": 50000, "palette": "alarm_blue"},
+                   {"lo_hz": 45000, "hi_hz": 96000, "palette": "appetitive_orange"}]
+    cell, row_of, px0 = _render_spectrogram(
+        tmp_path, {"colormap": "grayscale", "call_bands": overlapping})
+    b, g, r = cell[row_of(25000), px0 + 100].astype(int)
+    assert b == g == r and b > 150

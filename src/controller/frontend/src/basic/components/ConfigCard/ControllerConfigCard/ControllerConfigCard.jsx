@@ -590,6 +590,7 @@ function ControllerConfigCard() {
 
       {fontModal && (
         <FontImportModal
+          existingFonts={customFonts}
           onClose={() => setFontModal(false)}
           onSaved={font => {
             if (!font) return;

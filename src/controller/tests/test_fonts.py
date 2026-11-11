@@ -64,10 +64,18 @@ def test_file_names_are_content_hashes_and_resolvable():
         assert f.read() == WOFF2
 
 
-def test_second_font_with_same_name_gets_a_new_id():
+def test_font_with_an_existing_name_is_refused():
     s = _store()
-    assert s.save(_meta(), {"f0": WOFF2})["id"] == "inter"
-    assert s.save(_meta(), {"f0": OTF})["id"] == "inter-2"
+    s.save(_meta("Inter"), {"f0": WOFF2})
+    with pytest.raises(FontError, match="already added"):
+        s.save(_meta("inter"), {"f0": OTF})
+    assert len(s.list()) == 1
+
+
+def test_names_that_slug_alike_get_distinct_ids():
+    s = _store()
+    assert s.save(_meta("Open Sans"), {"f0": WOFF2})["id"] == "open-sans"
+    assert s.save(_meta("Open_Sans"), {"f0": OTF})["id"] == "open-sans-2"
 
 
 def test_name_matching_builtin_is_suffixed():

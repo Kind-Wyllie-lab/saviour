@@ -101,14 +101,34 @@ export function fontFaceCss(customFonts) {
 const GOOGLE_CSS_RE = /https:\/\/fonts\.googleapis\.com\/css2?\?[^\s"'<>)]+/;
 const DEFAULT_SUBSETS = ["latin", "latin-ext"];
 
-/** The Google Fonts CSS link inside whatever was pasted: the bare link, the
- *  <link> embed snippet or the @import one. Throws if there isn't one. */
-export function parseGoogleFontsUrl(text) {
-  const m = (text || "").replace(/&amp;/g, "&").match(GOOGLE_CSS_RE);
-  if (!m) {
-    throw new Error("Paste a fonts.googleapis.com link, or the <link> embed code from Google Fonts.");
+const GOOGLE_SPECIMEN_RE = /https:\/\/fonts\.google\.com\/specimen\/([^/?#\s"'<>]+)/;
+
+// Every weight, upright and italic. A specimen link names only the family,
+// so the request asks for all of them on Google's older `css` API, which (unlike
+// css2) leaves out the ones a family doesn't have instead of refusing.
+const ALL_STYLES = [100, 200, 300, 400, 500, 600, 700, 800, 900]
+  .flatMap((w) => [`${w}`, `${w}i`]).join(",");
+
+/** The Google Fonts CSS link for whatever was pasted: a family's page
+ *  (fonts.google.com/specimen/Name), which fetches every weight and italic it
+ *  has and nothing else; or a CSS link, its <link> embed snippet or the
+ *  @import one, taken as is. Throws if there's neither. */
+export function googleFontsUrl(text) {
+  const t = (text || "").replace(/&amp;/g, "&");
+  const css = t.match(GOOGLE_CSS_RE);
+  if (css) return css[0];
+  const spec = t.match(GOOGLE_SPECIMEN_RE);
+  if (spec) {
+    let family;
+    try { family = decodeURIComponent(spec[1].replace(/\+/g, " ")); } catch { family = ""; }
+    family = family.trim().replace(/\s+/g, "+");
+    if (/^[A-Za-z0-9+]+$/.test(family)) {
+      return `https://fonts.googleapis.com/css?family=${family}:${ALL_STYLES}&display=swap`;
+    }
   }
-  return m[0];
+  throw new Error(
+    "Paste a Google Fonts page link (fonts.google.com/specimen/…), "
+    + "or the <link> embed code from Google Fonts.");
 }
 
 function cssProp(block, name) {
@@ -122,13 +142,37 @@ function cssProp(block, name) {
  * Keeps the latin and latin-ext subsets (most of the size of a family is
  * other scripts), unless a family has none, e.g. one for another script.
  */
+// A variable family comes back as one @font-face per requested weight, all
+// pointing at the same file; fold those into one face with a weight range,
+// so the file is downloaded once and keeps every weight it covers.
+function mergeWeights(blocks) {
+  const groups = new Map();
+  for (const b of blocks) {
+    const k = `${b.url}|${b.style}|${b.unicodeRange || ""}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(b);
+  }
+  return [...groups.values()].map((g) => {
+    if (g.length === 1) return g[0];
+    const ws = g.flatMap((b) => b.weight.split(/\s+/).map(Number)).filter(Number.isFinite);
+    const lo = Math.min(...ws);
+    const hi = Math.max(...ws);
+    return { ...g[0], weight: lo === hi ? `${lo}` : `${lo} ${hi}` };
+  });
+}
+
 export async function fetchGoogleFonts(url, { subsets = DEFAULT_SUBSETS } = {}) {
   let css;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Google Fonts answered ${resp.status}`);
+    if (!resp.ok) {
+      const err = new Error(`Google Fonts answered ${resp.status}`);
+      err.status = resp.status;
+      throw err;
+    }
     css = await resp.text();
   } catch (e) {
+    if (e.status === 400) throw new Error("Google Fonts doesn't know that family. Check the link.");
     throw new Error(
       `Couldn't reach Google Fonts from this browser (${e.message}). `
       + "Check the link, or download the font files and drop them in instead.");
@@ -161,7 +205,7 @@ export async function fetchGoogleFonts(url, { subsets = DEFAULT_SUBSETS } = {}) 
   const families = [];
   for (const [family, all] of byFamily) {
     const wanted = all.filter((b) => !b.subset || subsets.includes(b.subset));
-    const chosen = wanted.length ? wanted : all;
+    const chosen = mergeWeights(wanted.length ? wanted : all);
     const faces = await Promise.all(chosen.map(async (b) => {
       const resp = await fetch(b.url);
       if (!resp.ok) throw new Error(`Couldn't download ${family} (${resp.status})`);

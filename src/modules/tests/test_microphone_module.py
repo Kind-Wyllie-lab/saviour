@@ -721,6 +721,15 @@ def test_units_with_an_external_mic_are_switched_to_it(tmp_path):
     assert fake.calls == [["microphone"]]
 
 
+def test_monitor_tag_shows_the_active_microphone(tmp_path):
+    m, _ = _make(tmp_path)
+    m.audiomoth_inputs = {"AAAA": {"external": True, "active": "external"},
+                          "BBBB": {"external": False, "active": "internal"}}
+    assert m._input_tag("AAAA") == "(ext)"
+    assert m._input_tag("BBBB") == "(int)"
+    assert m._input_tag("CCCC") == ""          # never answered the query
+
+
 def test_a_unit_set_to_internal_stays_on_it(tmp_path):
     """input: internal keeps a unit off its external mic, and puts it back
     when the firmware switches to a newly plugged-in mic."""

@@ -97,7 +97,8 @@ own thread (`_input_watch`): `@check` methods only run on readiness
 validation. Firmware quirk found while testing it: a switch right after an
 `update gain` plus a query is dropped, so `MICROPHONE` commands wait 1 s
 after an update and `_set_input` confirms the switch, resending once
-(`docs/HARDWARE_NOTES.md`).
+(`docs/HARDWARE_NOTES.md`). The live monitor's top line shows the mic in
+use in the AudioMoth tool's notation: "A1 (ext)  RMS ... Peak ...".
 
 Built: `_refresh_inputs` (read-only `MICROPHONE` query, parsed per serial);
 `_apply_inputs` (was `_ensure_external_inputs`) at module start (before streaming opens the

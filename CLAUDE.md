@@ -202,8 +202,8 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 
 **Reliability / UX**
 - Config changes while `ACTIVE`: `save_controller_config` still ungated; frontend has no `module_config_error` listener.
-- Rapid single-delete 404 race (root cause unknown) and a bulk `DELETE /api/v1/sessions` route; multi-select delete itself is done → `plans/session-list-multi-select-delete.md`.
-- TTL: edge timestamps on the Python callback path → `plans/ttl-kernel-timestamping.md`; hardening work → `plans/ttl-module-hardening.md`.
+- Rapid single-delete 404 race (root cause unknown) and a bulk `DELETE /api/v1/sessions` route; multi-select delete itself is done → `plans/backlog.md`.
+- TTL: edge timestamps on the Python callback path → `plans/ttl-kernel-timestamping.md`; hardening (PR #385) and the `external_host` module still need an on-device pass → `plans/backlog.md`.
 - pyControl visibility → `plans/pycontrol-live-event-bridge.md`.
 - Habitat RFID: replacing the standalone Pi 4 logger (72-unit Trovan bus). The `rfid` module now logs every read to a local SQLite store and syncs it to MariaDB (settings on the controller config RFID DB tab, schema `docs/sql/rfid_schema.sql`). Built, not yet on the bus or a real server; zero-ID reads not yet understood → `plans/habitat-rfid-db-sync.md`. `rfid.mock.enabled` runs the module on a simulated bus (no reader; separate store, never synced) for frontend work.
 - Habitat RFID gate mapping: the habitat **Gates** page (layout, walk-through check, guided mapping run with checks + change log; `variants/habitat/gate_map*.py`) is built, not yet run on the habitat bus; session snapshot, MariaDB mapping table and gate health remain → `plans/rfid-gate-mapping.md`.
@@ -212,7 +212,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - APA automated shocking: the grid's armed/disarmed state (arms at recording start) and the shock mode (manual/auto/dry_run) live on the controller (`variants/apa/shock_automation.py`), the `apa_arduino` module only pulses while told to. Built, not yet run on the rig; detector accuracy work and protocol placeholders → `plans/apa-rat-detector.md`.
 - APA shock current: a free number field; values off the 0.02 mA grid are floored and values over the 1.0 mA firmware cap keep the old setpoint, all silently → `plans/apa-shock-setpoint-validation.md`.
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
-- Field install feedback (slow compose preview, crop stretching/clear, timestamp position, session list by date + bulk download, live mic spectrogram blip) → `plans/field-install-feedback-2026-10.md`.
+- Field install leftovers: live mic spectrogram blip (waiting on evidence from the site) and the exposure warning overlapping the timestamp → `plans/backlog.md`.
 - `saviour-config`/`mend.sh` build the frontend as root (root-owned `dist/`); `clone_prep.sh` clears the wrong active-config path.
 - Post-Process compose layout editor: phases 1-2 (canvas, camera + spectrogram tiles, templates, timeline range + speed) shipped; next event/text tiles, saved templates → `plans/compose-layout-editor.md`. Habitat campaigns (16 cams, sparse clips, box map, jobs issued to the habitat server) are later → `plans/habitat-post-processing.md`.
 - A/V sync: audio is now anchored on PipeWire's reported stream latency (`LAT` sidecar lines) minus a per-AudioMoth offset that `sync_selftest` measures and stores (`audiomoth_sync_offsets_ms`); in a real session that put each buzz within 0.1 ms of its trigger (was +20 ms). Not yet calibrated on the rig or checked on another day; the camera's own placement (~+4 ms, start-of-exposure stamps) is the remaining A/V term → `plans/audio-video-sync-residual-validation.md`, `docs/AV_SYNC_TEST.md`.

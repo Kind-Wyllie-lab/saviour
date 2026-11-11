@@ -47,4 +47,4 @@ side beyond making sure it timestamps its own events from this Pi's system
 wall clock at some point (most acquisition software already does, e.g.
 pyControl's own session output).
 
-Full design writeup: `plans/pycontrol-timestamp-sync-module.md`.
+Full design writeup: `docs/CHANGELOG.md` ("`external_host` module"); the plan file is in git history.

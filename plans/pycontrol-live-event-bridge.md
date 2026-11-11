@@ -4,8 +4,7 @@
 - **Created:** 2026-09-14
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (new one-liner).
-- **Builds on:** `plans/pycontrol-timestamp-sync-module.md` (the
-  `external_host` module, already built on `feat/external-host-module`) —
+- **Builds on:** the `external_host` module (built, see `docs/CHANGELOG.md`) —
   this plan is the next increment on the same Pi, not a separate device.
 
 ## Why

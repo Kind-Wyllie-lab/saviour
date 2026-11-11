@@ -3,8 +3,7 @@ import socket from "/src/socket";
 import "./CropEditorModal.css";
 
 /**
- * Crop / digital zoom editor (plans/field-install-feedback-2026-10.md,
- * Phase B).
+ * Crop / digital zoom editor (docs/CHANGELOG.md, "Crop editor rework").
  *
  * While open, the module shows its sensor mode's whole field of view on the
  * preview (set_crop_editing), squeezed into the output's aspect ratio; this

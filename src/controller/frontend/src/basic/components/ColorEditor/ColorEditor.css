@@ -1,0 +1,131 @@
+.color-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+}
+
+.color-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-editor__preview {
+  width: 36px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.color-editor__modes {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.color-editor__mode {
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font: inherit;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+
+.color-editor__mode + .color-editor__mode {
+  border-left: 1px solid var(--border-color);
+}
+
+.color-editor__mode.selected {
+  background: var(--accent-color);
+  color: var(--bg-color);
+  font-weight: 600;
+}
+
+.color-editor__mode:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.color-editor__channel,
+.color-editor__hex {
+  display: grid;
+  grid-template-columns: 76px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-editor__hex {
+  grid-template-columns: 76px 1fr;
+}
+
+.color-editor__channel-label {
+  font-size: 0.8em;
+  opacity: 0.75;
+}
+
+.color-editor__channel input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border-color);
+  margin: 0;
+}
+
+.color-editor__channel input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #333;
+  cursor: pointer;
+}
+
+.color-editor__channel input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #333;
+  cursor: pointer;
+}
+
+.color-editor__num {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8em;
+}
+
+.color-editor__num input,
+.color-editor__hex input {
+  box-sizing: border-box;
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  font-family: monospace;
+  font-size: 0.95em;
+}
+
+.color-editor__num input {
+  width: 52px;
+}
+
+.color-editor__hex input {
+  width: 100%;
+  max-width: 120px;
+}

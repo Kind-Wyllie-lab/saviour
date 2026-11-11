@@ -17,6 +17,9 @@ import useLiveFontPreview from "/src/hooks/useLiveFontPreview";
 import { BUILTIN_FONTS, DEFAULT_FONT_ID, frontendFonts } from "/src/basic/utils/fonts";
 import { formatBytes } from "/src/basic/pages/Recording/sessionFormat";
 import {
+  effectiveFrontend, loadAppearance, onAppearanceChange, saveAppearance, validAppearance,
+} from "/src/basic/utils/appearance";
+import {
   listThemes, themeTokens, frontendTheme, DEFAULT_THEME_ID, BUILTIN_THEMES,
 } from "/src/basic/utils/themes";
 
@@ -92,19 +95,46 @@ function ControllerConfigCard() {
   // that custom theme.
   const [themeModal, setThemeModal] = useState(null);
   const [fontModal, setFontModal] = useState(false);
+  // Which appearance the Frontend tab edits: this browser's own choices
+  // (stored in this browser, applied at once) or the rig default (config,
+  // applied on Save to every browser that hasn't chosen its own).
+  const [appearanceScope, setAppearanceScope] = useState("browser");
+  const [choices, setChoices] = useState(loadAppearance);
+  useEffect(() => onAppearanceChange(setChoices), []);
   const saveTimerRef = useRef(null);
 
   // The theme tile and dark mode toggle preview on the whole page as soon as
   // they're clicked; Save keeps it, leaving the page unsaved drops it. Matches
   // the configured theme until something is changed, and shows nothing until
   // the config has loaded (an empty form would read as "default, dark").
-  const previewFe = formData?.frontend;
+  // In browser scope the choices apply straight away (useControllerTheme),
+  // so there's nothing to preview over the page.
+  const rigFe = formData?.frontend;
+  const browserScope = appearanceScope === "browser";
+  const previewFe = rigFe && !browserScope ? rigFe : null;
   const livePreview = useMemo(() => (previewFe ? frontendTheme(previewFe) : null), [previewFe]);
   useLiveThemePreview(livePreview?.tokens ?? null, livePreview?.darkMode ?? true);
   // Same for the font pickers.
-  useLiveFontPreview(previewFe ?? null);
-  const customFonts = previewFe?.custom_fonts ?? [];
-  const previewFonts = frontendFonts(previewFe);
+  useLiveFontPreview(previewFe);
+  // What the pickers show: this browser's view, or the rig default being edited.
+  const shownFe = browserScope ? effectiveFrontend(rigFe, choices) : rigFe;
+  const ownChoices = rigFe ? validAppearance(rigFe, choices) : {};
+  const hasOwnChoices = Object.keys(ownChoices).length > 0;
+  const customFonts = rigFe?.custom_fonts ?? [];
+  const previewFonts = frontendFonts(shownFe);
+
+  const setAppearance = (key, value) => {
+    if (browserScope) {
+      saveAppearance({ ...choices, [key]: value });
+    } else {
+      setFormData(fd => ({ ...fd, frontend: { ...(fd?.frontend || {}), [key]: value } }));
+    }
+  };
+  const makeRigDefault = () => {
+    setFormData(fd => ({ ...fd, frontend: { ...(fd?.frontend || {}), ...ownChoices } }));
+    saveAppearance({});
+    setAppearanceScope("rig");
+  };
 
   useEffect(() => {
     socket.emit("get_controller_config");
@@ -389,13 +419,69 @@ function ControllerConfigCard() {
             {/* FRONTEND */}
             {activeTab === "frontend" && (
               <>
+                <div className="form-field appearance-scope-field">
+                  <label>Appearance for:</label>
+                  <div className="appearance-scope" role="radiogroup" aria-label="Appearance for">
+                    {[
+                      { key: "browser", label: "This browser" },
+                      { key: "rig", label: "Rig default" },
+                    ].map(o => (
+                      <button
+                        key={o.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={appearanceScope === o.key}
+                        className={`appearance-scope-btn${appearanceScope === o.key ? " selected" : ""}`}
+                        onClick={() => setAppearanceScope(o.key)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  {browserScope ? (
+                    <div className="appearance-scope-note">
+                      <span className="frontend-accent-hint">
+                        {hasOwnChoices
+                          ? "This browser has its own appearance. Changes here apply at once and only here; anything not changed follows the rig default."
+                          : "This browser follows the rig default. Changes here apply at once and only to this browser."}
+                        {" "}Themes and fonts themselves are kept on the controller.
+                      </span>
+                      <div className="theme-picker-actions">
+                        <button
+                          type="button"
+                          className="teams-test-btn"
+                          disabled={!hasOwnChoices}
+                          onClick={() => saveAppearance({})}
+                        >
+                          Use rig default
+                        </button>
+                        {loggedIn && (
+                          <button
+                            type="button"
+                            className="teams-test-btn"
+                            disabled={!hasOwnChoices}
+                            title="Copy this browser's appearance into the rig default; Save to apply it"
+                            onClick={makeRigDefault}
+                          >
+                            Make this the rig default
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="frontend-accent-hint">
+                      Shown by every browser that hasn&apos;t chosen its own appearance. Changes
+                      preview on this page; Save applies them (leave without saving to go back).
+                    </span>
+                  )}
+                </div>
                 <div className="form-field frontend-theme-field">
                   <label>Theme:</label>
                   <div className="theme-picker">
-                    {listThemes(formData?.frontend?.custom_themes).map(t => {
-                      const darkMode = formData?.frontend?.dark_mode ?? true;
+                    {listThemes(rigFe?.custom_themes).map(t => {
+                      const darkMode = shownFe?.dark_mode ?? true;
                       const selected =
-                        (formData?.frontend?.theme_id ?? DEFAULT_THEME_ID) === t.id;
+                        (shownFe?.theme_id ?? DEFAULT_THEME_ID) === t.id;
                       const preview = themeTokens(t, darkMode);
                       return (
                         <label
@@ -408,7 +494,7 @@ function ControllerConfigCard() {
                             name="frontend-theme"
                             value={t.id}
                             checked={selected}
-                            onChange={e => handleChange(["frontend", "theme_id"], e)}
+                            onChange={() => setAppearance("theme_id", t.id)}
                           />
                           <span
                             className="theme-swatch-preview"
@@ -467,9 +553,8 @@ function ControllerConfigCard() {
                     </button>
                   </div>
                   <span className="frontend-accent-hint">
-                    Click a theme to preview it on this page; Save applies it across every
-                    dashboard variant (leave without saving to go back). Tiles show each theme's{" "}
-                    {(formData?.frontend?.dark_mode ?? true) ? "dark" : "light"} variant.
+                    Applies across every dashboard variant. Tiles show each theme&apos;s{" "}
+                    {(shownFe?.dark_mode ?? true) ? "dark" : "light"} variant.
                   </span>
                 </div>
                 <div className="form-field">
@@ -477,16 +562,15 @@ function ControllerConfigCard() {
                   <label className="toggle-switch">
                     <input
                       type="checkbox"
-                      checked={formData?.frontend?.dark_mode ?? true}
-                      onChange={e => handleChange(["frontend", "dark_mode"], e)}
+                      checked={shownFe?.dark_mode ?? true}
+                      onChange={e => setAppearance("dark_mode", e.target.checked)}
                     />
                     <span className="toggle-switch-track">
                       <span className="toggle-switch-thumb" />
                     </span>
                   </label>
                   <span className="frontend-accent-hint">
-                    Applied live across every dashboard variant on save. Each theme
-                    has its own light and dark variant.
+                    Each theme has its own light and dark variant.
                   </span>
                 </div>
                 <div className="form-field frontend-font-field">
@@ -501,8 +585,8 @@ function ControllerConfigCard() {
                           <span>{label}</span>
                           <select
                             id={`frontend-${key}`}
-                            value={formData?.frontend?.[key] ?? (same ? "" : DEFAULT_FONT_ID)}
-                            onChange={e => handleChange(["frontend", key], e)}
+                            value={shownFe?.[key] ?? (same ? "" : DEFAULT_FONT_ID)}
+                            onChange={e => setAppearance(key, e.target.value)}
                           >
                             {same && <option value="">Same as body text</option>}
                             <optgroup label="On each device">
@@ -565,8 +649,7 @@ function ControllerConfigCard() {
                     </div>
                   </div>
                   <span className="frontend-accent-hint">
-                    Choices preview on this page; Save applies them across every dashboard
-                    variant. &quot;On each device&quot; fonts use what each computer has
+                    &quot;On each device&quot; fonts use what each computer has
                     installed, so they can differ between computers. Added fonts are stored
                     on the controller and look the same everywhere, with no internet needed.
                   </span>
@@ -594,9 +677,10 @@ function ControllerConfigCard() {
           onClose={() => setFontModal(false)}
           onSaved={font => {
             if (!font) return;
-            // Pick the new font for body text (unsaved, previewed) so the
-            // operator sees it straight away; Save keeps it.
-            setFormData(fd => ({ ...fd, frontend: { ...(fd?.frontend || {}), font_body: font.id } }));
+            // Pick the new font for body text so the operator sees it straight
+            // away: in this browser at once, or previewed in the rig default
+            // until Save.
+            setAppearance("font_body", font.id);
           }}
         />
       )}

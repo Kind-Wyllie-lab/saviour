@@ -4,25 +4,29 @@ import {
   parsePalette, themeFromPalette, defaultRoleAssignment, PALETTE_ROLES,
 } from "/src/basic/utils/themes";
 import useLiveThemePreview from "/src/hooks/useLiveThemePreview";
+import ColorEditor from "/src/basic/components/ColorEditor/ColorEditor";
 import "./ThemeImportModal.css";
 
 // Starting colours for a new theme (the same Coolors palette the import
 // field uses as its placeholder).
 const DEFAULT_PALETTE = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"];
 
-// The palette editor: one tile per role, in fixed PALETTE_ROLES order. Its
-// colour is a native colour input (click to change it); dragging a tile onto
-// another swaps their colours -- there are always exactly 5 roles, so
+// The palette editor: one tile per role, in fixed PALETTE_ROLES order.
+// Clicking a tile opens ColorEditor (HSL / RGB / Hex) for it below the row;
+// dragging a tile onto another swaps their colours -- there are always exactly 5 roles, so
 // "reorder" here means "which of the 5 roles this hex anchors", not an
 // insert/shift.
 function RoleSwatches({ roles, onSwap, onPick }) {
   const [dragIndex, setDragIndex] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const editingRole = PALETTE_ROLES.find((r) => r.key === editing);
   return (
+    <>
     <div className="theme-import-modal__roles">
       {PALETTE_ROLES.map(({ key, label }, i) => (
         <div
           key={key}
-          className={`theme-role-swatch${dragIndex === i ? " theme-role-swatch--dragging" : ""}`}
+          className={`theme-role-swatch${dragIndex === i ? " theme-role-swatch--dragging" : ""}${editing === key ? " theme-role-swatch--editing" : ""}`}
           draggable
           title="Click the colour to change it; drag to swap with another role"
           onDragStart={() => setDragIndex(i)}
@@ -34,18 +38,30 @@ function RoleSwatches({ roles, onSwap, onPick }) {
             setDragIndex(null);
           }}
         >
-          <input
-            type="color"
+          <button
+            type="button"
             className="theme-role-swatch__color"
-            aria-label={`${label} colour`}
-            value={roles[key]}
-            onChange={(e) => onPick(key, e.target.value.toLowerCase())}
+            aria-label={`Change the ${label} colour`}
+            aria-expanded={editing === key}
+            style={{ background: roles[key] }}
+            onClick={() => setEditing(editing === key ? null : key)}
           />
           <span className="theme-role-swatch__label">{label}</span>
           <span className="theme-role-swatch__hex">{roles[key]}</span>
         </div>
       ))}
     </div>
+    {editingRole && (
+      <div className="theme-import-modal__color-edit">
+        <div className="theme-import-modal__color-edit-head">
+          <span>{editingRole.label}</span>
+          <button type="button" className="theme-import-modal__color-edit-done"
+            onClick={() => setEditing(null)}>Done</button>
+        </div>
+        <ColorEditor value={roles[editing]} onChange={(hex) => onPick(editing, hex)} />
+      </div>
+    )}
+    </>
   );
 }
 

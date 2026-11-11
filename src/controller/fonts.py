@@ -236,11 +236,16 @@ class FontStore:
         `meta` is {"name", "source"?, "faces": [{"field", "weight"?,
         "style"?, "unicode_range"?}]} where each face's `field` names its
         bytes in `files`. A new font gets an id derived from its name, made
-        unique; an existing font is never overwritten -- delete it first.
-        Raises FontError on any validation failure."""
+        unique. A font whose name matches an existing one (ignoring case) is
+        refused: Google's embed code lists every family in the operator's
+        Google Fonts selection, so re-pasting it would otherwise stack up
+        duplicates. Raises FontError on any validation failure."""
         if not isinstance(meta, dict):
             raise FontError("Font details must be an object")
         name = _clean_name(meta.get("name"))
+        if any(f["name"].lower() == name.lower() for f in self.list()):
+            raise FontError(
+                f'"{name}" is already added. Delete it first, or give this one another name.')
         source = _clean_source(meta.get("source"))
         raw_faces = meta.get("faces")
         if not isinstance(raw_faces, list) or not raw_faces:

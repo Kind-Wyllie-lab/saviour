@@ -148,6 +148,36 @@ offsets hold to 0.1 ms across a reboot and move 0.3-0.5 ms under heavy
 CPU/disk load. After a calibration, a second run should read `median_ms`
 near 0.
 
+### External microphones
+
+An AudioMoth with an external mic records through it (SAVIOUR switches it
+over; the firmware also does when one is plugged in). The self-test moves it
+to its **internal** mic for the run, since the buzzer sits next to the
+AudioMoth, and back afterwards; results and stored offsets carry `input`.
+To measure on the external mic instead, pass `"mic_input": "current"` (each
+unit stays on its active mic) and, if the mic isn't next to the buzzer,
+`"external_distance_m"` to remove its flight time (~2.9 ms per metre).
+External-mic results are never stored as the calibration.
+
+**The internal-mic offset holds on the external mic.** Measured 2026-11-11
+on the desk rig: an EM258 on AudioMoth `2474750264200FAD`, the same distance
+from the buzzer as the internal mic, so no flight-time correction was
+needed. Four measure-only runs of 10 pulses, alternating inputs, with the
+second AudioMoth (internal throughout) as a control:
+
+| Run | `2474…0FAD` input | median ms | control median ms |
+|---|---|---|---|
+| 1 | internal | +0.24 | −0.08 |
+| 2 | EM258 (external) | −0.18 | −0.16 |
+| 3 | internal | −0.20 | +0.11 |
+| 4 | EM258 (external) | −0.28 | −0.34 |
+
+10/10 pulses found every run, sd 0.2-0.8 ms, SNR ~32-34 dB. The external
+runs read ~0.2 ms earlier, the same size as the control's run-to-run drift,
+so the two analog front ends agree within what the test resolves and one
+calibration (taken on the internal mic) serves both. Checked with one mic
+type (EM258) on one unit.
+
 ## Session check (cameras too)
 
 1. Start a session with the cameras and the microphone module.

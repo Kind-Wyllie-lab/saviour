@@ -532,3 +532,19 @@ def test_monitor_bad_call_bands_are_ignored_not_fatal(tmp_path):
         tmp_path, {"colormap": "grayscale", "call_bands": overlapping})
     b, g, r = cell[row_of(25000), px0 + 100].astype(int)
     assert b == g == r and b > 150
+
+
+def test_monitor_palette_mode_ignores_saved_bands(tmp_path):
+    from src.shared import spectrogram_palette as sp
+    cell, row_of, px0 = _render_spectrogram(
+        tmp_path, {"colour_mode": "palette", "colormap": "grayscale",
+                   "call_bands": sp.band_presets()})
+    b, g, r = cell[row_of(25000), px0 + 100].astype(int)
+    assert b == g == r and b > 150                    # palette, not band blue
+
+
+def test_monitor_bands_mode_without_bands_is_grey(tmp_path):
+    cell, row_of, px0 = _render_spectrogram(
+        tmp_path, {"colour_mode": "bands", "colormap": "inferno", "call_bands": []})
+    b, g, r = cell[row_of(25000), px0 + 100].astype(int)
+    assert b == g == r and b > 150

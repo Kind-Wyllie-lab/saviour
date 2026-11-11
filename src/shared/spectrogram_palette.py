@@ -8,8 +8,9 @@ into a 256-entry lookup table. The built-ins live in
 ``tools/gen_spectrogram_palettes.py``; the frontend imports the same file).
 
 Call bands colour a frequency range with its own palette -- e.g. rat alarm
-calls (18-32 kHz) blue, appetitive calls (45-96 kHz) orange. While any band
-is on, rows outside every band are drawn grey, so only the bands are in
+calls (18-32 kHz) blue, appetitive calls (45-96 kHz) orange. The colour mode
+picks one palette for the whole image ("palette") or the bands ("bands"), in
+which case rows outside every band are drawn grey, so only the bands are in
 colour. This is colouring by **frequency**, not call detection: anything in
 the band, noise included, gets the band's colour.
 
@@ -154,6 +155,34 @@ def parse_bands(raw) -> list[CallBand]:
             raise PaletteError(
                 f"call bands {a.lo_hz:g}-{a.hi_hz:g} and {b.lo_hz:g}-{b.hi_hz:g} Hz overlap")
     return bands
+
+
+COLOUR_MODES = ("palette", "bands")
+
+
+def resolve_colouring(mode, palette_name, stops, raw_bands
+                      ) -> tuple[tuple, list[CallBand], str | None]:
+    """(base stops, bands, problem) for a spectrogram's colour settings.
+
+    `mode` "palette": the whole image in the palette; saved bands are kept
+    in config but not drawn. "bands": each band in its own palette, grey
+    everywhere else (all grey with no bands on). Unset or unknown: bands if
+    any are on, else the palette (the behaviour before the mode existed).
+    `problem` is why the bands couldn't be used, if they couldn't; this
+    never raises, so a bad setting can't blank a spectrogram."""
+    mode = mode if mode in COLOUR_MODES else None
+    base = resolve_stops(palette_name, stops)
+    if mode == "palette":
+        return base, [], None
+    try:
+        bands, problem = parse_bands(raw_bands), None
+    except PaletteError as exc:
+        bands, problem = [], str(exc)
+    if mode is None:
+        mode = "bands" if bands else "palette"
+    if mode == "bands":
+        return validate_stops(builtin_palettes()["grayscale"]), bands, problem
+    return base, [], problem
 
 
 def linear_row_hz(height: int, lo_hz: float, hi_hz: float) -> np.ndarray:

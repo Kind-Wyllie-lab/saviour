@@ -1061,23 +1061,24 @@ class AudiomothModule(Module):
     def _monitor_palette(self) -> tuple[tuple, list]:
         """(base palette stops, call bands) from the monitoring config.
 
-        `monitoring.colormap` names a built-in palette; `colormap_stops`
-        (written by the controller for a custom palette) wins when set.
-        `call_bands` that don't parse are logged once and ignored, so a bad
-        setting never blanks the monitor. Cached on the raw settings."""
+        `monitoring.colour_mode` is "palette" (one palette for the whole
+        image) or "bands" (call bands, grey elsewhere); unset = bands if any
+        are on. `monitoring.colormap` names a built-in palette;
+        `colormap_stops` (written by the controller for a custom palette)
+        wins when set. `call_bands` that don't parse are logged once and
+        ignored, so a bad setting never blanks the monitor. Cached on the
+        raw settings."""
+        mode = self.config.get("monitoring.colour_mode")
         name = self.config.get("monitoring.colormap", palette.default_palette())
         stops = self.config.get("monitoring.colormap_stops") or None
         raw_bands = self.config.get("monitoring.call_bands") or []
-        key = json.dumps([name, stops, raw_bands], sort_keys=True, default=str)
+        key = json.dumps([mode, name, stops, raw_bands], sort_keys=True, default=str)
         cached = getattr(self, "_palette_cache", None)
         if cached and cached[0] == key:
             return cached[1], cached[2]
-        base = palette.resolve_stops(name, stops)
-        try:
-            bands = palette.parse_bands(raw_bands)
-        except palette.PaletteError as exc:
-            self.logger.warning(f"monitoring.call_bands ignored: {exc}")
-            bands = []
+        base, bands, problem = palette.resolve_colouring(mode, name, stops, raw_bands)
+        if problem:
+            self.logger.warning(f"monitoring.call_bands ignored: {problem}")
         self._palette_cache = (key, base, bands)
         return base, bands
 

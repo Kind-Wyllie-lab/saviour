@@ -229,23 +229,33 @@ class AudiomothModule(Module):
 
     @command()
     def update_gain(self, gain=None):
-        """Update AudioMoth gain without interrupting the audio stream: the
-        module-wide gain on every AudioMoth, then any per-device gains
-        (audiomoth_settings) on top."""
-        if gain is None:
-            gain = int(self.config.get("audiomoth.gain", 2))
-        gain = int(gain)
-
+        """Update AudioMoth gain without interrupting the audio stream: each
+        connected AudioMoth, by serial, to its own gain (audiomoth_settings,
+        falling back to audiomoth.gain). `gain` (legacy callers) replaces the
+        fallback for this call. With no AudioMoth scanned yet, one untargeted
+        update to the fallback gain."""
+        default = int(self.config.get("audiomoth.gain", 2) if gain is None else gain)
         try:
-            rc, msg = self._run_audiomoth(["update", "gain", str(gain)])
-            if rc != 0:
-                self.logger.error(f"AudioMoth gain update failed: {msg}")
-                return {"result": "Error", "error": msg}
-            self.logger.info(f"AudioMoth gain updated to {gain}")
-            errors = self._apply_gain_overrides()
+            if not self.audiomoths:
+                rc, msg = self._run_audiomoth(["update", "gain", str(default)])
+                if rc != 0:
+                    self.logger.error(f"AudioMoth gain update failed: {msg}")
+                    return {"result": "Error", "error": msg}
+                return {"result": "Success", "gains": {}}
+            overrides = self._gain_overrides()
+            gains, errors = {}, []
+            for serial in self.audiomoths:
+                g = overrides.get(serial, default)
+                rc, msg = self._run_audiomoth(["update", "gain", str(g), serial])
+                if rc == 0:
+                    gains[serial] = g
+                else:
+                    errors.append(f"{serial}: {msg}")
+                    self.logger.error(f"AudioMoth {serial} gain update failed: {msg}")
+            self.logger.info(f"AudioMoth gains updated: {gains}")
             if errors:
-                return {"result": "Error", "gain": gain, "error": "; ".join(errors)}
-            return {"result": "Success", "gain": gain}
+                return {"result": "Error", "gains": gains, "error": "; ".join(errors)}
+            return {"result": "Success", "gains": gains}
         except FileNotFoundError:
             return {"result": "Error", "error": "Binary not found — run setup.sh to install"}
         except subprocess.TimeoutExpired:

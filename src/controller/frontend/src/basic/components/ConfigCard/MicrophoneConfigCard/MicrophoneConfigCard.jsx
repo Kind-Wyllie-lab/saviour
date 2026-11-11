@@ -118,7 +118,6 @@ const MIC_TABS = [
   { key: "recording", label: "Recording" },
   { key: "audiomoth", label: "AudioMoth" },
   { key: "monitor",   label: "Monitor"   },
-  { key: "labels",    label: "Labels"    },
   { key: "sync",      label: "Sync"      },
   { key: "export",    label: "Export"    },
 ];
@@ -235,6 +234,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   };
 
 
+  const refreshAudiomoths = () =>
+    socket.emit("send_command", { module_id: module.id, type: "list_audiomoths", params: {} });
+
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
     socket.emit("send_command", { module_id: module.id, type: "list_audiomoths", params: {} });
@@ -295,17 +297,16 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     });
   };
 
-  // Per-AudioMoth settings (audiomoth_settings: serial -> { gain }). "" =
-  // follow the module-wide value; an entry left empty is dropped so the
-  // module's sidecar only holds real overrides.
+  // Per-AudioMoth settings (audiomoth_settings: serial -> { gain }). The
+  // module-wide audiomoth.gain isn't shown any more: it's only the starting
+  // gain for an AudioMoth that has never been set.
   const amSettings = formData?.audiomoth_settings ?? {};
   const handleDeviceGainChange = (serial, value) => {
     setFormData(prev => {
       const cloned = structuredClone(prev);
       const all = { ...(cloned.audiomoth_settings ?? {}) };
       const entry = { ...(all[serial] ?? {}) };
-      if (value === "") delete entry.gain;
-      else entry.gain = Number(value);
+      entry.gain = Number(value);
       if (Object.keys(entry).length) all[serial] = entry;
       else delete all[serial];
       cloned.audiomoth_settings = all;
@@ -319,11 +320,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const allSerials = [...new Set([
     ...discoveredSerials, ...allLabelledSerials, ...Object.keys(amSettings),
   ])];
-  const serialName = (serial) => {
-    const label = formData?.audiomoth_labels?.[serial];
-    const name = label ? `${label} (${serial})` : serial;
-    return discoveredSerials.includes(serial) ? name : `${name}, disconnected`;
-  };
 
   // Compute tabBadges: warn on monitor tab if there are validation errors,
   // and on Sync if a connected AudioMoth's calibration is missing or stale.
@@ -440,6 +436,59 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       {activeTab === "audiomoth" && (
         formData?.audiomoth !== undefined ? (
           <>
+            {/* Each AudioMoth: connected?, its name (used everywhere: file
+                names, live monitor, Sync tab, habitat dashboard) and gain. */}
+            <div className="mic-moths">
+              <div className="mic-moths__head">
+                <span className="mic-moths__title">AudioMoths</span>
+                <button type="button" className="mic-moths__refresh" onClick={refreshAudiomoths}
+                  title="Scan the module for connected AudioMoths">Refresh</button>
+              </div>
+              {allSerials.length === 0 ? (
+                <div className="sensor-mode-info sensor-mode-info--muted">
+                  No AudioMoths found. Connect one to the module and press Refresh.
+                </div>
+              ) : (
+                <>
+                  <div className="mic-moths__row mic-moths__row--header">
+                    <span />
+                    <span>Name</span>
+                    <span>Gain</span>
+                  </div>
+                  {allSerials.map(serial => {
+                    const connected = discoveredSerials.includes(serial);
+                    const gain = amSettings[serial]?.gain ?? amGain;
+                    return (
+                      <div key={serial} className="mic-moths__row">
+                        <span className={`mic-moths__dot${connected ? " mic-moths__dot--on" : ""}`}
+                          title={connected ? "Connected" : "Not connected"} />
+                        <span className="mic-moths__name">
+                          <input type="text" maxLength={32}
+                            value={formData?.audiomoth_labels?.[serial] ?? ""}
+                            placeholder="Name, e.g. A1"
+                            aria-label={`Name for AudioMoth ${serial}`}
+                            onChange={e => handleLabelChange(serial, e.target.value)} />
+                          <span className="mic-moths__serial">
+                            {serial}{connected ? "" : " · not connected"}
+                          </span>
+                        </span>
+                        <select value={gain} aria-label={`Gain for AudioMoth ${serial}`}
+                          onChange={e => handleDeviceGainChange(serial, e.target.value)}>
+                          {GAIN_LABELS.map((label, i) => (
+                            <option key={i} value={i}>{i} - {label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                  <div className="sensor-mode-info sensor-mode-info--muted">
+                    Names are used in recording file names, the live monitor, the Sync tab and
+                    the habitat dashboard. Changing a gain doesn&apos;t interrupt the live monitor.
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="mic-moths__title mic-moths__title--section">All AudioMoths</div>
             <div className="form-field">
               <label>Sample rate:</label>
               <select value={amRate} onChange={handleSampleRateChange}>
@@ -448,38 +497,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 ))}
               </select>
             </div>
-            <div className="form-field">
-              <label title="Every AudioMoth uses this unless it has its own gain below.">
-                Gain{allSerials.length > 1 ? " (all AudioMoths)" : ""}:
-              </label>
-              <select value={amGain} onChange={e => handleChange(["audiomoth", "gain"], e)}>
-                {GAIN_LABELS.map((label, i) => (
-                  <option key={i} value={i}>{i} - {label}</option>
-                ))}
-              </select>
-            </div>
-            {allSerials.length > 0 && (
-              <div className="mic-device-gains">
-                <div className="mic-device-gains__title">Gain per AudioMoth</div>
-                {allSerials.map(serial => (
-                  <div key={serial} className="form-field">
-                    <label title={serial}>{serialName(serial)}:</label>
-                    <select value={amSettings[serial]?.gain ?? ""}
-                      onChange={e => handleDeviceGainChange(serial, e.target.value)}>
-                      <option value="">Same as above ({amGain} - {GAIN_LABELS[amGain]})</option>
-                      {GAIN_LABELS.map((label, i) => (
-                        <option key={i} value={i}>{i} - {label}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-                <div className="sensor-mode-info sensor-mode-info--muted">
-                  Changing a gain doesn&apos;t interrupt the live monitor. Each recording
-                  notes the gain its AudioMoth used. Sample rate and filter apply to
-                  every AudioMoth.
-                </div>
-              </div>
-            )}
             <div className="form-field">
               <label title="Rolling % of samples clipping that lights the CLIP indicator on the monitor and logs a warning per segment. Advisory only.">
                 Clipping warn threshold (%):
@@ -705,27 +722,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               )}
             </>
           )}
-        </>
-      )}
-
-      {/* LABELS tab */}
-      {activeTab === "labels" && (
-        <>
-          {allSerials.length === 0 ? (
-            <div className="sensor-mode-info sensor-mode-info--muted">
-              No AudioMoths discovered - connect devices and refresh
-            </div>
-          ) : allSerials.map(serial => (
-            <div key={serial} className="form-field">
-              <label title={serial}>
-                {discoveredSerials.includes(serial) ? serial : `${serial} (disconnected)`}:
-              </label>
-              <input type="text"
-                value={formData?.audiomoth_labels?.[serial] ?? ""}
-                placeholder={serial}
-                onChange={e => handleLabelChange(serial, e.target.value)} />
-            </div>
-          ))}
         </>
       )}
 

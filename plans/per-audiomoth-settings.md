@@ -43,8 +43,13 @@ and some setups may want a different rate or filter per device.
   skipped; a failed per-device update is returned as an error.
 - Each recording's `_timestamps.txt` sidecar gets `GAIN <n>` (the gain that
   AudioMoth ran at), as a `KEY value` trailer line `parse_mic_sidecar` skips.
-- AudioMoth tab: "Gain per AudioMoth", one row per known AudioMoth (label +
-  serial, disconnected ones marked), default "Same as above (n)".
+- AudioMoth tab (reworked 2026-11-11): an **AudioMoths** list at the top,
+  one row per known AudioMoth with a connected dot, its name (the old Labels
+  tab, now removed) and its own gain; a Refresh button rescans. There is no
+  module-wide gain on screen: `audiomoth.gain` stays in config only as the
+  starting gain for an AudioMoth that has never been set. `update_gain` sets
+  each connected AudioMoth by serial to its own gain (no untargeted update,
+  which would briefly set every unit alike).
 - Tests: `test_microphone_module.py` (`_gain_for`, invalid overrides,
   ordering, failed override, non-disruptive path).
 

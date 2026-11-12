@@ -17,6 +17,7 @@ import { gateMapRoutes } from "./gateMapMock";
 import { placementRoutes } from "./placementMock";
 import { ephysRoutes } from "./ephysMock";
 import { lightingCommand, lightingSave } from "./lightingMock";
+import { simSnapshot } from "./habitatSim/index";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
@@ -59,6 +60,8 @@ class MockSocket {
         // Stop arduino_state for `ms` (default 5 s) to see the stale display.
         silenceArduino: (ms = 5000) => { state.apa.silentUntil = Date.now() + ms; },
         get apa() { return state.apa; },
+        // The habitat simulator: where every rat is, recent crossings.
+        get sim() { return simSnapshot(); },
       };
     }
     console.info("%c[SAVIOUR] mock socket active — no backend. window.__mockSocket to poke it.",

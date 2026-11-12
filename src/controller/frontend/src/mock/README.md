@@ -49,6 +49,27 @@ in `.env.local` (gitignored).
    builders). Edit fixtures freely to reproduce a state you're working on —
    a module in fault, a full disk, a session mid-recording.
 
+## Habitat build: the simulated habitat
+
+With `VITE_VARIANT=habitat` the mock runs on the habitat simulator
+(`habitatSim/`, `plans/habitat-simulator.md`): 10 tagged rats moving
+through the 16 boxes, driving every feed from one model.
+
+- Modules: 16 `habitat_camera` (A1-D4), 4 microphone modules (A-D) with 4
+  labelled AudioMoths each, the RFID gate bus, the DMX lights.
+- Gate reads (`gate_map_hit`) are the rats' crossings; AudioMoth levels
+  follow who's in each box and the calls.
+- The dev server renders the camera streams (top-down view of each box with
+  its rats) and the microphone spectrograms (`mock-server/habitatMedia.js`,
+  hooked in by `vite.config.js`). Each stream comes from its own
+  `<name>.localhost` host, because the browser keeps only 6 connections per
+  host; open the app at `http://localhost:<port>` for that to work.
+- The model is deterministic per sim day, so the browser and the dev server
+  agree without talking. Tune it in `src/shared/habitat_sim.json` (rats,
+  nests, light schedule, dwell times, call rates, which gates are
+  unmapped / closed / faulty).
+- `__mockSocket.sim`: where every rat is now, recent crossings.
+
 ## Console poking
 
 `window.__mockSocket` in mock mode:

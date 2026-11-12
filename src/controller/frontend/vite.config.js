@@ -1,7 +1,9 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { createHabitatMedia } from './mock-server/habitatMedia.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -17,8 +19,15 @@ function mockMediaPlugin() {
     name: 'saviour-mock-media',
     apply: 'serve',
     configureServer(server) {
+      // Cameras named after a habitat box and microphone modules named after
+      // a column get frames from the habitat simulator (mock-server/,
+      // plans/habitat-simulator.md); anything else gets the placeholder.
+      const simParams = JSON.parse(fs.readFileSync(
+        path.resolve(__dirname, '../../shared/habitat_sim.json'), 'utf8'))
+      const habitat = createHabitatMedia(simParams)
       server.middlewares.use('/mock-media', (req, res) => {
         const url = new URL(req.url, 'http://localhost')
+        if (habitat(req, res, url)) return
         const label = url.searchParams.get('label') || 'MOCK CAMERA'
         const t = new Date().toLocaleTimeString()
         res.setHeader('Content-Type', 'image/svg+xml')

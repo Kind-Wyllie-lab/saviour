@@ -6,7 +6,8 @@ import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCar
 const STREAM_REFRESH_MS = 60 * 1000;
 
 const COLUMNS = ["A", "B", "C", "D"];
-const ROWS = [4, 3, 2, 1];
+// Row 1 at the top, as on the dashboard map and the Gates page.
+const ROWS = [1, 2, 3, 4];
 const ALL_CELLS = COLUMNS.flatMap(col => ROWS.map(row => `${col}${row}`));
 
 function parseCell(cell) {

@@ -16,12 +16,21 @@ const host = (m) => (typeof m === "string" ? m : m?.ip);
 const label = (m) =>
   typeof m === "string" ? m : (m?.name || m?.id || "camera");
 
+// A stream holds its connection open, and the browser allows only 6 per
+// host, so in mock mode each stream comes from its own <label>.localhost
+// (resolved to loopback by the browser), as real modules each have an IP.
+function mockOrigin(moduleOrIp) {
+  if (typeof window === "undefined" || window.location.hostname !== "localhost") return "";
+  const slug = label(moduleOrIp).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "") || "camera";
+  return `${window.location.protocol}//${slug}.localhost:${window.location.port}`;
+}
+
 /** Live MJPEG stream URL. */
 export function videoFeedUrl(moduleOrIp, { port = 8080, key } = {}) {
   const nonce = key != null ? `t=${key}` : "";
   if (MOCK) {
     const q = `label=${encodeURIComponent(label(moduleOrIp))}${nonce ? `&${nonce}` : ""}`;
-    return `/mock-media/stream.svg?${q}`;
+    return `${mockOrigin(moduleOrIp)}/mock-media/stream.svg?${q}`;
   }
   return `http://${host(moduleOrIp)}:${port}/video_feed${nonce ? `?${nonce}` : ""}`;
 }

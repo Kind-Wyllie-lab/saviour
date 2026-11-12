@@ -11,16 +11,21 @@
 // build -- socketMock.js is only imported when VITE_MOCK=1.
 
 import { LIGHTING_ID, lightingState, makeLightingModule } from "./lightingMock";
+import { habitatHealth, habitatModules } from "./habitatSim/fleet";
+
+const HABITAT = import.meta.env.VITE_VARIANT === "habitat";
 
 const now = () => Date.now() / 1000;
 
 // ── Modules ────────────────────────────────────────────────────────────────
 // status: READY | RECORDING | NOT_READY | OFFLINE | FAULT
 function makeModules() {
+  // The habitat build gets the simulated habitat (habitatSim/): 16 cameras,
+  // 4 microphone modules x 4 AudioMoths, the RFID gate bus, the lights.
+  if (HABITAT) return { [LIGHTING_ID]: makeLightingModule(), ...habitatModules() };
   return {
-    // Habitat lights: in the habitat and basic builds (the basic build is
-    // the default dev:mock one).
-    ...(["habitat", "basic", undefined].includes(import.meta.env.VITE_VARIANT)
+    // The lights also in the basic build (the default dev:mock one).
+    ...(["basic", undefined].includes(import.meta.env.VITE_VARIANT)
       ? { [LIGHTING_ID]: makeLightingModule() } : {}),
     "camera-module-a1b2": {
       id: "camera-module-a1b2",
@@ -147,14 +152,20 @@ function makeApaRig() {
 }
 
 // ── Per-module health (ModuleHealthSnapshot-ish) ──────────────────────────
-function makeHealth() {
+function lightingHealth() {
+  // The heartbeat's lighting block, so guests (who can't poll) see it too.
   return {
-    // The heartbeat's lighting block, so guests (who can't poll) see it too.
-    [LIGHTING_ID]: {
-      cpu_usage: 4.1, cpu_temp: 41.2, memory_usage: 18.0, status: "READY",
-      recording: false, hardware_fault: null, last_heartbeat: now(),
-      version: "v0.6.1-mock", lighting: lightingState(makeLightingModule()),
-    },
+    cpu_usage: 4.1, cpu_temp: 41.2, memory_usage: 18.0, status: "online",
+    ptp: 0.0000011, phc: 0.0000008, ptp4l_offset_ns: 1100, phc2sys_offset_ns: 800,
+    recording: false, hardware_fault: null, last_heartbeat: now(),
+    version: "v0.6.1-mock", lighting: lightingState(makeLightingModule()),
+  };
+}
+
+function makeHealth() {
+  if (HABITAT) return { [LIGHTING_ID]: lightingHealth(), ...habitatHealth() };
+  return {
+    [LIGHTING_ID]: lightingHealth(),
     "camera-module-a1b2": {
       cpu_usage: 34.2, cpu_temp: 52.1, memory_usage: 41.0,
       memory_total_gb: 8, disk_space: 38.0, disk_used_gb: 45.0, disk_total_gb: 118.0,
@@ -194,6 +205,16 @@ function makeControllerHealth() {
 
 // ── Sessions (RecordingSession dataclass, asdict) ─────────────────────────
 function makeSessions() {
+  // The habitat build starts idle: the generic sessions' cameras aren't in
+  // the simulated habitat, so leave out the one still recording.
+  if (HABITAT) {
+    const { ["arena-run-20260902_101500"]: _active, ...rest } = makeGenericSessions();
+    return rest;
+  }
+  return makeGenericSessions();
+}
+
+function makeGenericSessions() {
   return {
     "arena-run-20260902_101500": {
       session_name: "arena-run-20260902_101500",
@@ -378,7 +399,7 @@ export const state = {
   controllerConfig: makeControllerConfig(),
   storageOverview: makeStorageOverview(),
   moduleConfigs: {},
-  systemState: { recording: true, uptime: 71, ptp_sync: 2100 },
+  systemState: { recording: !HABITAT, uptime: 71, ptp_sync: 2100 },
   firstRun: { needed: false },
   apa: makeApaRig(),
   exportSim: makeExportSim(),
@@ -393,7 +414,7 @@ export function reset() {
   state.controllerConfig = makeControllerConfig();
   state.storageOverview = makeStorageOverview();
   state.moduleConfigs = {};
-  state.systemState = { recording: true, uptime: 71, ptp_sync: 2100 };
+  state.systemState = { recording: !HABITAT, uptime: 71, ptp_sync: 2100 };
   state.firstRun = { needed: false };
   state.apa = makeApaRig();
   state.exportSim = makeExportSim();

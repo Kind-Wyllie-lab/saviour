@@ -1,21 +1,22 @@
 // Mock-mode stand-in for the habitat placement service
 // (variants/habitat/placement.py), for the dashboard's Placement panel.
-// The AudioMoths match the levels gateMapMock.js sends: one per box,
-// labelled with it, plus one unlabelled; three cameras, one unplaced.
+// The simulated habitat's modules (habitatSim/fleet.js): every camera in
+// its box, every microphone module on its column, an AudioMoth per box
+// labelled with it, plus one unlabelled AudioMoth.
 
-const BOXES = ["A", "B", "C", "D"].flatMap((c) => [1, 2, 3, 4].map((r) => `${c}${r}`))
-  .sort((a, b) => a[1] - b[1] || a.localeCompare(b));
+import { BOXES as SIM_BOXES, COLUMNS, STRAY_MOTH, cameraId, micId, mothSerial } from "./habitatSim/fleet";
+
+const BOXES = [...SIM_BOXES].sort((a, b) => a[1] - b[1] || a.localeCompare(b));
 
 let p = null;
 const init = () => ({
-  cameras: { "camera-module-a1b2": "A1", "camera-module-c3d4": "B1", "hailo-camera-3606": "" },
-  // One microphone module per column; D's not given its column yet.
-  mics: { "microphone-mock-a": "A", "microphone-mock-b": "B", "microphone-mock-c": "C", "microphone-mock-d": "" },
-  moths: Object.fromEntries(["A", "B", "C", "D"].map((col) => [
-    `microphone-mock-${col.toLowerCase()}`,
+  cameras: Object.fromEntries(SIM_BOXES.map((b) => [cameraId(b), b])),
+  mics: Object.fromEntries(COLUMNS.map((c) => [micId(c), c])),
+  moths: Object.fromEntries(COLUMNS.map((col) => [
+    micId(col),
     Object.fromEntries([
-      ...[1, 2, 3, 4].map((r) => [`24E1440${col}${r}`, `${col}${r}`]),
-      ...(col === "D" ? [["24E1440XYZ", ""]] : []),
+      ...SIM_BOXES.filter((b) => b[0] === col).map((b) => [mothSerial(b), b]),
+      ...(col === STRAY_MOTH.module ? [[STRAY_MOTH.serial, ""]] : []),
     ]),
   ])),
   changes: [],
@@ -26,7 +27,7 @@ function state() {
   const box = (v) => (BOXES.includes(v) ? v : null);
   const cameras = Object.entries(p.cameras).map(([id, name]) => (
     { module_id: id, name: name || id, box: box(name), online: true, recording: false }));
-  const columns = ["A", "B", "C", "D"];
+  const columns = COLUMNS;
   const mics = Object.entries(p.mics).map(([id, name]) => (
     { module_id: id, name, column: columns.includes(name) ? name : null, online: true, recording: false }));
   const colOf = Object.fromEntries(mics.map((m) => [m.module_id, m.column]));

@@ -1,0 +1,42 @@
+{
+  "_comment": "Habitat simulator parameters (plans/habitat-simulator.md). Read by the frontend mock (src/controller/frontend/src/mock/habitatSim) and, later, the session generator. Times are local wall-clock. The schedule is reversed (lights off 07:00-19:00, as many rat labs run it), so the simulated rats are active during working hours.",
+  "seed": 20261112,
+  "layout": {
+    "cols": 4,
+    "rows": 4,
+    "gates_per_wall": 4,
+    "unfitted_walls": ["A4B4", "B4C4", "C4D4"]
+  },
+  "schedule": {
+    "lights_on": "19:00",
+    "lights_off": "07:00",
+    "sunrise_minutes": 30,
+    "sunset_minutes": 30,
+    "day_start": "01:00"
+  },
+  "rats": {
+    "count": 10,
+    "tag_prefix": "000807DC",
+    "nests": ["B2", "B2", "B2", "C3", "C3", "C3", "A1", "A1", "D2", "D2"]
+  },
+  "behaviour": {
+    "dwell_mean_s": { "night": 150, "day": 2400 },
+    "dwell_min_s": 8,
+    "social_weight": 0.6,
+    "nest_weight_day": 4.0,
+    "transit_s": 1.5
+  },
+  "rfid": {
+    "reads_per_crossing": [1, 3],
+    "read_spacing_s": 0.25,
+    "unmapped_gates": ["C1D1_c", "A2A3_a", "D2D3_d", "B3C3_b"],
+    "closed_gates": ["A1B1_d"],
+    "faulty_gates": ["C2C3_a"]
+  },
+  "audio": {
+    "noise_db": [-62, -50],
+    "per_rat_db": 3,
+    "call_prob_per_slot": { "alone": 0.004, "social": 0.02, "alarm": 0.003 },
+    "call_db": 26
+  }
+}

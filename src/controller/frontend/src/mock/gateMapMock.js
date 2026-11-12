@@ -2,43 +2,42 @@
 // (variants/habitat/gate_map_service.py), so the Gates page can be clicked
 // through with `VITE_VARIANT=habitat npm run dev:mock`. A rough simulation,
 // not a port: a mapping run registers a probe a moment after it starts, and
-// each gate is "read" by a fake unit shortly after it's prompted (sometimes
-// two units, sometimes a unit that's already mapped, to show the checks).
+// each gate is "read" by its unit on the simulated bus shortly after it's
+// prompted (sometimes two units, sometimes a unit that's already mapped, to
+// show the checks). The layout, the bus wiring and the live reads come from
+// the habitat simulator (habitatSim/), so reads follow the simulated rats.
+
+import { params, simWorld, recentCall } from "./habitatSim/index";
+import { BOXES, COLUMNS, RFID_ID, STRAY_MOTH, micId, mothSerial } from "./habitatSim/fleet";
 
 const SETTLE_S = 1.5;
 const PROBE = "000807DC1F";
-const MODULE = "rfid-module-mock";
-
-function generateLayout(cols = 4, rows = 4, perWall = 4) {
-  const id = (c, r) => `${String.fromCharCode(65 + c)}${r + 1}`;
-  const boxes = [];
-  const walls = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      boxes.push({ id: id(c, r), col: c, row: r });
-      if (c + 1 < cols) walls.push({ id: id(c, r) + id(c + 1, r), boxes: [id(c, r), id(c + 1, r)], orientation: "vertical" });
-      if (r + 1 < rows) walls.push({ id: id(c, r) + id(c, r + 1), boxes: [id(c, r), id(c, r + 1)], orientation: "horizontal" });
-    }
-  }
-  const gates = walls.flatMap((w) => Array.from({ length: perWall }, (_, i) => (
-    { id: `${w.id}_${"abcd"[i]}`, wall: w.id, index: i, fitted: true })));
-  return { version: 1, cols, rows, gates_per_wall: perWall, boxes, walls, gates };
-}
+const MODULE = RFID_ID;
 
 const now = () => Date.now() / 1000;
 
 function initialState() {
-  const layout = generateLayout();
-  // As an example, the walls between the bottom row's boxes (A4B4, B4C4,
-  // C4D4) have no gates fitted.
-  for (const gate of layout.gates) if (/^[A-Z]4[A-Z]4$/.test(gate.wall)) gate.fitted = false;
+  const world = simWorld();
+  const layout = JSON.parse(JSON.stringify(world.layout));
+  // Every fitted gate mapped to its unit on the simulated bus, except a few
+  // left unmapped (their reads show as "from unmapped units"), one closed,
+  // one faulty (habitat_sim.json rfid).
+  const rp = params.rfid ?? {};
+  const unmapped = new Set(rp.unmapped_gates ?? []);
+  const closed = new Set(rp.closed_gates ?? []);
+  const faulty = new Set(rp.faulty_gates ?? []);
   const entries = {};
-  layout.gates.slice(0, 10).forEach((g, i) => {
-    entries[g.id] = { gate: g.id, status: "mapped", module_id: MODULE, unit: i + 1,
-      unit_serial: `SN${String(i + 1).padStart(6, "0")}`, mapped_at: now() - 86400, run_id: "mock0" };
-  });
-  entries[layout.gates[10].id] = { gate: layout.gates[10].id, status: "closed", module_id: null, unit: null, unit_serial: null, mapped_at: now() - 86400, run_id: "mock0" };
-  entries[layout.gates[11].id] = { gate: layout.gates[11].id, status: "faulty", module_id: null, unit: null, unit_serial: null, mapped_at: now() - 86400, run_id: "mock0" };
+  const blank = { module_id: null, unit: null, unit_serial: null, mapped_at: now() - 86400, run_id: "mock0" };
+  for (const gate of layout.gates.filter((x) => x.fitted)) {
+    if (unmapped.has(gate.id)) continue;
+    if (closed.has(gate.id)) entries[gate.id] = { gate: gate.id, status: "closed", ...blank };
+    else if (faulty.has(gate.id)) entries[gate.id] = { gate: gate.id, status: "faulty", ...blank };
+    else {
+      const unit = world.trueUnit[gate.id];
+      entries[gate.id] = { gate: gate.id, status: "mapped", module_id: MODULE, unit,
+        unit_serial: `SN${String(unit).padStart(6, "0")}`, mapped_at: now() - 86400, run_id: "mock0" };
+    }
+  }
   return {
     layout,
     entries,
@@ -49,7 +48,7 @@ function initialState() {
     bus_scanned_at: null,
     hits: [],
     changes: [],
-    nextUnit: 11,
+    nextUnit: Math.max(...Object.values(simWorld().trueUnit)) + 1,
     timers: [],
   };
 }
@@ -160,7 +159,9 @@ function simulatePass(sock) {
       const any = Object.values(g.entries).find((e) => e.status === "mapped");
       units.push(any.unit);                    // already mapped elsewhere
     } else {
-      units.push(g.nextUnit++);
+      // The gate's own unit on the simulated bus (a new one if the
+      // layout was edited to add gates the simulator doesn't know).
+      units.push(simWorld().trueUnit[run.scope[run.index]] ?? g.nextUnit++);
       if (roll > 0.88) units.push(units[0] + 100);   // a neighbour also reads it
     }
     run.capture = { first: `${MODULE}:${units[0]}`, first_ts: now(), counts: {}, settled: false };
@@ -177,37 +178,47 @@ function prompt(run) {
   run.prompt_ts = now();
 }
 
-// The dashboard's live map: a read at a random mapped gate now and then,
-// plus one fake unmapped unit, and AudioMoth levels for every box from four
-// fake microphone modules (one per column, like the habitat).
+// The dashboard's live map, from the simulated rats: every crossing is 1-3
+// reads of the rat's tag on that gate's unit (none from a faulty gate), and
+// AudioMoth levels for every box: room noise, more per rat in the box, and a
+// burst on a call (habitatSim/model.js callAt, the same calls the dev
+// server draws on the Monitor spectrograms).
 let liveTimer = null;
+const LIVE_TICK_MS = 250;
 function startLive(sock) {
   if (liveTimer) return;
-  const boxes = generateLayout().boxes.map((b) => b.id);
-  const base = Object.fromEntries(boxes.map((b) => [b, -60 + Math.random() * 15]));
+  const ap = params.audio;
+  const faulty = new Set(params.rfid?.faulty_gates ?? []);
+  const base = Object.fromEntries(BOXES.map((b, i) => [b, ap.noise_db[0] + ((i * 7) % 10) / 10 * (ap.noise_db[1] - ap.noise_db[0])]));
+  let last = Date.now() / 1000;
   let tick = 0;
   liveTimer = setInterval(() => {
     tick++;
     g ??= initialState();
-    const mapped = Object.values(g.entries).filter((e) => e.status === "mapped");
-    if (mapped.length && Math.random() < 0.6) hit(sock, mapped[Math.floor(Math.random() * mapped.length)].unit, "000807DC20");
-    if (tick % 7 === 0) hit(sock, 99, "000807DC21");
-    if (tick % 2 === 0) {
-      for (const col of ["A", "B", "C", "D"]) {
-        sock._fire("audio_levels", {
-          module_id: `microphone-mock-${col.toLowerCase()}`,
-          levels: boxes.filter((b) => b[0] === col).map((b) => {
-            const burst = Math.random() < 0.08 ? 30 + Math.random() * 25 : 0;
-            const level = base[b] + Math.random() * 6 + burst;
-            return { serial: `24E1440${b}`, label: b, level_db: level,
-              peak_db: Math.min(0, level + 8 + Math.random() * 6), clip_pct: 0,
-              clipping: burst > 52 };
-          }).concat(col === "D" ? [{ serial: "24E1440XYZ", label: "24E1440XYZ",
-            level_db: -70, peak_db: -62, clip_pct: 0, clipping: false }] : []),
-        });
-      }
+    const world = simWorld();
+    const t = Date.now() / 1000;
+    for (const c of world.crossingsBetween(last, t)) {
+      if (faulty.has(c.gate)) continue;
+      for (const r of c.reads) if (r > last && r <= t) hit(sock, c.unit, c.tag);
     }
-  }, 250);
+    last = t;
+    if (tick % 2) return;
+    const occ = world.occupancy(t);
+    for (const col of COLUMNS) {
+      const levels = BOXES.filter((b) => b[0] === col).map((b) => {
+        const call = recentCall(world, b, t, occ, 0.5);
+        const burst = call ? ap.call_db * (0.7 + Math.random() * 0.3) : 0;
+        const level = Math.min(-1, base[b] + ap.per_rat_db * occ[b] + Math.random() * 4 + burst);
+        return { serial: mothSerial(b), label: b, level_db: level,
+          peak_db: Math.min(0, level + 6 + Math.random() * 5), clip_pct: 0, clipping: false };
+      });
+      if (col === STRAY_MOTH.module) {
+        levels.push({ serial: STRAY_MOTH.serial, label: STRAY_MOTH.serial, level_db: -70, peak_db: -62,
+          clip_pct: 0, clipping: false });
+      }
+      sock._fire("audio_levels", { module_id: micId(col), levels });
+    }
+  }, LIVE_TICK_MS);
 }
 
 export const gateMapRoutes = {

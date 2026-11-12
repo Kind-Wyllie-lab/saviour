@@ -4,6 +4,7 @@
 // lighting commands (override, blackout, strip test, clear).
 
 import { levelsAt } from "../basic/components/ConfigCard/DmxLightingConfigCard/lightingSchedule";
+import simParams from "@saviour-shared/habitat_sim.json";
 
 export const LIGHTING_ID = "dmx_lighting_5e1f";
 
@@ -14,8 +15,11 @@ export function makeLightingConfig() {
     module: { name: "Habitat lights", group: "lighting" },
     dmx_lighting: {
       serial_port: "", timezone: "Europe/London",
-      schedule: { lights_on: "07:00", lights_off: "19:00", sunrise_minutes: 30,
-        sunset_minutes: 30, curve: "perceptual", day_level: 100, night_level: 0 },
+      // The habitat simulator's schedule (src/shared/habitat_sim.json), so
+      // the lights and the simulated rats keep the same day.
+      schedule: { lights_on: simParams.schedule.lights_on, lights_off: simParams.schedule.lights_off,
+        sunrise_minutes: simParams.schedule.sunrise_minutes, sunset_minutes: simParams.schedule.sunset_minutes,
+        curve: "perceptual", day_level: 100, night_level: 0 },
       ir: { mode: "constant", level: 80 },
       channel_bits: 8,
       compartments: BOXES.map((box, i) => ({ box, visible: 2 * i + 1, ir: 2 * i + 2,

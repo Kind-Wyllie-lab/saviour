@@ -485,6 +485,13 @@ def _load_strip(path: str, height: int, pps: float, win: int) -> _SpectrogramStr
         raise ValueError(f"could not read spectrogram image {path}")
     if img.shape[0] != height:
         img = cv2.resize(img, (img.shape[1], height))
+    return strip_from_image(img, pps, win)
+
+
+def strip_from_image(img: np.ndarray, pps: float, win: int) -> _SpectrogramStrip:
+    """A scrolling strip from an in-memory image (e.g. an accelerometer
+    trace, accel_tiles.py), shown by `spectrogram_pane` like a spectrogram."""
+    height = img.shape[0]
     padded = np.empty((height, img.shape[1] + 2 * win, 3), dtype=np.uint8)
     padded[:] = _PANEL_BG
     padded[:, win:win + img.shape[1]] = img
@@ -681,6 +688,9 @@ def render_layout(
                     if tile["kind"] == "camera":
                         pane = camera_pane(synced[tile["source"]], w, h,
                                            tile["options"], background)
+                    elif tile.get("draw") is not None:
+                        # Drawn per frame by the tile itself (accel_tiles.py).
+                        pane = tile["draw"](t_ns, w, h)
                     elif idx in strips:
                         pane = spectrogram_pane(strips[idx], i * speed / fps, w, h,
                                                 tile["options"].get("playhead", 0.5))
@@ -862,6 +872,11 @@ def preview_layout(
             thumb = thumbs.get(tile["source"])
             pane = (camera_pane(thumb, w, h, tile["options"], background)
                     if thumb is not None else _blank_pane(w, h, background))
+        elif tile.get("draw") is not None:
+            pane = tile["draw"](t, w, h)
+        elif tile.get("message"):
+            pane = _blank_pane(w, h)
+            _label(pane, tile["message"][:80], max(0.4, min(1.0, h / 300)))
         else:
             img = cv2.imread(tile["image"]) if tile.get("image") else None
             if img is None:

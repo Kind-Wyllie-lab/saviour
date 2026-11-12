@@ -140,9 +140,13 @@ def test_run_progress_falls_back_to_run_without_duration(monkeypatch):
 
 def test_run_progress_raises_on_ffmpeg_failure(monkeypatch):
     class _FailProc:
+        # ffmpeg's log goes to the file passed as stderr, not a pipe: an
+        # unread stderr pipe once deadlocked a render.
         stdout = iter([])
-        stderr = type("S", (), {"read": staticmethod(lambda: "boom\nbad codec")})()
         returncode = 1
+
+        def __init__(self, stderr):
+            stderr.write("boom\nbad codec")
 
         def wait(self):
             pass
@@ -150,7 +154,7 @@ def test_run_progress_raises_on_ffmpeg_failure(monkeypatch):
         def poll(self):
             return 1
 
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FailProc())
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FailProc(k["stderr"]))
     with pytest.raises(RuntimeError, match="bad codec"):
         _run_progress(["ffmpeg"], total_s=5.0, on_frac=lambda _f: None)
 

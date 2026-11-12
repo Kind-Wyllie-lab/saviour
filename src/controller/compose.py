@@ -10,8 +10,9 @@ into the session's own date directory so it shows up in the normal
 file browser / download path with no new storage concept.
 
 What a render looks like is a layout document (compose_layout.py): a
-canvas and tiles, each a camera or an AudioMoth spectrogram placed in
-output pixels, plus the AudioMoths muxed as audio tracks. The editor
+canvas and tiles, each a camera, an AudioMoth spectrogram or a headstage
+accelerometer trace / orientation (accel_tiles.py) placed in output
+pixels, plus the AudioMoths muxed as audio tracks. The editor
 sends one; an old-style request (a layout keyword -- `side | stack |
 grid | auto` -- planned aspect-ratio-aware from each stream's real
 dimensions, plus an audio mode) is translated into one
@@ -386,6 +387,12 @@ class SessionStream:
     segments: list = field(default_factory=list)
 
 
+def _is_day_dir(path: str) -> bool:
+    """A recording day folder, not one of the session's own `_ephys` (an
+    uploaded ephys dataset) or hidden folders, which sort after the dates."""
+    return not os.path.basename(path).startswith(("_", "."))
+
+
 def resolve_date_dir(session_dir: str, date_dir: str | None) -> str:
     """Absolute path to the session's chosen date subdirectory (or the
     most recent one when unspecified)."""
@@ -395,7 +402,8 @@ def resolve_date_dir(session_dir: str, date_dir: str | None) -> str:
             raise ComposeError(f"date_dir {date_dir!r} not found in session")
         return path
     subs = sorted(
-        p for p in glob.glob(os.path.join(session_dir, "*")) if os.path.isdir(p)
+        p for p in glob.glob(os.path.join(session_dir, "*"))
+        if os.path.isdir(p) and _is_day_dir(p)
     )
     if not subs:
         raise ComposeError("session has no date directory")
@@ -514,7 +522,7 @@ def streams_info(share_path: str, session_name: str,
     dates = sorted(
         os.path.basename(p)
         for p in glob.glob(os.path.join(session_dir, "*"))
-        if os.path.isdir(p) and not os.path.basename(p).startswith(".")
+        if os.path.isdir(p) and _is_day_dir(p)
     )
     resolved = resolve_date_dir(session_dir, date_dir)
     cams = discover_streams(resolved, None)
@@ -541,6 +549,9 @@ def streams_info(share_path: str, session_name: str,
         "mics": list_mic_folders(resolved),
         "mic_devices": [{**d, "segments": mic_segments(resolved, d)}
                         for d in list_mic_devices(resolved)],
+        # Headstage accelerometers with output (only "aligned" ones can be
+        # placed: they need SAVIOUR time).
+        "accel_sources": list_accel_sources(session_dir),
         "suggested_fps": suggest_fps(wanted),
         # The selected cameras' overlap -- what a render covers at most.
         "duration_s": duration_s,
@@ -550,6 +561,32 @@ def streams_info(share_path: str, session_name: str,
         "playhead_pps": audio_align.PLAYHEAD_PPS,
         "max_strip_px": audio_align._MAX_STRIP_PX,
     }
+
+
+def list_accel_sources(session_dir: str) -> list[dict]:
+    """Every headstage with accelerometer output for the session
+    (`<session>/_ephys/accel/<port>/`, ephys_accel.py), for the editor:
+    `{"id": "ephys/accel/<port>", "port", "label", "aligned", "start_ns",
+    "end_ns"}`. Read from each summary.json, so no OpenCV here."""
+    root = os.path.join(session_dir, "_ephys", "accel")
+    out = []
+    try:
+        ports = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for port in ports:
+        pdir = os.path.join(root, port)
+        if not os.path.isfile(os.path.join(pdir, "accel.csv")):
+            continue
+        try:
+            with open(os.path.join(pdir, "summary.json"), encoding="utf-8") as f:
+                s = json.load(f)
+        except (OSError, ValueError):
+            continue
+        out.append({"id": f"ephys/accel/{port}", "port": port,
+                    "label": f"Headstage {port}", "aligned": bool(s.get("aligned")),
+                    "start_ns": s.get("start_ns"), "end_ns": s.get("end_ns")})
+    return out
 
 
 def _preview_cache_dir(session_name: str, date_base: str) -> str:
@@ -852,6 +889,8 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
 def _tile_label(resolved: ResolvedLayout, tile: dict) -> str:
     if tile["kind"] == "camera":
         return tile["source"]
+    if tile["kind"] in compose_layout.ACCEL_KINDS:
+        return f"Headstage {tile['source'].rsplit('/', 1)[-1]}"
     dev = resolved.devices.get(tile["source"])
     return dev["label"] if dev else tile["source"]
 
@@ -950,6 +989,58 @@ def _preview_window_spectrogram(cache_dir: str, date_dir: str, device: dict,
         return None
 
 
+def _accel_draw(data, tile: dict, label: str, t_start: int | None = None,
+                strip=None, yr=None):
+    """A tile's per-frame drawing function `draw(t_ns, w, h) -> pane` for an
+    accelerometer tile (accel_tiles.py). A render passes the whole-window
+    `strip` (built once) and its `t_start`; a preview leaves them out and the
+    trace's window is drawn directly around `t_ns`."""
+    from src.controller import accel_tiles, video_compose
+
+    o = tile["options"]
+    show = label if o.get("label", True) else None
+    if tile["kind"] == "orientation":
+        return lambda t_ns, w, h: accel_tiles.orientation_pane(data, t_ns, w, h, o, show)
+
+    def draw(t_ns, w, h):
+        if strip is not None:
+            pane = video_compose.spectrogram_pane(
+                strip, (t_ns - t_start) / 1e9, w, h, o["playhead"])
+            rng = yr
+        else:
+            window = o["window_s"]
+            t0 = t_ns - int(o["playhead"] * window * 1e9)
+            rng = yr or accel_tiles.y_range(data, o["signal"], o, t0,
+                                            t0 + int(window * 1e9))
+            pane = accel_tiles.render_strip(data, o["signal"], t0, w, h, w / window, rng)
+            video_compose._draw_playhead(pane, o["playhead"])
+        return accel_tiles.decorate_trace(pane, data, o["signal"], rng, t_ns, o, show)
+    return draw
+
+
+def _accel_preview_tile(session_dir: str, resolved: ResolvedLayout, tile: dict,
+                        logger=None) -> dict:
+    """Preview fields for an accelerometer tile: its `draw` function, or a
+    `message` (drawn on a blank tile) when its data can't be used. A
+    preview never fails over it."""
+    from src.controller import accel_tiles
+
+    try:
+        data = accel_tiles.load(session_dir, tile["source"])
+    except accel_tiles.AccelTileError as exc:
+        if logger:
+            logger.warning("compose preview: %s", exc)
+        return {"draw": None, "message": str(exc), "label_text": None}
+    yr = None
+    if tile["kind"] == "accel_trace" and tile["options"].get("y_auto"):
+        try:
+            t0, t1 = resolved.window()
+            yr = accel_tiles.y_range(data, tile["options"]["signal"], tile["options"], t0, t1)
+        except ComposeError:
+            yr = None
+    return {"draw": _accel_draw(data, tile, data.label, yr=yr), "label_text": None}
+
+
 @dataclass
 class PreviewResult:
     png: bytes                       # the whole composited frame
@@ -996,7 +1087,9 @@ def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960,
     tiles = []
     for full, tile in zip(resolved.doc["tiles"], small["tiles"], strict=True):
         tile = {**tile, "label_text": _tile_label(resolved, tile), "label_scale": scale}
-        if tile["kind"] == "spectrogram":
+        if tile["kind"] in compose_layout.ACCEL_KINDS:
+            tile.update(_accel_preview_tile(session_dir, resolved, tile, logger))
+        elif tile["kind"] == "spectrogram":
             device = resolved.devices.get(tile["source"])
             window_s = tile["options"].get("window_s")
             if window_s is None:
@@ -1420,7 +1513,10 @@ class ComposeWorker:
             strip_cache: dict[tuple, str] = {}
             for tile in doc["tiles"]:
                 tile = {**tile, "label_text": _tile_label(resolved, tile)}
-                if tile["kind"] == "spectrogram":
+                if tile["kind"] in compose_layout.ACCEL_KINDS:
+                    tile.update(self._accel_render_tile(session_dir, tile, t_start,
+                                                        t_end, total_s))
+                elif tile["kind"] == "spectrogram":
                     tile.update(strip=None, pps=1.0, win=2)
                     src = aligned.get(tile["source"])
                     if src:
@@ -1486,6 +1582,29 @@ class ComposeWorker:
                 _safe_unlink(path)
 
         return os.path.relpath(out_path, self.share_path)
+
+    @staticmethod
+    def _accel_render_tile(session_dir: str, tile: dict, t_start: int, t_end: int,
+                           total_s: float) -> dict:
+        """Render fields for an accelerometer tile: a `draw` function, with
+        the trace's whole-window strip drawn once up front."""
+        from src.controller import accel_tiles, video_compose
+
+        try:
+            data = accel_tiles.load(session_dir, tile["source"])
+        except accel_tiles.AccelTileError as exc:
+            raise ComposeError(str(exc)) from exc
+        if tile["kind"] == "orientation":
+            return {"draw": _accel_draw(data, tile, data.label), "label_text": None}
+        o = tile["options"]
+        w, h = tile["rect"][2], tile["rect"][3]
+        strip_w, pps = compose_layout.accel_strip(w, o["window_s"], total_s)
+        yr = accel_tiles.y_range(data, o["signal"], o, t_start, t_end)
+        img = accel_tiles.render_strip(data, o["signal"], t_start, strip_w, h, pps, yr)
+        strip = video_compose.strip_from_image(
+            img, pps, compose_layout.window_px(w, o["window_s"], pps))
+        return {"draw": _accel_draw(data, tile, data.label, t_start, strip, yr),
+                "label_text": None}
 
     def _align_mics(self, date_dir: str, devices: list[dict], t_start: int, t_end: int,
                     out_path: str, progress,

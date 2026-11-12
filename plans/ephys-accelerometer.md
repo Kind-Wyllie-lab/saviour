@@ -1,6 +1,7 @@
 # Ephys headstage accelerometer (Post-Process)
 
-- **Status:** in progress (recording choice + phase 1 built 2026-11-11; phases 2-3 open)
+- **Status:** in progress (recording choice + phase 1 built 2026-11-11; phase 2 built
+  2026-11-12, not yet accepted on hardware; phase 3 open)
 - **Created:** 2026-11-10
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (Post-Process).
@@ -126,6 +127,27 @@ Accept:
 
 *About two days*, after the compose editor's phase 3 (event/text tiles) or in
 parallel with it. They share the "non-camera strip tile" plumbing.
+
+### As built (2026-11-12)
+
+- `src/controller/accel_tiles.py` draws both kinds (OpenCV + numpy). A tile
+  carries a per-frame `draw(t_ns, w, h)` function that `video_compose`'s render
+  and preview loops call; the trace's whole-window strip is drawn once per job
+  and scrolled by `spectrogram_pane` (`strip_from_image`).
+- The preview draws the trace window directly around the scrubbed time. A
+  missing or unaligned source shows its reason on the tile instead of failing
+  the preview; a render refuses it.
+- `compose_streams_info` gains `accel_sources` (from each port's
+  `summary.json`). The editor lists them under "Headstage accelerometer"; only
+  aligned ones can be added, and they get a lane on the timeline.
+- Checked with a stand-in: the `1TS-1627-102915` session (one camera, one mic)
+  with experiment 2's headstage data and a hand-made clock model marked
+  `"fudged": true`. The accept tests above still need a real session with the
+  headstage, camera and TTL together.
+- Fixed on the way: `resolve_date_dir` took `_ephys` as the day folder of any
+  session with an ephys upload (it sorts after the dates); and `_run_progress`
+  never read ffmpeg's stderr pipe, so a chatty render could hang (seen on
+  Windows).
 
 ## Phase 3: animal frame and stored calibration
 

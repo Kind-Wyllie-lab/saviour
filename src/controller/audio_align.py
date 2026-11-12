@@ -44,6 +44,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 
@@ -685,9 +686,15 @@ def _run_progress(cmd: list[str], total_s: float | None, on_frac) -> None:
     if not total_s or total_s <= 0 or on_frac is None:
         _run(cmd)
         return
-    full = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    full = [cmd[0], "-nostdin", "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    # stderr goes to a temp file, not a pipe: only stdout is read while
+    # ffmpeg runs, so once its log filled a stderr pipe's buffer ffmpeg
+    # blocked writing it and the render hung (seen on Windows, whose pipe
+    # buffer is small; a long, warning-heavy render could do it anywhere).
+    errf = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(
-        _low_priority(full), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        _low_priority(full), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=errf, text=True,
     )
     try:
         for raw in proc.stdout:
@@ -708,8 +715,11 @@ def _run_progress(cmd: list[str], total_s: float | None, on_frac) -> None:
         proc.wait()
         if proc.poll() is None:
             proc.kill()
+    errf.seek(0)
+    err = errf.read()
+    errf.close()
     if proc.returncode != 0:
-        tail = "\n".join((proc.stderr.read() or "").strip().splitlines()[-8:])
+        tail = "\n".join(err.strip().splitlines()[-8:])
         raise RuntimeError(f"{cmd[0]} failed ({proc.returncode}):\n{tail}")
 
 

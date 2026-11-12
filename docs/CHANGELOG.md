@@ -11,6 +11,14 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-12
+
+- [x] **Post-Process compose: headstage accelerometer tiles** (branch `feat/ephys-accel-tiles`; `test_accel_tiles.py` (12) and 4 new cases in `test_compose_layout.py`; frontend lint/build clean, editor checked in `dev:mock`; **not yet run on a controller or with a real headstage session**). Phase 2 of `plans/ephys-accelerometer.md`.
+  - **Tiles.** `accel_trace` (a scrolling strip of X/Y/Z acceleration, pitch/roll or ODBA; window, playhead, fixed or auto y range, legend values at the playhead) and `orientation` (the headstage as a shaded box tilted by pitch and roll, heading fixed and stated, with an optional arrow for acceleration apart from gravity). Source `ephys/accel/<port>`; validated in `compose_layout.py`, drawn by `src/controller/accel_tiles.py` with OpenCV only. The render draws the trace's strip once and scrolls it like a spectrogram; the preview draws each frame directly.
+  - **Editor.** A "Headstage accelerometer" source section (unaligned headstages are listed with the step that's missing), per-kind inspector options, a timeline lane for each headstage on the canvas, and mock data/drawings in `dev:mock`.
+  - **Fixes.** `resolve_date_dir` and the day list skipped nothing, so a session with an ephys upload resolved `_ephys` as its day folder (it sorts after the dates) and compose found no streams; now `_`/`.` folders are skipped. `audio_align._run_progress` piped ffmpeg's stderr but read only stdout, so a render whose log filled the pipe hung; stderr now goes to a temp file and ffmpeg gets `-nostdin`.
+  - Checked end to end with the `1TS-1627-102915` session plus experiment 2's headstage data through a hand-made (`"fudged": true`) clock model: preview 0.6 s, an 8 s render 6.8 s, all tiles correct.
+
 ## 2026-11-11
 
 - [x] **Habitat DMX lighting module (`dmx_lighting`)** (branch `feat/dmx-lighting-module`; `test_dmx_lighting_schedule.py` (48), `_enttec.py` (7), `_module.py` (20), plus `TestDmxLighting` in `test_web.py`, `TestLightingAlerts` in `test_health.py`, one REST case; frontend lint/build clean, card and dashboard checked in the habitat `dev:mock`; **not yet run with a widget or decoders**). Built from `plans/dmx-lighting-module.md`. The patch itself waits on the installer (decoder model, 8/16-bit, addresses, signal-loss behaviour).

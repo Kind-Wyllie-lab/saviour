@@ -12,11 +12,18 @@ Module side (rfid_module.py): ``rfid_scan`` (bus logon), ``rfid_units``
 renewed only while a browser has the Gates page open (``keepalive``) or
 the dashboard's live gate view (``live_keepalive``), so a closed tab can't
 leave it on.
+
+A module running a simulated bus (``rfid.mock.enabled``) reports it in its
+``rfid_units`` / ``rfid_mock_*`` replies; the Gates page's Simulated bus
+panel then drives it by hand through ``mock_read`` / ``mock_unit`` /
+``mock_animals``, so a mapping run can be tested on the real code without
+readers. Those are refused for any module that isn't a simulated bus.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -47,6 +54,15 @@ HIT_HISTORY = 20
 # after the last renewal (closed tab), and mapping mode times out on the
 # modules MAPPING_TIMEOUT_S after that.
 LIVE_TTL_S = 60.0
+# Serial numbers are queried one unit at a time, 0.25 s apart, after a scan,
+# so on a big bus many are still missing at SCAN_REPLY_DELAY_S: while a
+# module says queries are pending, ask for its units again (at most this
+# many times per scan).
+QUERY_GAP_S = 0.25
+UNITS_RETRIES = 6
+MOCK_COMMANDS = ("rfid_mock_state", "rfid_mock_read", "rfid_mock_unit",
+                 "rfid_mock_animals")
+_TAG_RE = re.compile(r"^[0-9A-Fa-f]{10}$")
 
 
 class GateMapService:
@@ -76,6 +92,11 @@ class GateMapService:
         self._last_keepalive = 0.0
         self._live_until = 0.0
         self._settle_timer: threading.Timer | None = None
+        self._units_retries: dict[str, int] = {}
+        # module_id -> simulated-bus state, from its replies; and the
+        # modules already asked whether they run one.
+        self.mock_buses: dict[str, dict] = {}
+        self._mock_asked: set[str] = set()
 
         draft = store.load_draft()
         if draft:
@@ -114,6 +135,10 @@ class GateMapService:
                 "hits": list(self.hits),
                 "changes": self.store.recent_changes(20),
                 "settle_s": SETTLE_S,
+                "mock_buses": [
+                    {"module_id": mid, **s}
+                    for mid, s in sorted(self.mock_buses.items())
+                    if mid in self.rfid_module_ids()],
             }
 
     def _fitted(self, gate: str) -> bool:
@@ -211,6 +236,8 @@ class GateMapService:
     def scan(self) -> None:
         """Bus logon on every RFID module, then ask each for its units."""
         ids = self.rfid_module_ids()
+        with self._lock:
+            self._units_retries = {}
         for mid in ids:
             self.send_command(mid, "rfid_scan", {})
         t = self.timer(SCAN_REPLY_DELAY_S, self._request_units, args=(ids,))
@@ -220,6 +247,57 @@ class GateMapService:
     def _request_units(self, ids: list[str]) -> None:
         for mid in ids:
             self.send_command(mid, "rfid_units", {})
+
+    # ── Simulated bus (testing without readers) ─────────────────────────────
+
+    def refresh_mock(self) -> None:
+        """Ask each RFID module not yet asked whether it runs a simulated
+        bus (a real one answers with an error and is left alone)."""
+        ids = self.rfid_module_ids()
+        with self._lock:
+            new = [mid for mid in ids if mid not in self._mock_asked]
+            self._mock_asked.update(new)
+        for mid in new:
+            self.send_command(mid, "rfid_mock_state", {})
+
+    def _mock_module(self, module_id: object) -> str:
+        mid = str(module_id or "")
+        with self._lock:
+            known = mid in self.mock_buses
+        if not known or mid not in self.rfid_module_ids():
+            raise GateMapError(f"{mid or 'That module'} isn't running a simulated bus")
+        return mid
+
+    @staticmethod
+    def _unit(unit: object) -> int:
+        try:
+            return int(unit)
+        except (TypeError, ValueError):
+            raise GateMapError("Pick a unit") from None
+
+    def mock_read(self, module_id: object, unit: object, tag: object = None) -> None:
+        """A tag held at one antenna of a simulated bus."""
+        mid = self._mock_module(module_id)
+        params = {"unit": self._unit(unit)}
+        if tag:
+            if not _TAG_RE.match(str(tag)):
+                raise GateMapError("A tag is 10 hex digits")
+            params["tag"] = str(tag).upper()
+        self.send_command(mid, "rfid_mock_read", params)
+
+    def mock_unit(self, module_id: object, unit: object,
+                  plugged: object = None, swap: object = False) -> None:
+        """Unplug / replug a simulated unit, or swap its decoder."""
+        mid = self._mock_module(module_id)
+        params: dict = {"unit": self._unit(unit), "swap": bool(swap)}
+        if plugged is not None:
+            params["plugged"] = bool(plugged)
+        self.send_command(mid, "rfid_mock_unit", params)
+
+    def mock_animals(self, module_id: object, running: object) -> None:
+        """Start or stop a simulated bus's wandering tags."""
+        mid = self._mock_module(module_id)
+        self.send_command(mid, "rfid_mock_animals", {"running": bool(running)})
 
     def keepalive(self) -> None:
         """A Gates page is open: keep mapping mode on while it's needed."""
@@ -261,7 +339,11 @@ class GateMapService:
         kind = status.get("type")
         if kind == "rfid_read":
             self._on_read(module_id, status)
-        elif kind == "cmd_ack" and status.get("command") == "rfid_units":
+            return
+        if kind != "cmd_ack":
+            return
+        command = status.get("command")
+        if command == "rfid_units":
             with self._lock:
                 bus = {k: b for k, b in (self.bus or {}).items()
                        if b.module_id != module_id}
@@ -269,7 +351,47 @@ class GateMapService:
                     bus[b.key] = b
                 self.bus = bus
                 self.bus_scanned_at = self.clock()
+                self._note_mock(module_id, status)
+                retry = self._units_retry_delay(module_id, status)
+            if retry is not None:
+                t = self.timer(retry, self._request_units, args=([module_id],))
+                t.daemon = True
+                t.start()
             self.broadcast()
+        elif command in MOCK_COMMANDS:
+            with self._lock:
+                self._note_mock(module_id, status)
+            if command != "rfid_mock_state" and status.get("result") != "success":
+                self.emit("gate_map_error", {"error": str(
+                    status.get("message") or f"{command} failed on {module_id}")})
+            self.broadcast()
+
+    def _note_mock(self, module_id: str, status: dict) -> None:
+        """Keep (or drop) a module's simulated-bus state from its reply."""
+        if "mock_bus" not in status:
+            return
+        self._mock_asked.add(module_id)
+        state = status.get("mock_bus")
+        if isinstance(state, dict):
+            self.mock_buses[module_id] = state
+        else:
+            self.mock_buses.pop(module_id, None)
+
+    def _units_retry_delay(self, module_id: str, status: dict) -> float | None:
+        """Seconds until asking ``module_id`` for its units again, while its
+        serial-number queries are still going out; None when done."""
+        try:
+            pending = int(status.get("pending_queries") or 0)
+        except (TypeError, ValueError):
+            pending = 0
+        tries = self._units_retries.get(module_id, 0)
+        if pending <= 0:
+            self._units_retries.pop(module_id, None)
+            return None
+        if tries >= UNITS_RETRIES:      # given up until the next scan
+            return None
+        self._units_retries[module_id] = tries + 1
+        return min(30.0, pending * QUERY_GAP_S + 1.0)
 
     def _on_read(self, module_id: str, status: dict) -> None:
         try:
@@ -355,9 +477,12 @@ def register_socket_handlers(sio, svc: GateMapService, *,
                 reply_error(f"Unexpected error: {e}")
         return wrapped
 
+    def get_gate_map(_d):
+        sio.emit("gate_map_state", svc.state(), room=request.sid)
+        svc.refresh_mock()
+
     events = {
-        "get_gate_map": (lambda d: sio.emit(
-            "gate_map_state", svc.state(), room=request.sid), False),
+        "get_gate_map": (get_gate_map, False),
         "gate_map_keepalive": (lambda d: svc.keepalive(), False),
         "gate_map_live": (lambda d: svc.live_keepalive(), False),
         "gate_map_walkthrough": (
@@ -371,6 +496,15 @@ def register_socket_handlers(sio, svc: GateMapService, *,
             resolve=d.get("resolve")), True),
         "gate_map_save_run": (lambda d: svc.save_run(), True),
         "gate_map_discard_run": (lambda d: svc.discard_run(), True),
+        # Simulated bus only (refused for a real one): sign-in needed, as a
+        # read during a run changes it.
+        "gate_map_mock_read": (lambda d: svc.mock_read(
+            d.get("module_id"), d.get("unit"), d.get("tag")), True),
+        "gate_map_mock_unit": (lambda d: svc.mock_unit(
+            d.get("module_id"), d.get("unit"), d.get("plugged"),
+            d.get("swap", False)), True),
+        "gate_map_mock_animals": (lambda d: svc.mock_animals(
+            d.get("module_id"), d.get("running", True)), True),
     }
     for name, (fn, admin) in events.items():
         sio.on_event(name, handler(fn, admin=admin))

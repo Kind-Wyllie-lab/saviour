@@ -69,15 +69,17 @@ through the 16 boxes, driving every feed from one model.
   nests, light schedule, dwell times, call rates, which gates are
   unmapped / closed / faulty).
 - `__mockSocket.sim`: where every rat is now, recent crossings.
-- **Gates page: Simulated bus panel** (`MockBusPanel.jsx`, mock builds only).
-  Plays the RFID bus by hand for a mapping run: click Read on the antenna
-  you "put the probe on" (a second one within 1.5 s is a double read; one
-  already in the map at another gate is caught as a duplicate). Pick the
-  probe or an animal tag (a run should ignore it), unplug an antenna or
-  swap its decoder (new serial) and scan, paste your own antenna list
-  (`address, label, serial`, kept in localStorage; it starts an empty map),
-  or clear the saved map. Untick "Answer prompts by hand" for the old
-  automatic answers. `gateMapMock.js` follows `MappingRun` (gate_map.py).
+- **Gates page: Simulated bus panel** (`habitat/pages/Gates/SimulatedBusPanel.jsx`;
+  on a real controller it drives an `rfid` module's simulated bus, here the
+  mock's). Plays the RFID bus by hand for a mapping run: click Read on the
+  antenna you "put the probe on" (a second one within 1.5 s is a double
+  read; one already in the map at another gate is caught as a duplicate).
+  Pick the probe or an animal tag (a run should ignore it), unplug an
+  antenna or swap its decoder (new serial) and scan, label the antennas
+  (`address, label`, kept in localStorage). Mock-only extras: clear the
+  saved map, back to the simulator's map, and untick "Answer prompts by
+  hand" for automatic answers. `gateMapMock.js` follows `MappingRun`
+  (gate_map.py).
 
 ## Console poking
 

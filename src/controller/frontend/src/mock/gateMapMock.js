@@ -6,117 +6,38 @@
 // confirmed unit takes its serial from the last bus scan, and the review
 // runs the same checks as review_entries().
 //
-// The simulated bus is a list of antennas (reader units). By default it is
-// the habitat simulator's wiring (habitatSim/), and the Gates page's
-// "Simulated bus" panel (MockBusPanel.jsx) plays the probe by hand: click
-// the antenna you put the tag on. You can paste your own antenna list,
-// unplug an antenna (no reads, no scan answer) or swap its decoder (new
-// serial). "Answer prompts automatically" brings back the old behaviour:
-// each gate is read a moment after it's prompted, sometimes by two units or
-// by a unit that's already mapped, to show the checks. Live reads on the
-// dashboard follow the simulated rats either way.
+// The RFID module here reports a simulated bus, as one with
+// rfid.mock.enabled does to a real controller, so the Gates page's
+// Simulated bus panel (habitat/pages/Gates/SimulatedBusPanel.jsx) works
+// the same against both: gate_map_mock_read holds a tag at one unit,
+// gate_map_mock_unit unplugs or swaps one. The bus is the habitat
+// simulator's wiring (habitatSim/). Mock-only extras (`dev: true` on the
+// bus): "Answer prompts by hand" off brings back automatic answers (each
+// gate read a moment after it's prompted, sometimes by two units or by
+// one already mapped), and the saved map can be cleared or reset. Live
+// reads on the dashboard follow the simulated rats either way.
 
 import { params, simWorld, recentCall } from "./habitatSim/index";
 import { BOXES, COLUMNS, RFID_ID, STRAY_MOTH, micId, mothSerial } from "./habitatSim/fleet";
 
 const SETTLE_S = 1.5;
+const PROBE_AWAY_S = 1.0;   // gate_map.py: held probe ignored at its registering antenna
 const PROBE = "000807DC1F";
 const ANIMAL = "000807DC2A";   // a tag that isn't the probe (an animal)
 const MODULE = RFID_ID;
-const STORE_KEY = "saviour.mock.gateMapBus";
-const MAX_ADDRESS = 255;
+const INJECT_READS = 3;
+const INJECT_GAP_MS = 150;
 
 const now = () => Date.now() / 1000;
 const serialFor = (address) => `SN${String(address).padStart(6, "0")}`;
 const keyFor = (address) => `${MODULE}:${address}`;
 
-// ── Antenna list ───────────────────────────────────────────────────────────
-
 function simAntennas() {
   const addrs = [...new Set(Object.values(simWorld().trueUnit))].sort((a, b) => a - b);
   const spare = addrs.length ? addrs[addrs.length - 1] + 1 : 1;
-  return [
-    ...addrs.map((address) => ({ address, label: "", serial: serialFor(address), online: true })),
-    // On the bus but at no gate, so the review has an unmapped unit to report.
-    { address: spare, label: "spare", serial: serialFor(spare), online: true },
-  ];
+  // Plus one on the bus at no gate, so the review has an unmapped unit.
+  return [...addrs, spare].map((address) => ({ address, serial: serialFor(address), plugged: true }));
 }
-
-/** Parse a pasted antenna list: one per line, `address`, `address label`,
- *  `address, label, serial` or just `label` (an address is then given).
- *  Blank lines and `#` comments are skipped. Returns {antennas} or {error}. */
-export function parseAntennaList(text) {
-  const rows = [];
-  const lines = String(text ?? "").split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/#.*/, "").trim();
-    if (!line) continue;
-    // Commas, tabs or semicolons separate the fields when there are any (so
-    // a label may contain spaces); otherwise spaces do.
-    const parts = (/[,\t;]/.test(line) ? line.split(/\s*[,\t;]\s*/) : line.split(/\s+/)).filter(Boolean);
-    const num = /^\d+$/.test(parts[0]) ? Number(parts[0]) : null;
-    if (num !== null && (num < 1 || num > MAX_ADDRESS)) {
-      return { error: `Line ${i + 1}: address ${num} is outside 1-${MAX_ADDRESS}` };
-    }
-    rows.push({
-      line: i + 1, address: num,
-      label: (num === null ? parts.join(" ") : parts.slice(1, 2).join("")) || "",
-      serial: num === null ? null : parts[2] ?? null,
-    });
-  }
-  if (!rows.length) return { error: "The list is empty" };
-  const used = new Map();
-  for (const r of rows) {
-    if (r.address === null) continue;
-    if (used.has(r.address)) {
-      return { error: `Address ${r.address} is listed twice (lines ${used.get(r.address)} and ${r.line})` };
-    }
-    used.set(r.address, r.line);
-  }
-  const labels = new Map();
-  for (const r of rows) {
-    if (!r.label) continue;
-    const k = r.label.toLowerCase();
-    if (labels.has(k)) {
-      return { error: `"${r.label}" is listed twice (lines ${labels.get(k)} and ${r.line})` };
-    }
-    labels.set(k, r.line);
-  }
-  let next = 1;
-  const antennas = rows.map((r) => {
-    let address = r.address;
-    if (address === null) {
-      while (used.has(next)) next++;
-      address = next;
-      used.set(address, r.line);
-    }
-    if (address > MAX_ADDRESS) return null;
-    return { address, label: r.label, serial: r.serial || serialFor(address), online: true };
-  });
-  if (antennas.includes(null)) return { error: `More than ${MAX_ADDRESS} antennas` };
-  return { antennas: antennas.sort((a, b) => a.address - b.address) };
-}
-
-function loadStoredAntennas() {
-  try {
-    const raw = window.localStorage.getItem(STORE_KEY);
-    const list = raw ? JSON.parse(raw) : null;
-    return Array.isArray(list) && list.length ? list : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeAntennas(list) {
-  try {
-    if (list) window.localStorage.setItem(STORE_KEY, JSON.stringify(list));
-    else window.localStorage.removeItem(STORE_KEY);
-  } catch {
-    // Private window or blocked storage: the list lasts until a reload.
-  }
-}
-
-// ── State ──────────────────────────────────────────────────────────────────
 
 function simEntries(layout) {
   // Every fitted gate mapped to its unit on the simulated bus, except a few
@@ -144,24 +65,18 @@ function simEntries(layout) {
 
 function initialState() {
   const layout = JSON.parse(JSON.stringify(simWorld().layout));
-  const stored = loadStoredAntennas();
   return {
     layout,
-    // Your own antenna list starts with an empty map: the simulator's map
-    // refers to the simulator's units.
-    entries: stored ? {} : simEntries(layout),
-    updated_at: stored ? null : now() - 86400,
+    entries: simEntries(layout),
+    updated_at: now() - 86400,
     run: null,
     walkthrough: false,
     bus: null,
     bus_scanned_at: null,
     hits: [],
     changes: [],
-    antennas: stored ?? simAntennas(),
-    custom: !!stored,
+    antennas: simAntennas(),
     manual: true,
-    tagMode: "probe",
-    busError: null,
     timers: [],
   };
 }
@@ -235,6 +150,7 @@ function view() {
       phase: run.phase, index: run.index, probe_tag: run.probe_tag, prompt_ts: run.prompt_ts,
       results: run.results, gate: run.phase === "gate" ? run.scope[run.index] : null,
       capture: run.capture, issue: issue(run), total: run.scope.length, settle_s: SETTLE_S,
+      probe_at: run.probe_at ?? null,
     };
     if (run.phase === "review") {
       runView.review = review(runEntries(run));
@@ -255,33 +171,16 @@ function view() {
     hits: g.hits,
     changes: g.changes,
     settle_s: SETTLE_S,
-  };
-}
-
-// What the Simulated bus panel shows: each antenna with the gates it is in
-// the map as it stands (the run's preview while a run is open).
-function busView() {
-  const run = g.run;
-  const byUnit = mappedUnits(run ? runEntries(run) : g.entries);
-  const capture = run?.phase === "gate" ? run.capture : null;
-  return {
-    antennas: g.antennas.map((a) => ({ ...a, key: keyFor(a.address), gates: byUnit[keyFor(a.address)] ?? [],
-      reads: capture?.counts[keyFor(a.address)] ?? 0 })),
-    custom: g.custom,
-    manual: g.manual,
-    tag_mode: g.tagMode,
-    probe_tag: PROBE,
-    animal_tag: ANIMAL,
-    run: run ? { phase: run.phase, gate: run.phase === "gate" ? run.scope[run.index] : null,
-      probe_tag: run.probe_tag, settled: !!capture?.settled, first_ts: capture?.first_ts ?? null } : null,
-    settle_s: SETTLE_S,
-    error: g.busError,
+    // As rfid_mock.MockBusSerial.state() reports it, plus the mock's extras.
+    mock_buses: [{
+      module_id: MODULE, units: g.antennas.map((a) => ({ ...a })), animals: 0, animals_running: false,
+      probe_tag: PROBE, animal_tag: ANIMAL, dev: true, manual: g.manual,
+    }],
   };
 }
 
 function emit(sock) {
   sock._fire("gate_map_state", view());
-  sock._fire("mock_bus_state", busView());
 }
 
 function later(sock, ms, fn) {
@@ -300,17 +199,25 @@ function hit(sock, unit, tag = PROBE) {
   sock._fire("gate_map_hit", h);
 }
 
-// A tag read on one antenna, as MappingRun.on_read() takes it.
+// One tag read on one antenna, as MappingRun.on_read() takes it.
 function busRead(sock, address, tag) {
   const run = g.run;
+  const key = keyFor(address);
   if (run?.phase === "probe") {
     run.probe_tag = tag;
     run.phase = "gate";
     run.index = 0;
     prompt(run);
+    run.probe_at = key;
+    run.probe_at_ts = now();
   } else if (run?.phase === "gate" && tag === run.probe_tag && !run.capture.settled) {
+    if (run.probe_at && now() - run.probe_at_ts >= PROBE_AWAY_S) run.probe_at = null;
+    if (key === run.probe_at) {        // still held where it was registered
+      run.probe_at_ts = now();
+      hit(sock, address, tag);
+      return;
+    }
     const c = run.capture;
-    const key = keyFor(address);
     if (!c.first) {
       c.first = key;
       c.first_ts = now();
@@ -321,30 +228,44 @@ function busRead(sock, address, tag) {
   hit(sock, address, tag);
 }
 
-// "Answer prompts automatically": the probe passes the current gate.
+// A tag held at an antenna: a few reads, like the module's rfid_mock_read.
+function holdTag(sock, address, tag) {
+  for (let i = 0; i < INJECT_READS; i++) {
+    g.timers.push(setTimeout(() => { busRead(sock, address, tag); emit(sock); }, i * INJECT_GAP_MS));
+  }
+}
+
+// "Answer prompts by hand" off: the probe passes the current gate.
 function simulatePass(sock) {
   const run = g.run;
   if (g.manual || !run || run.phase !== "gate") return;
   later(sock, 1500 + Math.random() * 1500, () => {
     if (g.run !== run || run.phase !== "gate") return;
-    const online = g.antennas.filter((a) => a.online).map((a) => a.address);
-    if (!online.length) return;
+    const plugged = g.antennas.filter((a) => a.plugged).map((a) => a.address);
+    if (!plugged.length) return;
     const roll = Math.random();
     const units = [];
     const mapped = Object.values(runEntries(run)).filter((e) => e.status === "mapped");
     if (roll < 0.12 && mapped.length) {
       units.push(mapped[0].unit);              // already mapped elsewhere
     } else {
-      // The gate's own unit on the simulated bus, or a random antenna for
-      // a gate the simulator doesn't know (or your own list).
-      const own = g.custom ? null : simWorld().trueUnit[run.scope[run.index]];
-      units.push(own ?? online[Math.floor(Math.random() * online.length)]);
-      const other = online.find((u) => u !== units[0]);
+      const own = simWorld().trueUnit[run.scope[run.index]];
+      units.push(own ?? plugged[Math.floor(Math.random() * plugged.length)]);
+      const other = plugged.find((u) => u !== units[0]);
       if (roll > 0.88 && other) units.push(other);   // a neighbour also reads it
     }
     for (const u of units) busRead(sock, u, run.probe_tag);
     busRead(sock, units[0], run.probe_tag);
     busRead(sock, units[0], run.probe_tag);
+  });
+}
+
+function autoProbe(sock, ms) {
+  later(sock, ms, () => {
+    const first = g.antennas.find((a) => a.plugged);
+    if (g.run?.phase !== "probe" || !first) return;
+    busRead(sock, first.address, PROBE);
+    simulatePass(sock);
   });
 }
 
@@ -406,7 +327,7 @@ export const gateMapRoutes = {
   gate_map_scan() {
     g ??= initialState();
     later(this, 800, () => {
-      g.bus = g.antennas.filter((a) => a.online).map((a) => ({
+      g.bus = g.antennas.filter((a) => a.plugged).map((a) => ({
         unit: keyFor(a.address), module_id: MODULE, address: a.address, serial: a.serial, firmware: "800",
       }));
       g.bus_scanned_at = now();
@@ -445,14 +366,7 @@ export const gateMapRoutes = {
     prompt(g.run);
     gateMapRoutes.gate_map_scan.call(this);
     emit(this);
-    if (!g.manual) {
-      later(this, 1500, () => {
-        const first = g.antennas.find((a) => a.online);
-        if (g.run?.phase !== "probe" || !first) return;
-        busRead(this, first.address, PROBE);
-        simulatePass(this);
-      });
-    }
+    if (!g.manual) autoProbe(this, 1500);
   },
   gate_map_action(p) {
     const run = g.run;
@@ -520,79 +434,45 @@ export const gateMapRoutes = {
     emit(this);
   },
 
-  // ── Simulated bus panel (mock only; MockBusPanel.jsx) ──
-  mock_bus_get() {
+  // ── Simulated bus, as gate_map_service.mock_read / mock_unit take it ──
+  gate_map_mock_read(p) {
     g ??= initialState();
-    this._fire("mock_bus_state", busView());
+    const a = g.antennas.find((x) => x.address === Number(p?.unit));
+    if (!a) { this._fire("gate_map_error", { error: `unit ${p?.unit} is not on this simulated bus` }); return; }
+    if (!a.plugged) { this._fire("gate_map_error", { error: `unit ${a.address} is unplugged` }); return; }
+    holdTag(this, a.address, String(p?.tag || PROBE).toUpperCase());
   },
-  mock_bus_read(p) {
-    g ??= initialState();
-    const a = g.antennas.find((x) => x.address === Number(p?.address));
-    if (!a || !a.online) return;
-    busRead(this, a.address, g.tagMode === "animal" ? ANIMAL : PROBE);
+  gate_map_mock_unit(p) {
+    const a = g.antennas.find((x) => x.address === Number(p?.unit));
+    if (!a) return;
+    if (typeof p.plugged === "boolean") a.plugged = p.plugged;
+    if (p.swap) a.serial = `SN${String(100000 + Math.floor(Math.random() * 899999))}`;
     emit(this);
   },
+  gate_map_mock_animals() {},
+
+  // ── Mock-only extras ──
   mock_bus_set(p) {
     g ??= initialState();
     if (typeof p?.manual === "boolean") {
       g.manual = p.manual;
       if (!g.manual && g.run?.phase === "gate" && !g.run.capture.first) simulatePass(this);
-      if (!g.manual && g.run?.phase === "probe") {
-        later(this, 800, () => {
-          const first = g.antennas.find((a) => a.online);
-          if (g.run?.phase === "probe" && first) { busRead(this, first.address, PROBE); simulatePass(this); }
-        });
-      }
+      if (!g.manual && g.run?.phase === "probe") autoProbe(this, 800);
     }
-    if (p?.tag_mode === "probe" || p?.tag_mode === "animal") g.tagMode = p.tag_mode;
     emit(this);
   },
-  mock_bus_antenna(p) {
-    const a = g.antennas.find((x) => x.address === Number(p?.address));
-    if (!a) return;
-    if (typeof p.online === "boolean") a.online = p.online;
-    if (p.swap) {
-      // A different decoder on the same address: a new serial.
-      a.serial = `SN${String(100000 + Math.floor(Math.random() * 899999))}`;
-    }
-    if (g.custom) storeAntennas(g.antennas);
-    emit(this);
-  },
-  mock_bus_set_list(p) {
-    if (g.run) { g.busError = "Finish or discard the mapping run before changing the antenna list"; emit(this); return; }
-    const parsed = parseAntennaList(p?.text);
-    if (parsed.error) { g.busError = parsed.error; emit(this); return; }
-    clearTimers();
-    g.antennas = parsed.antennas;
-    g.custom = true;
+  mock_bus_clear_map() {
+    if (g.run) { this._fire("gate_map_error", { error: "Finish or discard the mapping run first" }); return; }
     g.entries = {};
     g.updated_at = null;
-    g.bus = null;
-    g.bus_scanned_at = null;
     g.changes = [];
-    g.busError = null;
-    storeAntennas(g.antennas);
     emit(this);
   },
   mock_bus_reset() {
     clearTimers();
-    storeAntennas(null);
-    const { manual, tagMode } = g ?? {};
+    const manual = g?.manual;
     g = initialState();
     if (typeof manual === "boolean") g.manual = manual;
-    if (tagMode) g.tagMode = tagMode;
-    emit(this);
-  },
-  mock_bus_clear_map() {
-    if (g.run) { g.busError = "Finish or discard the mapping run first"; emit(this); return; }
-    g.entries = {};
-    g.updated_at = null;
-    g.changes = [];
-    g.busError = null;
-    emit(this);
-  },
-  mock_bus_dismiss() {
-    g.busError = null;
     emit(this);
   },
 };

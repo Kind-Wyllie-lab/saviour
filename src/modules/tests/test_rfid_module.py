@@ -40,6 +40,7 @@ def _make_rfid(**attrs) -> RFIDModule:
     m._db_threads = []
     m._zero_reads = 0
     m._mapping_until = 0.0
+    m._mock_bus = None
     m.is_streaming = False
     m.bus = MagicMock()
     m.bus.is_connected = False

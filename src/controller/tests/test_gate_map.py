@@ -100,6 +100,28 @@ def test_first_read_registers_probe_then_others_ignored():
     assert run.capture.first is None
 
 
+def test_probe_still_held_where_registered_is_not_the_first_gate():
+    # A held tag keeps reading: those reads aren't gate 1's.
+    run = _run()
+    assert run.on_read("rfid_1", 5, PROBE, 101.0)
+    for ts in (101.2, 101.4, 102.3):            # still held (gaps < 1 s)
+        assert not run.on_read("rfid_1", 5, PROBE, ts)
+    assert run.capture.first is None and run.view(None)["probe_at"] == "rfid_1:5"
+    # Taken away for a second, then presented at the same antenna: counts.
+    assert run.on_read("rfid_1", 5, PROBE, 103.5)
+    assert run.capture.first == "rfid_1:5"
+
+
+def test_probe_read_elsewhere_counts_at_once():
+    run = _run()
+    run.on_read("rfid_1", 5, PROBE, 101.0)
+    assert run.on_read("rfid_1", 34, PROBE, 101.1)
+    assert run.capture.first == "rfid_1:34"
+    # The held tag's last read arriving late isn't a double read.
+    assert not run.on_read("rfid_1", 5, PROBE, 101.2)
+    assert set(run.capture.counts) == {"rfid_1:34"}
+
+
 def test_zero_ids_are_not_a_probe():
     run = _run()
     assert not run.on_read("rfid_1", 5, "0000000000", 101.0)
@@ -489,3 +511,79 @@ def test_socket_handlers_auth_and_errors(tmp_path):
     states = [e for e in client.get_received() if e["name"] == "gate_map_state"]
     assert states[-1]["args"][0]["run"]["phase"] == "probe"
     web.facade.send_command.assert_any_call("rfid_1", "rfid_scan", {})
+
+
+# ── Simulated bus (driven from the Gates page) ──────────────────────────────
+
+_MOCK_STATE = {"units": [{"address": 1, "serial": "S1", "plugged": True}],
+               "animals": 0, "animals_running": False,
+               "probe_tag": "000807DC1F", "animal_tag": "000807DC2A"}
+
+
+def test_units_that_missed_the_scan_are_not_on_the_bus():
+    units = gm.units_from_ack("rfid_1", [
+        {"address": 1, "serial_number": "S1", "answered_last_scan": True},
+        {"address": 2, "serial_number": "S2", "answered_last_scan": False},
+        {"address": 3, "serial_number": "S3"}])     # an older module: kept
+    assert [u.unit for u in units] == [1, 3]
+
+
+def test_units_are_asked_again_while_serials_are_pending(tmp_path):
+    t = _Svc(tmp_path)
+    t.svc.scan()
+    _Timer.made[0].fire()
+    ack = {"type": "cmd_ack", "command": "rfid_units", "pending_queries": 8,
+           "units": [{"address": 1}]}
+    t.svc.on_module_status("rfid_1", ack)
+    retry = _Timer.made[-1]
+    assert retry.args == (["rfid_1"],)
+    retry.fire()
+    assert len(t.commands("rfid_units")) == 2
+    # Bounded, and done once nothing is pending.
+    for _ in range(10):
+        t.svc.on_module_status("rfid_1", ack)
+    n = len(_Timer.made)
+    t.svc.on_module_status("rfid_1", {**ack, "pending_queries": 0})
+    assert len(_Timer.made) == n
+    assert n <= 2 + gm_service().UNITS_RETRIES
+
+
+def gm_service():
+    import gate_map_service
+    return gate_map_service
+
+
+def test_simulated_bus_is_found_and_driven(tmp_path):
+    t = _Svc(tmp_path, modules=("rfid_1", "rfid_real"))
+    t.svc.refresh_mock()
+    t.svc.refresh_mock()                     # asked once per module
+    assert [m for m, _ in t.commands("rfid_mock_state")] == ["rfid_1", "rfid_real"]
+    t.svc.on_module_status("rfid_1", {"type": "cmd_ack", "command": "rfid_mock_state",
+                                      "result": "success", "mock_bus": _MOCK_STATE})
+    t.svc.on_module_status("rfid_real", {"type": "cmd_ack", "command": "rfid_mock_state",
+                                         "result": "error", "mock_bus": None})
+    state = t.last("gate_map_state")
+    assert [b["module_id"] for b in state["mock_buses"]] == ["rfid_1"]
+    assert not [d for e, d in t.emitted if e == "gate_map_error"]
+
+    t.svc.mock_read("rfid_1", "1", "000807dc2a")
+    t.svc.mock_unit("rfid_1", 1, plugged=False)
+    t.svc.mock_animals("rfid_1", False)
+    assert t.commands("rfid_mock_read") == [("rfid_1", {"unit": 1, "tag": "000807DC2A"})]
+    assert t.commands("rfid_mock_unit") == [("rfid_1", {"unit": 1, "swap": False,
+                                                        "plugged": False})]
+    assert t.commands("rfid_mock_animals") == [("rfid_1", {"running": False})]
+
+    for bad in [lambda: t.svc.mock_read("rfid_real", 1),
+                lambda: t.svc.mock_read("rfid_1", "x"),
+                lambda: t.svc.mock_read("rfid_1", 1, "zz")]:
+        with pytest.raises(gm.GateMapError):
+            bad()
+
+    # A failed mock command is reported; the module going offline hides it.
+    t.svc.on_module_status("rfid_1", {"type": "cmd_ack", "command": "rfid_mock_read",
+                                      "result": "error", "message": "unit 1 is unplugged",
+                                      "mock_bus": _MOCK_STATE})
+    assert t.last("gate_map_error") == {"error": "unit 1 is unplugged"}
+    t.modules = ["rfid_real"]
+    assert t.svc.state()["mock_buses"] == []

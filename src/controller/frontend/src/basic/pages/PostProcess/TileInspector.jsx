@@ -1,6 +1,7 @@
 import React from "react";
 import {
-  LIMITS, SPEC_COLORS, autoWindowSeconds, cameraAspect, clampRect,
+  ACCEL_SIGNALS, KIND_LABEL, LIMITS, SPEC_COLORS, autoWindowSeconds, cameraAspect,
+  clampRect, isAccelKind,
 } from "./composeLayout";
 
 // Committed swatch PNGs, one per colour map (tools/gen_spectrogram_swatches.py).
@@ -14,13 +15,14 @@ const SWATCHES = Object.fromEntries(
   ).map(([path, url]) => [path.split("/").pop().replace(".png", ""), url]),
 );
 
-function Num({ label, value, onChange, min, max, step = 1, title, suffix }) {
+function Num({ label, value, onChange, min, max, step = 1, title, suffix, placeholder }) {
   return (
     <label className="tile-inspector__field" title={title}>
       <span>{label}</span>
       <span className="tile-inspector__input">
         <input
           type="number" value={value ?? ""} min={min} max={max} step={step}
+          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
         />
         {suffix && <em>{suffix}</em>}
@@ -35,8 +37,8 @@ function Num({ label, value, onChange, min, max, step = 1, title, suffix }) {
  * fit / crop / rotation; spectrogram look, window and playhead).
  */
 export default function TileInspector({
-  tile, doc, cameras, micDevices, durationS, info, onChange, onDelete, onDuplicate,
-  onZ, isTrack, onToggleTrack,
+  tile, doc, cameras, micDevices, accelSources = [], durationS, info, onChange, onDelete,
+  onDuplicate, onZ, isTrack, onToggleTrack,
 }) {
   if (!tile) {
     return (
@@ -78,7 +80,7 @@ export default function TileInspector({
   return (
     <div className="tile-inspector">
       <div className="tile-inspector__head">
-        <strong>{tile.kind === "camera" ? "Camera" : "Spectrogram"}</strong>
+        <strong>{KIND_LABEL[tile.kind] || tile.kind}</strong>
         <span className="tile-inspector__actions">
           <button className="btn btn-small" onClick={() => onZ("front")} title="Bring to front">Front</button>
           <button className="btn btn-small" onClick={() => onZ("back")} title="Send to back">Back</button>
@@ -92,9 +94,12 @@ export default function TileInspector({
         <select value={tile.source} onChange={(e) => onChange({ source: e.target.value })}>
           {tile.kind === "camera"
             ? cameras.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)
-            : micDevices.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+            : isAccelKind(tile.kind)
+              ? accelSources.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)
+              : micDevices.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
           {!(tile.kind === "camera" ? cameras.some((c) => c.name === tile.source)
-            : micDevices.some((d) => d.id === tile.source)) && (
+            : isAccelKind(tile.kind) ? accelSources.some((a) => a.id === tile.source)
+              : micDevices.some((d) => d.id === tile.source)) && (
             <option value={tile.source}>{tile.source} (not in this day)</option>
           )}
         </select>
@@ -146,6 +151,60 @@ export default function TileInspector({
             title="Set the tile's height so the (cropped, rotated) camera fills it with no letterbox">
             Match tile to camera shape
           </button>
+        </>
+      )}
+
+      {tile.kind === "accel_trace" && (
+        <>
+          <label className="tile-inspector__field tile-inspector__field--wide">
+            <span>Show</span>
+            <select value={o.signal} onChange={(e) => onChange({ options: {
+              ...o, signal: e.target.value, y_min: null, y_max: null } })}>
+              {ACCEL_SIGNALS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
+          <div className="tile-inspector__grid">
+            <Num label="Window" value={o.window_s} min={LIMITS.windowMin} max={LIMITS.windowMax}
+              step={1} suffix="s" title="Seconds of data across the tile"
+              onChange={(v) => setOpt("window_s", Math.min(LIMITS.windowMax, Math.max(LIMITS.windowMin, v ?? 10)))} />
+            <Num
+              label="Playhead" value={Math.round((o.playhead ?? 0.5) * 100)}
+              onChange={(v) => setOpt("playhead", Math.min(100, Math.max(0, v ?? 50)) / 100)}
+              min={0} max={100} step={5} suffix="%"
+              title="Where 'now' sits across the tile: 0% = left edge, 50% = centre"
+            />
+          </div>
+          <label className="tile-inspector__check">
+            <input type="checkbox" checked={!!o.y_auto} onChange={(e) => setOpt("y_auto", e.target.checked)} />
+            Fit the vertical scale to the data in the render
+          </label>
+          {!o.y_auto && (
+            <div className="tile-inspector__grid">
+              <Num label="Bottom" value={o.y_min ?? ""} step={o.signal === "tilt" ? 10 : 0.5}
+                placeholder={o.signal === "tilt" ? "-90" : o.signal === "odba" ? "0" : "-2"}
+                onChange={(v) => setOpt("y_min", v)} />
+              <Num label="Top" value={o.y_max ?? ""} step={o.signal === "tilt" ? 10 : 0.5}
+                placeholder={o.signal === "tilt" ? "90" : o.signal === "odba" ? "1.5" : "2"}
+                onChange={(v) => setOpt("y_max", v)} />
+            </div>
+          )}
+          <p className="tile-inspector__hint">
+            The headstage&apos;s own axes (mounting on the head isn&apos;t set yet).
+            The legend shows each value at the playhead.
+          </p>
+        </>
+      )}
+
+      {tile.kind === "orientation" && (
+        <>
+          <label className="tile-inspector__check">
+            <input type="checkbox" checked={!!o.arrow} onChange={(e) => setOpt("arrow", e.target.checked)} />
+            Show the movement arrow (acceleration apart from gravity)
+          </label>
+          <p className="tile-inspector__hint">
+            Tilted by pitch and roll from gravity. Heading can&apos;t be measured with an
+            accelerometer, so the box always faces the same way.
+          </p>
         </>
       )}
 

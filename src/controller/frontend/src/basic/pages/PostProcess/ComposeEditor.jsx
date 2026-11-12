@@ -9,8 +9,9 @@ import TileInspector from "./TileInspector";
 import Timeline from "./Timeline";
 import {
   CANVAS_PRESETS, DEFAULT_SPECTROGRAM, LIMITS, TEMPLATES, TEMPLATE_AUDIO,
-  clampRect, fitToCanvas, formatSpan, missingSources, msToNs, newCameraTile,
-  newSpectrogramTile, newTileId, nsToMs, streamsByDate,
+  clampRect, fitToCanvas, formatSpan, isAccelKind, missingSources, msToNs,
+  newAccelTraceTile, newCameraTile, newOrientationTile, newSpectrogramTile,
+  newTileId, nsToMs, streamsByDate,
 } from "./composeLayout";
 import "./ComposeEditor.css";
 
@@ -58,11 +59,16 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     && info.cameras) || [];
   const micDevices = (info?.session_name === sessionName && info?.date_dir === dateDir
     && info.mic_devices) || [];
+  // Headstage accelerometers with output (Ephys panel); only aligned ones
+  // have video time to be placed on.
+  const accelAll = (info?.session_name === sessionName && info?.date_dir === dateDir
+    && info.accel_sources) || [];
+  const accelSources = accelAll.filter((a) => a.aligned);
   const infoReady = cameras.length > 0;
   const camSources = (doc?.tiles || []).filter((t) => t.kind === "camera").map((t) => t.source);
   const camKey = [...new Set(camSources)].join("|");
   const missing = infoReady ? missingSources(doc, cameras.map((c) => c.name),
-    micDevices.map((d) => d.id)) : [];
+    micDevices.map((d) => d.id), accelSources.map((a) => a.id)) : [];
   const docKey = JSON.stringify(doc);
   const selected = doc?.tiles.find((t) => t.id === selectedId) || null;
   const hasSpectrogram = !!doc?.tiles.some((t) => t.kind === "spectrogram");
@@ -295,8 +301,10 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     if (!doc || full) return;
     const tile = kind === "camera"
       ? newCameraTile(doc, source, cameras.find((c) => c.name === source))
-      : newSpectrogramTile(doc, source,
-        doc.tiles.find((t) => t.kind === "spectrogram")?.options);
+      : kind === "accel_trace" ? newAccelTraceTile(doc, source)
+        : kind === "orientation" ? newOrientationTile(doc, source)
+          : newSpectrogramTile(doc, source,
+            doc.tiles.find((t) => t.kind === "spectrogram")?.options);
     if (at) {
       const [, , w, h] = tile.rect;
       tile.rect = clampRect([at.x - w / 2, at.y - h / 2, w, h], doc.canvas);
@@ -313,9 +321,14 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     e.dataTransfer.setData(SOURCE_MIME, JSON.stringify({ kind, source }));
     e.dataTransfer.effectAllowed = "copy";
   };
-  const labelFor = (tile) => (tile.kind === "camera"
-    ? tile.source
-    : micDevices.find((d) => d.id === tile.source)?.label || tile.source);
+  const labelFor = (tile) => {
+    if (tile.kind === "camera") return tile.source;
+    if (isAccelKind(tile.kind)) {
+      const name = accelAll.find((a) => a.id === tile.source)?.label || tile.source;
+      return tile.kind === "orientation" ? `${name} orientation` : name;
+    }
+    return micDevices.find((d) => d.id === tile.source)?.label || tile.source;
+  };
 
   const setZ = (where) => {
     if (!selected) return;
@@ -326,7 +339,8 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     if (!selected || full) return;
     const [x, y, w, h] = selected.rect;
     addTile({
-      ...selected, id: newTileId(doc, selected.kind === "camera" ? "c" : "a"),
+      ...selected,
+      id: newTileId(doc, selected.kind === "camera" ? "c" : isAccelKind(selected.kind) ? "e" : "a"),
       rect: clampRect([x + 24, y + 24, w, h], doc.canvas),
       z: selected.z, options: { ...selected.options },
     });
@@ -471,6 +485,42 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
               ))}
             </>
           )}
+          {accelAll.length > 0 && (
+            <>
+              <div className="compose-editor__sources-head">Headstage accelerometer</div>
+              {accelAll.map((a) => (
+                <div key={a.id} className="compose-editor__source">
+                  <span className="compose-editor__source-name">{a.label}</span>
+                  {a.aligned ? (
+                    <>
+                      <span className="compose-panel__hint">
+                        {a.start_ns != null && a.end_ns != null
+                          ? `${Math.round((a.end_ns - a.start_ns) / 1e9)} s of motion data` : ""}
+                      </span>
+                      <span className="compose-editor__source-buttons">
+                        <button className="btn btn-small" disabled={full || !doc} draggable
+                          onDragStart={dragSource("accel_trace", a.id)}
+                          onClick={() => addSource("accel_trace", a.id)}
+                          title="A scrolling trace of acceleration, tilt or movement (drag onto the canvas, or click)">
+                          Add trace
+                        </button>
+                        <button className="btn btn-small" disabled={full || !doc} draggable
+                          onDragStart={dragSource("orientation", a.id)}
+                          onClick={() => addSource("orientation", a.id)}
+                          title="The headstage drawn as a box tilted by its pitch and roll (drag onto the canvas, or click)">
+                          Add orientation
+                        </button>
+                      </span>
+                    </>
+                  ) : (
+                    <span className="compose-panel__hint">
+                      Not aligned to this session yet: run Align, then Accelerometer, on the Ephys panel.
+                    </span>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
           {full && <div className="compose-panel__hint">At most {LIMITS.maxTiles} tiles.</div>}
         </aside>
 
@@ -487,8 +537,14 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
                 <Timeline
                   windowMs={windowMs}
                   cameras={cameras.filter((c) => camSources.includes(c.name))}
-                  mics={micDevices.filter((d) => (doc?.audio_tracks || []).includes(d.id)
-                    || doc?.tiles.some((t) => t.kind === "spectrogram" && t.source === d.id))}
+                  mics={[
+                    ...micDevices.filter((d) => (doc?.audio_tracks || []).includes(d.id)
+                      || doc?.tiles.some((t) => t.kind === "spectrogram" && t.source === d.id)),
+                    // Headstages on the canvas, as a lane of their aligned span.
+                    ...accelSources.filter((a) => doc?.tiles.some((t) => t.source === a.id))
+                      .map((a) => ({ id: a.id, label: a.label,
+                        segments: a.start_ns != null ? [[a.start_ns, a.end_ns]] : [] })),
+                  ]}
                   rangeMs={rangeMs} speed={speed}
                   previewMs={previewMs} previewedMs={previewedMs}
                   onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}
@@ -522,7 +578,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
 
         <TileInspector
           tile={selected} doc={doc || { canvas: { width: 1, height: 1 }, tiles: [] }}
-          cameras={cameras} micDevices={micDevices}
+          cameras={cameras} micDevices={micDevices} accelSources={accelSources}
           durationS={rangeLenMs != null ? rangeLenMs / 1000 : info?.duration_s} info={info}
           onChange={(patch) => selected && updateTile(selected.id, patch)}
           onDelete={() => selected && deleteTile(selected.id)}

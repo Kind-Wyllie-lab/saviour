@@ -720,6 +720,13 @@ const ROUTER = {
       session_name: payload?.session_name, date_dir: payload?.date_dir || "20261013",
       dates: ["20261013"], cameras: MOCK_CAMERAS, mics: ["microphone-1"],
       mic_devices: MOCK_MICS, suggested_fps: 30, duration_s: MOCK_DAY_S,
+      // Headstage accelerometer output (Ephys panel): one aligned, one not.
+      accel_sources: [
+        { id: "ephys/accel/A1", port: "A1", label: "Headstage A1", aligned: true,
+          start_ns: seg(60, 2400)[0], end_ns: seg(60, 2400)[1] },
+        { id: "ephys/accel/B1", port: "B1", label: "Headstage B1", aligned: false,
+          start_ns: null, end_ns: null },
+      ],
       window_start_ns: `${MOCK_T0_MS}000000`, window_end_ns: `${MOCK_T0_MS + MOCK_DAY_S * 1000}000000`,
       playhead_pps: 120, max_strip_px: 48000,
     });
@@ -811,6 +818,31 @@ function mockTileSvg(t, w, h) {
     const px = (t.options?.playhead ?? 0.5) * w;
     return `<rect width="${w}" height="${h}" fill="#141014"/>${bars}`
       + `<line x1="${px}" x2="${px}" y1="0" y2="${h}" stroke="#ffd700" stroke-width="3" stroke-dasharray="14 9"/>`;
+  }
+  if (t.kind === "accel_trace") {
+    const colours = t.options?.signal === "odba" ? ["#e8e8e8"]
+      : t.options?.signal === "tilt" ? ["#3987e5", "#d95926"] : ["#3987e5", "#d95926", "#199e70"];
+    const lines = colours.map((c, k) => {
+      const pts = Array.from({ length: 81 }, (_, i) => {
+        const y = h / 2 + (0.15 + 0.1 * k) * h * Math.sin(i / 6 + k * 2) * Math.cos(i / 17);
+        return `${(i * w) / 80},${y.toFixed(1)}`;
+      }).join(" ");
+      return `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2"/>`;
+    }).join("");
+    const px = (t.options?.playhead ?? 0.5) * w;
+    return `<rect width="${w}" height="${h}" fill="#101418"/>${lines}`
+      + `<line x1="${px}" x2="${px}" y1="0" y2="${h}" stroke="#ffd700" stroke-width="2" stroke-dasharray="10 7"/>`;
+  }
+  if (t.kind === "orientation") {
+    const s = Math.min(w, h) / 2;
+    const cx = w / 2;
+    const cy = h / 2;
+    return `<rect width="${w}" height="${h}" fill="#101418"/>`
+      + `<ellipse cx="${cx}" cy="${cy + s * 0.5}" rx="${s * 0.8}" ry="${s * 0.25}" fill="none" stroke="#445"/>`
+      + `<polygon points="${cx - s * 0.6},${cy} ${cx + s * 0.2},${cy - s * 0.35} ${cx + s * 0.7},${cy - s * 0.05} ${cx - s * 0.1},${cy + s * 0.3}" fill="#7a8794" stroke="#cfd8e0"/>`
+      + `<line x1="${cx}" y1="${cy}" x2="${cx + s * 0.6}" y2="${cy - s * 0.25}" stroke="#3987e5" stroke-width="3"/>`
+      + `<line x1="${cx}" y1="${cy}" x2="${cx - s * 0.4}" y2="${cy - s * 0.2}" stroke="#d95926" stroke-width="3"/>`
+      + `<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy - s * 0.7}" stroke="#199e70" stroke-width="3"/>`;
   }
   const hue = MOCK_HUES[t.source] ?? 280;
   return `<rect width="${w}" height="${h}" fill="hsl(${hue},40%,28%)"/>`

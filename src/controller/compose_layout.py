@@ -25,7 +25,10 @@ and the render, so what the editor shows is what gets rendered.
     }
 
 Camera sources are module folder names, mic sources are
-`compose.list_mic_devices()` ids (`"<folder>/<device>"`). This module only
+`compose.list_mic_devices()` ids (`"<folder>/<device>"`). The headstage
+accelerometer tiles (`accel_trace`, a scrolling trace like the
+spectrogram; `orientation`, the headstage as a tilted 3D box; drawn by
+accel_tiles.py) take `"ephys/accel/<port>"`. This module only
 checks shape; whether a source exists in a given session is checked when a
 preview or render resolves it. Pure (no OpenCV, no Flask) so it is cheap to
 import and test.
@@ -38,7 +41,12 @@ import re
 
 from src.controller import audio_align
 
-TILE_KINDS = ("camera", "spectrogram")
+TILE_KINDS = ("camera", "spectrogram", "accel_trace", "orientation")
+ACCEL_KINDS = ("accel_trace", "orientation")
+ACCEL_SIGNALS = ("xyz", "tilt", "odba")
+ACCEL_SOURCE = re.compile(r"^ephys/accel/[A-Za-z0-9_-]{1,16}$")
+ACCEL_WINDOW_DEFAULT_S = 10.0
+ACCEL_Y_LIMIT = 1000.0          # |y_min|, |y_max| (g or degrees)
 CAMERA_FITS = ("contain", "cover", "stretch")
 ROTATIONS = (0, 90, 180, 270)
 # Constants rather than UI limits, so a bigger rig (plans/
@@ -176,6 +184,36 @@ def _validate_spectrogram_options(raw: dict) -> dict:
     }
 
 
+def _validate_accel_trace_options(raw: dict) -> dict:
+    signal = str(raw.get("signal", "xyz")).lower()
+    if signal not in ACCEL_SIGNALS:
+        raise LayoutError(f"accel signal must be one of {', '.join(ACCEL_SIGNALS)}")
+    window_s = _float(raw.get("window_s", ACCEL_WINDOW_DEFAULT_S), "accel window_s")
+    lo, hi = SPECTROGRAM_WINDOW_RANGE_S
+    if not lo <= window_s <= hi:
+        raise LayoutError(f"accel window_s must be between {lo:g} and {hi:g} s")
+    playhead = _float(raw.get("playhead", 0.5), "accel playhead")
+    if not 0 <= playhead <= 1:
+        raise LayoutError("accel playhead must be between 0 and 1")
+    ys = []
+    for key in ("y_min", "y_max"):
+        v = raw.get(key)
+        if v is not None:
+            v = _float(v, f"accel {key}")
+            if abs(v) > ACCEL_Y_LIMIT:
+                raise LayoutError(f"accel {key} must be within ±{ACCEL_Y_LIMIT:g}")
+        ys.append(v)
+    if ys[0] is not None and ys[1] is not None and ys[1] <= ys[0]:
+        raise LayoutError("accel y_max must be above y_min")
+    return {"signal": signal, "window_s": window_s, "playhead": playhead,
+            "y_auto": bool(raw.get("y_auto", False)), "y_min": ys[0], "y_max": ys[1],
+            "label": bool(raw.get("label", True))}
+
+
+def _validate_orientation_options(raw: dict) -> dict:
+    return {"arrow": bool(raw.get("arrow", True)), "label": bool(raw.get("label", True))}
+
+
 def _validate_tile(raw, canvas: dict, index: int) -> dict:
     if not isinstance(raw, dict):
         raise LayoutError("each tile must be an object")
@@ -189,6 +227,9 @@ def _validate_tile(raw, canvas: dict, index: int) -> dict:
     if kind == "camera":
         if not _safe_segment(source):
             raise LayoutError(f"invalid camera source {source!r}")
+    elif kind in ACCEL_KINDS:
+        if not ACCEL_SOURCE.match(source):
+            raise LayoutError(f"invalid accelerometer source {source!r}")
     else:
         source = _validate_mic_id(source, "spectrogram source")
     rect = raw.get("rect")
@@ -202,8 +243,12 @@ def _validate_tile(raw, canvas: dict, index: int) -> dict:
     options = raw.get("options") or {}
     if not isinstance(options, dict):
         raise LayoutError(f"tile {tile_id}: options must be an object")
-    options = (_validate_camera_options(options) if kind == "camera"
-               else _validate_spectrogram_options(options))
+    options = {
+        "camera": _validate_camera_options,
+        "spectrogram": _validate_spectrogram_options,
+        "accel_trace": _validate_accel_trace_options,
+        "orientation": _validate_orientation_options,
+    }[kind](options)
     return {"id": tile_id, "kind": kind, "source": source,
             "rect": [x, y, w, h], "z": _int(raw.get("z", 0), "tile z"),
             "options": options}
@@ -305,6 +350,21 @@ def mic_sources(doc: dict) -> list[str]:
         if sid not in out:
             out.append(sid)
     return out
+
+
+def accel_sources(doc: dict) -> list[str]:
+    """Distinct headstages the layout's accelerometer tiles show."""
+    out: list[str] = []
+    for t in doc["tiles"]:
+        if t["kind"] in ACCEL_KINDS and t["source"] not in out:
+            out.append(t["source"])
+    return out
+
+
+def accel_strip(tile_w: int, window_s: float, total_s: float) -> tuple[int, float]:
+    """`(strip_width_px, strip_pps)` for an accel trace tile: like
+    `spectrogram_strip` with a set window (capped the same way)."""
+    return spectrogram_strip(tile_w, window_s, total_s)
 
 
 def draw_order(tiles: list[dict]) -> list[dict]:

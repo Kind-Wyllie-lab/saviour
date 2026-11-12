@@ -41,6 +41,25 @@ export const DEFAULT_SPECTROGRAM = {
 
 export const DEFAULT_CAMERA = { fit: "contain", crop: null, rotate: 0, label: true };
 
+// Headstage accelerometer tiles (compose_layout.ACCEL_KINDS, drawn by
+// accel_tiles.py): a scrolling trace and a tilted 3D box.
+export const ACCEL_KINDS = ["accel_trace", "orientation"];
+export const isAccelKind = (kind) => ACCEL_KINDS.includes(kind);
+export const ACCEL_SIGNALS = [
+  { value: "xyz", label: "Acceleration X / Y / Z (g)" },
+  { value: "tilt", label: "Tilt: pitch and roll (°)" },
+  { value: "odba", label: "Movement (ODBA, g)" },
+];
+export const DEFAULT_ACCEL_TRACE = {
+  signal: "xyz", window_s: 10, playhead: 0.5, y_auto: false, y_min: null, y_max: null,
+  label: true,
+};
+export const DEFAULT_ORIENTATION = { arrow: true, label: true };
+export const KIND_LABEL = {
+  camera: "Camera", spectrogram: "Spectrogram", accel_trace: "Accelerometer trace",
+  orientation: "Head orientation",
+};
+
 const even = (v) => Math.max(2, Math.round(v / 2) * 2);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -131,6 +150,30 @@ export function newSpectrogramTile(doc, source, defaults = {}) {
   };
 }
 
+/** A new accelerometer trace tile: full width, a sixth of the height,
+ *  at the bottom, above the cameras. */
+export function newAccelTraceTile(doc, source) {
+  const { width: W, height: H } = doc.canvas;
+  const h = Math.max(LIMITS.minTile, even(H / 6));
+  return {
+    id: newTileId(doc, "e"), kind: "accel_trace", source,
+    rect: clampRect([0, H - h, W, h], doc.canvas),
+    z: 1, options: { ...DEFAULT_ACCEL_TRACE },
+  };
+}
+
+/** A new head-orientation tile: a square a third of the canvas high, top
+ *  right, above the cameras. */
+export function newOrientationTile(doc, source) {
+  const { width: W, height: H } = doc.canvas;
+  const s = Math.max(LIMITS.minTile, even(Math.min(W, H) / 3));
+  return {
+    id: newTileId(doc, "e"), kind: "orientation", source,
+    rect: clampRect([W - s, 0, s, s], doc.canvas),
+    z: 1, options: { ...DEFAULT_ORIENTATION },
+  };
+}
+
 /** `doc` scaled uniformly to fit a new canvas size and centred on it
  *  (mirrors compose_layout.fit_to_canvas). */
 export function fitToCanvas(doc, width, height) {
@@ -150,13 +193,16 @@ export function fitToCanvas(doc, width, height) {
   };
 }
 
-/** Sources the layout uses that this day doesn't have. */
-export function missingSources(doc, cameraNames, micIds) {
+/** Sources the layout uses that this day doesn't have (for the
+ *  accelerometer tiles: no aligned output for that headstage). */
+export function missingSources(doc, cameraNames, micIds, accelIds = []) {
   const cams = new Set(cameraNames);
   const mics = new Set(micIds);
+  const accel = new Set(accelIds);
   const out = [];
   for (const t of doc?.tiles || []) {
-    const ok = t.kind === "camera" ? cams.has(t.source) : mics.has(t.source);
+    const ok = t.kind === "camera" ? cams.has(t.source)
+      : isAccelKind(t.kind) ? accel.has(t.source) : mics.has(t.source);
     if (!ok && !out.includes(t.source)) out.push(t.source);
   }
   for (const m of doc?.audio_tracks || []) {

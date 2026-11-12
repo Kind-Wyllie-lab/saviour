@@ -353,3 +353,67 @@ def test_legacy_layout_has_the_default_range():
     spec = ComposeSpec.from_dict({"session_name": "s"})
     doc = layout_from_legacy(spec, _streams((1280, 720)), [])
     assert doc["range"] == {"start_ns": None, "end_ns": None, "speed": 1.0}
+
+
+# --------------------------------------------------------------------------- #
+# Headstage accelerometer tiles                                               #
+# --------------------------------------------------------------------------- #
+
+
+def _cam():
+    return {"kind": "camera", "source": "a", "rect": [0, 0, 100, 100]}
+
+
+def test_accel_tiles_fill_defaults():
+    doc = cl.validate_layout(_doc(tiles=[
+        _cam(),
+        {"kind": "accel_trace", "source": "ephys/accel/A1", "rect": [0, 100, 400, 80]},
+        {"kind": "orientation", "source": "ephys/accel/A1", "rect": [400, 0, 200, 200]},
+    ]))
+    trace, orient = doc["tiles"][1], doc["tiles"][2]
+    assert trace["options"] == {"signal": "xyz", "window_s": cl.ACCEL_WINDOW_DEFAULT_S,
+                                "playhead": 0.5, "y_auto": False, "y_min": None,
+                                "y_max": None, "label": True}
+    assert orient["options"] == {"arrow": True, "label": True}
+    assert cl.accel_sources(doc) == ["ephys/accel/A1"]
+    assert cl.mic_sources(doc) == []          # nothing to align as audio
+
+
+@pytest.mark.parametrize("tile, match", [
+    ({"kind": "accel_trace", "source": "ephys/accel/../x"}, "accelerometer source"),
+    ({"kind": "orientation", "source": "mic/dev"}, "accelerometer source"),
+    ({"kind": "accel_trace", "source": "ephys/accel/A1",
+      "options": {"signal": "gyro"}}, "signal"),
+    ({"kind": "accel_trace", "source": "ephys/accel/A1",
+      "options": {"window_s": 0.1}}, "window_s"),
+    ({"kind": "accel_trace", "source": "ephys/accel/A1",
+      "options": {"y_min": 1, "y_max": -1}}, "y_max"),
+    ({"kind": "accel_trace", "source": "ephys/accel/A1",
+      "options": {"playhead": 2}}, "playhead"),
+])
+def test_accel_tiles_rejected(tile, match):
+    with pytest.raises(cl.LayoutError, match=match):
+        cl.validate_layout(_doc(tiles=[_cam(), {**tile, "rect": [0, 100, 100, 50]}]))
+
+
+def test_date_dir_skips_the_ephys_folder(tmp_path):
+    from src.controller.compose import resolve_date_dir
+    (tmp_path / "20261111").mkdir()
+    (tmp_path / "_ephys" / "accel").mkdir(parents=True)
+    assert resolve_date_dir(str(tmp_path), None).endswith("20261111")
+
+
+def test_list_accel_sources(tmp_path):
+    import json
+
+    from src.controller.compose import list_accel_sources
+    a1 = tmp_path / "_ephys" / "accel" / "A1"
+    a1.mkdir(parents=True)
+    (a1 / "accel.csv").write_text("timestamp_ns" + chr(10))
+    (a1 / "summary.json").write_text(json.dumps({"aligned": True, "start_ns": 5,
+                                                 "end_ns": 9}))
+    (tmp_path / "_ephys" / "accel" / "B1").mkdir()   # no output: left out
+    assert list_accel_sources(str(tmp_path)) == [
+        {"id": "ephys/accel/A1", "port": "A1", "label": "Headstage A1",
+         "aligned": True, "start_ns": 5, "end_ns": 9}]
+    assert list_accel_sources(str(tmp_path / "nothing")) == []

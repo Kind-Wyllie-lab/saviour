@@ -35,7 +35,13 @@
   `habitat/components/HabitatGrid`, is the piece meant to grow into the
   layout-aware habitat view. `dev:mock` simulates a run
   (`src/mock/gateMapMock.js`) for UI work without a habitat controller:
-  `VITE_VARIANT=habitat npm run dev:mock`.
+  `VITE_VARIANT=habitat npm run dev:mock`. Its **Simulated bus** panel
+  (2026-11-12) lets you play the probe by hand, antenna by antenna, with
+  your own antenna list; the checks there are a JS copy of `MappingRun`,
+  not the Python. Next for hardware-free testing of the real code: an
+  "inject a read on unit N" command on the module's simulated bus
+  (`rfid_mock.py`), driven from the same panel against a habitat
+  controller.
 - Tests: `src/controller/tests/test_gate_map.py`, plus mapping-mode tests
   in `test_rfid_module.py`.
 - Built differently from the text below: a live read already shows its

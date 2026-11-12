@@ -57,6 +57,12 @@ STATUSES = (MAPPED, CLOSED, NOT_FITTED, FAULTY)
 # How long reads keep being collected after the first one, to catch a
 # neighbouring antenna also picking up the probe.
 SETTLE_S = 1.5
+# A tag held at an antenna reads continuously, so the probe keeps reading at
+# the antenna it was registered at. Those reads don't count for the first
+# gate until that antenna has been quiet this long (the probe taken away);
+# a read at any other antenna counts straight away, without ending the hold
+# (the held tag's last reads can still arrive after it).
+PROBE_AWAY_S = 1.0
 
 _BOX_RE = re.compile(r"[A-Z][1-9]")
 _OPERATOR_MAX = 60
@@ -295,10 +301,13 @@ class BusUnit:
 
 
 def units_from_ack(module_id: str, units: object) -> list[BusUnit]:
-    """The ``units`` list of an ``rfid_units`` command reply."""
+    """The ``units`` list of an ``rfid_units`` command reply: the units that
+    answered the latest scan (a module that doesn't say counts them all)."""
     out = []
     for u in units if isinstance(units, list) else []:
         if not isinstance(u, dict) or "address" not in u:
+            continue
+        if u.get("answered_last_scan") is False:
             continue
         try:
             out.append(BusUnit(module_id, int(u["address"]),
@@ -348,6 +357,10 @@ class MappingRun:
     prompt_ts: float | None = None
     results: dict = field(default_factory=dict)   # gate -> entry | None
     capture: Capture = field(default_factory=Capture)
+    # Where the probe was registered, and its latest read there, until it's
+    # been taken away (PROBE_AWAY_S); not saved in the draft.
+    probe_at: str | None = None
+    probe_at_ts: float | None = None
 
     @classmethod
     def start(cls, operator: str, scope: list[str], base_entries: dict,
@@ -402,16 +415,22 @@ class MappingRun:
         tag = (tag or "").upper()
         if not tag or set(tag) == {"0"}:
             return False
+        key = unit_key(module_id, unit)
         if self.phase == "probe":
             self.probe_tag = tag
             self.phase = "gate"
             self.index = 0
             self.prompt_ts = ts
             self.capture = Capture()
+            self.probe_at, self.probe_at_ts = key, ts
             return True
         if self.phase != "gate" or tag != self.probe_tag or self.capture.settled:
             return False
-        key = unit_key(module_id, unit)
+        if self.probe_at is not None and ts - self.probe_at_ts >= PROBE_AWAY_S:
+            self.probe_at = self.probe_at_ts = None     # taken away
+        if key == self.probe_at:
+            self.probe_at_ts = ts           # still held where it was registered
+            return False
         c = self.capture
         if c.first is None:
             c.first, c.first_ts = key, ts
@@ -534,7 +553,8 @@ class MappingRun:
         d = self.to_dict()
         d.pop("base_entries")
         d.update(gate=self.gate, capture=self.capture.to_dict(),
-                 issue=self.issue(), total=len(self.scope), settle_s=SETTLE_S)
+                 issue=self.issue(), total=len(self.scope), settle_s=SETTLE_S,
+                 probe_at=self.probe_at)
         if self.phase == "review":
             d["review"] = self.review(bus)
             d["changes"] = diff_entries(self.base_entries, self.entries())

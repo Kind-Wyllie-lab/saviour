@@ -88,6 +88,11 @@ an all-zero ID. Tag IDs come from `seed`, so they're the same across restarts.
   settings.
 - Toggling it, or changing any `rfid.mock.*` key, reconnects the bus and
   reopens the store. Turn it off before recording real data.
+- It can be played by hand (the habitat Gates page's Simulated bus panel uses
+  these): `rfid_mock_read` holds a tag at a unit (3 reads, the probe tag
+  `000807DC1F` by default), `rfid_mock_unit` unplugs a unit or swaps its decoder
+  (new serial), `rfid_mock_animals` pauses the wandering tags, `rfid_mock_state`
+  lists it all. They're refused on a real bus.
 
 ## Config (`rfid_config.json`)
 

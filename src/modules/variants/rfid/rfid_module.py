@@ -33,7 +33,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 sys.path.append(os.path.dirname(__file__))
 from rfid_bus import RS485Bus
-from rfid_mock import MOCK_PORT, MockBusSerial, MockOptions
+from rfid_mock import MOCK_PORT, PROBE_TAG, MockBusSerial, MockOptions
 from rfid_store import KIND_READ, KIND_ZERO, RfidStore, StoredRead
 from rfid_sync import DbSettings, RfidSync, load_settings, save_settings
 
@@ -179,6 +179,10 @@ class RFIDModule(Module):
         # controller while a mapping page is open, so a closed browser tab
         # can't leave it on.
         self._mapping_until = 0.0
+
+        # The simulated bus while rfid.mock.enabled is on (rfid_mock_*
+        # commands drive it by hand); None otherwise.
+        self._mock_bus: MockBusSerial | None = None
 
         # ── Bus ─────────────────────────────────────────────────────────
         self.bus = RS485Bus()
@@ -751,11 +755,66 @@ class RFIDModule(Module):
     @command()
     def rfid_units(self):
         """Every unit seen on the bus since connect (address, firmware,
-        serial number), for the gate map's bus-vs-map checks."""
+        serial number, and whether it answered the latest scan), for the
+        gate map's bus-vs-map checks. ``pending_queries`` is how many
+        serial-number queries are still queued (the controller asks again
+        until it's 0); ``mock_bus`` is the simulated bus, if this is one."""
+        units = []
+        for _, u in sorted(self.bus.units.items()):
+            d = u.to_dict()
+            d["answered_last_scan"] = self.bus.answered_last_scan(u)
+            units.append(d)
         return {"result": "success",
                 "connected": bool(self.bus.is_connected),
                 "port": self.bus.port,
-                "units": [u.to_dict() for _, u in sorted(self.bus.units.items())]}
+                "units": units,
+                "pending_queries": self.bus.pending_queries,
+                "mock_bus": self._mock_state()}
+
+    # ── Simulated bus, driven by hand (habitat Gates page) ────────────────
+
+    def _mock_state(self) -> dict | None:
+        bus = self._mock_bus
+        if bus is None or not self._mock_enabled():
+            return None
+        return bus.state()
+
+    def _mock_call(self, fn) -> dict:
+        """Run ``fn(bus)`` on the simulated bus; refused on a real one."""
+        bus = self._mock_bus
+        if bus is None or not self._mock_enabled():
+            return {"result": "error", "mock_bus": None,
+                    "message": "Not a simulated bus (rfid.mock.enabled is off)"}
+        try:
+            fn(bus)
+        except (TypeError, ValueError) as e:
+            return {"result": "error", "message": str(e), "mock_bus": bus.state()}
+        return {"result": "success", "mock_bus": bus.state()}
+
+    @command()
+    def rfid_mock_state(self):
+        """The simulated bus's units and settings (an error on a real bus)."""
+        return self._mock_call(lambda bus: None)
+
+    @command()
+    def rfid_mock_read(self, unit: int, tag: str = PROBE_TAG, count: int = 3):
+        """A tag held at one antenna: ``count`` reads of ``tag`` on ``unit``,
+        through the real receive path. Simulated bus only."""
+        return self._mock_call(lambda bus: bus.inject_read(unit, tag, count))
+
+    @command()
+    def rfid_mock_unit(self, unit: int, plugged: bool | None = None,
+                       swap: bool = False):
+        """Unplug / replug a unit, or swap its decoder (new serial number).
+        Simulated bus only."""
+        return self._mock_call(lambda bus: bus.set_unit(unit, plugged, bool(swap)))
+
+    @command()
+    def rfid_mock_animals(self, running: bool = True):
+        """Start or stop the wandering simulated tags. Simulated bus only."""
+        def apply(bus):
+            bus.animals_paused = not running
+        return self._mock_call(apply)
 
     # ══════════════════════════════════════════════════════════════════════
     # Bus lifecycle
@@ -765,9 +824,15 @@ class RFIDModule(Module):
         port = self.config.get("rfid.serial_port", "") or ""
         baud = int(self.config.get("rfid.baud", 19200))
         opener = None
+        self._mock_bus = None
         if self._mock_enabled():
             opts = MockOptions.from_config(self.config.get)
-            port, opener = MOCK_PORT, lambda: MockBusSerial(opts)
+
+            def opener():
+                self._mock_bus = MockBusSerial(opts)
+                return self._mock_bus
+
+            port = MOCK_PORT
             self.logger.warning(
                 f"RFID: SIMULATED bus ({opts.units} units, {opts.tags} tags); "
                 "rfid.mock.enabled is on, reads are not real")

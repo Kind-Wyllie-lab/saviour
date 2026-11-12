@@ -1,0 +1,94 @@
+/* Simulated bus panel (an RFID module with rfid.mock.enabled, or dev:mock), on the habitat Gates page. */
+.sim-bus {
+    border-style: dashed;
+}
+.sim-bus__badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    margin-left: 6px;
+    border-radius: 4px;
+    border: 1px solid var(--warning-color, #d9822b);
+    color: var(--warning-color, #d9822b);
+    vertical-align: middle;
+}
+.sim-bus__toggle,
+.sim-bus__mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+.sim-bus__status {
+    margin: 6px 0 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+.sim-bus__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+}
+.sim-bus__search {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+.sim-bus__table-wrap {
+    max-height: 380px;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+.sim-bus__table td,
+.sim-bus__table th {
+    vertical-align: middle;
+}
+.sim-bus__table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--card-bg-color);
+    z-index: 1;
+}
+.sim-bus__serial {
+    font-size: 0.8rem;
+}
+.sim-bus__row-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+.sim-bus__row--off td {
+    opacity: 0.5;
+}
+.sim-bus__row--read td {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+}
+.sim-bus__warn {
+    color: var(--warning-color, #d9822b);
+    font-weight: 600;
+}
+.sim-bus__labels {
+    margin-top: 10px;
+}
+.sim-bus__labels summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+.sim-bus__labels textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: monospace;
+}
+.sim-bus__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 20px;
+}

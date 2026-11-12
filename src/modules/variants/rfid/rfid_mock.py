@@ -15,6 +15,15 @@ and writes, and speaks the real frame protocol, so the whole receive path
     enter / exit visits;
   * ``zero_fraction`` of reads carry an all-zero ID, like the real bus.
 
+For testing the habitat gate mapping by hand (the Gates page's Simulated bus
+panel, via the module's ``rfid_mock_*`` commands), a test can also:
+
+  * ``inject_read`` a tag on one unit (a few reads, like a tag held at an
+    antenna), e.g. the mapping run's probe;
+  * ``set_unit`` to unplug a unit (it stops reading and answering the
+    host) or swap its decoder (a new serial number on the same address);
+  * ``animals_paused`` to stop the wandering tags.
+
 Everything is driven from ``read()`` on the bus's own reader thread; there is
 no extra thread. Tag IDs and unit serial numbers come from ``seed``, so they
 stay the same across restarts.
@@ -44,6 +53,12 @@ from rfid_bus import (
 MOCK_PORT = "simulated"
 MOCK_FIRMWARE = "800"
 _TYPE_TROVAN_UNIQUE = 0x20
+
+# Default tags for reads injected by hand: a probe for the gate-mapping run,
+# and one that stands for an animal (a mapping run should ignore it).
+PROBE_TAG = "000807DC1F"
+ANIMAL_TAG = "000807DC2A"
+INJECT_MAX_READS = 20
 
 
 @dataclass
@@ -111,6 +126,11 @@ class MockBusSerial:
         # Different stream per run for the movements, same IDs.
         self._rng = random.Random()
 
+        # Hand-driven state (inject_read / set_unit / animals_paused).
+        self.unplugged: set[int] = set()
+        self.animals_paused = False
+        self._scheduled: list[tuple[float, int, bytes]] = []   # (due, unit, tag)
+
     # ── serial.Serial interface ──────────────────────────────────────────
 
     def read(self, size: int = 1) -> bytes:
@@ -141,9 +161,11 @@ class MockBusSerial:
     def _answer(self, unit_to: int, content: bytes) -> None:
         if unit_to == BROADCAST_ADDR and not content:      # logon
             for a in self.unit_addrs:
-                self._emit(a, HOST_ADDR, MOCK_FIRMWARE.encode("ascii"))
+                if a not in self.unplugged:
+                    self._emit(a, HOST_ADDR, MOCK_FIRMWARE.encode("ascii"))
             return
-        if unit_to not in self.unit_serials or not content:
+        if (unit_to not in self.unit_serials or unit_to in self.unplugged
+                or not content):
             return
         cmd = content[0]
         if cmd == CMD_SERIAL_NUMBER:
@@ -165,11 +187,23 @@ class MockBusSerial:
     # ── Simulation ───────────────────────────────────────────────────────
 
     def _next_event(self) -> float:
-        times = [a.next_change for a in self.animals]
-        times += [a.next_ping for a in self.animals if a.present]
+        times = []
+        if not self.animals_paused:
+            times += [a.next_change for a in self.animals]
+            times += [a.next_ping for a in self.animals if a.present]
+        with self._lock:
+            times += [due for due, _, _ in self._scheduled]
         return min(times, default=float("inf"))
 
     def _advance(self, now: float) -> None:
+        with self._lock:
+            due = [s for s in self._scheduled if s[0] <= now]
+            self._scheduled = [s for s in self._scheduled if s[0] > now]
+        for _, unit, tag in due:
+            if unit not in self.unplugged:
+                self._emit(unit, BROADCAST_ADDR, bytes([_TYPE_TROVAN_UNIQUE]) + tag)
+        if self.animals_paused:
+            return
         period = 1.0 / self.opts.ping_hz
         for a in self.animals:
             if now >= a.next_change:
@@ -181,7 +215,7 @@ class MockBusSerial:
                     a.present = True
                     a.next_ping = now
                     a.next_change = now + self._rng.uniform(*self.opts.dwell_s)
-            if a.present and now >= a.next_ping:
+            if a.present and now >= a.next_ping and a.unit not in self.unplugged:
                 tag = a.tag
                 if self._rng.random() < self.opts.zero_fraction:
                     tag = bytes(len(a.tag))
@@ -189,6 +223,58 @@ class MockBusSerial:
                            bytes([_TYPE_TROVAN_UNIQUE]) + tag)
                 # A little jitter, as a real reader's read cycle isn't fixed.
                 a.next_ping = now + period * self._rng.uniform(0.7, 1.3)
+
+    # ── Driven by hand (rfid_module's rfid_mock_* commands) ─────────────
+
+    def inject_read(self, unit: int, tag_hex: str = PROBE_TAG, count: int = 3,
+                    gap_s: float = 0.15) -> None:
+        """``count`` reads of ``tag_hex`` (5 bytes, as a Trovan Unique tag)
+        on ``unit``, ``gap_s`` apart starting now: a tag held at one antenna."""
+        unit = int(unit)
+        if unit not in self.unit_serials:
+            raise ValueError(f"unit {unit} is not on this simulated bus")
+        if unit in self.unplugged:
+            raise ValueError(f"unit {unit} is unplugged")
+        try:
+            tag = bytes.fromhex(str(tag_hex))
+        except ValueError:
+            raise ValueError(f"tag {tag_hex!r} is not hex") from None
+        if len(tag) != 5:
+            raise ValueError("a tag is 10 hex digits (5 bytes)")
+        count = min(INJECT_MAX_READS, max(1, int(count)))
+        now = self._clock()
+        with self._lock:
+            self._scheduled += [(now + i * gap_s, unit, tag) for i in range(count)]
+
+    def set_unit(self, unit: int, plugged: bool | None = None,
+                 swap: bool = False) -> None:
+        """Unplug or replug ``unit``, or swap its decoder for another one
+        (a new serial number on the same address)."""
+        unit = int(unit)
+        if unit not in self.unit_serials:
+            raise ValueError(f"unit {unit} is not on this simulated bus")
+        if plugged is not None:
+            if plugged:
+                self.unplugged.discard(unit)
+            else:
+                self.unplugged.add(unit)
+        if swap:
+            old = self.unit_serials[unit]
+            new = old
+            while new == old:
+                new = bytes(self._rng.randrange(256) for _ in range(4))
+            self.unit_serials[unit] = new
+
+    def state(self) -> dict:
+        """What the Simulated bus panel shows."""
+        return {
+            "units": [{"address": a, "serial": self.unit_serials[a].hex().upper(),
+                       "plugged": a not in self.unplugged} for a in self.unit_addrs],
+            "animals": len(self.animals),
+            "animals_running": bool(self.animals) and not self.animals_paused,
+            "probe_tag": PROBE_TAG,
+            "animal_tag": ANIMAL_TAG,
+        }
 
     def _neighbour(self, unit: int) -> int:
         """Usually the next unit along (an animal walking a tube), sometimes

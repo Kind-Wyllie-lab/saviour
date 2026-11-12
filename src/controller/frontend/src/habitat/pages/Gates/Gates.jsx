@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import HabitatGrid from "/src/habitat/components/HabitatGrid/HabitatGrid";
+import SimulatedBusPanel from "./SimulatedBusPanel";
 
 import "./Gates.css";
 
@@ -309,6 +310,12 @@ function RunStep({ run, send, loggedIn }) {
       <p className="gates-step-count">Gate {run.index + 1} of {run.total}</p>
       <p className="gates-prompt">Pass the probe through gate <strong>{run.gate}</strong></p>
       <p className="gates-muted">Probe tag {run.probe_tag}</p>
+      {run.probe_at && !c.first && (
+        <p className="gates-muted">
+          Registered at <span className="gates-mono">{run.probe_at}</span>: take the probe away from
+          that antenna first (its reads there don&apos;t count until it&apos;s been quiet for a second).
+        </p>
+      )}
 
       {!c.first && (
         <p className={waited > NO_READ_HINT_S ? "gates-problem gates-problem--warn" : "gates-muted"}>
@@ -581,6 +588,10 @@ function Gates() {
           {editingLayout && (
             <LayoutEditor state={state} send={send} loggedIn={loggedIn}
                           draft={layoutDraft} setDraft={setLayoutDraft} />
+          )}
+          {tab !== "layout" && state.mock_buses?.length > 0 && (
+            <SimulatedBusPanel state={state} entries={run ? previewEntries(state, run) : state.map.entries}
+                               send={send} loggedIn={loggedIn} />
           )}
         </div>
       </div>

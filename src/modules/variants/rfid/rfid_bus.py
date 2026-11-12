@@ -191,9 +191,15 @@ class RS485Bus:
         # Scan-window state
         self._scanning       = False
         self._scan_deadline  = 0.0
+        # When the latest bus logon was sent (None: never). A unit whose
+        # last_seen is older didn't answer it (unplugged, dead decoder).
+        self.last_scan_started: float | None = None
 
         # Post-discovery serial-number query queue (one at a time, rate-limited)
         self._query_queue: queue.Queue = queue.Queue()
+        # A query taken off the queue but not yet answered (its gap, the
+        # send, a moment for the reply): still pending to a caller.
+        self._query_busy = False
         self._query_thread = threading.Thread(
             target=self._query_worker, daemon=True, name='rs485-query')
         self._query_thread.start()
@@ -320,9 +326,20 @@ class RS485Bus:
             return
         frame = build_frame(HOST_ADDR, BROADCAST_ADDR)   # empty = logon
         self._scanning      = True
-        self._scan_deadline = time.time() + 3.0
+        self.last_scan_started = time.time()
+        self._scan_deadline = self.last_scan_started + 3.0
         self._send(frame)
         log.info('Bus scan started (broadcast logon sent)')
+
+    @property
+    def pending_queries(self) -> int:
+        """Serial-number queries not yet answered (queued or in flight)."""
+        return self._query_queue.qsize() + (1 if self._query_busy else 0)
+
+    def answered_last_scan(self, unit: UnitInfo) -> bool:
+        """Whether ``unit`` replied to the latest logon (True before any)."""
+        return (self.last_scan_started is None
+                or unit.last_seen >= self.last_scan_started)
 
     def get_serial_number(self, unit_addr: int) -> None:
         """Request the 4-byte hardware serial number from a specific unit."""
@@ -356,9 +373,14 @@ class RS485Bus:
             addr = self._query_queue.get()
             if not self.is_connected:
                 continue
-            time.sleep(0.25)   # small gap - never saturate the bus
-            log.debug('Querying serial number for unit %02Xh', addr)
-            self.get_serial_number(addr)
+            self._query_busy = True
+            try:
+                time.sleep(0.25)   # small gap - never saturate the bus
+                log.debug('Querying serial number for unit %02Xh', addr)
+                self.get_serial_number(addr)
+                time.sleep(0.1)    # the reply is a few ms at 19200 baud
+            finally:
+                self._query_busy = False
 
     # ── Frame reader state machine ────────────────────────────────────────────
 
@@ -500,7 +522,6 @@ class RS485Bus:
 
         # ── Responses addressed to host ───────────────────────────────────────
         if unit_to == HOST_ADDR:
-            is_new = unit_from not in self.units
             self._register_unit(unit_from, ts=ts)
 
             # Logon response: 3 ASCII decimal bytes (e.g. 38 30 30 = "800")
@@ -510,9 +531,10 @@ class RS485Bus:
                 version = content.decode('ascii')
                 log.info('Unit %02Xh logon response, fw=%s', unit_from, version)
                 self._register_unit(unit_from, firmware_version=version, ts=ts)
-                # Queue a serial-number query for newly discovered units
-                if is_new:
-                    self._query_queue.put(unit_from)
+                # Ask every unit that answers for its serial number, not only
+                # new ones: a decoder swapped onto a known address keeps the
+                # address but not the serial, and the gate map checks that.
+                self._query_queue.put(unit_from)
                 return
 
             if not content:

@@ -621,6 +621,23 @@ class TestReadOnlySocketIOHandlers:
         assert received[0]["name"] == "modules_update"
         assert received[0]["args"][0] == {"cam1": {"type": "camera"}}
 
+    def test_module_list_logs_never_carry_the_share_password(self):
+        # Both the connect handler and get_modules logged the full module
+        # dicts, config and export.share_password included (seen in the
+        # habitat controller's journal 2026-11-16).
+        web, facade = _make_web_with_facade()
+        facade.get_modules.return_value = {"cam1": {
+            "type": "camera",
+            "config": {"export": {"share_password": "s3cret-pw"}}}}
+        web.logger = MagicMock()
+
+        client = web.socketio.test_client(web.app)
+        client.emit("get_modules")
+
+        logged = " ".join(str(c) for c in web.logger.method_calls)
+        assert "cam1" in logged
+        assert "s3cret-pw" not in logged
+
     def test_get_module_health_emits_health_update(self):
         web, facade = _make_web_with_facade()
         facade.get_module_health.return_value = {"cam1": "ok"}

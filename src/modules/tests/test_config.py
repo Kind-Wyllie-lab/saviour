@@ -551,3 +551,52 @@ class TestSetMany:
     def test_private_keys_are_refused(self):
         cfg, _ = self._cfg()
         assert cfg.set_many({"camera._codec": "x"}) == []
+
+
+# ---------------------------------------------------------------------------
+# User-keyed maps (ttl.pins): one value for default-merge and startup prune
+# ---------------------------------------------------------------------------
+
+class TestUserKeyedMaps:
+    """Found on the rig 2026-11-16: a TTL restart pruned pins 2 and 3 (added
+    by the user, absent from the shipped defaults) and ttl.protocol."""
+
+    DEFAULTS = {"ttl": {"active_logic": "active_low", "protocol": None,
+                        "pins": {"19": {"mode": "experiment_clock"},
+                                 "26": {"mode": "pseudorandom"}}}}
+
+    def setup_method(self):
+        self.cfg = _make_config()
+
+    def test_prune_keeps_user_added_pins_and_protocol(self):
+        target = {"ttl": {"active_logic": "active_low",
+                          "protocol": {"version": 1, "steps": []},
+                          "pins": {"2": {"mode": "scheduled"},
+                                   "3": {"mode": "input"}}}}
+        self.cfg._prune_stale_keys(target, self.DEFAULTS)
+        assert set(target["ttl"]["pins"]) == {"2", "3"}
+        assert target["ttl"]["protocol"] == {"version": 1, "steps": []}
+
+    def test_prune_still_removes_stale_schema_keys_beside_the_map(self):
+        target = {"ttl": {"active_logic": "active_low", "old": 1, "pins": {}}}
+        self.cfg._prune_stale_keys(target, self.DEFAULTS)
+        assert "old" not in target["ttl"]
+
+    def test_merge_does_not_readd_a_deleted_default_pin(self):
+        target = {"ttl": {"active_logic": "active_low",
+                          "pins": {"2": {"mode": "scheduled"}}}}
+        self.cfg._merge_defaults(target, self.DEFAULTS)
+        assert set(target["ttl"]["pins"]) == {"2"}
+        assert target["ttl"]["protocol"] is None  # schema key still filled
+
+    def test_merge_fills_a_missing_map_with_a_copy(self):
+        target = {"ttl": {}}
+        self.cfg._merge_defaults(target, self.DEFAULTS)
+        assert set(target["ttl"]["pins"]) == {"19", "26"}
+        target["ttl"]["pins"]["5"] = {"mode": "input"}
+        assert "5" not in self.DEFAULTS["ttl"]["pins"]  # defaults not aliased
+
+    def test_other_maps_still_merge_key_by_key(self):
+        target = {"camera": {"fps": 30}}
+        self.cfg._merge_defaults(target, {"camera": {"fps": 60, "width": 1280}})
+        assert target["camera"] == {"fps": 30, "width": 1280}

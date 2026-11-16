@@ -171,6 +171,13 @@ function StepRow({ step, path, pins, depth, onChange, onRemove }) {
   );
 }
 
+// True when some repeat block draws random gaps (jitter upper bound > 0):
+// only then does the seed change anything.
+function usesJitter(steps) {
+  return (steps ?? []).some((s) => s && s.action === "repeat"
+    && ((Number(s.jitter_s?.[1]) || 0) > 0 || usesJitter(s.steps)));
+}
+
 export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId }) {
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
@@ -239,12 +246,6 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       )}
 
       <div className="pe-top">
-        <NumField label="Seed" int min={0} value={protocol?.seed ?? 1} width="6em"
-          title="Seeds the random repeat gaps: the same seed gives the same gaps every session"
-          onChange={(v) => update({ seed: v })} />
-        <button type="button" className="pe-small" onClick={() => update({ seed: Math.floor(Math.random() * 1e6) })}>
-          New seed
-        </button>
         <label className="pe-field">
           <span className="pe-field-label">When it ends</span>
           <select value={protocol?.end_state ?? "all_inactive"} onChange={(e) => update({ end_state: e.target.value })}>
@@ -300,6 +301,25 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {usesJitter(protocol?.steps) && (
+        <div className="pe-random">
+          <div className="pe-random-controls">
+            <NumField label="Random gap pattern" int min={0} value={protocol?.seed ?? 1} width="7em"
+              onChange={(v) => update({ seed: v })} />
+            <button type="button" className="pe-small"
+              onClick={() => update({ seed: Math.floor(Math.random() * 1e6) })}>
+              New pattern
+            </button>
+          </div>
+          <p className="pe-random-hint">
+            Repeats with jitter add a random extra gap to each repetition. This number (the
+            seed) picks which random gaps you get: keep it and every session uses the same
+            gaps, the ones in the timeline below; change it for a different pattern. The gaps
+            used are saved with each session's data.
+          </p>
         </div>
       )}
 

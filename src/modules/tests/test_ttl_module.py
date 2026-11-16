@@ -29,6 +29,7 @@ def _make_ttl(**attrs) -> TTLModule:
     m.interval_pulse_pins = []
     m.experiment_start_pins = []
     m.scheduled_pins = []
+    m._protocol_status = {"running": False}
     m._protocol_error = None
     m.generator_threads = {}
     m.pin_state_buffers = {}
@@ -791,3 +792,81 @@ class TestProtocolRunner:
         self._run(m, csv_path)
         ok, reason = m._check_recording_alive()
         assert not ok and "gpio gone" in reason
+
+
+class TestProtocolTest:
+    """test_protocol: a bench run of the routine without recording."""
+
+    def _bench(self, tmp_path, protocol):
+        m, pins, csv_path = _protocol_ttl(tmp_path, protocol)
+        m.is_recording = False
+        m._pin_test_stop_flags = {}
+        return m, pins, csv_path
+
+    def _statuses(self, m):
+        return [c.args[0] for c in m.facade.send_status.call_args_list
+                if c.args and c.args[0].get("type") == "ttl_protocol_test"]
+
+    def test_runs_the_protocol_without_logging_and_reports(self, tmp_path):
+        m, pins, csv_path = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.02}},
+            {"at_s": 0.05, "action": "set", "params": {"pin": 22, "level": "high"}},
+        ))
+        r = m.test_protocol()
+        assert r["result"] == "success" and r["edges"] == 3
+        m._protocol_thread.join(3)
+        assert pins[0].on.call_count == 1 and pins[0].off.call_count >= 1
+        # held pin 22 goes inactive at the end of a test
+        assert pins[1].on.call_count == 1 and pins[1].off.call_count >= 1
+        assert _rows(csv_path) == []          # nothing in the CSV
+        states = [s["state"] for s in self._statuses(m)]
+        assert states == ["running", "finished"]
+        assert self._statuses(m)[-1]["fired"] == 3
+        assert m._protocol_error is None
+
+    def test_uses_a_passed_protocol_over_the_saved_one(self, tmp_path):
+        m, pins, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))
+        r = m.test_protocol(_proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 22, "width_s": 0.01}}))
+        m._protocol_thread.join(3)
+        assert r["pins"] == [22]
+        assert pins[0].on.call_count == 0 and pins[1].on.call_count == 1
+
+    def test_stop_ends_it_and_sets_pins_inactive(self, tmp_path):
+        m, pins, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            {"at_s": 30, "action": "set", "params": {"pin": 17, "level": "low"}}))
+        m.test_protocol()
+        deadline = time.time() + 2
+        while pins[0].on.call_count == 0 and time.time() < deadline:
+            time.sleep(0.01)
+        assert m._protocol_test_running()
+        assert m.test_pin(17)["result"] == "error"   # pin busy with the test
+        m.stop_protocol_test()
+        assert not m._protocol_test_running()
+        assert pins[0].off.call_count >= 1
+        assert [s["state"] for s in self._statuses(m)][-1] == "stopped"
+
+    def test_refused_while_recording(self, tmp_path):
+        m, _, _ = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))
+        r = m.test_protocol()
+        assert r["result"] == "error" and "recording" in r["message"]
+        assert self._statuses(m)[-1]["state"] == "refused"
+
+    def test_refused_when_invalid_naming_the_reason(self, tmp_path):
+        m, _, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 5, "width_s": 0.01}}))
+        r = m.test_protocol()
+        assert r["result"] == "error" and "not a 'scheduled' output pin" in r["message"]
+
+    def test_runner_failure_in_a_test_is_not_a_recording_failure(self, tmp_path):
+        m, pins, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))
+        m._set_output_active = MagicMock(side_effect=RuntimeError("gpio gone"))
+        m.test_protocol()
+        m._protocol_thread.join(3)
+        assert m._protocol_error is None
+        last = self._statuses(m)[-1]
+        assert last["state"] == "error" and "gpio gone" in last["message"]

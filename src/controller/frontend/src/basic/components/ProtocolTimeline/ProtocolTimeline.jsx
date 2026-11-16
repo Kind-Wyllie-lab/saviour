@@ -43,7 +43,9 @@ function describe(bar) {
 }
 
 // highlightRow: a row key to emphasise (the others fade), or null.
-export default function ProtocolTimeline({ rows, spans, duration, emptyText, highlightRow = null }) {
+// cursorT: a "now" line at this many seconds (a running test), or null.
+export default function ProtocolTimeline({ rows, spans, duration, emptyText, highlightRow = null,
+  cursorT = null }) {
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(600);
   const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1);
@@ -208,6 +210,9 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
               rx={Math.min(2, (b.x1 - b.x0) / 2)}
             />
           ))}
+          {cursorT !== null && cursorT >= v0 && cursorT <= v1 && (
+            <line className="ptl-now" x1={xOf(cursorT)} x2={xOf(cursorT)} y1={AXIS_H - 4} y2={height - 6} />
+          )}
           {/* hover crosshair */}
           {hover && !drag && (
             <line className="ptl-cursor" x1={hover.x} x2={hover.x} y1={AXIS_H - 4} y2={height - 6} />

@@ -12,6 +12,7 @@ import CopyActionsBar from "../CopyActionsBar";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 import ProtocolEditor from "./ProtocolEditor";
+import { useProtocolTest, ProtocolTestControls } from "./ProtocolTest";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
@@ -58,6 +59,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
+  const protocolTest = useProtocolTest(id);
+  const isRecording = module.status === "RECORDING";
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
@@ -346,6 +349,32 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     .map(Number)}
                   onChange={(protocol) =>
                     setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, protocol } }))}
+                  cursorT={protocolTest.elapsed}
+                  renderTest={(result) => {
+                    // The module checks pins against its *saved* Scheduled
+                    // pins; the steps themselves can be unsaved edits.
+                    const scheduledIn = (pins) => Object.entries(pins ?? {})
+                      .filter(([, c]) => c?.mode === "scheduled").map(([p]) => Number(p))
+                      .sort((a, b) => a - b).join(",");
+                    const pinsUnsaved = scheduledIn(ttlCfg.pins) !== scheduledIn(module.config?.ttl?.pins);
+                    const blocked = isRecording ? "Recording: the protocol is running as part of the session."
+                      : !loggedIn ? "Sign in as admin to run a test."
+                      : !result ? "Add some steps first."
+                      : !result.ok ? "Fix the problems below first."
+                      : result.edges.length === 0 ? "Add some steps first."
+                      : pinsUnsaved ? "Save first: the module doesn't know about the Pins tab changes yet."
+                      : null;
+                    return (
+                      <ProtocolTestControls
+                        test={protocolTest.test}
+                        elapsed={protocolTest.elapsed}
+                        running={protocolTest.running}
+                        blocked={blocked}
+                        onStart={() => protocolTest.start(ttlCfg.protocol)}
+                        onStop={protocolTest.stop}
+                      />
+                    );
+                  }}
                 />
               )}
 

@@ -147,6 +147,8 @@ class TTLModule(Module):
             "pulse_pin": self.pulse_pin,
             "protocol_status": self.protocol_status,
             "validate_protocol": self.validate_protocol,
+            "test_protocol": self.test_protocol,
+            "stop_protocol_test": self.stop_protocol_test,
         }
         self.command.set_commands(self.ttl_commands) # Append new TTL callbacks
 
@@ -171,6 +173,9 @@ class TTLModule(Module):
         """Open the initial TTL events CSV and start monitoring all pins."""
         # Cancel any in-progress pin tests before starting a real recording
         self._stop_all_pin_tests()
+        if self._protocol_test_running():
+            self.logger.info("Stopping the protocol test: a recording is starting")
+            self._stop_protocol()
 
         # Stop any stale generators left from a previous recording that was not
         # cleanly stopped (e.g. controller disconnect).  _stop_pin_generators
@@ -539,7 +544,123 @@ class TTLModule(Module):
                             f"session protocol — manual pulses are disabled "
                             f"while recording"),
             }
+        if pin_number in self.scheduled_pins and self._protocol_test_running():
+            return {
+                "result": "error",
+                "message": (f"Pin {pin_number} is running a protocol test — "
+                            f"stop the test first"),
+            }
         return None
+
+    # ── Protocol test (bench run of the routine, no recording) ──────────────
+    # The test lead: the first edge at t = 0 lands this long after the
+    # command, so it isn't late by however long setup took.
+    _PROTOCOL_TEST_LEAD_S = 0.2
+
+    def _protocol_test_running(self) -> bool:
+        return bool(self._protocol_status.get("test")
+                    and self._protocol_status.get("running"))
+
+    def _send_protocol_test_status(self, state: str, **extra) -> None:
+        msg = {"type": "ttl_protocol_test", "state": state}
+        msg.update(extra)
+        try:
+            self.facade.send_status(msg)
+        except Exception as e:                              # noqa: BLE001 -- status is best effort
+            self.logger.debug(f"Could not send protocol test status: {e}")
+
+    def _refuse_protocol_test(self, message: str) -> dict:
+        self._send_protocol_test_status("refused", message=message)
+        return {"result": "error", "message": message}
+
+    def test_protocol(self, protocol: dict | None = None) -> dict:
+        """Run the protocol (*protocol*, default the saved ttl.protocol) on the
+        scheduled pins now, timed exactly as in a recording, without
+        recording: nothing is written to a CSV or the session, and every
+        scheduled pin is set inactive at the end (or on stop). Refused while
+        recording. Progress goes out as `ttl_protocol_test` status messages
+        (running / finished / stopped / error)."""
+        if self.is_recording:
+            return self._refuse_protocol_test(
+                "Can't test the protocol while recording — it is already running "
+                "as part of the session")
+        if self._protocol_thread is not None and self._protocol_thread.is_alive():
+            return self._refuse_protocol_test(
+                "A protocol test is already running — stop it first")
+        expansion = self._expand_protocol(protocol)
+        if expansion is None:
+            return self._refuse_protocol_test("No protocol to test")
+        if not expansion.ok:
+            message = "Protocol invalid: " + "; ".join(expansion.errors[:5])
+            if not self.scheduled_pins:
+                message += " (no pins are in Scheduled mode on this module: save the Pins tab first)"
+            return self._refuse_protocol_test(message)
+        if not expansion.edges:
+            return self._refuse_protocol_test("The protocol has no steps for this module")
+
+        # Clear any bench pin test on those pins so nothing else drives them.
+        for pn in expansion.pins:
+            flag = self._pin_test_stop_flags.pop(pn, None)
+            if flag is not None:
+                flag.set()
+
+        t0 = time.time() + self._PROTOCOL_TEST_LEAD_S
+        self._protocol_status = {
+            "running": True,
+            "test": True,
+            "session_start_at": t0,
+            "resumed": False,
+            "total_edges": len(expansion.edges),
+            "next_index": 0,
+            "next_at": t0 + expansion.edges[0].t_s,
+            "fired": 0,
+            "missed": 0,
+            "late": 0,
+            "max_late_ms": 0.0,
+            "end_state": "all_inactive",
+            "finished": False,
+        }
+        self._protocol_stop = threading.Event()
+        self._protocol_thread = threading.Thread(
+            target=self._protocol_worker,
+            args=(expansion.edges, t0, 0, {}, "all_inactive", self._protocol_stop),
+            kwargs={"log_events": False, "on_done": self._protocol_test_done},
+            daemon=True,
+            name="ttl-protocol-test",
+        )
+        self._protocol_thread.start()
+        info = {
+            "started_at": t0,
+            "duration_s": round(expansion.duration_s, 6),
+            "edges": len(expansion.edges),
+            "pins": expansion.pins,
+            "warnings": expansion.warnings,
+        }
+        self._send_protocol_test_status("running", **info)
+        self.logger.info(
+            f"TTL protocol test: {len(expansion.edges)} edges over "
+            f"{expansion.duration_s:.3f}s on pins {expansion.pins}")
+        return {"result": "success", **info}
+
+    def stop_protocol_test(self) -> dict:
+        """Stop a running protocol test; its pins go inactive."""
+        if not self._protocol_test_running():
+            self._send_protocol_test_status("stopped", message="No protocol test was running")
+            return {"result": "success", "message": "No protocol test was running"}
+        self._stop_protocol()
+        return {"result": "success"}
+
+    def _protocol_test_done(self, status: dict, error: str | None) -> None:
+        if error:
+            state = "error"
+        elif status.get("finished"):
+            state = "finished"
+        else:
+            state = "stopped"
+        self._send_protocol_test_status(
+            state, fired=status.get("fired", 0), edges=status.get("total_edges", 0),
+            late=status.get("late", 0), max_late_ms=status.get("max_late_ms", 0.0),
+            message=error)
 
     def _expand_protocol(self, protocol=None):
         """Expand ttl.protocol (or *protocol*) against this module's scheduled
@@ -711,7 +832,10 @@ class TTLModule(Module):
 
     def _protocol_worker(self, edges, t0: float, start_index: int,
                          restore: dict, end_state: str,
-                         stop: threading.Event) -> None:
+                         stop: threading.Event, *, log_events: bool = True,
+                         on_done=None) -> None:
+        """Fire *edges* at t0 + t on their pins. *log_events* False (a bench
+        test) leaves the TTL CSV alone; *on_done(status, error)* runs last."""
         try:
             os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(70))
         except (PermissionError, AttributeError, OSError) as e:
@@ -721,6 +845,7 @@ class TTLModule(Module):
         level = {pn: "low" for pn in self.scheduled_pins}
         status = self._protocol_status
         threshold = session_protocol.LATE_THRESHOLD_S
+        error = None
 
         def drive(pin_number: int, new_level: str, source: str,
                   target: float | None = None) -> float:
@@ -734,6 +859,8 @@ class TTLModule(Module):
             ts = time.time_ns()
             level[pin_number] = new_level
             late_s = (ts / 1e9 - target) if target is not None else 0.0
+            if not log_events:
+                return late_s
             if target is not None:
                 source = f"{source} late_ms={late_s * 1000:.3f}"
             self._write_ttl_event(
@@ -791,7 +918,10 @@ class TTLModule(Module):
                 f"TTL protocol finished: {status['fired']} edges, "
                 f"{status['late']} late, max {status['max_late_ms']} ms")
         except Exception as e:
-            self._protocol_error = str(e)
+            error = str(e)
+            # A bench test's failure isn't a recording failure.
+            if log_events:
+                self._protocol_error = error
             self.logger.exception(f"TTL protocol runner failed: {e}")
             try:
                 all_low("protocol error")
@@ -799,6 +929,11 @@ class TTLModule(Module):
                 self.logger.exception("Could not set scheduled pins inactive")
         finally:
             status["running"] = False
+            if on_done is not None:
+                try:
+                    on_done(status, error)
+                except Exception:
+                    self.logger.exception("Protocol on_done callback failed")
 
 
     def _start_recording_all_input_pins(self):

@@ -156,6 +156,28 @@
   padding: 8px;
 }
 
+.pe-random {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.pe-random-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.pe-random-hint {
+  margin: 0;
+  color: var(--secondary-text-color);
+  font-size: 0.82em;
+  line-height: 1.4;
+}
+
 .pe-check {
   display: flex;
   flex-direction: column;

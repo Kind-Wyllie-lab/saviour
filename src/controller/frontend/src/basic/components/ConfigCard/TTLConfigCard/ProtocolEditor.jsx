@@ -70,14 +70,27 @@ function PinSelect({ value, pins, onChange }) {
   );
 }
 
-function StepRow({ step, path, pins, depth, onChange, onRemove }) {
+// Whether a step drives *pin* (a repeat block: any step inside it does).
+function touchesPin(step, pin) {
+  if (!step) return false;
+  if (step.action === "repeat") return (step.steps ?? []).some((s) => touchesPin(s, pin));
+  return Number(step.params?.pin) === pin;
+}
+
+// focusPin: the pin picked at the top (null = all pins). With one picked,
+// rows for other pins are hidden, the pin column is implied, and new steps
+// go to that pin.
+function StepRow({ step, path, pins, depth, focusPin, onChange, onRemove }) {
   const action = step?.action;
   const set = (patch) => onChange({ ...step, ...patch });
   const setParam = (k, v) => onChange({ ...step, params: { ...(step.params ?? {}), [k]: v } });
   const changeAction = (a) => {
-    const pin = step?.params?.pin ?? pins[0];
+    const pin = step?.params?.pin ?? focusPin ?? pins[0];
     onChange(newStep(a, pin, step?.at_s ?? 0));
   };
+  const pinField = focusPin === null
+    ? <PinSelect value={step.params?.pin} pins={pins} onChange={(v) => setParam("pin", v)} />
+    : null;
 
   if (action === "repeat" && depth >= 1) {
     return (
@@ -109,7 +122,7 @@ function StepRow({ step, path, pins, depth, onChange, onRemove }) {
 
         {action === "set" && (
           <>
-            <PinSelect value={step.params?.pin} pins={pins} onChange={(v) => setParam("pin", v)} />
+            {pinField}
             <label className="pe-field">
               <span className="pe-field-label">Level</span>
               <select value={step.params?.level ?? ""} onChange={(e) => setParam("level", e.target.value)}>
@@ -121,13 +134,13 @@ function StepRow({ step, path, pins, depth, onChange, onRemove }) {
         )}
         {action === "pulse" && (
           <>
-            <PinSelect value={step.params?.pin} pins={pins} onChange={(v) => setParam("pin", v)} />
+            {pinField}
             <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} />
           </>
         )}
         {action === "train" && (
           <>
-            <PinSelect value={step.params?.pin} pins={pins} onChange={(v) => setParam("pin", v)} />
+            {pinField}
             <NumField label="Rate" unit="Hz" value={step.params?.rate_hz} onChange={(v) => setParam("rate_hz", v)} width="4.5em" />
             <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} width="4.5em" />
             <NumField label="Count" int min={1} value={step.params?.count} onChange={(v) => setParam("count", v)} width="4.5em" />
@@ -150,19 +163,20 @@ function StepRow({ step, path, pins, depth, onChange, onRemove }) {
 
       {action === "repeat" && (
         <div className="pe-repeat-body">
-          {(step.steps ?? []).map((inner, i) => (
+          {(step.steps ?? []).map((inner, i) => (focusPin !== null && !touchesPin(inner, focusPin) ? null : (
             <StepRow
               key={i}
               step={inner}
               path={`${path}.*.${i}`}
               pins={pins}
               depth={depth + 1}
+              focusPin={focusPin}
               onChange={(s) => set({ steps: step.steps.map((x, j) => (j === i ? s : x)) })}
               onRemove={() => set({ steps: step.steps.filter((_, j) => j !== i) })}
             />
-          ))}
+          )))}
           <button type="button" className="pe-add pe-add--inner"
-            onClick={() => set({ steps: [...(step.steps ?? []), newStep("pulse", pins[0])] })}>
+            onClick={() => set({ steps: [...(step.steps ?? []), newStep("pulse", focusPin ?? pins[0])] })}>
             + Step in each repetition
           </button>
         </div>
@@ -182,10 +196,13 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
+  const [pickedPin, setPickedPin] = useState("all");
   // Keyed on the contents: the card passes a fresh array every render, and
   // a new array would re-run the expansion on every keystroke elsewhere.
   const pinsKey = [...scheduledPins].sort((a, b) => a - b).join(",");
   const pins = useMemo(() => (pinsKey ? pinsKey.split(",").map(Number) : []), [pinsKey]);
+  // A pin picked before it stopped being scheduled falls back to all pins.
+  const focusPin = pickedPin !== "all" && pins.includes(Number(pickedPin)) ? Number(pickedPin) : null;
 
   const result = useMemo(
     () => (protocol ? expand(protocol, { moduleId, allowedPins: pins }) : null),
@@ -246,6 +263,23 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       )}
 
       <div className="pe-top">
+        {pins.length > 1 && (
+          <label className="pe-field">
+            <span className="pe-field-label">Pin</span>
+            <select value={focusPin ?? "all"} onChange={(e) => setPickedPin(e.target.value)}>
+              <option value="all">All pins</option>
+              {pins.map((p) => {
+                const n = steps.filter((st) => touchesPin(st, p)).length;
+                const desc = pinConfigs?.[p]?.description;
+                return (
+                  <option key={p} value={p}>
+                    GPIO {p}{desc ? ` · ${desc}` : ""} ({n} step{n === 1 ? "" : "s"})
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        )}
         <label className="pe-field">
           <span className="pe-field-label">When it ends</span>
           <select value={protocol?.end_state ?? "all_inactive"} onChange={(e) => update({ end_state: e.target.value })}>
@@ -273,23 +307,30 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       ) : (
         <div className="pe-steps">
           {steps.length === 0 && <div className="pe-empty">No steps. Add one below.</div>}
-          {steps.map((s, i) => (
+          {focusPin !== null && steps.length > 0 && (
+            <div className="pe-empty">
+              Showing the {steps.filter((st) => touchesPin(st, focusPin)).length} of {steps.length} steps
+              that drive GPIO {focusPin}; new steps go to it.
+            </div>
+          )}
+          {steps.map((s, i) => (focusPin !== null && !touchesPin(s, focusPin) ? null : (
             <StepRow
               key={i}
               step={s}
               path={String(i)}
               pins={pins}
               depth={0}
+              focusPin={focusPin}
               onChange={(ns) => update({ steps: steps.map((x, j) => (j === i ? ns : x)) })}
               onRemove={() => update({ steps: steps.filter((_, j) => j !== i) })}
             />
-          ))}
+          )))}
           <div className="pe-add-row">
             {["set", "pulse", "train", "repeat"].map((a) => (
               <button key={a} type="button" className="pe-add" disabled={!pins.length}
                 onClick={() => {
                   const last = steps.length ? Number(steps[steps.length - 1].at_s) || 0 : 0;
-                  update({ steps: [...steps, newStep(a, pins[0], steps.length ? last + 1 : 0.1)] });
+                  update({ steps: [...steps, newStep(a, focusPin ?? pins[0], steps.length ? last + 1 : 0.1)] });
                 }}>
                 + {ACTION_LABELS[a]}
               </button>
@@ -351,6 +392,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           rows={rows}
           spans={spans}
           duration={result?.durationS ?? 0}
+          highlightRow={focusPin}
           emptyText="Add a scheduled pin and some steps to see the timeline."
         />
       </div>

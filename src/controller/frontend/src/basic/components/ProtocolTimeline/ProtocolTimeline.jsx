@@ -42,7 +42,8 @@ function describe(bar) {
   return `${bar.label} · ${fmtTime(bar.start, true)} → ${end}${len}`;
 }
 
-export default function ProtocolTimeline({ rows, spans, duration, emptyText }) {
+// highlightRow: a row key to emphasise (the others fade), or null.
+export default function ProtocolTimeline({ rows, spans, duration, emptyText, highlightRow = null }) {
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(600);
   const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1);
@@ -182,7 +183,9 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText }) {
           {rows.map((r, i) => {
             const y = AXIS_H + i * ROW_H;
             return (
-              <g key={r.key}>
+              <g key={r.key}
+                className={highlightRow === null ? undefined
+                  : r.key === highlightRow ? "ptl-row--focus" : "ptl-row--faded"}>
                 <line className="ptl-baseline" x1={LABEL_W} x2={LABEL_W + plotW}
                   y1={y + ROW_H / 2 + BAR_H / 2} y2={y + ROW_H / 2 + BAR_H / 2} />
                 <text className="ptl-label" x={8} y={y + ROW_H / 2 + 4}>{r.label}</text>
@@ -196,7 +199,8 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText }) {
           {bars.map((b, i) => (
             <rect
               key={i}
-              className={`ptl-bar${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}`}
+              className={`ptl-bar${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${
+                highlightRow !== null && rows[b.ri].key !== highlightRow ? " ptl-bar--faded" : ""}`}
               x={b.x0}
               y={AXIS_H + b.ri * ROW_H + (ROW_H - BAR_H) / 2}
               width={Math.max(2, b.x1 - b.x0)}

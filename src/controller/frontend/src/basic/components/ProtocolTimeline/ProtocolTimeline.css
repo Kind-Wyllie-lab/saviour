@@ -23,8 +23,17 @@
 }
 
 .ptl-reset {
-  font-size: 0.9em;
   padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.95em;
+}
+.ptl-reset:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
 }
 
 .ptl-plot {
@@ -66,6 +75,11 @@
 /* A level held past the last step: same hue, lighter, so it reads as
    "continues" rather than a planned end. */
 .ptl-bar--held { fill-opacity: 0.45; }
+
+/* One row picked in the editor: the rest step back. */
+.ptl-bar--faded { opacity: 0.3; }
+.ptl-row--faded .ptl-label { fill: var(--secondary-text-color); }
+.ptl-row--focus .ptl-label { font-weight: 700; }
 
 .ptl-cursor {
   stroke: var(--secondary-text-color);

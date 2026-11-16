@@ -67,3 +67,27 @@ def test_unmount_never_raises_on_failure(monkeypatch):
     monkeypatch.setattr(cifs.subprocess, "run", fake_run)
     assert cifs.unmount("/mnt/x", lazy=True).returncode == 32
     assert calls == [["sudo", "umount", "-l", "/mnt/x"]]
+
+
+def test_mask_secret_fields():
+    from src.shared.cifs import mask_secret_fields
+    data = {"export": {"share_password": "pw", "share_user": "u",
+                       "Admin_Password": "x", "empty_password": ""},
+            "diffs": [["export.share_password", "pw", None], ["camera.fps", 30, 60]],
+            "list": [{"password": "y"}], "n": 1}
+    out = mask_secret_fields(data)
+    assert out["export"] == {"share_password": "***", "share_user": "u",
+                             "Admin_Password": "***", "empty_password": ""}
+    assert out["diffs"] == [["export.share_password", "***", None],
+                            ["camera.fps", 30, 60]]
+    assert out["list"] == [{"password": "***"}] and out["n"] == 1
+    assert data["export"]["share_password"] == "pw"  # input untouched
+
+
+def test_drop_masked_secrets():
+    from src.shared.cifs import drop_masked_secrets
+    assert drop_masked_secrets(
+        {"export": {"share_password": "***", "share_user": "u"}, "a": 1}
+    ) == {"export": {"share_user": "u"}, "a": 1}
+    assert drop_masked_secrets({"export": {"share_password": "new"}}) == \
+        {"export": {"share_password": "new"}}

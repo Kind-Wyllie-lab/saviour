@@ -55,6 +55,12 @@ export share is configured but unreachable.
 
 ---
 
+**Secrets are masked.** No response or SSE event carries a password: any
+`*password*` field (e.g. a module config's `export.share_password`, in
+`/modules`, `.../config` and its `config_diffs`) reads `"***"`. A PATCH body
+that sends `"***"` back for a password keeps the current one; send a real
+value to change it.
+
 ## Read endpoints
 
 ### `GET /api/v1/` — index

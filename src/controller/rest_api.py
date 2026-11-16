@@ -61,6 +61,8 @@ from functools import wraps
 
 from flask import Blueprint, Response, jsonify, request
 
+from src.shared.cifs import drop_masked_secrets, mask_secret_fields
+
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/v1"
@@ -121,6 +123,20 @@ def create_api_blueprint(web) -> Blueprint:
       * web._nas_health            -- last cached share probe (no mount)
     """
     bp = Blueprint("rest_api_v1", __name__, url_prefix=API_PREFIX)
+
+    @bp.after_request
+    def _mask_secrets(response):
+        """No API response carries a password: module configs (in
+        /modules, .../config and its diffs) hold the Samba
+        export.share_password, readable even with a readonly token. Masked
+        here once for every JSON route; the SSE stream masks per event."""
+        if response.is_json and not response.is_streamed:
+            data = response.get_json(silent=True)
+            if data is not None:
+                masked = mask_secret_fields(data)
+                if masked != data:
+                    response.set_data(json.dumps(masked))
+        return response
 
     # ------------------------------------------------------------------ #
     # helpers
@@ -386,7 +402,7 @@ def create_api_blueprint(web) -> Blueprint:
                         continue
                     if wanted and event.get("type") not in wanted:
                         continue
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield f"data: {json.dumps(mask_secret_fields(event))}\n\n"
             finally:
                 web._event_unsubscribe(q)
 
@@ -504,6 +520,9 @@ def create_api_blueprint(web) -> Blueprint:
                 "the session first.",
                 409)
 
+        # A body built from a masked GET carries "***" for the password;
+        # drop it so the real one (in true_config) is kept.
+        patch = drop_masked_secrets(patch)
         merged = _deep_merge(
             _filter_private(true_config), _filter_private(patch))
 

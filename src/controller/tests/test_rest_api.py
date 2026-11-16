@@ -1373,3 +1373,62 @@ class TestLightingConfigPatchWhileRecording:
             json={"dmx_lighting": {"schedule": {"lights_on": "06:30"}}},
             headers=_auth(password))
         assert resp.status_code != 409
+
+
+class TestSecretsMasked:
+    """The Samba export.share_password must not leave the controller in any
+    REST response (seen 2026-11-16: a PATCH .../config response printed it
+    in config_diffs). Masked as "***"; a masked value sent back is dropped."""
+
+    PW = "real-share-pw"
+
+    def _web(self):
+        web, password = _web()
+        cfg = {"camera": {"fps": 30},
+               "export": {"share_path": "//10.0.0.1/share",
+                          "share_password": self.PW}}
+        web.facade.get_modules.return_value = {
+            "cam1": {"type": "camera", "config": cfg,
+                     "config_diffs": [("export.share_password", self.PW, None)]}}
+        web.facade.is_module_recording.return_value = False
+        state = {"true_config": cfg, "target_config": cfg, "status": "FAILED",
+                 "diffs": [("export.share_password", self.PW, None)]}
+        web.facade.get_module_configs.return_value = {"cam1": state}
+        return web, password
+
+    def test_module_list_and_detail(self):
+        web, password = self._web()
+        c = web.app.test_client()
+        for url in ("/api/v1/modules", "/api/v1/modules/cam1"):
+            body = c.get(url, headers=_auth(password)).get_data(as_text=True)
+            assert self.PW not in body
+            assert '"***"' in body
+
+    def test_config_read_including_diffs(self):
+        web, password = self._web()
+        resp = web.app.test_client().get(
+            "/api/v1/modules/cam1/config", headers=_auth(password))
+        assert self.PW not in resp.get_data(as_text=True)
+        data = resp.get_json()
+        assert data["config"]["export"]["share_password"] == "***"
+        assert data["config"]["export"]["share_path"] == "//10.0.0.1/share"
+        assert data["config_diffs"] == [["export.share_password", "***", None]]
+
+    def test_patch_response_masked_and_roundtrip_keeps_real_password(self):
+        web, password = self._web()
+        resp = web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"camera": {"fps": 60}, "export": {"share_password": "***"}},
+            headers=_auth(password))
+        assert self.PW not in resp.get_data(as_text=True)
+        sent = web.facade.send_command.call_args[0][2]
+        assert sent["export"]["share_password"] == self.PW  # not "***"
+        assert sent["camera"]["fps"] == 60
+
+    def test_a_new_password_can_still_be_set(self):
+        web, password = self._web()
+        web.app.test_client().patch(
+            "/api/v1/modules/cam1/config",
+            json={"export": {"share_password": "new-pw"}}, headers=_auth(password))
+        assert web.facade.send_command.call_args[0][2]["export"]["share_password"] \
+            == "new-pw"

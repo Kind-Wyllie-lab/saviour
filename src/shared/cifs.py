@@ -63,3 +63,36 @@ def redact_secrets(text: str) -> str:
     import re
     return re.sub(r'("[^"]*password[^"]*"\s*:\s*)"[^"]*"', r'\1"***"', text,
                   flags=re.IGNORECASE)
+
+
+SECRET_MASK = "***"
+
+
+def _is_secret_key(key) -> bool:
+    return isinstance(key, str) and "password" in key.lower()
+
+
+def mask_secret_fields(obj):
+    """A copy of *obj* (JSON-shaped) with every non-empty ``*password*``
+    field replaced by ``"***"``. Also masks config diff triples
+    ``[path, true_value, target_value]`` whose path names a password.
+    For API responses; ``redact_secrets`` is the log-string version."""
+    if isinstance(obj, dict):
+        return {k: (SECRET_MASK if _is_secret_key(k) and isinstance(v, str) and v
+                    else mask_secret_fields(v))
+                for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        if len(obj) == 3 and _is_secret_key(obj[0]):
+            return [obj[0]] + [SECRET_MASK if v else v for v in obj[1:]]
+        return [mask_secret_fields(v) for v in obj]
+    return obj
+
+
+def drop_masked_secrets(obj):
+    """A copy of *obj* without ``*password*`` fields whose value is the mask,
+    so a client that read a masked config and sends it back doesn't set the
+    password to ``"***"``."""
+    if isinstance(obj, dict):
+        return {k: drop_masked_secrets(v) for k, v in obj.items()
+                if not (_is_secret_key(k) and v == SECRET_MASK)}
+    return obj

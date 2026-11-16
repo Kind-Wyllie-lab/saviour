@@ -1638,7 +1638,10 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             # same as the 'get_modules' handler, so a reconnect refreshes the
             # client's module/readiness state.
             modules = self.facade.get_modules()
-            self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
+            # Only the ids: the full dicts carry each module's config,
+            # including export.share_password.
+            self.logger.info(
+                f"Sending {len(modules)} modules to new client: {sorted(modules)}")
             self.socketio.emit('modules_update', modules)
 
             # Send current experiment name to new client
@@ -1771,7 +1774,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
             # Send module update to all clients
             self.socketio.emit('modules_update', modules)
-            self.logger.info(f"Sent module update to all clients: {modules}")
+            self.logger.info(
+                f"Sent module update to all clients: {sorted(modules)}")
 
 
         @self.socketio.on("check_ready")

@@ -1,9 +1,11 @@
 # Session protocols: module capabilities, timed schedules, event rules and a session timeline
 
-- **Status:** proposed 2026-11-16, nothing built. Supersedes the TTL-only
-  `ttl-session-schedule.md` (2026-11-12), whose format, runner and timeline
-  design carry over as phase 1. Phase 1's format waits on the requesting
-  user's protocol (see "Open questions").
+- **Status:** proposed 2026-11-16. Supersedes the TTL-only
+  `ttl-session-schedule.md` (2026-11-12). **First slice built 2026-11-16,
+  not yet on hardware** (see "Built so far"): the shared expansion and
+  validation, and the TTL runner with a `scheduled` pin mode, with the
+  protocol carried in the TTL module's config for now. Phase 1's final
+  format still waits on the requesting user's protocol.
 - **Created:** 2026-11-16
 - **Owner:** ascottg
 - **CLAUDE.md ref:** Reliability / UX → "Session protocols"
@@ -72,6 +74,40 @@ today becomes the simplest protocol:
   plans onto this; not phase 1).
 - **The motion trigger**: an event rule firing `record_clip(duration_s)`
   (phase 3).
+
+## Built so far (2026-11-16)
+
+The TTL half of phase 1's runner, testable with one TTL module:
+
+- `src/shared/session_protocol.py`: v1 format for `set` / `pulse` / `train`
+  and `repeat` (seeded jitter via mulberry32, checked against JavaScript so
+  the frontend twin can match), expansion to time-ordered edges, validation
+  (overlaps per pin, train width ≥ period, unknown actions/params, pins
+  that aren't `scheduled`, a 200k edge cap) and timing-floor warnings.
+- TTL module: pin mode `scheduled`; the protocol in `ttl.protocol` (module
+  config, a stand-in until protocols live on the session). An invalid
+  protocol refuses the recording (`recording_start_failed`, reason
+  `ttl_protocol`). One SCHED_FIFO worker fires each edge at
+  `session_start + t` (sleep to 2 ms before, then spin) and logs it in the
+  TTL CSV as `[protocol step=<path> <action> late_ms=<x>]`;
+  `<csv stem>_protocol.json` holds the protocol, t0 and every planned edge.
+  Stop drives held pins low (logged `protocol stopped`); natural end
+  applies `end_state`; a runner crash fails liveness. Commands
+  `validate_protocol` and `protocol_status` (via `/facade/send_command`).
+  `pulse_pin`/`test_pin` on a scheduled pin are refused while recording.
+- **Re-arm keeps the session clock.** The controller's first
+  `start_recording` carries `start_at`; its re-arms don't. The module
+  saves t0 in `/var/lib/saviour/ttl_protocol_state.json` (session name +
+  protocol hash), and a start without `start_at` in the same session with
+  the same protocol resumes: past edges are skipped and counted as missed,
+  held levels restored (`protocol resume`). When protocols move to the
+  session, the controller should send the session t0 explicitly instead.
+
+Rig test (one TTL module, a jumper from a scheduled output to an `input`
+pin): timing (lateness of each input edge against its planned time), drift
+(1 Hz for 30-60 min), early stop, manual pulse refused, same seed same
+gaps, re-arm mid-protocol. Set the late threshold from the results (the
+code uses 20 ms, `LATE_THRESHOLD_S`).
 
 ## Two execution tiers
 

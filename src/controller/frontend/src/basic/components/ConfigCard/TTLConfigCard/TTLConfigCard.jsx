@@ -19,12 +19,16 @@ import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleAct
 // sugar over interval_pulse(repeat_count=1) with its own honest mode name and
 // a simpler delay_s/pulse_duration_s-only schema (both server-driven from
 // _mode_settings_schema, nothing hardcoded here beyond the label/badge).
+// "scheduled" is an output driven by the session protocol (ttl.protocol,
+// plans/session-protocol.md); its steps live in the protocol, not per pin.
 const OUTPUT_MODES = new Set([
   "experiment_clock", "pseudorandom", "interval_pulse", "experiment_start", "None",
+  "scheduled",
 ]);
 const MODE_LABELS = {
   None: "None (manual output)",
   experiment_start: "Experiment Start (one pulse)",
+  scheduled: "Scheduled (session protocol)",
 };
 
 const TAB_COPY_SECTION = {

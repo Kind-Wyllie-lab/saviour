@@ -4,7 +4,6 @@
   border-radius: 6px;
   background: var(--card-bg-color);
   color: var(--text-color);
-  box-shadow: 0 0 20px rgba(0,0,0,0.5);
   max-width: 1100px;
 }
 

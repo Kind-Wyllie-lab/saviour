@@ -192,7 +192,10 @@ function usesJitter(steps) {
     && ((Number(s.jitter_s?.[1]) || 0) > 0 || usesJitter(s.steps)));
 }
 
-export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId }) {
+// renderTest(result): the Test routine controls, given the current
+// validation; cursorT: seconds into a running test, drawn on the timeline.
+export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId,
+  renderTest, cursorT = null }) {
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
@@ -384,6 +387,8 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </div>
       )}
 
+      {renderTest && renderTest(result)}
+
       <div className={`pe-timeline${result && !result.ok ? " pe-timeline--invalid" : ""}`}>
         <div className="pe-timeline-title">
           Timeline preview{result && !result.ok ? " (invalid protocol: may not match what would run)" : ""}
@@ -393,6 +398,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           spans={spans}
           duration={result?.durationS ?? 0}
           highlightRow={focusPin}
+          cursorT={cursorT}
           emptyText="Add a scheduled pin and some steps to see the timeline."
         />
       </div>

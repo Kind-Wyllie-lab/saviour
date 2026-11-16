@@ -249,3 +249,39 @@
   color: var(--secondary-text-color);
   margin-bottom: 2px;
 }
+
+/* Test routine (bench run on the module). */
+.pe-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pe-test-start {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+.pe-test-start:disabled {
+  border-color: var(--border-color);
+  color: var(--secondary-text-color);
+  font-weight: 400;
+  cursor: not-allowed;
+}
+.pe-test-stop {
+  border-color: var(--recording-color);
+  color: var(--recording-color);
+  font-weight: 600;
+}
+.pe-test-stop:hover:not(:disabled) {
+  border-color: var(--recording-color);
+  color: var(--recording-color);
+}
+.pe-test-line {
+  flex: 1;
+  min-width: 14em;
+  font-size: 0.85em;
+  color: var(--secondary-text-color);
+  font-variant-numeric: tabular-nums;
+}
+.pe-test-line--bad { color: var(--recording-color); }

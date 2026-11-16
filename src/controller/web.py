@@ -4913,6 +4913,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # and the /api/v1/events SSE stream, which is the point of this
                 # one -- an external experiment controller reacting to a TTL
                 # input (lever press, an external trigger) without polling.
+                # A bench run of the TTL session protocol (test_protocol):
+                # running / finished / stopped / error / refused, for the
+                # Protocol tab's Test routine button.
+                case "ttl_protocol_test":
+                    self.socketio.emit("ttl_protocol_test", {
+                        k: v for k, v in status.items() if k != "type"
+                    } | {"module_id": module_id})
+
                 case "ttl_edge":
                     edge = {
                         "module_id": module_id,

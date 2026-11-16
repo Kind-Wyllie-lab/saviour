@@ -81,6 +81,13 @@
 .ptl-row--faded .ptl-label { fill: var(--secondary-text-color); }
 .ptl-row--focus .ptl-label { font-weight: 700; }
 
+/* Where a running test is now. */
+.ptl-now {
+  stroke: var(--recording-color);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
 .ptl-cursor {
   stroke: var(--secondary-text-color);
   stroke-width: 1;

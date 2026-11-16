@@ -10,6 +10,7 @@ Centralizes configuration management for SAVIOUR modules, including:
 - Saving configuration changes
 """
 
+import copy
 import json
 import logging
 import os
@@ -223,22 +224,33 @@ class Config:
             elif key.startswith("_"):
                 target[key] = val
 
-    def _merge_defaults(self, target: dict[str, Any], defaults: dict[str, Any]) -> None:
+    # Maps whose keys are user data (e.g. GPIO numbers), not schema: the
+    # shipped defaults are only a starting set. Default-merge and the startup
+    # prune treat them as one value: filled in when missing, never merged or
+    # pruned key by key. Before this, every TTL restart deleted pins added
+    # beyond the defaults (19, 26) and re-added a deleted default pin.
+    _USER_KEYED_MAPS = frozenset({"ttl.pins"})
+
+    def _merge_defaults(self, target: dict[str, Any], defaults: dict[str, Any],
+                        path: str = "") -> None:
         """
-        Recursively merge defualts into target only for missing keys
+        Recursively merge defaults into target only for missing keys
         Does not overwrite existing values in target
         """
         for key, val in defaults.items():
+            full_key = f"{path}.{key}" if path else key
             if key not in target:
                 # Missing key - copy the default
-                target[key] = val
+                target[key] = copy.deepcopy(val)
             # Both present and both dicts - recurse
-            elif isinstance(target[key], dict) and isinstance(val, dict):
-                self._merge_defaults(target[key], val)
+            elif (isinstance(target[key], dict) and isinstance(val, dict)
+                    and full_key not in self._USER_KEYED_MAPS):
+                self._merge_defaults(target[key], val, full_key)
                 # Otherwise target has a value, do not overwrite
 
 
-    def _prune_stale_keys(self, target: dict[str, Any], reference: dict[str, Any]) -> None:
+    def _prune_stale_keys(self, target: dict[str, Any], reference: dict[str, Any],
+                          path: str = "") -> None:
         """Remove from *target* any non-private key absent from *reference*.
 
         Called after merging so that keys removed from base_config.json or the
@@ -262,11 +274,13 @@ class Config:
         for key in list(target.keys()):
             if key.startswith("_") or key == "export" or key in self._sidecar_sections:
                 continue
+            full_key = f"{path}.{key}" if path else key
             if key not in reference:
-                self.logger.info(f"Pruning stale config key: {key}")
+                self.logger.info(f"Pruning stale config key: {full_key}")
                 del target[key]
-            elif isinstance(target[key], dict) and isinstance(reference.get(key), dict):
-                self._prune_stale_keys(target[key], reference[key])
+            elif (isinstance(target[key], dict) and isinstance(reference.get(key), dict)
+                    and full_key not in self._USER_KEYED_MAPS):
+                self._prune_stale_keys(target[key], reference[key], full_key)
 
     # ── Runtime-state sidecar ──────────────────────────────────────────────
     def _load_sidecar(self) -> None:

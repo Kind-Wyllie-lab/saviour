@@ -18,6 +18,7 @@
                 "pulse_duration": 0.2
             }
         },
+        "protocol": null,
         "_available_modes": [
             "None",
             "pseudorandom",

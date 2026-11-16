@@ -322,13 +322,17 @@ class Export:
             The triggered session (first component of export_path) is always
             present in the result so callers can check it directly.
         """
-        all_files = os.listdir(self.to_export_folder)
         triggered_session = export_path.split('/', maxsplit=1)[0] if export_path and '/' in export_path else export_path
 
         with self._export_lock:
             if self.exporting:
                 self.logger.warning("Export already in progress; ignoring concurrent call")
                 return {triggered_session: False} if triggered_session else {}
+            # Under the lock with `exporting` False, no copy of ours is in
+            # flight, so any PENDING_ file here was stranded by a crash or
+            # reboot mid-copy.
+            all_files = self._recover_stranded_pending(
+                os.listdir(self.to_export_folder))
             self.staged_for_export = all_files
             self.exporting = True
 
@@ -477,6 +481,64 @@ class Export:
                 self.staged_for_export = []
                 self.exporting = False
 
+
+    def _recover_stranded_pending(self, filenames: list[str]) -> list[str]:
+        """Rename stranded ``PENDING_<name>`` files in to_export/ back to
+        ``<name>`` and return the file list to export.
+
+        ``export_staged`` renames each file ``PENDING_<name>`` while copying
+        it; a crash or reboot mid-copy leaves it under that name. Exported
+        as-is, its session parses as ``PENDING_<session>``: it lands in a
+        stray folder on the share and the controller drops its ``complete``.
+        Re-exported under its real name, the copy overwrites the half-written
+        ``PENDING_<name>`` stub in the real session folder on its way to
+        ``<name>``. If ``<name>`` also exists the two can't be told apart
+        safely, so the PENDING_ copy is moved to ``to_export_stranded/``
+        (next to to_export/) for manual recovery: left in place, the export of
+        ``<name>`` would overwrite it with its own PENDING_ rename.
+        """
+        result = []
+        names = set(filenames)
+        held: set[str] = set()  # originals whose stranded copy couldn't move
+        for filename in filenames:
+            if not filename.startswith("PENDING_"):
+                result.append(filename)
+                continue
+            original = filename[len("PENDING_"):]
+            if not original or original in names:
+                if not self._set_aside_stranded(filename):
+                    held.add(original)
+                continue
+            try:
+                os.rename(os.path.join(self.to_export_folder, filename),
+                          os.path.join(self.to_export_folder, original))
+            except OSError as e:
+                self.logger.error(f"Could not recover stranded {filename}: {e}")
+                continue
+            self.logger.warning(
+                f"Recovered {filename} (export interrupted); "
+                f"re-exporting as {original}")
+            names.add(original)
+            result.append(original)
+        return [f for f in result if f not in held]
+
+    def _set_aside_stranded(self, filename: str) -> bool:
+        folder = f"{self.to_export_folder.rstrip('/')}_stranded"
+        try:
+            os.makedirs(folder, exist_ok=True)
+            dest = os.path.join(folder, filename)
+            if os.path.exists(dest):
+                dest = f"{dest}.{int(time.time())}"
+            os.rename(os.path.join(self.to_export_folder, filename), dest)
+        except OSError as e:
+            self.logger.error(
+                f"Could not set aside stranded {filename}: {e}; holding both "
+                f"copies back from export")
+            return False
+        self.logger.error(
+            f"Stranded {filename} in to_export/ but the unprefixed file also "
+            f"exists; moved it to {dest} for manual recovery")
+        return True
 
     def _delete_local_files(self, files: list) -> None:
         deleted_count = 0

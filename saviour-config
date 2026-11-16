@@ -1917,7 +1917,19 @@ VITE_VARIANT=${frontend_variant}
 EOF
 
     cd "${DIR}/src/controller/frontend"
-    if ! run_logged npm install || ! run_logged npm run build; then
+    # Build as the checkout's owner, not root (saviour-config runs under
+    # sudo): root-owned dist/ and node_modules/ break that user's own
+    # `npm run build` (EACCES). Earlier root builds' files are handed back.
+    local owner npm_cmd
+    owner=$(stat -c %U "$DIR")
+    if [ "$(id -u)" = 0 ] && [ -n "$owner" ] && [ "$owner" != root ]; then
+        chown -R "$owner": dist node_modules .env.local 2>/dev/null || true
+        npm_cmd=(sudo -u "$owner" env PATH="$PATH"
+                 HOME="$(getent passwd "$owner" | cut -d: -f6)" npm)
+    else
+        npm_cmd=(npm)
+    fi
+    if ! run_logged "${npm_cmd[@]}" install || ! run_logged "${npm_cmd[@]}" run build; then
         cd "${DIR}"
         log "WARNING: frontend build failed -- see the npm output above"
         return 1

@@ -38,7 +38,7 @@ npm run build        # production build → dist/
 npm run lint
 ```
 
-**After making any frontend change, run `npm run build`** so the user can review the result (they don't run a dev server themselves). If it fails with `EACCES`/`unlink` errors under `dist/`, that's the known root-owned-`dist/` issue — `sudo chown -R $(whoami) src/controller/frontend/dist` then rebuild, rather than deleting `dist/` outright.
+**After making any frontend change, run `npm run build`** so the user can review the result (they don't run a dev server themselves). Deploys, `mend.sh` and `saviour-config` build as the checkout's owner and hand back root-owned files (fixed 2026-11-16); if `EACCES`/`unlink` errors under `dist/` still appear, `sudo chown -R $(whoami) src/controller/frontend/{dist,node_modules}` then rebuild, rather than deleting `dist/` outright.
 
 ### Analysis tools
 
@@ -226,7 +226,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Per-AudioMoth settings: gain per AudioMoth built (not yet confirmed on the rig); internal/external mic chosen per AudioMoth (default external when present; dropdown not yet used on the rig), internal for the sync self-test (one calibration serves both inputs, measured with an EM258); per-device sample rate/filter → `plans/per-audiomoth-settings.md`.
 - AudioMoth noise: room noise reporting (band L90/L10, tonal lines, impulses; live + per session) and characterising PoE HAT / switch / supply noise (`noise_selftest` load steps, dummy-plug and power-swap survey). Planned, nothing built → `plans/audio-noise-characterisation.md`.
 - Spectrograms (monitor + post-processing): custom colour palettes and per-band colouring (rat alarm 18–32 / appetitive 45–96 kHz, grey outside the bands), exportable custom palettes, ffmpeg colour schemes replaced. Phase 1 (shared palettes + live monitor bands) built, not yet on the rig; post-processing next → `plans/spectrogram-palettes-and-call-bands.md`.
-- `saviour-config`/`mend.sh` build the frontend as root (root-owned `dist/`); `clone_prep.sh` clears the wrong active-config path.
+- `clone_prep.sh` clears the wrong active-config path.
 - Post-Process compose layout editor: phases 1-2 (canvas, camera + spectrogram tiles, templates, timeline range + speed) shipped; next event/text tiles, saved templates → `plans/compose-layout-editor.md`. Habitat campaigns (16 cams, sparse clips, box map, jobs issued to the habitat server) are later → `plans/habitat-post-processing.md`.
 - Ephys headstage accelerometer (`A1_AUX1-3` in the uploaded Open Ephys data): recording choice (`ephys_data.py`: the recording that overlaps the session, sync pin auto-detected) and phase 1 (`ephys_accel.py` → `_ephys/accel/<port>/`, Accelerometer section + charts on the Ephys panel) built, not yet run on a controller; phase 2 (`accel_trace` / `orientation` compose tiles, `accel_tiles.py`) built and checked only on a stand-in session with a fudged clock model; next a real headstage + camera session for its accept tests → `plans/ephys-accelerometer.md`.
 - A/V sync: audio is now anchored on PipeWire's reported stream latency (`LAT` sidecar lines) minus a per-AudioMoth offset that `sync_selftest` measures and stores (`audiomoth_sync_offsets_ms`); in a real session that put each buzz within 0.1 ms of its trigger (was +20 ms). Not yet calibrated on the rig or checked on another day; the camera's own placement (~+4 ms, start-of-exposure stamps) is the remaining A/V term → `plans/audio-video-sync-residual-validation.md`, `docs/AV_SYNC_TEST.md`.

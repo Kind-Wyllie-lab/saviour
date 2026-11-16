@@ -221,8 +221,19 @@ if [ "$DETECTED_ROLE" = "controller" ]; then
     if command -v npm &>/dev/null; then
         fix "Rebuilding frontend for ${TYPE:-unknown} controller"
         cd "$TARGET_DIR/src/controller/frontend"
-        npm install --silent >> "$LOG" 2>&1
-        npm run build >> "$LOG" 2>&1
+        # Build as the checkout's owner, not root: root-owned dist/ and
+        # node_modules/ break that user's own `npm run build` (EACCES).
+        # Earlier root builds' files are handed back first.
+        OWNER=$(stat -c %U "$TARGET_DIR")
+        if [ "$(id -u)" = 0 ] && [ -n "$OWNER" ] && [ "$OWNER" != root ]; then
+            chown -R "$OWNER": dist node_modules .env.local 2>/dev/null || true
+            OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
+            NPM=(sudo -u "$OWNER" env PATH="$PATH" HOME="$OWNER_HOME" npm)
+        else
+            NPM=(npm)
+        fi
+        "${NPM[@]}" install --silent >> "$LOG" 2>&1
+        "${NPM[@]}" run build >> "$LOG" 2>&1
         cd "$TARGET_DIR"
         ok "Frontend rebuilt"
     else

@@ -445,6 +445,18 @@ class TestTtlPulse:
         assert resp.get_json()["error"]["code"] == "pin_not_output"
         web.facade.send_command.assert_not_called()
 
+    def test_scheduled_pin_409_names_the_protocol(self):
+        web, password = self._pulse_web(pins={"2": {"mode": "scheduled"}})
+        resp = web.app.test_client().post(
+            "/api/v1/modules/ttl1/pulse", json={"pin": 2},
+            headers=_auth(password))
+        assert resp.status_code == 409
+        err = resp.get_json()["error"]
+        assert err["code"] == "pin_busy"
+        assert "session protocol" in err["message"]
+        assert 'mode to "None"' not in err["message"]
+        web.facade.send_command.assert_not_called()
+
     def test_generator_driven_pin_409(self):
         web, password = self._pulse_web()
         resp = web.app.test_client().post(

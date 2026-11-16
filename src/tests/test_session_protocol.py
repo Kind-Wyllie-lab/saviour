@@ -190,3 +190,57 @@ class TestValidation:
                                     "count": MAX_EDGES}}))
         assert not exp.ok
         assert any("too many edges" in e for e in exp.errors)
+
+
+# ---------------------------------------------------------------------------
+# The frontend twin (sessionProtocol.js) must expand every fixture identically
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402 -- section-local imports for the twin check
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
+_FIXTURES = os.path.join(_ROOT, "src", "shared", "session_protocol_fixtures.json")
+_JS = os.path.join(_ROOT, "src", "controller", "frontend", "src", "basic",
+                   "utils", "sessionProtocol.js")
+
+
+def _py_result(case):
+    exp = expand(case["protocol"], module_id=case.get("module_id"),
+                 allowed_pins=set(case["allowed_pins"]) if "allowed_pins" in case
+                 else None)
+    return {"edges": [[round(e.t_s, 9), e.pin, e.level, e.step, e.action]
+                      for e in exp.edges],
+            "ok": exp.ok, "errors": len(exp.errors), "warnings": len(exp.warnings),
+            "end_state": exp.end_state}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_js_twin_matches_python_on_every_fixture():
+    script = f"""
+import {{ expand }} from {json.dumps("file://" + os.path.abspath(_JS))};
+import fs from "fs";
+const doc = JSON.parse(fs.readFileSync({json.dumps(os.path.abspath(_FIXTURES))}, "utf8"));
+const out = doc.cases.map((c) => {{
+  const r = expand(c.protocol, {{ moduleId: c.module_id ?? null,
+                                 allowedPins: c.allowed_pins ?? null }});
+  return {{ edges: r.edges.map((e) => [Math.round(e.t_s * 1e9) / 1e9, e.pin, e.level,
+                                     e.step, e.action]),
+           ok: r.ok, errors: r.errors.length, warnings: r.warnings.length,
+           end_state: r.endState }};
+}});
+console.log(JSON.stringify(out));
+"""
+    res = subprocess.run(["node", "--input-type=module", "-e", script],
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stderr
+    js = json.loads(res.stdout)
+    cases = json.load(open(_FIXTURES))["cases"]
+    assert len(js) == len(cases)
+    for case, js_result in zip(cases, js):
+        py = _py_result(case)
+        assert js_result == py, f"fixture {case['name']!r} differs"
+        if case["name"] == "bad steps":
+            assert py["errors"] >= 8

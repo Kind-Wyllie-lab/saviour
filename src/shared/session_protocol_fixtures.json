@@ -1,0 +1,54 @@
+{
+  "_comment": "Inputs both session-protocol expanders (src/shared/session_protocol.py and frontend src/basic/utils/sessionProtocol.js) must agree on: edges, ok, error and warning counts. Checked by src/tests/test_session_protocol.py.",
+  "cases": [
+    {"name": "set pulse train", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+      {"at_s": 10, "action": "set", "params": {"pin": 17, "level": "low"}},
+      {"at_s": 20, "action": "pulse", "params": {"pin": 22, "width_s": 0.05}},
+      {"at_s": 30, "action": "train", "params": {"pin": 22, "rate_hz": 10, "width_s": 0.02, "count": 3}}]}},
+    {"name": "seeded jitter", "protocol": {"version": 1, "seed": 1234, "steps": [
+      {"at_s": 0, "action": "repeat", "times": 20, "every_s": 2, "jitter_s": [0, 3],
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 4, "width_s": 0.05}}]}]}},
+    {"name": "nested repeat with jitter", "protocol": {"version": 1, "seed": 7, "steps": [
+      {"at_s": 5, "action": "repeat", "times": 3, "every_s": 30, "jitter_s": [1, 4], "steps": [
+        {"at_s": 0, "action": "set", "params": {"pin": 2, "level": "high"}},
+        {"at_s": 0.5, "action": "repeat", "times": 4, "every_s": 1, "jitter_s": [0, 0.5],
+         "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 3, "width_s": 0.1}}]},
+        {"at_s": 10, "action": "set", "params": {"pin": 2, "level": "low"}}]}]}},
+    {"name": "rig test 1", "allowed_pins": [2], "protocol": {"version": 1, "seed": 1234, "steps": [
+      {"at_s": 0, "action": "set", "params": {"pin": 2, "level": "high"}},
+      {"at_s": 5, "action": "set", "params": {"pin": 2, "level": "low"}},
+      {"at_s": 10, "action": "train", "params": {"pin": 2, "rate_hz": 10, "width_s": 0.02, "count": 50}},
+      {"at_s": 20, "action": "repeat", "times": 10, "every_s": 2, "jitter_s": [0, 3],
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 2, "width_s": 0.05}}]}]}},
+    {"name": "module filter", "module_id": "ttl_a", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "module": "ttl_a", "action": "pulse", "params": {"pin": 1, "width_s": 0.1}},
+      {"at_s": 1, "module": "ttl_b", "action": "pulse", "params": {"pin": 1, "width_s": 0.1}},
+      {"at_s": 2, "action": "pulse", "params": {"pin": "1", "width_s": 0.1}}]}},
+    {"name": "back to back", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "pulse", "params": {"pin": 1, "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pin": 1, "width_s": 1}}]}},
+    {"name": "overlap inside set", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+      {"at_s": 5, "action": "pulse", "params": {"pin": 17, "width_s": 0.1}},
+      {"at_s": 10, "action": "set", "params": {"pin": 17, "level": "low"}}]}},
+    {"name": "bad steps", "allowed_pins": [1, 2], "protocol": {"version": 1, "end_state": "explode", "steps": [
+      {"at_s": 0, "action": "blink", "params": {"pin": 1}},
+      {"at_s": -1, "action": "pulse", "params": {"pin": 1, "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pin": 9, "width_s": 1}},
+      {"at_s": 0, "action": "set", "params": {"pin": 1, "level": "on"}},
+      {"at_s": 0, "action": "pulse"},
+      {"at_s": 0, "action": "train", "params": {"pin": 2, "rate_hz": 10, "width_s": 0.1, "count": 3}},
+      {"at_s": 0, "action": "repeat", "times": 0, "every_s": 1, "steps": []},
+      {"at_s": 0, "action": "repeat", "times": 2, "every_s": 1, "jitter_s": [3, 1],
+       "steps": [{"action": "pulse", "params": {"pin": 1, "width_s": 0.1}}]}]}},
+    {"name": "warnings", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "set", "params": {"pin": 1, "level": "low"}},
+      {"at_s": 1, "action": "train", "params": {"pin": 2, "rate_hz": 100, "width_s": 0.002, "count": 5}}]}},
+    {"name": "hold", "protocol": {"version": 1, "end_state": "hold", "steps": [
+      {"at_s": 0.1, "action": "set", "params": {"pin": 2, "level": "high"}}]}},
+    {"name": "not an object", "protocol": "nope"},
+    {"name": "no steps", "protocol": {"version": 1}},
+    {"name": "wrong version", "protocol": {"version": 2, "steps": []}}
+  ]
+}

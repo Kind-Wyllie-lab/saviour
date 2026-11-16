@@ -98,13 +98,50 @@ function makeModules() {
       name: "TTL box",
       type: "ttl",
       ip: "10.0.0.41",
-      status: "OFFLINE",
-      online: false,
-      ready: false,
+      status: "READY",
+      online: true,
+      ready: true,
       checks: {},
       group: "other",
       version: "v0.6.1-mock",
       config_sync_status: "SYNCED",
+      // Two scheduled pins and an example session protocol, for the TTL
+      // card's Protocol tab (plans/session-protocol.md).
+      config: {
+        module: { name: "TTL box", group: "other" },
+        ttl: {
+          active_logic: "active_low",
+          _active_logic_options: ["active_low", "active_high"],
+          _available_pins: [2, 3, 4, 17, 19, 22, 26, 27],
+          _available_modes: ["None", "pseudorandom", "experiment_clock", "interval_pulse",
+                             "experiment_start", "scheduled", "input"],
+          _mode_settings_schema: {
+            _experiment_clock: {
+              _duty_cycle: { type: "float", min: 0.1, max: 1.0, default: "0.75" },
+              _period: { type: "float", default: 1 },
+            },
+            _scheduled: {},
+            _input: { _debounce_ms: { type: "int", min: 0, default: 50 } },
+          },
+          pins: {
+            2: { mode: "scheduled", description: "house light" },
+            17: { mode: "scheduled", description: "tone gate" },
+            3: { mode: "input", debounce_ms: 0, description: "lever" },
+            19: { mode: "experiment_clock", duty_cycle: 0.75, period: 1 },
+          },
+          protocol: {
+            version: 1, name: "habituation then tones", seed: 1234, end_state: "all_inactive",
+            steps: [
+              { at_s: 0.1, action: "set", params: { pin: 2, level: "high" } },
+              { at_s: 180, action: "set", params: { pin: 2, level: "low" } },
+              { at_s: 200, action: "train", params: { pin: 17, rate_hz: 2, width_s: 0.2, count: 20 } },
+              { at_s: 240, action: "repeat", times: 10, every_s: 20, jitter_s: [0, 10],
+                steps: [{ at_s: 0, action: "pulse", params: { pin: 17, width_s: 1.5 } }] },
+            ],
+          },
+        },
+        recording: { segment_length_mins: 60 },
+      },
     },
     // Only in the apa build, which is the only one with a panel for it.
     ...(import.meta.env.VITE_VARIANT === "apa" ? {

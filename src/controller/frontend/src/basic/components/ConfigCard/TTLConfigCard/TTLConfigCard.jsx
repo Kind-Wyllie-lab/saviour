@@ -11,6 +11,7 @@ import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCa
 import CopyActionsBar from "../CopyActionsBar";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
+import ProtocolEditor from "./ProtocolEditor";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
@@ -34,6 +35,7 @@ const MODE_LABELS = {
 const TAB_COPY_SECTION = {
   basic:  { key: "module",    label: "Basic"  },
   pins:   { key: "ttl",       label: "TTL"    },
+  protocol: { key: "ttl",     label: "TTL"    },
   record: { key: "recording", label: "Record" },
   export: { key: "export",    label: "Export" },
 };
@@ -41,6 +43,7 @@ const TAB_COPY_SECTION = {
 const TABS = [
   { key: "basic",  label: "Basic"  },
   { key: "pins",   label: "Pins"   },
+  { key: "protocol", label: "Protocol" },
   { key: "record", label: "Record" },
   { key: "export", label: "Export" },
 ];
@@ -330,6 +333,20 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     </button>
                   </div>
                 </>
+              )}
+
+              {/* PROTOCOL */}
+              {activeTab === "protocol" && (
+                <ProtocolEditor
+                  protocol={ttlCfg.protocol ?? null}
+                  moduleId={id}
+                  pinConfigs={ttlCfg.pins ?? {}}
+                  scheduledPins={sortedPins
+                    .filter((p) => ttlCfg.pins[p]?.mode === "scheduled")
+                    .map(Number)}
+                  onChange={(protocol) =>
+                    setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, protocol } }))}
+                />
               )}
 
               {/* RECORD */}

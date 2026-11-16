@@ -1,0 +1,108 @@
+/* Session/protocol timeline (Gantt). Colours come from the app theme tokens,
+   so light and dark themes each get their own values. */
+.ptl {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-color);
+}
+
+.ptl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 0.85em;
+}
+
+.ptl-range { font-variant-numeric: tabular-nums; }
+
+.ptl-hint {
+  color: var(--secondary-text-color);
+  margin-left: auto;
+}
+
+.ptl-reset {
+  font-size: 0.9em;
+  padding: 2px 8px;
+}
+
+.ptl-plot {
+  position: relative;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  overflow: hidden;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.ptl-plot svg { display: block; }
+
+.ptl-grid {
+  stroke: var(--border-color);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.ptl-baseline {
+  stroke: var(--border-color);
+  stroke-width: 1;
+}
+
+.ptl-tick {
+  fill: var(--secondary-text-color);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ptl-label {
+  fill: var(--text-color);
+  font-size: 12px;
+}
+
+.ptl-bar { fill: var(--accent-color); }
+
+/* A level held past the last step: same hue, lighter, so it reads as
+   "continues" rather than a planned end. */
+.ptl-bar--held { fill-opacity: 0.45; }
+
+.ptl-cursor {
+  stroke: var(--secondary-text-color);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.ptl-brush {
+  fill: var(--accent-color);
+  fill-opacity: 0.15;
+  stroke: var(--accent-color);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.ptl-tooltip {
+  position: absolute;
+  max-width: 280px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: normal;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 2;
+}
+
+.ptl-tooltip--quiet { color: var(--secondary-text-color); }
+
+.ptl-empty {
+  padding: 12px;
+  color: var(--secondary-text-color);
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+}

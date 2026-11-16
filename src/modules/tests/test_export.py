@@ -200,6 +200,80 @@ class TestPendingRollback:
 
 
 # ---------------------------------------------------------------------------
+# Stranded PENDING_ files (export interrupted by a reboot, test D 2026-10-06)
+# ---------------------------------------------------------------------------
+
+class TestStrandedPendingRecovery:
+    MIC_FILE = ("testDfast-100744_audiomoth_4703_24FCBD0864934CA8_"
+                "(13_20261006-101254).flac")
+
+    def _exp(self, tmpdir):
+        exp = _make_export(tmpdir)
+        exp.module_id = "microphone_4703"
+        exp.facade = MagicMock()
+        exp.facade.get_module_name.return_value = "microphone_4703"
+        return exp
+
+    def test_stranded_file_exports_to_its_real_session_under_its_real_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir)
+            nas_dir = os.path.join(tmpdir, "nas_session")
+            os.makedirs(nas_dir)
+            _write_test_file(exp.to_export_folder, f"PENDING_{self.MIC_FILE}")
+            # The half-copied stub the interrupted export left on the share.
+            with open(os.path.join(nas_dir, f"PENDING_{self.MIC_FILE}"), "wb") as f:
+                f.write(b"STUB")
+
+            with patch.object(exp, "_setup_export", return_value=nas_dir) as setup, \
+                 patch.object(exp, "_update_samba_settings"):
+                results = exp.export_staged("testDfast-100744")
+
+            target = setup.call_args.args[0]
+            assert target == "testDfast-100744/20261006/microphone_4703"
+            assert results == {"testDfast-100744": True}
+            assert sorted(os.listdir(nas_dir)) == [self.MIC_FILE]
+            assert os.path.getsize(os.path.join(nas_dir, self.MIC_FILE)) > 4
+            assert os.listdir(exp.to_export_folder) == []
+
+    def test_pending_copy_left_alone_when_original_also_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir)
+            nas_dir = os.path.join(tmpdir, "nas_session")
+            os.makedirs(nas_dir)
+            _write_test_file(exp.to_export_folder, self.MIC_FILE)
+            _write_test_file(exp.to_export_folder, f"PENDING_{self.MIC_FILE}")
+
+            with patch.object(exp, "_setup_export", return_value=nas_dir), \
+                 patch.object(exp, "_update_samba_settings"):
+                exp.export_staged("testDfast-100744")
+
+            # The original exports; the stranded copy is moved aside, not
+            # overwritten by the original's own PENDING_ rename.
+            assert os.listdir(nas_dir) == [self.MIC_FILE]
+            assert os.listdir(exp.to_export_folder) == []
+            stranded = f"{exp.to_export_folder}_stranded"
+            assert os.listdir(stranded) == [f"PENDING_{self.MIC_FILE}"]
+            exp.logger.error.assert_called()
+
+    def test_both_held_back_when_stranded_copy_cannot_move(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = self._exp(tmpdir)
+            nas_dir = os.path.join(tmpdir, "nas_session")
+            os.makedirs(nas_dir)
+            _write_test_file(exp.to_export_folder, self.MIC_FILE)
+            _write_test_file(exp.to_export_folder, f"PENDING_{self.MIC_FILE}")
+
+            with patch.object(exp, "_setup_export", return_value=nas_dir), \
+                 patch.object(exp, "_update_samba_settings"), \
+                 patch.object(exp, "_set_aside_stranded", return_value=False):
+                exp.export_staged("testDfast-100744")
+
+            assert os.listdir(nas_dir) == []
+            assert sorted(os.listdir(exp.to_export_folder)) == sorted(
+                [self.MIC_FILE, f"PENDING_{self.MIC_FILE}"])
+
+
+# ---------------------------------------------------------------------------
 # Thread lock — concurrent export_staged calls
 # ---------------------------------------------------------------------------
 

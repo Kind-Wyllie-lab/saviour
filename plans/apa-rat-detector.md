@@ -1,6 +1,6 @@
 # APA rat detector: auto-labelled training set, whole-video evaluation, safe automated shocks
 
-- **Status:** in progress (step 1 built; awaiting step 2; step 5 designed 2026-10-23)
+- **Status:** in progress (step 1 built; awaiting step 2; step 5 (automated shocking) built 2026-10-23 and validated on the rig 2026-11-16)
 - **Created:** 2026-10-21
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (APA rat detector / automated shocking)
@@ -182,7 +182,7 @@ Not enabled for real shocks until step 3's target is met; the dry-run mode
 below can be built and run on the rig before that, and is how step 3 gets
 measured live.
 
-### Built (2026-10-23): steps 1 and 2 below, plus `auto` (not yet run on the rig)
+### Built (2026-10-23): steps 1 and 2 below, plus `auto` (validated on the rig 2026-11-16)
 
 Design changed from the first draft: the gate is on the **controller**, not
 the `apa_arduino` module. Every shock command already goes through the

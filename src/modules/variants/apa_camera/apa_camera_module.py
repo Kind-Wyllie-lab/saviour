@@ -344,7 +344,7 @@ class APACameraModule(CameraBase):
         # Detection used to run inside the capture callback, on every frame:
         # with the rat HEF on a Hailo-8L at 1000x1000 / 25 fps that callback
         # sat at ~79% of a core and ~13% of frames were dropped (2026-11-10,
-        # plans/apa-camera-async-detection.md). Now the callback only hands
+        # CHANGELOG 2026-11-16). Now the callback only hands
         # the newest frame to this worker (one-slot, drop-oldest queue) and
         # reads the latest TrackSnapshot back.
         # _det_lock is held around detect() and around any detector swap or

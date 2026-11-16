@@ -38,7 +38,7 @@ Instead each module advertises two lists:
 
 - **Actions**: what it can be told to do, with typed parameters, e.g.
   `ttl.set(pin, level)`, `ttl.pulse(pin, width_s)`,
-  `ttl.train(pin, rate_hz, width_s, count)`, `sound.play(file, level_db)`,
+  `ttl.train(pin, rate_hz, width_s, count)`, `sound.play(file, volume, duration_s)`,
   `<camera>.record`.
 - **Events**: what it reports, with fields, e.g. `ttl.edge(pin, level)`,
   `apa_camera.zone_entered`, `rfid.read(antenna, tag)`.
@@ -90,6 +90,12 @@ today becomes the simplest protocol:
    trigger event + field filter, one action, a refractory period, a maximum
    count. No variables, no state machines.
 
+Every action in the manifest can be used by a timed step or an event rule;
+there is no per-rig allow-list (decided 2026-11-16). Safety checks therefore
+live inside the action, not in the rule layer: a shock action goes through
+the same armed/disarmed and mode checks as today (`shock_automation.py`),
+whoever calls it, so a rule can't pulse a disarmed grid.
+
 ## Capability manifest
 
 - `@command()` already registers module RPCs (`module.py`). Add an
@@ -140,7 +146,9 @@ config), the same way compose layouts are.
   Possibly per target (open question).
 - A TTL pin used by a protocol must be in a new pin mode, `scheduled` (an
   output the protocol owns), so a pin can't be both a generator and
-  scheduled.
+  scheduled. While a session runs, manual commands on a `scheduled` pin
+  (test pulses, set) are refused (decided 2026-11-16): the protocol is the
+  only thing driving it, so the data matches the plan.
 
 **Expansion.** The controller (and the frontend, from the same rules)
 expands the protocol into a flat list per module: repeats unrolled, jitter
@@ -209,7 +217,7 @@ row; a table view of the steps alongside (dataviz rules).
 1. **Manifest + timed steps for TTL and sound.** `@action`/`@event`, the
    `capabilities` message, the shared format/expansion/validation with JS
    twin and fixtures, the module runner on `ttl` (with the `scheduled` pin
-   mode) and `sound` (`play(file, level_db)` as an action), per-module
+   mode) and `sound` (`play(file, volume, duration_s)` as an action), per-module
    export, `end_state`. Two different modules from the start is what keeps
    the design general. Tests with mocked pins/audio and a fake clock; then
    an on-device lateness check (a scope, or a second TTL module recording
@@ -242,12 +250,21 @@ For us:
 
 - Protocol on the session vs. on each module's config: per session (above)
   so one protocol spans modules; templates cover reuse. Confirm.
-- Can a `scheduled` TTL pin take a manual test pulse during a session?
-- Sound: is `level_db` settable per play on the current hardware, or only
-  per file?
-- Which modules may an event rule target in phase 3: any action in the
-  manifest, or an allow-list per rig (shocking is safety-relevant, and its
-  arm/disarm rules must stay in force)?
+
+Decided 2026-11-16:
+
+- Manual test pulses on a `scheduled` TTL pin are refused mid-session.
+- Sound level per play: yes. Today `_play_sound` takes no arguments and reads
+  `sound.volume` (an ffmpeg gain factor, 1 = 100%), `sound.duration` and the
+  file picked by `_use_this_sound_file` from module state. Phase 1 makes
+  `file`, `volume` and `duration_s` optional `play` parameters, falling back
+  to those settings, and logs the values actually used in the sound CSV (it
+  already has volume and duration columns). `_play_sound` blocks until
+  `aplay` exits, so the runner times each play from its deadline, and
+  validation flags a play longer than the gap to the next one.
+- All actions are schedulable, by timed steps and event rules alike; no
+  allow-list (safety checks stay inside the actions, see "Two execution
+  tiers").
 
 ## Tests
 

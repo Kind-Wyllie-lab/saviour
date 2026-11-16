@@ -652,6 +652,18 @@ class TTLModule(Module):
         }
         self._protocol_error = None
 
+        # Start the worker before the file I/O below: on the rig, writing and
+        # staging the record first made the t = 0 edge 5.7 ms late.
+        self._protocol_stop = threading.Event()
+        self._protocol_thread = threading.Thread(
+            target=self._protocol_worker,
+            args=(edges, t0, start_index, restore, expansion.end_state,
+                  self._protocol_stop),
+            daemon=True,
+            name="ttl-protocol",
+        )
+        self._protocol_thread.start()
+
         record = {
             "format": "saviour.ttl_protocol/1",
             "module_id": getattr(self, "module_id", None),
@@ -685,15 +697,6 @@ class TTLModule(Module):
                 f"TTL protocol starting: {len(edges)} edges over "
                 f"{expansion.duration_s:.3f}s on pins {expansion.pins}")
 
-        self._protocol_stop = threading.Event()
-        self._protocol_thread = threading.Thread(
-            target=self._protocol_worker,
-            args=(edges, t0, start_index, restore, expansion.end_state,
-                  self._protocol_stop),
-            daemon=True,
-            name="ttl-protocol",
-        )
-        self._protocol_thread.start()
 
     def _stop_protocol(self) -> None:
         thread = self._protocol_thread

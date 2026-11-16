@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-16
+
+- [x] **Sidebar page links use the heading font** (branch `fix/sidebar-nav-heading-font`; frontend lint/build clean). `.nav-link` (`Sidebar.css`) inherited `--font-body`, so a page's name was in the body font in the sidebar and the heading font as the page title, and the Frontend tab's heading font barely changed the sidebar. Now `font-family: var(--font-heading)`; the wordmark and footer keep their own fonts.
+
 ## 2026-11-12
 
 - [x] **Habitat gate mapping tested end to end on the real code, no readers** (branch `feat/rfid-mock-inject`; `test_gate_map_simulated_bus.py` (2, a real `RFIDModule` on its simulated bus driving a real `GateMapService`), 9 new cases in `test_rfid_mock.py`, 5 in `test_gate_map.py`; frontend lint/build clean, checked in the habitat `dev:mock`; **not yet run on a controller with an `rfid` module in mock mode**).

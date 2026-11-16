@@ -1,0 +1,191 @@
+/* TTL session protocol editor (Protocol tab). Theme tokens only. */
+.pe {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pe-intro {
+  margin: 0;
+  color: var(--secondary-text-color);
+  font-size: 0.88em;
+  line-height: 1.4;
+}
+
+.pe-notice {
+  padding: 8px 10px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  color: var(--secondary-text-color);
+}
+
+.pe-top {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pe-top-right {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.pe-field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85em;
+}
+
+.pe-field-label {
+  color: var(--secondary-text-color);
+  font-size: 0.9em;
+}
+
+.pe-field input,
+.pe-field select {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The unit sits after the input on the same line. */
+.pe-field:has(.pe-unit) {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  column-gap: 4px;
+  align-items: end;
+}
+.pe-field:has(.pe-unit) .pe-field-label { grid-column: 1 / -1; }
+.pe-unit {
+  color: var(--secondary-text-color);
+  padding-bottom: 4px;
+}
+
+.pe-small {
+  font-size: 0.85em;
+  padding: 3px 8px;
+}
+
+.pe-danger { color: var(--recording-color); }
+
+.pe-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pe-empty {
+  color: var(--secondary-text-color);
+  font-size: 0.9em;
+}
+
+.pe-step {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--card-bg-color);
+}
+
+.pe-step--repeat { border-left: 3px solid var(--accent-color); }
+
+.pe-step--locked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--secondary-text-color);
+  font-size: 0.9em;
+}
+
+.pe-step-main {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pe-path {
+  min-width: 2.2em;
+  align-self: center;
+  color: var(--secondary-text-color);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+}
+
+.pe-remove {
+  margin-left: auto;
+  align-self: center;
+  background: none;
+  border: none;
+  color: var(--secondary-text-color);
+  cursor: pointer;
+  font-size: 1em;
+}
+.pe-remove:hover { color: var(--recording-color); }
+
+.pe-repeat-body {
+  margin: 6px 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pe-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pe-add {
+  font-size: 0.85em;
+  padding: 3px 10px;
+}
+
+.pe-add--inner { align-self: flex-start; }
+
+.pe-json textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.pe-check {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Text stays in text colours; the icon carries the state. */
+.pe-summary {
+  font-size: 0.9em;
+  color: var(--text-color);
+}
+.pe-summary-icon {
+  display: inline-block;
+  margin-right: 6px;
+  font-weight: 700;
+  color: var(--accent-color);
+}
+.pe-summary--bad .pe-summary-icon { color: var(--recording-color); }
+
+.pe-timeline--invalid .ptl-plot { opacity: 0.5; }
+
+.pe-msg {
+  font-size: 0.82em;
+  line-height: 1.35;
+}
+.pe-msg--error { color: var(--recording-color); }
+.pe-msg--warn { color: var(--secondary-text-color); }
+
+.pe-timeline-title {
+  font-size: 0.85em;
+  color: var(--secondary-text-color);
+  margin-bottom: 2px;
+}

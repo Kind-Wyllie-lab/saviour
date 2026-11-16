@@ -103,11 +103,43 @@ The TTL half of phase 1's runner, testable with one TTL module:
   held levels restored (`protocol resume`). When protocols move to the
   session, the controller should send the session t0 explicitly instead.
 
-Rig test (one TTL module, a jumper from a scheduled output to an `input`
-pin): timing (lateness of each input edge against its planned time), drift
-(1 Hz for 30-60 min), early stop, manual pulse refused, same seed same
-gaps, re-arm mid-protocol. Set the late threshold from the results (the
-code uses 20 ms, `LATE_THRESHOLD_S`).
+Rig test 2026-11-16 (`ttl_2904`, GPIO2 scheduled → jumper → GPIO3 input,
+`tools/ttl_protocol_check.py --loopback-pin 3`):
+
+- **Timing** (122-edge protocol: set/hold, 10 Hz × 50 train, 10 jittered
+  pulses): output lateness median 0.033 ms, p99 0.082 ms; every edge seen
+  on the loopback input; input callback delay median 0.61 ms (gpiozero's
+  path, `plans/ttl-kernel-timestamping.md`, not the runner).
+- **The t = 0 edge** lands 3-6 ms late: the runner starts with the
+  recording, after its setup. Starting the worker before writing the
+  record (5.7 → 3.3 ms) and watching inputs before driving outputs (the
+  loopback missed it) are fixed; for exact timing put the first step at
+  ≥ 0.05 s. Pre-arming the runner in the scheduled-start phase would close
+  it; not done.
+- **Same seed, same plan** across runs; **early stop** mid-train leaves the
+  pin low; a **manual pulse** is refused (REST `pin_busy`, naming the
+  protocol).
+- Found on the way: the startup config prune deleted user-added TTL pins
+  and `ttl.protocol` on every restart (fixed, CHANGELOG 2026-11-16).
+- **Drift** (1 Hz × 1800, 30 min): 3,600/3,600 edges, output lateness
+  median 0.042 ms, p99 0.073 ms, max 0.39 ms; median 0.038 ms in the first
+  tenth, 0.033 ms in the last: no drift. All 3,600 on the loopback.
+- Late threshold set from that to 5 ms (`LATE_THRESHOLD_S`, was 20 ms).
+- Not yet: re-arm mid-protocol (needs a module dropout; restarting the
+  service is for the user to do).
+
+**Editor and preview timeline (phase 2, first part), built 2026-11-16:** a
+Protocol tab on the TTL card (`ProtocolEditor.jsx`): steps as a table
+(set / pulse / train, one level of repeat blocks; deeper in the JSON
+view), checked as you type by `sessionProtocol.js`, the JS twin (both
+expand `src/shared/session_protocol_fixtures.json` identically; pytest
+runs the JS under node). `ProtocolTimeline.jsx`: one row per scheduled
+pin, bars where high, mm:ss axis, hover tooltips, drag to zoom, sub-pixel
+bars merged (a 30 min 1 Hz train stays drawable); dimmed and labelled when
+the protocol is invalid. Checked by rendering it (light, dark, invalid);
+hover and zoom not yet used in a browser. Next: the after-session view
+(planned from `_protocol.json` vs actual from the CSV, late/missing
+marked), then live.
 
 ## Two execution tiers
 

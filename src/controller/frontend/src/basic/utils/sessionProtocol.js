@@ -9,7 +9,7 @@
 export const SUPPORTED_VERSION = 1;
 export const END_STATES = ["all_inactive", "hold"];
 export const ACTIONS = ["set", "pulse", "train"];
-export const LATE_THRESHOLD_S = 0.020;
+export const LATE_THRESHOLD_S = 0.005;
 export const MIN_WIDTH_S = 0.005;
 export const MAX_RATE_HZ = 50.0;
 export const MAX_EDGES = 200_000;

@@ -198,10 +198,13 @@ class TTLModule(Module):
         self.current_ttl_events_filename = filename
         self.facade.add_session_file(filename)
         self._open_ttl_file(filename)
+        # Inputs first, so an input jumpered to (or wired downstream of) an
+        # output sees the first generated edges: on the rig the protocol's
+        # t = 0 edge was missed on the loopback input when inputs came last.
+        self._start_recording_all_input_pins()
         self._start_pin_generators()
         if expansion is not None:
             self._start_protocol(expansion, filename)
-        self._start_recording_all_input_pins()
 
 
     def _start_next_recording_segment(self):

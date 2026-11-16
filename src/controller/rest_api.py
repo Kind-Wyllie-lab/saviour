@@ -594,6 +594,12 @@ def create_api_blueprint(web) -> Blueprint:
                 "pin_not_output",
                 f"Pin {pin} on '{module_id}' is configured as an input, not "
                 f"an output", 409)
+        if mode == "scheduled":
+            return _error(
+                "pin_busy",
+                f"Pin {pin} on '{module_id}' is a scheduled pin driven by the "
+                f"session protocol (ttl.protocol); manual pulses are disabled "
+                f"on it", 409)
         if mode not in (None, "None", "none"):
             return _error(
                 "pin_busy",

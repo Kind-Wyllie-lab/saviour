@@ -28,6 +28,8 @@ def _make_ttl(**attrs) -> TTLModule:
     m.pseudorandom_pins = []
     m.interval_pulse_pins = []
     m.experiment_start_pins = []
+    m.scheduled_pins = []
+    m._protocol_error = None
     m.generator_threads = {}
     m.pin_state_buffers = {}
     m.pin_state_lock = threading.Lock()
@@ -563,3 +565,229 @@ class TestSegmentRotationLock:
             with open(csv_file) as f:
                 total_rows += sum(1 for line in f) - 1  # minus header
         assert total_rows == n_writes
+
+
+# ---------------------------------------------------------------------------
+# Session protocol: scheduled pins + runner (plans/session-protocol.md)
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402 -- section-local import for the protocol tests
+import time  # noqa: E402
+
+
+def _protocol_ttl(tmp_path, protocol, pins=(17, 22), start_at=None, session="sessA"):
+    """A TTL module with scheduled output pins, a real CSV in tmp_path and
+    ttl.protocol set; recording folder <tmp>/recordings/pending so the
+    resume state file lands in tmp_path."""
+    pin_objs = [_output_pin(p) for p in pins]
+    m = _make_ttl(
+        pin_configs={p: {"mode": "scheduled"} for p in pins},
+        output_pins=pin_objs,
+        scheduled_pins=list(pins),
+        _protocol_thread=None,
+        _protocol_stop=threading.Event(),
+        _protocol_status={"running": False},
+        _protocol_error=None,
+        module_id="ttl_test",
+    )
+    values = {"ttl.protocol": protocol, "ttl.active_logic": "active_high"}
+    m.config.get.side_effect = lambda k, d=None: values.get(k, d)
+    rec = tmp_path / "recordings" / "pending"
+    rec.mkdir(parents=True, exist_ok=True)
+    m.facade.get_recording_folder.return_value = str(rec)
+    m.facade.get_current_session_name.return_value = session
+    m.facade.stage_file_for_export.side_effect = lambda f: None
+    m.recording = MagicMock()
+    m.recording.recording_intended_start_at = start_at
+    m.recording.recording_start_time = start_at or time.time()
+    csv_path = rec / "sessA_ttl_test_(0_20261116-120000).csv"
+    m._open_ttl_file(str(csv_path))
+    m.is_recording = True
+    return m, pin_objs, csv_path
+
+
+def _rows(csv_path):
+    lines = csv_path.read_text().splitlines()[1:]
+    return [line.split(",") for line in lines]
+
+
+def _proto(*steps, **top):
+    return {"version": 1, "steps": list(steps), **top}
+
+
+class TestScheduledPinRefusals:
+    def test_pulse_pin_refused_while_recording(self):
+        m = _make_ttl(pin_configs={17: {"mode": "scheduled"}},
+                      output_pins=[_output_pin(17)], scheduled_pins=[17],
+                      is_recording=True)
+        result = m.pulse_pin(17)
+        assert result["result"] == "error"
+        assert "scheduled" in result["message"]
+
+    def test_test_pin_refused_while_recording(self):
+        m = _make_ttl(pin_configs={17: {"mode": "scheduled"}},
+                      output_pins=[_output_pin(17)], scheduled_pins=[17],
+                      is_recording=True)
+        assert m.test_pin(17, duration=0.1)["result"] == "error"
+
+    def test_bench_pulse_allowed_outside_a_recording(self):
+        m = _make_ttl(pin_configs={17: {"mode": "scheduled"}},
+                      output_pins=[_output_pin(17)], scheduled_pins=[17])
+        m.config.get.side_effect = lambda k, d=None: d
+        with patch("src.modules.variants.ttl.ttl_module.time.sleep"):
+            assert m.pulse_pin(17, duration_ms=1)["result"] == "success"
+
+
+class TestAssignScheduledPin:
+    def test_scheduled_pin_is_an_inactive_output(self):
+        m = _make_ttl()
+        m.config.get.side_effect = _cfg({"17": {"mode": "scheduled"}})
+        with patch("src.modules.variants.ttl.ttl_module.gpiozero.LED") as led, \
+                patch("src.modules.variants.ttl.ttl_module.time.sleep"):
+            m.assign_pins()
+        led.assert_called_once_with(17)
+        assert m.scheduled_pins == [17]
+        assert len(m.output_pins) == 1
+        led.return_value.on.assert_called_once()  # active_low: inactive = on()
+
+
+class TestProtocolStart:
+    def test_invalid_protocol_refuses_the_recording(self, tmp_path):
+        m, _, _ = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 5, "width_s": 0.1}}))
+        m.is_recording = False
+        m._get_ttl_filename = MagicMock(return_value=str(tmp_path / "x.csv"))
+        m._start_pin_generators = MagicMock()
+        assert m._start_new_recording() is False
+        m._start_pin_generators.assert_not_called()
+        status = m.facade.send_status.call_args[0][0]
+        assert status["type"] == "recording_start_failed"
+        assert "pin 5" in status["error"]
+
+    def test_validate_protocol_command(self, tmp_path):
+        m, _, _ = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 1, "action": "pulse", "params": {"pin": 17, "width_s": 0.5}}))
+        r = m.validate_protocol()
+        assert r["result"] == "success"
+        assert r["edges"] == 2 and r["duration_s"] == 1.5 and r["pins"] == [17]
+        bad = m.validate_protocol({"version": 1, "steps": [{"action": "x"}]})
+        assert bad["result"] == "error" and bad["errors"]
+
+
+class TestProtocolRunner:
+    def _run(self, m, csv_path, timeout=3.0):
+        m._start_protocol(m._expand_protocol(), str(csv_path))
+        m._protocol_thread.join(timeout)
+        assert not m._protocol_thread.is_alive()
+
+    def test_fires_every_edge_on_time_and_logs_it(self, tmp_path):
+        t0 = time.time() + 0.05
+        m, pins, csv_path = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            {"at_s": 0.1, "action": "set", "params": {"pin": 17, "level": "low"}},
+            {"at_s": 0.15, "action": "train",
+             "params": {"pin": 22, "rate_hz": 20, "width_s": 0.01, "count": 3}},
+        ), start_at=t0)
+        self._run(m, csv_path)
+        rows = _rows(csv_path)
+        assert [(r[1], r[3]) for r in rows] == [
+            ("17", "TTLValue.HIGH"), ("17", "TTLValue.LOW"),
+            ("22", "TTLValue.HIGH"), ("22", "TTLValue.LOW"),
+            ("22", "TTLValue.HIGH"), ("22", "TTLValue.LOW"),
+            ("22", "TTLValue.HIGH"), ("22", "TTLValue.LOW"),
+        ]
+        planned = [0, 0.1, 0.15, 0.16, 0.2, 0.21, 0.25, 0.26]
+        for row, t in zip(rows, planned):
+            late = int(row[0]) / 1e9 - (t0 + t)
+            assert -0.0005 < late < 0.015  # never early; loose bound for CI
+            assert "protocol step=" in row[4] and "late_ms=" in row[4]
+        st = m.protocol_status()
+        assert st["finished"] and not st["running"]
+        assert st["fired"] == 8 and st["missed"] == 0
+        assert pins[0].on.call_count == 1 and pins[1].on.call_count == 3
+
+        record = json.loads(
+            (tmp_path / "recordings" / "pending" /
+             "sessA_ttl_test_(0_20261116-120000)_protocol.json").read_text())
+        assert record["session_start_at"] == t0
+        assert len(record["edges"]) == 8 and record["resumed"] is False
+        m.facade.stage_file_for_export.assert_called()
+
+    def test_stop_mid_protocol_drives_held_pins_low(self, tmp_path):
+        m, pins, csv_path = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            {"at_s": 30, "action": "set", "params": {"pin": 17, "level": "low"}},
+        ), start_at=time.time())
+        m._start_protocol(m._expand_protocol(), str(csv_path))
+        time.sleep(0.1)
+        started = time.monotonic()
+        m._stop_protocol()
+        assert time.monotonic() - started < 1.0  # stop doesn't wait out the sleep
+        rows = _rows(csv_path)
+        assert [(r[1], r[3]) for r in rows] == [
+            ("17", "TTLValue.HIGH"), ("17", "TTLValue.LOW")]
+        assert "protocol stopped" in rows[-1][4]
+        pins[0].off.assert_called()  # active_high: inactive = off()
+
+    def test_hold_end_state_leaves_pin_high_at_natural_end(self, tmp_path):
+        m, _, csv_path = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            end_state="hold"), start_at=time.time())
+        self._run(m, csv_path)
+        assert [r[3] for r in _rows(csv_path)] == ["TTLValue.HIGH"]
+
+    def test_all_inactive_end_state_drops_pin_at_natural_end(self, tmp_path):
+        m, _, csv_path = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}}),
+            start_at=time.time())
+        self._run(m, csv_path)
+        rows = _rows(csv_path)
+        assert [r[3] for r in rows] == ["TTLValue.HIGH", "TTLValue.LOW"]
+        assert "protocol end" in rows[-1][4]
+
+    def test_rearm_resumes_on_the_session_clock(self, tmp_path):
+        """First start writes t0; a re-arm without start_at in the same session
+        skips past edges (counted as missed) and restores held levels."""
+        proto = _proto(
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            {"at_s": 0.05, "action": "pulse", "params": {"pin": 22, "width_s": 0.01}},
+            {"at_s": 0.6, "action": "pulse", "params": {"pin": 22, "width_s": 0.01}},
+            {"at_s": 0.8, "action": "set", "params": {"pin": 17, "level": "low"}},
+        )
+        t0 = time.time() - 0.4  # session began 0.4 s ago
+        first, _, _ = _protocol_ttl(tmp_path, proto, start_at=t0)
+        # what the first start persisted
+        first._resolve_protocol_start(TTLModule._protocol_hash(proto))
+
+        m, pins, csv_path = _protocol_ttl(tmp_path, proto, start_at=None)
+        m._start_protocol(m._expand_protocol(), str(csv_path))
+        m._protocol_thread.join(3)
+        st = m.protocol_status()
+        assert st["resumed"], st
+        rows = _rows(csv_path)
+        assert rows[0][1] == "17" and "protocol resume" in rows[0][4]
+        assert st["missed"] == 3  # set high + first pulse's two edges
+        assert st["session_start_at"] == pytest.approx(t0)
+        late = int(rows[1][0]) / 1e9 - (t0 + 0.6)
+        assert -0.0005 < late < 0.015
+
+    def test_new_session_does_not_resume(self, tmp_path):
+        proto = _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 22, "width_s": 0.01}})
+        old, _, _ = _protocol_ttl(tmp_path, proto, start_at=time.time() - 100,
+                                  session="old")
+        old._resolve_protocol_start(TTLModule._protocol_hash(proto))
+        m, _, csv_path = _protocol_ttl(tmp_path, proto, start_at=None, session="new")
+        m._start_protocol(m._expand_protocol(), str(csv_path))
+        m._protocol_thread.join(3)
+        st = m.protocol_status()
+        assert not st["resumed"] and st["fired"] == 2
+
+    def test_runner_crash_fails_liveness(self, tmp_path):
+        m, _, csv_path = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}),
+            start_at=time.time())
+        m._set_output_active = MagicMock(side_effect=RuntimeError("gpio gone"))
+        self._run(m, csv_path)
+        ok, reason = m._check_recording_alive()
+        assert not ok and "gpio gone" in reason

@@ -12,6 +12,8 @@ Created: 23/05/2025
 
 import atexit  # Add GPIO cleanup at module level
 import collections
+import hashlib
+import json
 import os
 import random
 import signal
@@ -29,6 +31,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module
+from shared import session_protocol
 
 
 # Global GPIO cleanup function
@@ -102,7 +105,14 @@ class TTLModule(Module):
         self.pseudorandom_pins = []  # Pins configured as pseudorandom
         self.interval_pulse_pins = []  # Pins configured as interval_pulse
         self.experiment_start_pins = []  # Pins configured as experiment_start
+        self.scheduled_pins = []  # Pins driven by the session protocol (ttl.protocol)
         self.generator_threads = {}  # Store generator threads
+
+        # Session protocol runner (plans/session-protocol.md, phase 1)
+        self._protocol_thread = None
+        self._protocol_stop = threading.Event()
+        self._protocol_status = {"running": False}
+        self._protocol_error = None
 
         # Rolling pin state buffers: {pin_number: deque of bool (True = electrical HIGH)}
         # Must be initialised before assign_pins() which populates them
@@ -135,6 +145,8 @@ class TTLModule(Module):
         self.ttl_commands = {
             "test_pin": self.test_pin,
             "pulse_pin": self.pulse_pin,
+            "protocol_status": self.protocol_status,
+            "validate_protocol": self.validate_protocol,
         }
         self.command.set_commands(self.ttl_commands) # Append new TTL callbacks
 
@@ -169,6 +181,17 @@ class TTLModule(Module):
         # Set before starting generator threads so their while-loops don't exit immediately.
         # The base Recording class sets recording.is_recording=True only after this method
         # returns, but the workers need to see the flag as True when they first check it.
+        # Expand the session protocol before anything starts: an invalid one
+        # refuses the recording (with the reasons) rather than running part of
+        # a protocol or none of it while the session looks healthy.
+        expansion = self._expand_protocol()
+        if expansion is not None and not expansion.ok:
+            message = "TTL protocol invalid: " + "; ".join(expansion.errors[:5])
+            self.logger.error(message)
+            self.facade.send_status({"type": "recording_start_failed",
+                                     "error": message, "reason": "ttl_protocol"})
+            return False
+
         self.is_recording = True
 
         filename = self._get_ttl_filename()
@@ -176,6 +199,8 @@ class TTLModule(Module):
         self.facade.add_session_file(filename)
         self._open_ttl_file(filename)
         self._start_pin_generators()
+        if expansion is not None:
+            self._start_protocol(expansion, filename)
         self._start_recording_all_input_pins()
 
 
@@ -229,6 +254,8 @@ class TTLModule(Module):
         """
         if not self.is_recording:
             return True, None
+        if self._protocol_error:
+            return False, f"TTL protocol runner failed: {self._protocol_error}"
         dead = []
         for pn, t in self.generator_threads.items():
             if t.is_alive():
@@ -272,6 +299,9 @@ class TTLModule(Module):
                 "result": "error",
                 "message": f"Pin {pin_number} is not an output pin — cannot drive a test pulse",
             }
+        refused = self._scheduled_pin_refusal(pin_number)
+        if refused:
+            return refused
 
         # Cancel any in-progress test on this pin
         existing = self._pin_test_stop_flags.pop(pin_number, None)
@@ -453,6 +483,10 @@ class TTLModule(Module):
                 "message": f"Pin {pin_number} is not an output pin — cannot pulse it",
             }
 
+        refused = self._scheduled_pin_refusal(pin_number)
+        if refused:
+            return refused
+
         gen_thread = self.generator_threads.get(pin_number)
         if gen_thread is not None and gen_thread.is_alive():
             mode = self.pin_configs[pin_number].get("mode")
@@ -480,6 +514,285 @@ class TTLModule(Module):
             "onset_ns": onset_ns,
             "offset_ns": offset_ns,
         }
+
+
+    """Session protocol (plans/session-protocol.md, phase 1)"""
+
+    # A re-armed module skips protocol edges more than this far in the past
+    # (logged as missed) instead of firing them late in a burst.
+    _PROTOCOL_RESUME_GRACE_S = 0.25
+    # The worker sleeps to this long before each deadline, then spins.
+    _PROTOCOL_SPIN_S = 0.002
+    _PROTOCOL_LATE_LOG_LIMIT = 10
+
+    def _scheduled_pin_refusal(self, pin_number: int) -> dict | None:
+        """Manual drives of a protocol-owned pin are refused mid-session
+        (decided 2026-11-16): the protocol is the only thing driving it, so
+        the data matches the plan. Outside a recording they're bench tests."""
+        if pin_number in self.scheduled_pins and self.is_recording:
+            return {
+                "result": "error",
+                "message": (f"Pin {pin_number} is a scheduled pin driven by the "
+                            f"session protocol — manual pulses are disabled "
+                            f"while recording"),
+            }
+        return None
+
+    def _expand_protocol(self, protocol=None):
+        """Expand ttl.protocol (or *protocol*) against this module's scheduled
+        pins. None when there's no protocol to run."""
+        if protocol is None:
+            protocol = self.config.get("ttl.protocol", None)
+        if not protocol:
+            if self.scheduled_pins:
+                self.logger.warning(
+                    f"Scheduled pin(s) {self.scheduled_pins} but no ttl.protocol "
+                    f"— they stay inactive")
+            return None
+        return session_protocol.expand(
+            protocol,
+            module_id=getattr(self, "module_id", None),
+            allowed_pins=set(self.scheduled_pins),
+        )
+
+    def validate_protocol(self, protocol: dict | None = None) -> dict:
+        """Check a protocol (default: the configured ttl.protocol) without
+        running it: errors, warnings, edge count, duration."""
+        exp = self._expand_protocol(protocol)
+        if exp is None:
+            return {"result": "error", "errors": ["no protocol configured"],
+                    "warnings": []}
+        return {
+            "result": "success" if exp.ok else "error",
+            "errors": exp.errors,
+            "warnings": exp.warnings,
+            "edges": len(exp.edges),
+            "duration_s": round(exp.duration_s, 6),
+            "pins": exp.pins,
+            "end_state": exp.end_state,
+        }
+
+    def protocol_status(self) -> dict:
+        """The protocol runner's progress: next edge, late and missed counts."""
+        return dict(self._protocol_status)
+
+    def _protocol_state_path(self) -> str:
+        # recording_folder is <root>/recordings/pending: keep the state beside
+        # <root>/recordings, outside anything the export scans.
+        root = os.path.dirname(os.path.dirname(self.facade.get_recording_folder()))
+        return os.path.join(root, "ttl_protocol_state.json")
+
+    @staticmethod
+    def _protocol_hash(protocol) -> str:
+        """Identifies a protocol, so a re-arm resumes only the same one."""
+        canonical = json.dumps(protocol, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+    def _resolve_protocol_start(self, protocol_hash: str) -> tuple[float, bool]:
+        """t = 0 for the protocol, and whether this is a resume.
+
+        The controller's first start_recording carries the session's PTP
+        start time (start_at); its re-arms after a dropout don't. So the first
+        start writes t0 to a small state file, and a start without start_at
+        in the same session with the same protocol picks it up again (even
+        after a module restart), keeping every step on the session's clock.
+        """
+        recording = getattr(self, "recording", None)
+        intended = getattr(recording, "recording_intended_start_at", None)
+        session = self.facade.get_current_session_name()
+        path = self._protocol_state_path()
+        if intended is None and session:
+            try:
+                with open(path) as f:
+                    state = json.load(f)
+                if (state.get("session") == session
+                        and state.get("hash") == protocol_hash):
+                    return float(state["t0"]), True
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        t0 = intended or getattr(recording, "recording_start_time", None) or time.time()
+        try:
+            with open(path, "w") as f:
+                json.dump({"session": session, "t0": t0, "hash": protocol_hash}, f)
+        except OSError as e:
+            self.logger.warning(f"Could not save protocol start state ({e}); "
+                                f"a re-arm would restart the protocol")
+        return float(t0), False
+
+    def _start_protocol(self, expansion, csv_filename: str) -> None:
+        protocol = self.config.get("ttl.protocol", None)
+        t0, resumed = self._resolve_protocol_start(self._protocol_hash(protocol))
+        now = time.time()
+        edges = expansion.edges
+
+        start_index = 0
+        restore: dict[int, str] = {}
+        if resumed:
+            cutoff = (now - t0) - self._PROTOCOL_RESUME_GRACE_S
+            while start_index < len(edges) and edges[start_index].t_s < cutoff:
+                start_index += 1
+            restore = session_protocol.state_at(edges[:start_index], cutoff)
+
+        for w in expansion.warnings:
+            self.logger.warning(f"TTL protocol: {w}")
+
+        self._protocol_status = {
+            "running": True,
+            "session_start_at": t0,
+            "resumed": resumed,
+            "total_edges": len(edges),
+            "next_index": start_index,
+            "next_at": (t0 + edges[start_index].t_s) if start_index < len(edges) else None,
+            "fired": 0,
+            "missed": start_index if resumed else 0,
+            "late": 0,
+            "max_late_ms": 0.0,
+            "end_state": expansion.end_state,
+            "finished": False,
+        }
+        self._protocol_error = None
+
+        record = {
+            "format": "saviour.ttl_protocol/1",
+            "module_id": getattr(self, "module_id", None),
+            "session": self.facade.get_current_session_name(),
+            "session_start_at": t0,
+            "runner_started_at": now,
+            "resumed": resumed,
+            "missed_edges": start_index if resumed else 0,
+            "late_threshold_ms": session_protocol.LATE_THRESHOLD_S * 1000,
+            "end_state": expansion.end_state,
+            "warnings": expansion.warnings,
+            "protocol": protocol,
+            "edges": [e.to_dict() for e in edges],
+        }
+        stem = csv_filename[:-4] if csv_filename.endswith(".csv") else csv_filename
+        record_path = f"{stem}_protocol.json"
+        try:
+            with open(record_path, "w") as f:
+                json.dump(record, f, indent=1)
+            self.facade.add_session_file(record_path)
+            self.facade.stage_file_for_export(record_path)
+        except OSError as e:
+            self.logger.error(f"Could not write {record_path}: {e}")
+
+        if resumed:
+            self.logger.warning(
+                f"TTL protocol resumed at t={now - t0:.3f}s: skipped "
+                f"{start_index} past edge(s), restoring {restore}")
+        else:
+            self.logger.info(
+                f"TTL protocol starting: {len(edges)} edges over "
+                f"{expansion.duration_s:.3f}s on pins {expansion.pins}")
+
+        self._protocol_stop = threading.Event()
+        self._protocol_thread = threading.Thread(
+            target=self._protocol_worker,
+            args=(edges, t0, start_index, restore, expansion.end_state,
+                  self._protocol_stop),
+            daemon=True,
+            name="ttl-protocol",
+        )
+        self._protocol_thread.start()
+
+    def _stop_protocol(self) -> None:
+        thread = self._protocol_thread
+        self._protocol_stop.set()
+        if thread is not None and thread.is_alive() \
+                and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        self._protocol_thread = None
+
+    def _protocol_worker(self, edges, t0: float, start_index: int,
+                         restore: dict, end_state: str,
+                         stop: threading.Event) -> None:
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(70))
+        except (PermissionError, AttributeError, OSError) as e:
+            self.logger.debug(f"Protocol runner: SCHED_FIFO unavailable ({e})")
+
+        pins = {p.pin.number: p for p in self.output_pins}
+        level = {pn: "low" for pn in self.scheduled_pins}
+        status = self._protocol_status
+        threshold = session_protocol.LATE_THRESHOLD_S
+
+        def drive(pin_number: int, new_level: str, source: str,
+                  target: float | None = None) -> float:
+            """Set the pin, stamp it, log it; returns lateness in seconds
+            against *target* (0 when there's no deadline)."""
+            pin_obj = pins[pin_number]
+            if new_level == "high":
+                self._set_output_active(pin_obj)
+            else:
+                self._set_output_inactive(pin_obj)
+            ts = time.time_ns()
+            level[pin_number] = new_level
+            late_s = (ts / 1e9 - target) if target is not None else 0.0
+            if target is not None:
+                source = f"{source} late_ms={late_s * 1000:.3f}"
+            self._write_ttl_event(
+                ts, pin_number,
+                TTLValue.HIGH if new_level == "high" else TTLValue.LOW,
+                source=source)
+            return late_s
+
+        def all_low(source: str) -> None:
+            for pn, lv in list(level.items()):
+                if lv == "high" and pn in pins:
+                    drive(pn, "low", source)
+
+        try:
+            for pn, lv in restore.items():
+                if lv == "high":
+                    drive(pn, "high", "protocol resume")
+
+            for index in range(start_index, len(edges)):
+                edge = edges[index]
+                target = t0 + edge.t_s
+                status["next_index"] = index
+                status["next_at"] = target
+                while True:
+                    remaining = target - time.time()
+                    if remaining <= 0:
+                        break
+                    if remaining > self._PROTOCOL_SPIN_S:
+                        if stop.wait(remaining - self._PROTOCOL_SPIN_S):
+                            break
+                    elif stop.is_set():
+                        break
+                if stop.is_set():
+                    all_low("protocol stopped")
+                    return
+                late_s = drive(edge.pin, edge.level,
+                               f"protocol step={edge.step} {edge.action}", target)
+                status["fired"] += 1
+                late_ms = late_s * 1000
+                if late_ms > status["max_late_ms"]:
+                    status["max_late_ms"] = round(late_ms, 3)
+                if late_s > threshold:
+                    status["late"] += 1
+                    if status["late"] <= self._PROTOCOL_LATE_LOG_LIMIT:
+                        self.logger.warning(
+                            f"TTL protocol step {edge.step} ({edge.action}) on pin "
+                            f"{edge.pin} fired {late_ms:.1f} ms late")
+
+            status["next_index"] = len(edges)
+            status["next_at"] = None
+            status["finished"] = True
+            if end_state == "all_inactive":
+                all_low("protocol end")
+            self.logger.info(
+                f"TTL protocol finished: {status['fired']} edges, "
+                f"{status['late']} late, max {status['max_late_ms']} ms")
+        except Exception as e:
+            self._protocol_error = str(e)
+            self.logger.exception(f"TTL protocol runner failed: {e}")
+            try:
+                all_low("protocol error")
+            except Exception:
+                self.logger.exception("Could not set scheduled pins inactive")
+        finally:
+            status["running"] = False
 
 
     def _start_recording_all_input_pins(self):
@@ -690,6 +1003,7 @@ class TTLModule(Module):
             self.pseudorandom_pins = []
             self.interval_pulse_pins = []
             self.experiment_start_pins = []
+            self.scheduled_pins = []
 
             # Track pin assignments for logging
             input_pins_assigned = []
@@ -833,6 +1147,23 @@ class TTLModule(Module):
                                 self.logger.error(
                                     f"Pin {pin_number} retry failed: {e2}")
 
+                    elif pin_type == "scheduled":
+                        # An output the session protocol (ttl.protocol) owns:
+                        # held inactive, driven only by the protocol runner
+                        # during a recording; manual pulses are refused then.
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            self._set_output_inactive(pin_obj)
+                            self.scheduled_pins.append(pin_number)
+                            self.logger.info(
+                                f"Assigned output pin {pin_number} as scheduled "
+                                f"(initial state: inactive)")
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to assign scheduled pin {pin_number}: {e}")
+
                     elif pin_type in (None, "None", "none"):
                         # Plain output pin, held inactive, with no automatic
                         # generator -- for test_pin()/pulse_pin() to drive on
@@ -944,6 +1275,7 @@ class TTLModule(Module):
         try:
             # Set recording flag to False to signal threads to stop
             self.is_recording = False
+            self._stop_protocol()
 
             # Give threads a moment to exit naturally and execute finally blocks
             time.sleep(0.1)  # 100ms should be enough for daemon threads to check the flag and cleanup

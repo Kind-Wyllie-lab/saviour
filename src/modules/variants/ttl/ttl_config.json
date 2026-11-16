@@ -24,6 +24,7 @@
             "experiment_clock",
             "interval_pulse",
             "experiment_start",
+            "scheduled",
             "input"
         ],
         "_mode_settings_schema": {
@@ -45,6 +46,7 @@
                 "_delay_s": {"type": "float", "min": 0.001, "default": 0.001, "description": "Delay after recording starts before the pulse fires, in seconds (e.g. 0.001 = as close to immediate as the schema allows)"},
                 "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"}
             },
+            "_scheduled": {},
             "_input": {
                 "_debounce_ms": {"type": "int", "min": 0, "default": 50}
             }

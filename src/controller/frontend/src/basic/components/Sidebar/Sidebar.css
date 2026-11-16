@@ -197,6 +197,8 @@
     .nav-link {
         text-decoration: none;
         color: var(--text-color);
+        /* Page names, shown again as each page's title: same font as headings. */
+        font-family: var(--font-heading);
         font-size: clamp(15px, 1.5vw, 18px);
         text-align: center;
         min-height: 46px;

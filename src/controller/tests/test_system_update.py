@@ -272,3 +272,62 @@ def test_find_npm_none_when_absent(monkeypatch):
     monkeypatch.setattr("glob.glob", lambda _pat: [])
     npm, _env = system_update.find_npm()
     assert npm is None
+
+
+# --------------------------------------------------------------------------- #
+# Frontend build runs as the checkout owner (root-owned dist/ fix)
+# --------------------------------------------------------------------------- #
+
+class TestNpmAsOwner:
+    def test_plain_npm_when_we_own_the_tree(self):
+        with patch.object(su, "_tree_owner", return_value="pi"), \
+             patch.object(su, "_current_user", return_value="pi"):
+            assert su._npm_as_owner("/x", "/n/npm", {"PATH": "/n"},
+                                    ["run", "build"]) == ["/n/npm", "run", "build"]
+
+    def test_sudo_to_owner_carrying_path_and_home(self):
+        ent = MagicMock(pw_dir="/home/pi")
+        with patch.object(su, "_tree_owner", return_value="pi"), \
+             patch.object(su, "_current_user", return_value="root"), \
+             patch.object(su.pwd, "getpwnam", return_value=ent):
+            assert su._npm_as_owner("/x", "/n/npm", {"PATH": "/n:/usr/bin"},
+                                    ["install"]) == [
+                "sudo", "-n", "-u", "pi", "env", "PATH=/n:/usr/bin",
+                "HOME=/home/pi", "/n/npm", "install"]
+
+    def test_plain_npm_when_owner_unknown(self):
+        with patch.object(su, "_tree_owner", return_value=None):
+            assert su._npm_as_owner("/x", "npm", {}, ["install"]) == ["npm", "install"]
+
+
+class TestReclaimTree:
+    def test_noop_when_not_root(self, tmp_path):
+        with patch.object(su.os, "geteuid", return_value=1000):
+            assert su._reclaim_tree(str(tmp_path), "pi") == 0
+
+    def test_chowns_only_foreign_entries(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "f.js").write_text("x")
+        (tmp_path / "g.js").write_text("y")
+        me = os.getuid()
+        ent = MagicMock(pw_uid=me + 1, pw_gid=me + 1)
+        owned = {str(tmp_path / "g.js")}  # already the owner's
+        real_lstat = os.lstat
+
+        def fake_lstat(p):
+            st = real_lstat(p)
+            fields = list(st[:10])
+            fields[4] = me + 1 if str(p) in owned else st.st_uid  # st_uid
+            return os.stat_result(fields)
+
+        with patch.object(su.os, "geteuid", return_value=0), \
+             patch.object(su.pwd, "getpwnam", return_value=ent), \
+             patch.object(su.os, "lstat", side_effect=fake_lstat), \
+             patch.object(su.os, "lchown") as lchown:
+            assert su._reclaim_tree(str(tmp_path), "pi") == 3
+        done = {c.args[0] for c in lchown.call_args_list}
+        assert done == {str(tmp_path), str(tmp_path / "a"), str(tmp_path / "a" / "f.js")}
+
+    def test_missing_path_is_fine(self, tmp_path):
+        with patch.object(su.os, "geteuid", return_value=0):
+            assert su._reclaim_tree(str(tmp_path / "nope"), "pi") == 0

@@ -67,6 +67,50 @@ def _as_owner(src_root: str, argv: list[str]) -> list[str]:
         return ["sudo", "-n", "-u", owner, *argv]
     return argv
 
+
+def _reclaim_tree(path: str, owner: str | None) -> int:
+    """Give *owner* back every file under *path* it doesn't own (only when
+    running as root, else a no-op). Undoes earlier root builds, whose
+    root-owned dist/ and node_modules/ broke the owner's own `npm run build`
+    with EACCES. Doesn't follow symlinks. Returns how many entries changed."""
+    if pwd is None or not owner or not os.path.exists(path) or os.geteuid() != 0:
+        return 0
+    try:
+        ent = pwd.getpwnam(owner)
+    except KeyError:
+        return 0
+    uid, gid = ent.pw_uid, ent.pw_gid
+    changed = 0
+    paths = [path]
+    for root, dirs, files in os.walk(path):
+        paths.extend(os.path.join(root, n) for n in dirs + files)
+    for p in paths:
+        try:
+            if os.lstat(p).st_uid != uid:
+                os.lchown(p, uid, gid)
+                changed += 1
+        except OSError:
+            pass
+    return changed
+
+
+def _npm_as_owner(src_root: str, npm: str, npm_env: dict,
+                  args: list[str]) -> list[str]:
+    """argv running `npm *args` as the checkout's owner when that isn't us,
+    so build output belongs to the user who edits and builds the tree.
+    sudo resets the environment, so PATH (nvm's node) and HOME (npm's cache)
+    go through `env`."""
+    owner = _tree_owner(src_root)
+    if pwd is None or not owner or owner == _current_user():
+        return [npm, *args]
+    try:
+        home = pwd.getpwnam(owner).pw_dir
+    except KeyError:
+        return [npm, *args]
+    return ["sudo", "-n", "-u", owner, "env", f"PATH={npm_env.get('PATH', '')}",
+            f"HOME={home}", npm, *args]
+
+
 SRC_ROOT = "/usr/local/src/saviour"
 UPDATE_STORE = "/var/lib/saviour/updates"
 UPDATE_ZIP = os.path.join(UPDATE_STORE, "saviour-latest.zip")
@@ -309,12 +353,22 @@ def build_and_restart(src_root: str = SRC_ROOT, rebuild_frontend: bool = True,
                 if emit:
                     emit("deploy_update_status", {"stage": "building_frontend"})
                 _LOG.info("build_and_restart: rebuilding frontend")
-                # npm runs as the service user (root): the root-owned dist/
-                # drift is a known CLAUDE.md item.
-                subprocess.run([npm, "install", "--silent"],
-                               cwd=frontend_dir, capture_output=True, env=npm_env)
-                b = subprocess.run([npm, "run", "build"], cwd=frontend_dir,
-                                   capture_output=True, text=True, env=npm_env)
+                # npm runs as the checkout's owner, not the service's root:
+                # root-built files in dist/ and node_modules/ made the owner's
+                # next `npm run build` fail with EACCES. Earlier root builds'
+                # files are handed back first.
+                owner = _tree_owner(src_root)
+                for sub in ("dist", "node_modules", ".env.local"):
+                    n = _reclaim_tree(os.path.join(frontend_dir, sub), owner)
+                    if n:
+                        _LOG.info("build_and_restart: %s: %d entries back to %s",
+                                  sub, n, owner)
+                subprocess.run(
+                    _npm_as_owner(src_root, npm, npm_env, ["install", "--silent"]),
+                    cwd=frontend_dir, capture_output=True, env=npm_env)
+                b = subprocess.run(
+                    _npm_as_owner(src_root, npm, npm_env, ["run", "build"]),
+                    cwd=frontend_dir, capture_output=True, text=True, env=npm_env)
                 if b.returncode != 0:
                     _LOG.warning("build_and_restart: frontend build failed: %s",
                                  b.stderr)

@@ -43,9 +43,10 @@ SUPPORTED_VERSION = 1
 END_STATES = ("all_inactive", "hold")
 ACTIONS = ("set", "pulse", "train")
 
-# A step later than this still fires but is counted as late (to be measured
-# on the rig; see the plan).
-LATE_THRESHOLD_S = 0.020
+# A step later than this still fires but is counted as late. Measured on the
+# desk rig 2026-11-16: worst 0.39 ms over 3,600 edges in 30 min (the t = 0
+# edge ~3 ms); 5 ms flags a real stall without tripping on those.
+LATE_THRESHOLD_S = 0.005
 # Below these the editor warns: a Python thread can't hold them reliably.
 MIN_WIDTH_S = 0.005
 MAX_RATE_HZ = 50.0

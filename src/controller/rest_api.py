@@ -617,7 +617,7 @@ def create_api_blueprint(web) -> Blueprint:
             return _error(
                 "pin_busy",
                 f"Pin {pin} on '{module_id}' is a scheduled pin driven by the "
-                f"session protocol (ttl.protocol); manual pulses are disabled "
+                f"session protocol; manual pulses are disabled "
                 f"on it", 409)
         if mode not in (None, "None", "none"):
             return _error(
@@ -871,6 +871,7 @@ def create_api_blueprint(web) -> Blueprint:
             data.get("duration_minutes"),
             data.get("researcher") or None,
             unattended=bool(data.get("unattended")),
+            protocol_name=data.get("protocol") or None,
         )
         if not result or not result.get("success"):
             return _error(

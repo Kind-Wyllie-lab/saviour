@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { expand, highSpans } from "../../../utils/sessionProtocol";
+import { expand, highSpans } from "../../utils/sessionProtocol";
 
 // Expand a protocol against this module's scheduled pins and shape it for
 // ProtocolTimeline: { pins, result, rows, spans }. Shared by the designer

@@ -1,4 +1,4 @@
-import { fmtTime } from "../../../utils/sessionProtocol";
+import { fmtTime } from "../../utils/sessionProtocol";
 
 // Test routine / Stop test controls and the result line; the state comes
 // from useProtocolTest.

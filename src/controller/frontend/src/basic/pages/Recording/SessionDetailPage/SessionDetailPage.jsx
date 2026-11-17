@@ -19,6 +19,7 @@ import FileTree from "./FileTree";
 import HabitatSessionPanel from "./HabitatSessionPanel";
 import SessionExportStatus from "./SessionExportStatus";
 import ComposeJobRow from "./ComposeJobRow";
+import SessionProtocolRow from "./SessionProtocolRow";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -543,6 +544,8 @@ export default function SessionDetailPage() {
                 </>
               );
             })()}
+
+            {session.protocol && <SessionProtocolRow protocol={session.protocol} />}
 
             <span className="session-meta-label">Start</span>
             <span>{session.start_time || "-"}</span>

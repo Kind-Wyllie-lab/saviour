@@ -9,6 +9,7 @@ import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
 import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
 import { humanizeMinutes } from "../sessionFormat";
+import SessionProtocolField from "./SessionProtocolField";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
@@ -33,6 +34,10 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   }, [experimentName, target, now]);
 
   const [recordingMode, setRecordingMode] = usePersistedState("saviour_session_form_mode", "immediate");
+  // Library protocol for the session ("" = none), and whether it will run
+  // on the target (SessionProtocolField's check, the controller's twin).
+  const [protocolName, setProtocolName] = usePersistedState("saviour_session_form_protocol", "");
+  const [protocolOk, setProtocolOk] = useState(true);
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [dataRate, setDataRate] = useState(null);
@@ -108,6 +113,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   useEffect(() => {
     if (!prefill) return;
     setRecordingMode(prefill.mode);
+    setProtocolName(prefill.protocolName ?? "");
     if (prefill.mode === "timed") {
       // prefill.durationMinutes may carry a fractional/sub-minute part
       // (e.g. 12.25 == 12m15s) -- convert through whole seconds so the
@@ -127,7 +133,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
       setScheduledDays(new Set(prefill.scheduledDays?.length ? prefill.scheduledDays : ALL_DAYS));
     }
   }, [
-    prefill, setRecordingMode, setDurationHours, setDurationMinutes, setDurationSeconds,
+    prefill, setRecordingMode, setProtocolName, setDurationHours, setDurationMinutes, setDurationSeconds,
     setStartHour, setStartMinute, setEndHour, setEndMinute, setScheduledDays,
   ]);
 
@@ -150,8 +156,9 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const timedDurationValid = recordingMode !== "timed" || totalDurationMins > 0;
 
   const ptpOk = ptpSyncStatus === null || ptpSyncStatus.ok;
-  const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid && ptpOk;
-  const canSchedule = !!experimentName;
+  const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid && ptpOk
+    && protocolOk;
+  const canSchedule = !!experimentName && protocolOk;
 
   const nameAlreadyUsed = experimentName
     ? Object.values(sessionList).some(s => s.session_name.startsWith(experimentName + "-"))
@@ -208,6 +215,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         end_time:   `${endHour}:${endMinute}`,
         days: daysArray,
         researcher: experimenter || null,
+        protocol: protocolName || null,
       });
     } else {
       socket.emit("create_session", {
@@ -215,6 +223,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         session_name: experimentName,
         duration_minutes: recordingMode === "timed" ? totalDurationMins : null,
         researcher: experimenter || null,
+        protocol: protocolName || null,
       });
     }
 
@@ -328,6 +337,14 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
             </div>
           </>
         )}
+
+        <SessionProtocolField
+          value={protocolName}
+          onChange={setProtocolName}
+          targetModules={targetModules}
+          durationMinutes={recordingMode === "timed" ? totalDurationMins : null}
+          onCheck={setProtocolOk}
+        />
 
         <div className="session-description">
           {recordingMode === "immediate" && (

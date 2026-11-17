@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import socket from "../../../../socket";
+import socket from "../../../socket";
 
 // Bench run of the session protocol on the module (TTL test_protocol): the
 // same edges at the same times as in a recording, nothing recorded, pins

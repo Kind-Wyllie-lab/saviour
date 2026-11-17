@@ -715,9 +715,22 @@ class TestSessionCreate:
         assert resp.get_json()["session_name"] == "MyExp_all_20260907"
         assert resp.get_json()["state"] == "pending"
         web.facade.create_session.assert_called_once_with(
-            "MyExp", "all", None, "asg", unattended=False)
+            "MyExp", "all", None, "asg", unattended=False, protocol_name=None)
         web._write_session_metadata.assert_called_once()
         web.facade.force_start_session.assert_not_called()
+
+    def test_create_passes_the_protocol_name(self):
+        web, password = _web()
+        web.facade.create_session.return_value = {
+            "success": True, "session_name": "MyExp_all_20260907"}
+        web.facade.get_recording_sessions.return_value = {
+            "MyExp_all_20260907": _session("MyExp_all_20260907", state="pending"),
+        }
+        web.app.test_client().post(
+            "/api/v1/sessions",
+            json={"name": "MyExp", "target": "all", "protocol": "tones"},
+            headers=_auth(password))
+        assert web.facade.create_session.call_args.kwargs["protocol_name"] == "tones"
 
     def test_create_with_autostart(self):
         web, password = _web()

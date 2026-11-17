@@ -62,6 +62,11 @@ class Recording:
         self._recording_duration_thread = None # A thread to automatically stop recording if a duration is given # TODO: Rename this something to do with auto stop recording
         self.recording_start_time = None # When a recording session was started
         self.recording_intended_start_at = None # The start_at timestamp requested by the controller (None = start immediately)
+        # The session's protocol and its t = 0 (plans/session-protocol.md),
+        # as sent with start_recording; None when the session has none. A
+        # module type that runs protocols (TTL) reads them at start.
+        self.session_protocol = None
+        self.session_protocol_start_at = None
 
         # Health metadata thread
         self.health_recording_thread = None # A thread to record health on
@@ -107,12 +112,16 @@ class Recording:
 
     """Start / Stop Recording"""
     def start_recording(self, session_name: str = None, duration: str = None,
-                        start_at: float | None = None) -> dict:
+                        start_at: float | None = None, protocol: dict | None = None,
+                        protocol_start_at: float | None = None) -> dict:
         """Accept a start_recording command from the controller.
 
         If start_at is provided (a UTC epoch float), recording begins at that
         timestamp rather than immediately.  All modules share a PTP-disciplined
         clock so they all fire at the same wall-clock moment.
+
+        protocol / protocol_start_at: the session's protocol and the session's
+        t = 0 for it (the same on a re-arm, so steps stay on the session clock).
         """
         self.logger.info(
             f"start_recording called — session_name={session_name}, "
@@ -135,6 +144,8 @@ class Recording:
             return {"result": "error", "error": blocked}
 
         self.recording_intended_start_at = start_at
+        self.session_protocol = protocol if isinstance(protocol, dict) else None
+        self.session_protocol_start_at = protocol_start_at
 
         if start_at is not None:
             delay = start_at - time.time()

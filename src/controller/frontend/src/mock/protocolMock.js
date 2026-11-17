@@ -19,7 +19,7 @@ function seedLibrary(modules) {
   return lib;
 }
 
-export function makeProtocolRoutes(getModules) {
+export function makeProtocolRoutes(getModules, getSessions) {
   let lib = null;
   const ensure = () => { if (!lib) lib = seedLibrary(getModules()); return lib; };
   const list = () => Object.entries(ensure())
@@ -29,6 +29,34 @@ export function makeProtocolRoutes(getModules) {
   const fail = (sock, error) => sock._fire("protocol_error", { error });
 
   return {
+    // Minimal session creation so the New Session form works in dev:mock: a
+    // PENDING session with a copy of the picked protocol (the real check
+    // and start live in src/controller/recording.py).
+    create_session(d = {}) {
+      const name = String(d.session_name || "").trim();
+      if (!name) return this._fire("session_error", { error: "Session name cannot be empty" });
+      let protocol = null;
+      if (d.protocol) {
+        const e = ensure()[d.protocol];
+        if (!e) return this._fire("session_error", { error: `No protocol called “${d.protocol}” in the library` });
+        protocol = structuredClone(e.protocol);
+      }
+      const mods = Object.values(getModules() ?? {})
+        .filter((m) => d.target === "all" || m.id === d.target || m.group === d.target).map((m) => m.id);
+      const p = (n) => String(n).padStart(2, "0");
+      const t = new Date();
+      const full = `${name.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_")}-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`;
+      const sessions = getSessions();
+      sessions[full] = {
+        session_name: full, target: d.target || "all", state: "pending", modules: mods,
+        start_time: null, end_time: null, error_message: "", error_time: null, scheduled: false,
+        duration_minutes: d.duration_minutes ?? null, timed_stop_at: null, researcher: d.researcher ?? null,
+        module_stop_states: {}, module_export_states: {}, total_exports_complete: 0,
+        total_exports_failed: 0, pending_exports: 0, stopped_epoch: null, protocol,
+      };
+      this._fire("sessions_update", structuredClone(sessions));
+      this._fire("create_session_result", { success: true, session_name: full });
+    },
     get_protocols() { this._fire("protocols", { items: list() }); },
     save_protocol(d = {}) {
       const name = clean(d.name);

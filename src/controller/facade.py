@@ -301,14 +301,23 @@ class ControllerFacade:
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)
 
-    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False) -> dict:
-        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended)
+    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False, protocol_name=None) -> dict:
+        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended, protocol_name=protocol_name)
 
     def update_pending_session(self, session_name: str, new_session_name=None, duration_minutes=None) -> dict:
         return self.controller.recording.update_pending_session(session_name, new_session_name, duration_minutes)
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False) -> dict:
-        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name)
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False, protocol_name=None) -> dict:
+        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name, protocol_name=protocol_name)
+
+    def get_protocol(self, name: str) -> dict | None:
+        """A library protocol by name (a copy), or None."""
+        library = getattr(self.controller, "protocol_library", None)
+        return library.get(name) if library is not None and name else None
+
+    def get_session_protocol(self, session_name: str) -> dict | None:
+        session = self.controller.recording.sessions.get(session_name)
+        return session.protocol if session is not None else None
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)

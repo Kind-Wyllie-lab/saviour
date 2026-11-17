@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import socket from "../../../../socket";
+import socket from "../../../socket";
 
 // The controller's named protocol library (src/controller/protocol_library.py)
 // over Socket.IO: `protocols` lists them (broadcast after every change, with

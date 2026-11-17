@@ -136,10 +136,25 @@ expand `src/shared/session_protocol_fixtures.json` identically; pytest
 runs the JS under node). `ProtocolTimeline.jsx`: one row per scheduled
 pin, bars where high, mm:ss axis, hover tooltips, drag to zoom, sub-pixel
 bars merged (a 30 min 1 Hz train stays drawable); dimmed and labelled when
-the protocol is invalid. Checked by rendering it (light, dark, invalid);
-hover and zoom not yet used in a browser. Next: the after-session view
-(planned from `_protocol.json` vs actual from the CSV, late/missing
-marked), then live.
+the protocol is invalid. Test routine (2026-11-16): `test_protocol` runs it
+on the pins now through the same runner, nothing recorded.
+
+**Protocol library and designer modal, built 2026-11-17:** named protocols
+live on the controller (`src/controller/protocol_library.py`,
+`/var/lib/saviour/controller/protocols.json`; Socket.IO `get_protocols` /
+`save_protocol` / `copy_protocol` / `delete_protocol`, admin for writes),
+the "templates" this plan called for. The designer modal
+(`ProtocolDesigner.jsx`) lists them (new / copy / rename / delete) beside
+the editor, with Test routine. The card's Protocol tab picks one: picking
+copies it into `ttl.protocol` (its `name` kept) and the card's Save applies
+it, so a module still runs and resumes without the controller; the tab says
+when the module's copy differs from the library or the protocol was
+deleted from it. Driven end to end in a browser against `dev:mock`
+(edit/save, copy/rename, name clash, use on module, test + stop, delete in
+use, discard guard, hover, zoom). When protocols move onto the session,
+the library is where a session's protocol is picked from. Next: the
+after-session view (planned from `_protocol.json` vs actual from the CSV,
+late/missing marked), then live.
 
 ## Two execution tiers
 

@@ -12,6 +12,7 @@
 // Mutations mutate the in-memory `state` (fixtures.js) and re-emit the
 // relevant *_update so the UI reflects the change.
 
+import { makeProtocolRoutes, protocolTestCommand } from "./protocolMock";
 import { state, reset } from "./fixtures";
 import { gateMapRoutes } from "./gateMapMock";
 import { placementRoutes } from "./placementMock";
@@ -405,6 +406,8 @@ function mockNetworkOverview() {
 }
 
 const ROUTER = {
+  // Protocol library + TTL Test routine, see protocolMock.js.
+  ...makeProtocolRoutes(() => state.modules),
   // Habitat Gates page (RFID gate mapping), see gateMapMock.js.
   ...gateMapRoutes,
   ...placementRoutes,
@@ -596,6 +599,7 @@ const ROUTER = {
   // Generic module command. Only the APA rig's commands do anything here.
   send_command(payload) {
     if (lightingCommand(this, payload, state)) return;
+    if (protocolTestCommand(this, payload)) return;
     const r = state.apa;
     const t = Date.now();
     switch (payload?.type) {

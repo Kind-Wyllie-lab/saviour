@@ -11,8 +11,11 @@ import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCa
 import CopyActionsBar from "../CopyActionsBar";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
-import ProtocolEditor from "./ProtocolEditor";
-import { useProtocolTest, ProtocolTestControls } from "./ProtocolTest";
+import ProtocolTab from "./ProtocolTab";
+import ProtocolDesigner from "./ProtocolDesigner";
+import { useProtocolLibrary } from "./protocolLibrary";
+import { ProtocolTestControls } from "./ProtocolTest";
+import useProtocolTest from "./useProtocolTest";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
@@ -60,6 +63,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
   const protocolTest = useProtocolTest(id);
+  const protocolLibrary = useProtocolLibrary();
+  const [designer, setDesigner] = useState(null); // null = closed, else where it opens
   const isRecording = module.status === "RECORDING";
 
   const ttlCfg = formData?.ttl ?? {};
@@ -133,6 +138,40 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
         },
       },
     }));
+  };
+
+  const scheduledPinList = sortedPins
+    .filter((p) => ttlCfg.pins[p]?.mode === "scheduled")
+    .map(Number);
+  const setProtocol = (protocol) =>
+    setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, protocol } }));
+
+  // Test routine controls, for the Protocol tab and the designer. *protocol*
+  // is what's shown there: the module's copy, or the designer's draft.
+  const renderProtocolTest = (result, protocol) => {
+    // The module checks pins against its *saved* Scheduled pins; the steps
+    // themselves can be unsaved edits.
+    const scheduledIn = (pins) => Object.entries(pins ?? {})
+      .filter(([, c]) => c?.mode === "scheduled").map(([p]) => Number(p))
+      .sort((a, b) => a - b).join(",");
+    const pinsUnsaved = scheduledIn(ttlCfg.pins) !== scheduledIn(module.config?.ttl?.pins);
+    const blocked = isRecording ? "Recording: the protocol is running as part of the session."
+      : !module.online ? "The module is offline."
+      : !loggedIn ? "Sign in as admin to run a test."
+      : !result || result.edges.length === 0 ? "Add some steps first."
+      : !result.ok ? "Fix the problems first."
+      : pinsUnsaved ? "Save first: the module doesn't know about the Pins tab changes yet."
+      : null;
+    return (
+      <ProtocolTestControls
+        test={protocolTest.test}
+        elapsed={protocolTest.elapsed}
+        running={protocolTest.running}
+        blocked={blocked}
+        onStart={() => protocolTest.start(protocol)}
+        onStop={protocolTest.stop}
+      />
+    );
   };
 
   const testPin = (pin) => {
@@ -340,41 +379,16 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
               {/* PROTOCOL */}
               {activeTab === "protocol" && (
-                <ProtocolEditor
+                <ProtocolTab
                   protocol={ttlCfg.protocol ?? null}
                   moduleId={id}
                   pinConfigs={ttlCfg.pins ?? {}}
-                  scheduledPins={sortedPins
-                    .filter((p) => ttlCfg.pins[p]?.mode === "scheduled")
-                    .map(Number)}
-                  onChange={(protocol) =>
-                    setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, protocol } }))}
+                  scheduledPins={scheduledPinList}
+                  library={protocolLibrary}
+                  onPick={setProtocol}
+                  onOpenDesigner={setDesigner}
                   cursorT={protocolTest.elapsed}
-                  renderTest={(result) => {
-                    // The module checks pins against its *saved* Scheduled
-                    // pins; the steps themselves can be unsaved edits.
-                    const scheduledIn = (pins) => Object.entries(pins ?? {})
-                      .filter(([, c]) => c?.mode === "scheduled").map(([p]) => Number(p))
-                      .sort((a, b) => a - b).join(",");
-                    const pinsUnsaved = scheduledIn(ttlCfg.pins) !== scheduledIn(module.config?.ttl?.pins);
-                    const blocked = isRecording ? "Recording: the protocol is running as part of the session."
-                      : !loggedIn ? "Sign in as admin to run a test."
-                      : !result ? "Add some steps first."
-                      : !result.ok ? "Fix the problems below first."
-                      : result.edges.length === 0 ? "Add some steps first."
-                      : pinsUnsaved ? "Save first: the module doesn't know about the Pins tab changes yet."
-                      : null;
-                    return (
-                      <ProtocolTestControls
-                        test={protocolTest.test}
-                        elapsed={protocolTest.elapsed}
-                        running={protocolTest.running}
-                        blocked={blocked}
-                        onStart={() => protocolTest.start(ttlCfg.protocol)}
-                        onStop={protocolTest.stop}
-                      />
-                    );
-                  }}
+                  renderTest={renderProtocolTest}
                 />
               )}
 
@@ -478,6 +492,30 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             </div>
           </div>
         </div>
+      )}
+
+      {designer && (
+        <ProtocolDesigner
+          start={designer}
+          library={protocolLibrary}
+          moduleLabel={module.name || id}
+          usedName={ttlCfg.protocol?.name ?? null}
+          scheduledPins={scheduledPinList}
+          pinConfigs={ttlCfg.pins ?? {}}
+          moduleId={id}
+          canEdit={loggedIn}
+          renderTest={renderProtocolTest}
+          cursorT={protocolTest.elapsed}
+          onUse={(protocol) => setProtocol(structuredClone(protocol))}
+          // Saving the protocol this module uses (or renaming it) refreshes
+          // the module's copy; the card's Save then applies it.
+          onSaved={(name, protocol, previousName) => setFormData((prev) => {
+            const current = prev?.ttl?.protocol?.name;
+            if (!current || (current !== name && current !== previousName)) return prev;
+            return { ...prev, ttl: { ...prev.ttl, protocol: structuredClone(protocol) } };
+          })}
+          onClose={() => setDesigner(null)}
+        />
       )}
     </div>
   );

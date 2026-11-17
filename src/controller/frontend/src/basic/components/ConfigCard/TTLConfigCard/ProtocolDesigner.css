@@ -1,0 +1,221 @@
+/* Protocol designer modal. Own classes (not the shared .modal, which
+   several components override); rendered into <body>, theme tokens only. */
+.pdm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3vh 16px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+.pdm {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  max-height: 94vh;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.pdm-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.pdm-head h2 {
+  margin: 0;
+  font-size: 1.1em;
+}
+.pdm-head-sub {
+  flex: 1;
+  min-width: 16em;
+  color: var(--secondary-text-color);
+  font-size: 0.85em;
+}
+.pdm-x {
+  background: none;
+  border: none;
+  color: var(--secondary-text-color);
+  font-size: 1.1em;
+  cursor: pointer;
+}
+.pdm-x:hover { color: var(--text-color); }
+
+.pdm-body {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.pdm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-right: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-color) 45%, var(--card-bg-color));
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pdm-list-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pdm-filter {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+
+.pdm-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pdm-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-color);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.pdm-item:hover { border-color: var(--border-color); }
+.pdm-item--active {
+  border-color: var(--accent-color);
+  background: var(--card-bg-color);
+}
+.pdm-item-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: 600;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+.pdm-item-meta {
+  color: var(--secondary-text-color);
+  font-size: 0.78em;
+}
+.pdm-badge {
+  padding: 0 6px;
+  border: 1px solid var(--accent-color);
+  border-radius: 999px;
+  color: var(--accent-color);
+  font-size: 0.78em;
+  font-weight: 500;
+}
+
+.pdm-empty {
+  color: var(--secondary-text-color);
+  font-size: 0.9em;
+  padding: 6px 2px;
+}
+
+.pdm-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pdm-name-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pdm-name { flex: 1; min-width: 14em; }
+.pdm-name input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 1.05em;
+  font-weight: 600;
+}
+.pdm-name input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.pdm-hint {
+  color: var(--secondary-text-color);
+  font-size: 0.85em;
+  padding-bottom: 6px;
+}
+.pdm-hint--bad { color: var(--recording-color); }
+
+.pdm-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-color);
+}
+.pdm-foot .pdm-hint { padding-bottom: 0; }
+.pdm-error {
+  color: var(--recording-color);
+  font-size: 0.88em;
+}
+.pdm-foot-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.pdm-save:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+.pdm .pe-small:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .pdm-body { grid-template-columns: minmax(0, 1fr); }
+  .pdm-list {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    max-height: 30vh;
+  }
+}

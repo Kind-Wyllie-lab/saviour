@@ -285,3 +285,19 @@
   font-variant-numeric: tabular-nums;
 }
 .pe-test-line--bad { color: var(--recording-color); }
+
+/* Card Protocol tab (ProtocolTab.jsx). */
+.pt-pick select { min-width: 16em; max-width: 26em; }
+.pt-designer {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+.pt-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.88em;
+  color: var(--secondary-text-color);
+}

@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import ProtocolTimeline from "../../ProtocolTimeline/ProtocolTimeline";
-import { expand, fmtTime, highSpans } from "../../../utils/sessionProtocol";
+import { fmtTime } from "../../../utils/sessionProtocol";
+import useProtocolExpansion from "./useProtocolExpansion";
 import "./ProtocolEditor.css";
 
-// The TTL module's session protocol (ttl.protocol): a table of timed steps,
-// checked as you type by the same expansion the module runs
-// (sessionProtocol.js, the twin of src/shared/session_protocol.py), with a
-// timeline preview. Saved with the rest of the card's config.
+// A session protocol's steps as a table, checked as you type by the same
+// expansion the module runs (sessionProtocol.js, the twin of
+// src/shared/session_protocol.py), with a timeline preview. Used in the
+// Protocol designer modal on a library protocol (ProtocolDesigner.jsx).
 //
 // The table edits steps and one level of repeat blocks; anything deeper is
 // shown as a nested-repeat row and edited in the JSON view.
@@ -194,41 +195,17 @@ function usesJitter(steps) {
 
 // renderTest(result): the Test routine controls, given the current
 // validation; cursorT: seconds into a running test, drawn on the timeline.
+// renderTest(result, protocol): the Test routine controls; cursorT: seconds
+// into a running test, drawn on the timeline. allowClear: show "Clear".
 export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId,
-  renderTest, cursorT = null }) {
+  renderTest, cursorT = null, allowClear = true, intro }) {
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const [pickedPin, setPickedPin] = useState("all");
-  // Keyed on the contents: the card passes a fresh array every render, and
-  // a new array would re-run the expansion on every keystroke elsewhere.
-  const pinsKey = [...scheduledPins].sort((a, b) => a - b).join(",");
-  const pins = useMemo(() => (pinsKey ? pinsKey.split(",").map(Number) : []), [pinsKey]);
+  const { pins, result, rows, spans } = useProtocolExpansion(protocol, scheduledPins, pinConfigs, moduleId);
   // A pin picked before it stopped being scheduled falls back to all pins.
   const focusPin = pickedPin !== "all" && pins.includes(Number(pickedPin)) ? Number(pickedPin) : null;
-
-  const result = useMemo(
-    () => (protocol ? expand(protocol, { moduleId, allowedPins: pins }) : null),
-    [protocol, moduleId, pins]);
-
-  const rows = useMemo(() => {
-    const keys = new Set([...pins, ...(result?.pins ?? [])]);
-    return [...keys].sort((a, b) => a - b).map((p) => ({
-      key: p,
-      label: `GPIO ${p}`,
-      sublabel: pinConfigs?.[p]?.description || undefined,
-    }));
-  }, [pins, result, pinConfigs]);
-
-  const spans = useMemo(() => {
-    if (!result) return [];
-    return highSpans(result.edges).map((s) => ({
-      row: s.pin,
-      start: s.start,
-      end: s.end === null && result.endState === "all_inactive" ? result.durationS : s.end,
-      label: `${s.action} (step ${s.step})`,
-    }));
-  }, [result]);
 
   const ensure = () => protocol ?? { version: 1, seed: 1, end_state: "all_inactive", steps: [] };
   const update = (patch) => onChange({ ...ensure(), ...patch });
@@ -255,11 +232,13 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
 
   return (
     <div className="pe">
-      <p className="pe-intro">
-        Steps run on this module during every recording, timed from session start on its
-        PTP clock. Only pins in <strong>Scheduled</strong> mode (Pins tab) can be used, and
-        manual pulses on them are refused while recording. Save the config to apply.
-      </p>
+      {intro !== undefined ? intro : (
+        <p className="pe-intro">
+          Steps run on this module during every recording, timed from session start on its
+          PTP clock. Only pins in <strong>Scheduled</strong> mode (Pins tab) can be used, and
+          manual pulses on them are refused while recording.
+        </p>
+      )}
 
       {pins.length === 0 && (
         <div className="pe-notice">No scheduled pins yet: set a pin's mode to “Scheduled (session protocol)” on the Pins tab.</div>
@@ -294,7 +273,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           <button type="button" className="pe-small" onClick={() => (jsonMode ? setJsonMode(false) : openJson())}>
             {jsonMode ? "Table view" : "Edit as JSON"}
           </button>
-          {protocol && (
+          {protocol && allowClear && (
             <button type="button" className="pe-small pe-danger" onClick={() => onChange(null)}>
               Clear protocol
             </button>
@@ -387,7 +366,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </div>
       )}
 
-      {renderTest && renderTest(result)}
+      {renderTest && renderTest(result, protocol)}
 
       <div className={`pe-timeline${result && !result.ok ? " pe-timeline--invalid" : ""}`}>
         <div className="pe-timeline-title">

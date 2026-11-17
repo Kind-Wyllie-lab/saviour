@@ -54,6 +54,10 @@ from src.controller.modules import Modules
 from src.controller.network import Network
 from src.controller.notify import Notifier
 from src.controller.ping_monitor import PingMonitor
+from src.controller.protocol_library import ProtocolLibrary
+from src.controller.protocol_library import (
+    register_socket_handlers as register_protocol_handlers,
+)
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.web import Web
@@ -138,6 +142,11 @@ class Controller(ABC):
         # RTT to every host on the rig network (System -> Network tab).
         self.ping_monitor = PingMonitor(targets=self.facade.network_ping_targets)
         self.link_stats = LinkStats("eth0")
+        # Named session protocols (TTL Protocol designer), every variant.
+        self.protocol_library = ProtocolLibrary()
+        register_protocol_handlers(self.web.socketio, self.protocol_library,
+                                   require_auth=self.web._require_auth,
+                                   logger=self.logger)
 
         # Register facade/callbacks
         self.network.facade = self.facade

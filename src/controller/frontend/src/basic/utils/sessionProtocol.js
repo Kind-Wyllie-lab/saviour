@@ -44,6 +44,7 @@ export function mulberry32(seed) {
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isInt = (v) => Number.isInteger(v);
 const show = (v) => (v === undefined ? "None" : JSON.stringify(v));
+const fmtG = (v) => String(Number(v.toPrecision(6)));
 
 function num(value, name, where, errors, { minimum = null, exclusiveMin = false } = {}) {
   if (!isNum(value)) {
@@ -150,6 +151,35 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
 
       if (action === "repeat") {
         const times = int(step.times, "times", where, errors, 1);
+        if ("spread_s" in step) {
+          // Spread over a window: see src/shared/session_protocol.py.
+          if ("every_s" in step) {
+            errors.push(`step ${where}: give every_s or spread_s, not both`);
+            continue;
+          }
+          const spread = num(step.spread_s, "spread_s", where, errors, { minimum: 0 });
+          const gap = num(step.min_gap_s ?? 0, "min_gap_s", where, errors, { minimum: 0 });
+          const inner = step.steps;
+          if (!Array.isArray(inner) || inner.length === 0) {
+            errors.push(`step ${where}: repeat needs a non-empty 'steps' list`);
+            continue;
+          }
+          if (times === null || spread === null || gap === null) continue;
+          let free = spread - (times - 1) * gap;
+          if (free < -1e-9) {
+            errors.push(`step ${where}: ${times} repetitions at least ${fmtG(gap)} s apart need a spread of at least ${fmtG((times - 1) * gap)} s (got ${fmtG(spread)} s)`);
+            continue;
+          }
+          free = Math.max(free, 0);
+          const draws = [];
+          for (let k = 0; k < times; k++) draws.push(free > 0 ? rng.uniform(0, free) : 0);
+          draws.sort((a, b) => a - b);
+          for (let k = 0; k < times; k++) {
+            walk(inner, t0 + draws[k] + k * gap, `${where}.${k}.`);
+            if (edges.length > MAX_EDGES) return;
+          }
+          continue;
+        }
         const every = num(step.every_s, "every_s", where, errors, { minimum: 0, exclusiveMin: true });
         let jitter = step.jitter_s ?? [0, 0];
         let lo = 0, hi = 0;

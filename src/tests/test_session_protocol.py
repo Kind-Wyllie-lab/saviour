@@ -200,6 +200,7 @@ import json  # noqa: E402 -- section-local imports for the twin check
 import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
+from itertools import pairwise  # noqa: E402
 
 _ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 _FIXTURES = os.path.join(_ROOT, "src", "shared", "session_protocol_fixtures.json")
@@ -244,3 +245,56 @@ console.log(JSON.stringify(out));
         assert js_result == py, f"fixture {case['name']!r} differs"
         if case["name"] == "bad steps":
             assert py["errors"] >= 8
+
+
+# ---------------------------------------------------------------------------
+# repeat spread over a window (spread_s / min_gap_s)
+# ---------------------------------------------------------------------------
+
+def _conditioning(seed=1, times=10, spread=1130, gap=60):
+    return {"version": 1, "seed": seed, "end_state": "all_inactive", "steps": [
+        {"at_s": 60, "action": "repeat", "times": times, "spread_s": spread,
+         "min_gap_s": gap, "steps": [
+             {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 10}},
+             {"at_s": 9, "action": "pulse", "params": {"pin": 2, "width_s": 1}}]}]}
+
+
+def _starts(exp, pin=17):
+    return [e.t_s for e in exp.edges if e.pin == pin and e.level == "high"]
+
+
+class TestSpreadRepeat:
+    @pytest.mark.parametrize("seed", range(1, 30))
+    def test_trials_inside_the_window_and_at_least_min_gap_apart(self, seed):
+        exp = expand(_conditioning(seed=seed))
+        assert exp.ok, exp.errors
+        starts = _starts(exp)
+        assert len(starts) == 10
+        assert 60 <= starts[0] and starts[-1] <= 60 + 1130 + 1e-9
+        assert min(b - a for a, b in pairwise(starts)) >= 60 - 1e-9
+        # co-terminating shock: each shock ends with its light
+        light_off = [e.t_s for e in exp.edges if e.pin == 17 and e.level == "low"]
+        shock_off = [e.t_s for e in exp.edges if e.pin == 2 and e.level == "low"]
+        assert light_off == pytest.approx(shock_off)
+
+    def test_same_seed_same_schedule_different_seed_different(self):
+        a, b, c = (expand(_conditioning(seed=s)) for s in (5, 5, 6))
+        assert _starts(a) == _starts(b) != _starts(c)
+
+    def test_placement_is_random_not_bunched(self):
+        # first trial isn't always at the window start
+        firsts = {round(_starts(expand(_conditioning(seed=s)))[0]) for s in range(1, 20)}
+        assert len(firsts) > 5
+
+    def test_too_many_trials_for_the_window_is_an_error(self):
+        exp = expand(_conditioning(times=21, spread=1130, gap=60))
+        assert not exp.ok and "need a spread of at least 1200" in exp.errors[0]
+
+    def test_every_and_spread_together_is_an_error(self):
+        p = _conditioning()
+        p["steps"][0]["every_s"] = 5
+        assert "not both" in expand(p).errors[0]
+
+    def test_gap_shorter_than_a_trial_is_caught_as_an_overlap(self):
+        exp = expand(_conditioning(times=10, spread=40, gap=2))
+        assert not exp.ok

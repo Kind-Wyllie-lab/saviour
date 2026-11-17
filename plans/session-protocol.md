@@ -204,6 +204,14 @@ created by `POST /api/v1/sessions` with `protocol` (5 Hz × 20 train, then
 `session_metadata.json` and `_protocol.json`. Refusals checked live: no
 TTL module in the target, unknown name, bad step parameters.
 
+**First real protocol (2026-11-17):** fear conditioning, 10 s light
+stimuli pseudo-randomly over 20 min, each co-terminating with a 1 s
+footshock from a Coulbourn shocker (TTL-gated, so a TTL module drives both;
+same schedule for every animal). Trial count and spacing still to come from
+the researcher, so they're parameters: added `spread_s` / `min_gap_s`
+repeats (see CHANGELOG). Polarity is module-wide (`ttl.active_logic`):
+light and shocker must agree, and the shock line must be inactive at boot.
+
 Next: the after-session view
 (planned from `_protocol.json` vs actual from the CSV, late/missing
 marked), then live; then sound.

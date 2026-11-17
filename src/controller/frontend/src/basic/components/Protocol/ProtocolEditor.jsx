@@ -33,6 +33,23 @@ function newStep(action, pin, atS = 0) {
   return { at_s: atS, action, params: defaultParams(action, pin) };
 }
 
+// Switch a repeat block between regular gaps (every_s + jitter_s) and a
+// pseudo-random spread over a window (spread_s + min_gap_s), keeping the
+// overall length about the same.
+function toSpacing(step, mode) {
+  // eslint-disable-next-line no-unused-vars -- dropping the other mode's keys
+  const { every_s, jitter_s, spread_s, min_gap_s, ...rest } = step;
+  const gaps = Math.max((Number(step.times) || 1) - 1, 1);
+  if (mode === "spread") {
+    if (spread_s !== undefined) return step;
+    const every = Number(every_s) || 10;
+    return { ...rest, spread_s: Math.round(every * gaps), min_gap_s: Math.round(every / 2) };
+  }
+  if (every_s !== undefined) return step;
+  const every = Math.round((Number(spread_s) || 10) / gaps) || 10;
+  return { ...rest, every_s: Math.max(every, Number(min_gap_s) || 0), jitter_s: [0, 0] };
+}
+
 // Keep what the user typed when it isn't a number yet ("" or "0."), so the
 // validation can say so instead of the field snapping back.
 const numOrRaw = (raw, int = false) => {
@@ -150,13 +167,32 @@ function StepRow({ step, path, pins, depth, focusPin, onChange, onRemove }) {
         {action === "repeat" && (
           <>
             <NumField label="Times" int min={1} value={step.times} onChange={(v) => set({ times: v })} width="4.5em" />
-            <NumField label="Every" unit="s" value={step.every_s} onChange={(v) => set({ every_s: v })} width="5.5em"
-              title="Gap from one repetition's start to the next, before jitter" />
-            <NumField label="+ jitter" value={step.jitter_s?.[0]} width="4.5em"
-              title="Extra random gap per repetition, drawn between these two values (seeded)"
-              onChange={(v) => set({ jitter_s: [v, step.jitter_s?.[1] ?? 0] })} />
-            <NumField label="to" unit="s" value={step.jitter_s?.[1]} width="4.5em"
-              onChange={(v) => set({ jitter_s: [step.jitter_s?.[0] ?? 0, v] })} />
+            <label className="pe-field">
+              <span className="pe-field-label">Spacing</span>
+              <select value={"spread_s" in step ? "spread" : "regular"}
+                onChange={(e) => onChange(toSpacing(step, e.target.value))}>
+                <option value="regular">Regular gaps</option>
+                <option value="spread">Spread over a window</option>
+              </select>
+            </label>
+            {"spread_s" in step ? (
+              <>
+                <NumField label="Within" unit="s" value={step.spread_s} onChange={(v) => set({ spread_s: v })} width="5.5em"
+                  title="Every repetition starts within this many seconds of the block's At, placed pseudo-randomly (seeded)" />
+                <NumField label="Min gap" unit="s" value={step.min_gap_s ?? 0} onChange={(v) => set({ min_gap_s: v })} width="5em"
+                  title="Shortest time from one repetition's start to the next" />
+              </>
+            ) : (
+              <>
+                <NumField label="Every" unit="s" value={step.every_s} onChange={(v) => set({ every_s: v })} width="5.5em"
+                  title="Gap from one repetition's start to the next, before jitter" />
+                <NumField label="+ jitter" value={step.jitter_s?.[0]} width="4.5em"
+                  title="Extra random gap per repetition, drawn between these two values (seeded)"
+                  onChange={(v) => set({ jitter_s: [v, step.jitter_s?.[1] ?? 0] })} />
+                <NumField label="to" unit="s" value={step.jitter_s?.[1]} width="4.5em"
+                  onChange={(v) => set({ jitter_s: [step.jitter_s?.[0] ?? 0, v] })} />
+              </>
+            )}
           </>
         )}
         <button type="button" className="pe-remove" onClick={onRemove} title="Remove step">✕</button>
@@ -190,7 +226,7 @@ function StepRow({ step, path, pins, depth, focusPin, onChange, onRemove }) {
 // only then does the seed change anything.
 function usesJitter(steps) {
   return (steps ?? []).some((s) => s && s.action === "repeat"
-    && ((Number(s.jitter_s?.[1]) || 0) > 0 || usesJitter(s.steps)));
+    && ((Number(s.jitter_s?.[1]) || 0) > 0 || "spread_s" in s || usesJitter(s.steps)));
 }
 
 // renderTest(result): the Test routine controls, given the current
@@ -338,10 +374,10 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
             </button>
           </div>
           <p className="pe-random-hint">
-            Repeats with jitter add a random extra gap to each repetition. This number (the
-            seed) picks which random gaps you get: keep it and every session uses the same
-            gaps, the ones in the timeline below; change it for a different pattern. The gaps
-            used are saved with each session's data.
+            Repeats with jitter, or spread over a window, place repetitions at random. This
+            number (the seed) picks which random times you get: keep it and every session (and
+            every animal) gets the same schedule, the one in the timeline below; change it for
+            a different one. The times used are saved with each session's data.
           </p>
         </div>
       )}

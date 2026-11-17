@@ -2,7 +2,7 @@
 Session protocols: expand and validate a timed step list (plans/session-protocol.md).
 
 Phase 1 slice: TTL output actions only (``set``, ``pulse``, ``train``) plus
-``repeat`` blocks with seeded jitter. The TTL module runs the result
+``repeat`` blocks (seeded jitter, or spread over a window). The TTL module runs the result
 (``ttl_module.py``, pin mode ``scheduled``).
 
 Format (v1)::
@@ -27,6 +27,13 @@ Format (v1)::
   previous one. Draws come from mulberry32 seeded with ``seed``: a small PRNG
   that a JavaScript twin can reproduce exactly (Python's Mersenne Twister
   can't be matched cheaply in the browser).
+- ``repeat`` spread over a window (instead of ``every_s``): ``spread_s``
+  and optional ``min_gap_s``. The ``times`` repetitions start pseudo-randomly
+  between ``at_s`` and ``at_s + spread_s``, at least ``min_gap_s`` apart
+  (start to start): ``times`` draws in [0, spread_s - (times-1)*min_gap_s],
+  sorted, the k-th plus k*min_gap_s, so every valid placement is equally
+  likely. E.g. 10 trials pseudo-randomly over 20 min, ≥ 60 s apart. Same
+  seed, same placement.
 - A ``module`` key on a step is optional; ``expand(..., module_id=...)``
   keeps steps with no module or that module.
 
@@ -201,6 +208,35 @@ def expand(protocol: dict, *, module_id: str | None = None,
 
             if action == "repeat":
                 times = _int(step.get("times"), "times", where, errors, 1)
+                if "spread_s" in step:
+                    if "every_s" in step:
+                        errors.append(f"step {where}: give every_s or spread_s, not both")
+                        continue
+                    spread = _num(step.get("spread_s"), "spread_s", where, errors,
+                                  minimum=0)
+                    gap = _num(step.get("min_gap_s", 0), "min_gap_s", where, errors,
+                               minimum=0)
+                    inner = step.get("steps")
+                    if not isinstance(inner, list) or not inner:
+                        errors.append(f"step {where}: repeat needs a non-empty 'steps' list")
+                        continue
+                    if times is None or spread is None or gap is None:
+                        continue
+                    free = spread - (times - 1) * gap
+                    if free < -1e-9:
+                        errors.append(
+                            f"step {where}: {times} repetitions at least {gap:g} s apart "
+                            f"need a spread of at least {(times - 1) * gap:g} s "
+                            f"(got {spread:g} s)")
+                        continue
+                    free = max(free, 0.0)
+                    draws = sorted(rng.uniform(0.0, free) if free > 0 else 0.0
+                                   for _ in range(times))
+                    for k, u in enumerate(draws):
+                        walk(inner, t0 + u + k * gap, f"{where}.{k}.")
+                        if len(edges) > MAX_EDGES:
+                            return
+                    continue
                 every = _num(step.get("every_s"), "every_s", where, errors,
                              minimum=0, exclusive_min=True)
                 jitter = step.get("jitter_s", [0, 0])

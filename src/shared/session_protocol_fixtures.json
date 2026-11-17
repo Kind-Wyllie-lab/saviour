@@ -49,6 +49,25 @@
       {"at_s": 0.1, "action": "set", "params": {"pin": 2, "level": "high"}}]}},
     {"name": "not an object", "protocol": "nope"},
     {"name": "no steps", "protocol": {"version": 1}},
-    {"name": "wrong version", "protocol": {"version": 2, "steps": []}}
+    {"name": "wrong version", "protocol": {"version": 2, "steps": []}},
+    {"name": "spread: light + co-terminating shock, 10 trials over 20 min", "allowed_pins": [2, 17],
+     "protocol": {"version": 1, "seed": 1, "end_state": "all_inactive", "steps": [
+      {"at_s": 60, "action": "repeat", "times": 10, "spread_s": 1130, "min_gap_s": 60, "steps": [
+        {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 10}},
+        {"at_s": 9, "action": "pulse", "params": {"pin": 2, "width_s": 1}}]}]}},
+    {"name": "spread: nested jitter inside a spread", "protocol": {"version": 1, "seed": 99, "steps": [
+      {"at_s": 0, "action": "repeat", "times": 4, "spread_s": 100, "min_gap_s": 20, "steps": [
+        {"at_s": 0, "action": "repeat", "times": 3, "every_s": 1, "jitter_s": [0, 0.5],
+         "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 3, "width_s": 0.1}}]}]}]}},
+    {"name": "spread: zero slack places trials exactly min_gap apart", "protocol": {"version": 1, "steps": [
+      {"at_s": 5, "action": "repeat", "times": 3, "spread_s": 20, "min_gap_s": 10,
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 3, "width_s": 1}}]}]}},
+    {"name": "spread: errors", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "repeat", "times": 5, "spread_s": 30, "min_gap_s": 10,
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 3, "width_s": 1}}]},
+      {"at_s": 0, "action": "repeat", "times": 2, "spread_s": 30, "every_s": 5,
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 4, "width_s": 1}}]},
+      {"at_s": 0, "action": "repeat", "times": 2, "spread_s": -1,
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 5, "width_s": 1}}]}]}}
   ]
 }

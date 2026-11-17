@@ -1,10 +1,11 @@
 """Named session protocols saved on the controller (the protocol library).
 
 A protocol (src/shared/session_protocol.py format) is designed once, saved
-here under a name, copied, edited and picked by TTL modules. Picking one
-copies it into the module's own config (`ttl.protocol`, its `name` kept),
-so the module runs and resumes it without the controller; the library is
-where protocols are kept and edited, not what runs.
+here under a name, copied, edited and picked for a session (New Session
+form, `protocol` on create_session / POST /api/v1/sessions). The session
+keeps a copy (later library edits don't change it) and the controller sends
+it with every start_recording; check_for_session refuses one a TTL module
+in the target couldn't run.
 
 One JSON file, written atomically: {"protocols": {name: entry}} where entry
 is {"protocol": {...}, "created_at": ts, "updated_at": ts}. A protocol
@@ -28,6 +29,8 @@ import os
 import threading
 import time
 from collections.abc import Callable
+
+from src.shared import session_protocol
 
 LIBRARY_FILE = "/var/lib/saviour/controller/protocols.json"
 MAX_NAME_LEN = 80
@@ -165,6 +168,50 @@ class ProtocolLibrary:
             if self._items.pop(name, None) is None:
                 raise ProtocolLibraryError(f"No protocol called “{name}”")
             self._write()
+
+
+def scheduled_pins_of(config: dict | None) -> list[int]:
+    """GPIO numbers a TTL module's config puts in `scheduled` mode."""
+    pins = ((config or {}).get("ttl") or {}).get("pins") or {}
+    out = []
+    for pin, cfg in pins.items():
+        if isinstance(cfg, dict) and cfg.get("mode") == "scheduled":
+            try:
+                out.append(int(pin))
+            except (TypeError, ValueError):
+                continue
+    return sorted(out)
+
+
+def check_for_session(protocol: dict, modules: dict[str, dict],
+                      configs: dict[str, dict],
+                      duration_minutes: float | None = None) -> tuple[list[str], list[str]]:
+    """Will *protocol* run on this session's modules? (errors, warnings).
+
+    modules: the session's target, module_id -> {"type": ...}; configs:
+    module_id -> that module's current config. Each TTL module expands the
+    protocol against its own Scheduled pins, as it will at recording start,
+    so a protocol a module would refuse is refused here, before the session
+    exists, with the module named.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    base = session_protocol.expand(protocol)
+    if not base.ok:
+        return [f"Protocol: {e}" for e in base.errors[:5]], []
+    ttl = sorted(m for m, info in modules.items() if "ttl" in str((info or {}).get("type", "")))
+    if not ttl:
+        return ["The protocol drives TTL pins, but no TTL module is in this session's target"], []
+    for mid in ttl:
+        pins = scheduled_pins_of(configs.get(mid))
+        exp = session_protocol.expand(protocol, module_id=mid, allowed_pins=set(pins))
+        if not exp.ok:
+            errors.extend(f"{mid}: {e}" for e in exp.errors[:5])
+    if duration_minutes and base.duration_s > duration_minutes * 60:
+        warnings.append(
+            f"The protocol runs {base.duration_s / 60:.1f} min, longer than the "
+            f"session's {duration_minutes:g} min: its last steps won't run")
+    return errors, warnings
 
 
 def register_socket_handlers(sio, library: ProtocolLibrary, *,

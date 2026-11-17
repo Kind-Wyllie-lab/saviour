@@ -179,6 +179,12 @@ class RecordingSession:
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
     researcher:                str | None = None
+    # Session protocol (src/shared/session_protocol.py format): a copy of the
+    # library protocol picked at creation, so editing or deleting it in the
+    # library later never changes a session. Sent with every start_recording
+    # (protocol_start_at = recording_start_at, so a re-armed module resumes on
+    # the session's clock). None = no protocol.
+    protocol:                  dict | None = None
     # Long-term / unattended posture (weeks-long habitat runs). When True the
     # session self-heals instead of parking terminally in ERROR: a module
     # dropping its recording state stays ACTIVE while _monitor_sessions keeps
@@ -523,7 +529,8 @@ class Recording:
                        duration_minutes: float | None = None,
                        researcher: str | None = None,
                        raw_name: bool = False,
-                       unattended: bool = False) -> dict:
+                       unattended: bool = False,
+                       protocol_name: str | None = None) -> dict:
         """Create a session in PENDING state -- modules assigned, nothing
         recording yet. Call start_pending_session() (via the unified
         force_start_session()) to actually begin recording.
@@ -552,6 +559,12 @@ class Recording:
             self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
             return {"success": False, "error": ptp["error"]}
 
+        protocol, protocol_warnings, err = self._resolve_session_protocol(
+            protocol_name, target, duration_minutes)
+        if err:
+            self.logger.warning(f"create_session: {err}")
+            return {"success": False, "error": err}
+
         session_name = self._format_session_name(session_name, target) if not raw_name else \
             "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
@@ -563,6 +576,7 @@ class Recording:
             duration_minutes=duration_minutes,
             researcher=researcher or None,
             unattended=bool(unattended),
+            protocol=protocol,
         )
 
         with self._lock:
@@ -580,7 +594,52 @@ class Recording:
         )
         self._log_session_event(session_name, "INFO",
             f"Session created — modules: {', '.join(modules)}")
+        self._log_protocol(session_name, protocol, protocol_warnings)
         return {"success": True, "session_name": session_name}
+
+    def _resolve_session_protocol(self, protocol_name: str | None, target: str,
+                                  duration_minutes: float | None,
+                                  ) -> tuple[dict | None, list[str], str | None]:
+        """(protocol copy, warnings, error) for a session about to be created
+        with the library protocol *protocol_name* (None = no protocol). The
+        error says which module would refuse it and why."""
+        if not protocol_name:
+            return None, [], None
+        protocol = self.facade.get_protocol(protocol_name)
+        if protocol is None:
+            return None, [], f"No protocol called “{protocol_name}” in the library"
+        modules = self.facade.get_modules_by_target(target)
+        configs = {mid: (c or {}).get("true_config") or {}
+                   for mid, c in (self.facade.get_module_configs() or {}).items()}
+        from src.controller.protocol_library import check_for_session
+        errors, warnings = check_for_session(protocol, modules, configs, duration_minutes)
+        if errors:
+            more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
+            return None, [], (f"Protocol “{protocol_name}” can't run on this session: "
+                              + "; ".join(errors[:3]) + more)
+        return protocol, warnings, None
+
+    def _log_protocol(self, session_name: str, protocol: dict | None,
+                      warnings: list[str]) -> None:
+        if not protocol:
+            return
+        steps = len(protocol.get("steps") or [])
+        self._log_session_event(session_name, "INFO",
+            f"Protocol “{protocol.get('name')}” ({steps} step{'s' if steps != 1 else ''})")
+        for w in warnings:
+            self._log_session_event(session_name, "WARNING", f"Protocol: {w}")
+
+    @staticmethod
+    def _with_protocol(session: RecordingSession, params: dict) -> dict:
+        """*params* for a start_recording, plus the session's protocol and its
+        t = 0 when it has one. Every start_recording goes through this --
+        first start, re-arms, back-online, scheduled runs -- so a module
+        never records a protocol session without its protocol."""
+        if session.protocol:
+            params = {**params, "protocol": session.protocol}
+            if session.recording_start_at:
+                params["protocol_start_at"] = session.recording_start_at
+        return params
 
 
     def update_pending_session(self, session_name: str, new_session_name: str | None,
@@ -680,7 +739,8 @@ class Recording:
             session.recording_start_at = start_at
             session.timed_stop_at = timed_stop_at
 
-        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
+        params = self._with_protocol(
+            session, {"duration": 0, "session_name": session_name, "start_at": start_at})
         for module_id in modules:
             self.facade.send_command(module_id, "start_recording", params)
             # Immediate first read rather than waiting on the next 5-min
@@ -726,7 +786,8 @@ class Recording:
                                   start_time: str, end_time: str,
                                   days: list | None = None,
                                   researcher: str | None = None,
-                                  raw_name: bool = False) -> dict:
+                                  raw_name: bool = False,
+                                  protocol_name: str | None = None) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
         days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
@@ -745,6 +806,11 @@ class Recording:
                 f"session will pick them up when it starts"
             )
 
+        protocol, protocol_warnings, err = self._resolve_session_protocol(
+            protocol_name, target, None)
+        if err:
+            return {"success": False, "error": err}
+
         session_name = self._format_session_name(session_name, target) if not raw_name else \
             "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
@@ -752,6 +818,7 @@ class Recording:
             session_name=session_name,
             target=target,
             state=SessionState.SCHEDULED,
+            protocol=protocol,
             modules=modules,
             scheduled=True,
             scheduled_start_time=start_time,
@@ -787,6 +854,7 @@ class Recording:
             f"{start_time}–{end_time}, {days_desc}, modules: {modules_desc}"
             + (f", researcher: {researcher}" if researcher else "")
         )
+        self._log_protocol(session_name, protocol, protocol_warnings)
         return {"success": True, "session_name": session_name}
 
 
@@ -1211,9 +1279,9 @@ class Recording:
             if now_ts - self._health_probe_times.get(m, 0) < 60:
                 continue
             self._health_probe_times[m] = now_ts
-            self.facade.send_command(m, "start_recording", {
+            self.facade.send_command(m, "start_recording", self._with_protocol(session, {
                 "duration": 0, "session_name": session.session_name,
-            })
+            }))
             self._record_unattended_fault(session.session_name, [m])
             self._log_session_event(
                 session.session_name, "FAULT",
@@ -1838,7 +1906,7 @@ class Recording:
             session.module_stop_states[module_id] = "recording"
             session.module_export_states[module_id] = "idle"
 
-        params = {"duration": 0, "session_name": session_name}
+        params = self._with_protocol(session, {"duration": 0, "session_name": session_name})
         self.facade.send_command(module_id, "start_recording", params)
         self.facade.send_command(
             module_id, "report_recording_state", {"session_name": session_name}
@@ -2198,7 +2266,7 @@ class Recording:
             # discrepancy between stop_state and module.status in the window between
             # sending start_recording and receiving the ack (or "Already recording").
             self.facade.notify_module_recording(module_id)
-            params = {"duration": 0, "session_name": session_name}
+            params = self._with_protocol(session, {"duration": 0, "session_name": session_name})
             self.facade.send_command(module_id, "start_recording", params)
             self.facade.send_command(
                 module_id, "report_recording_state", {"session_name": session_name}
@@ -2557,7 +2625,8 @@ class Recording:
             session.module_export_states = {m: "idle" for m in session.modules}
             session.recording_start_at = start_at
 
-        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
+        params = self._with_protocol(
+            session, {"duration": 0, "session_name": session_name, "start_at": start_at})
         for module_id in session.modules:
             self.facade.send_command(module_id, "start_recording", params)
             self.facade.send_command(

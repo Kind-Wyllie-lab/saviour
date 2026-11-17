@@ -18,6 +18,10 @@ import { gateMapRoutes } from "./gateMapMock";
 import { placementRoutes } from "./placementMock";
 import { ephysRoutes } from "./ephysMock";
 import { lightingCommand, lightingSave } from "./lightingMock";
+
+const mockExperimentName = (md) =>
+  ["experiment", "rat_id", "stage", "trial"].map((k) => String(md?.[k] ?? "").trim())
+    .filter(Boolean).join("-") || null;
 import { simSnapshot } from "./habitatSim/index";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
@@ -407,7 +411,7 @@ function mockNetworkOverview() {
 
 const ROUTER = {
   // Protocol library + TTL Test routine, see protocolMock.js.
-  ...makeProtocolRoutes(() => state.modules),
+  ...makeProtocolRoutes(() => state.modules, () => state.sessions),
   // Habitat Gates page (RFID gate mapping), see gateMapMock.js.
   ...gateMapRoutes,
   ...placementRoutes,
@@ -462,9 +466,17 @@ const ROUTER = {
   get_nas_health() { this._fire("nas_health_update", clone(state.storageOverview.nas)); },
   get_storage_overview() { this._fire("storage_overview", clone(state.storageOverview)); },
   get_first_run_state() { this._fire("first_run_state", clone(state.firstRun)); },
+  // Experiment metadata -> name, as web.py's _generate_experiment_name.
   get_experiment_metadata() {
+    const md = state.experimentMetadata ?? {};
     this._fire("experiment_metadata_response", {
-      status: "success", metadata: {}, experiment_name: null,
+      status: "success", metadata: md, experiment_name: mockExperimentName(md),
+    });
+  },
+  update_experiment_metadata(md = {}) {
+    state.experimentMetadata = { ...md };
+    this._fire("experiment_metadata_updated", {
+      status: "success", metadata: md, experiment_name: mockExperimentName(md),
     });
   },
   get_update_info() {

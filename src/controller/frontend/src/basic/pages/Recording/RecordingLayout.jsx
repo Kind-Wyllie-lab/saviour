@@ -98,6 +98,7 @@ function RecordingLayout() {
             scheduledStart: session.scheduled_start_time,
             scheduledEnd: session.scheduled_end_time,
             scheduledDays: session.scheduled_days,
+            protocolName: session.protocol?.name ?? "",
         });
         setDrawerOpen(true);
     };

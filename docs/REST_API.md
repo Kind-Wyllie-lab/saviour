@@ -333,6 +333,7 @@ Request body:
 | `researcher` | string | `null` | |
 | `unattended` | bool | `false` | long-term posture: self-heal instead of terminal `ERROR` |
 | `autostart` | bool | `false` | if true, start recording immediately after creation |
+| `protocol` | string | `null` | name of a protocol in the controller's protocol library (designed in the web UI). The session keeps a copy and each TTL module in the target runs it on its Scheduled pins, timed from the recording start. Refused (`409`) if the name is unknown, no TTL module is in the target, or a module's Scheduled pins can't run it |
 
 Preflight: the export share is checked for free space first — `503`
 `share_unavailable` if it is configured but unreachable or full.
@@ -342,8 +343,9 @@ requested but the start gate rejected it (e.g. PTP not yet converged), the
 session is still created `PENDING` and the body carries an
 `"autostart_error"` field — retry with `POST .../<name>/stop` +
 recreate, or wait and call the start path via the web UI. A facade
-rejection (no online modules, name clash, modules already recording) is
-`409` `session_rejected`.
+rejection (no online modules, name clash, modules already recording, a
+protocol that won't run) is `409` `session_rejected`. The session object
+carries `protocol` (the copy, or `null`).
 
 ```bash
 curl -X POST "$base_url/api/v1/sessions" \

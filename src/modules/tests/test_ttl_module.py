@@ -578,7 +578,7 @@ import time  # noqa: E402
 
 def _protocol_ttl(tmp_path, protocol, pins=(17, 22), start_at=None, session="sessA"):
     """A TTL module with scheduled output pins, a real CSV in tmp_path and
-    ttl.protocol set; recording folder <tmp>/recordings/pending so the
+    the session's protocol set; recording folder <tmp>/recordings/pending so the
     resume state file lands in tmp_path."""
     pin_objs = [_output_pin(p) for p in pins]
     m = _make_ttl(
@@ -591,7 +591,7 @@ def _protocol_ttl(tmp_path, protocol, pins=(17, 22), start_at=None, session="ses
         _protocol_error=None,
         module_id="ttl_test",
     )
-    values = {"ttl.protocol": protocol, "ttl.active_logic": "active_high"}
+    values = {"ttl.active_logic": "active_high"}
     m.config.get.side_effect = lambda k, d=None: values.get(k, d)
     rec = tmp_path / "recordings" / "pending"
     rec.mkdir(parents=True, exist_ok=True)
@@ -601,6 +601,10 @@ def _protocol_ttl(tmp_path, protocol, pins=(17, 22), start_at=None, session="ses
     m.recording = MagicMock()
     m.recording.recording_intended_start_at = start_at
     m.recording.recording_start_time = start_at or time.time()
+    # The session's protocol, as start_recording delivers it; no
+    # protocol_start_at unless a test sets one (the older-controller path).
+    m.recording.session_protocol = protocol
+    m.recording.session_protocol_start_at = None
     csv_path = rec / "sessA_ttl_test_(0_20261116-120000).csv"
     m._open_ttl_file(str(csv_path))
     m.is_recording = True
@@ -870,3 +874,30 @@ class TestProtocolTest:
         assert m._protocol_error is None
         last = self._statuses(m)[-1]
         assert last["state"] == "error" and "gpio gone" in last["message"]
+
+
+class TestSessionProtocol:
+    """Protocols come with the session (start_recording), not the config."""
+
+    def test_settings_protocol_is_not_run(self, tmp_path):
+        m, _, _ = _protocol_ttl(tmp_path, None)
+        old = _proto({"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}})
+        values = {"ttl.protocol": old, "ttl.active_logic": "active_high"}
+        m.config.get.side_effect = lambda k, d=None: values.get(k, d)
+        assert m._expand_protocol() is None
+
+    def test_controller_t0_wins_and_first_start_is_not_a_resume(self, tmp_path):
+        t0 = time.time() + 0.05
+        m, _, _ = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}), start_at=t0)
+        m.recording.session_protocol_start_at = t0
+        got, resumed = m._resolve_protocol_start("h")
+        assert got == t0 and resumed is False
+
+    def test_rearm_with_controller_t0_resumes_on_the_session_clock(self, tmp_path):
+        t0 = time.time() - 30
+        m, _, _ = _protocol_ttl(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}), start_at=None)
+        m.recording.session_protocol_start_at = t0
+        got, resumed = m._resolve_protocol_start("h")
+        assert got == t0 and resumed is True

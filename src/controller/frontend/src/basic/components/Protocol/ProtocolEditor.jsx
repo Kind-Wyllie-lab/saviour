@@ -1,6 +1,6 @@
 import { useState } from "react";
-import ProtocolTimeline from "../../ProtocolTimeline/ProtocolTimeline";
-import { fmtTime } from "../../../utils/sessionProtocol";
+import ProtocolTimeline from "../ProtocolTimeline/ProtocolTimeline";
+import { fmtTime } from "../../utils/sessionProtocol";
 import useProtocolExpansion from "./useProtocolExpansion";
 import "./ProtocolEditor.css";
 

@@ -7,6 +7,8 @@ delete it here.
 
 ## Correctness / data loss
 
+- **Habitat plans send `segment_minutes` no module accepts** (found 2026-11-17). `Recording._start_plan` adds `segment_minutes` to `start_recording` when a plan sets it, but `src/modules/recording.py::start_recording` has no such parameter and commands are dispatched as `handler(**params)`, so that start raises `TypeError` on the module. Either implement segmenting on the module or stop sending it.
+
 - **Habitat motion clips: pre-roll frames have no CSV rows** (found 2026-11-06). `_open_clip` flushes up to `pre_roll_secs` × fps buffered frames into the file, but timestamp rows start at the open, so frame *i* of a motion-triggered clip is row *i − pre-roll count*, not row *i*. Compose / `av_sync_check` assume they match. Fix by keeping per-frame rows for the circular buffer too and writing the buffered ones at open. `always_record` clips open with an empty buffer, so they're unaffected.
 - **Habitat clips recorded before 2026-11-06's CSV trim still end with surplus CSV rows** (~5 at 30 fps, frames that were still in the encoder at clip stop). Compose remaps the surplus proportionally and shows mid-clip frames ~80 ms late. New clips are trimmed at `_finish_clip` (CHANGELOG 2026-11-06). Only desk-rig clips are affected so far; if a real habitat clip from that window matters, trim its CSV to the `.ts` frame count by hand. Plain cameras (CameraBase segments) may have the same tail; not checked.
 - **Habitat clips recorded 2026-09-03 → 2026-11-06 have header-only timestamp CSVs** (see CHANGELOG 2026-11-06): no per-frame times. Recoverable only approximately (clip start from the filename + nominal fps). Check whether any real habitat data from that window needs it.

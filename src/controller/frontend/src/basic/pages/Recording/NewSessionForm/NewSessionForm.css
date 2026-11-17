@@ -174,3 +174,13 @@
 }
 
 /* .primary-button / .secondary-button now live in the shared index.css. */
+
+/* Protocol row: picker + designer button side by side. */
+.protocol-pick {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.protocol-pick select { flex: 1; min-width: 0; }
+.protocol-pick .secondary-button { flex: 0 0 auto; }

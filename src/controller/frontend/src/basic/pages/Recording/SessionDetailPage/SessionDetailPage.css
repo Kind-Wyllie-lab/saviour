@@ -832,3 +832,23 @@
   font-size: 0.85rem;
   cursor: pointer;
 }
+
+/* Protocol row: a small text button and a full-width timeline under it. */
+.session-protocol-toggle {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.82em;
+  cursor: pointer;
+}
+.session-protocol-toggle:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+.session-protocol-timeline {
+  grid-column: 1 / -1;
+  min-width: 0;
+}

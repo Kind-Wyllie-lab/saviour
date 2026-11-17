@@ -12,10 +12,10 @@ import CopyActionsBar from "../CopyActionsBar";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 import ProtocolTab from "./ProtocolTab";
-import ProtocolDesigner from "./ProtocolDesigner";
-import { useProtocolLibrary } from "./protocolLibrary";
-import { ProtocolTestControls } from "./ProtocolTest";
-import useProtocolTest from "./useProtocolTest";
+import ProtocolDesigner from "../../Protocol/ProtocolDesigner";
+import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
+import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
+import useProtocolTest from "../../Protocol/useProtocolTest";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
@@ -380,13 +380,15 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               {/* PROTOCOL */}
               {activeTab === "protocol" && (
                 <ProtocolTab
-                  protocol={ttlCfg.protocol ?? null}
+                  legacyProtocol={ttlCfg.protocol ?? null}
+                  onClearLegacy={() => setProtocol(null)}
                   moduleId={id}
+                  moduleLabel={module.name || id}
                   pinConfigs={ttlCfg.pins ?? {}}
                   scheduledPins={scheduledPinList}
                   library={protocolLibrary}
-                  onPick={setProtocol}
-                  onOpenDesigner={setDesigner}
+                  canEdit={loggedIn}
+                  onOpenDesigner={(start, onPick) => setDesigner({ start, onPick })}
                   cursorT={protocolTest.elapsed}
                   renderTest={renderProtocolTest}
                 />
@@ -496,24 +498,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
       {designer && (
         <ProtocolDesigner
-          start={designer}
+          start={designer.start}
           library={protocolLibrary}
           moduleLabel={module.name || id}
-          usedName={ttlCfg.protocol?.name ?? null}
           scheduledPins={scheduledPinList}
           pinConfigs={ttlCfg.pins ?? {}}
           moduleId={id}
           canEdit={loggedIn}
           renderTest={renderProtocolTest}
           cursorT={protocolTest.elapsed}
-          onUse={(protocol) => setProtocol(structuredClone(protocol))}
-          // Saving the protocol this module uses (or renaming it) refreshes
-          // the module's copy; the card's Save then applies it.
-          onSaved={(name, protocol, previousName) => setFormData((prev) => {
-            const current = prev?.ttl?.protocol?.name;
-            if (!current || (current !== name && current !== previousName)) return prev;
-            return { ...prev, ttl: { ...prev.ttl, protocol: structuredClone(protocol) } };
-          })}
+          useLabel="Check on this module"
+          onUse={(protocol) => designer.onPick?.(protocol.name)}
           onClose={() => setDesigner(null)}
         />
       )}

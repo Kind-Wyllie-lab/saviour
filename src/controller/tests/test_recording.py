@@ -2222,3 +2222,95 @@ class TestShareSpaceEvents:
         for pct in (12, 3):
             self._run(rec, pct)
         assert [c.args[1] for c in rec._log_session_event.call_args_list] == ["WARNING", "FAULT"]
+
+
+# ---------------------------------------------------------------------------
+# Session protocols (plans/session-protocol.md): picked at creation, sent
+# with every start_recording
+# ---------------------------------------------------------------------------
+
+_PROTO = {"version": 1, "name": "tones", "steps": [
+    {"at_s": 0.1, "action": "pulse", "params": {"pin": 17, "width_s": 0.05}}]}
+
+
+def _ttl_facade(facade, scheduled=(17,)):
+    facade.get_modules_by_target.return_value = {"ttl_1": {"type": "ttl"}, "cam1": {"type": "camera"}}
+    facade.get_module_configs.return_value = {"ttl_1": {"true_config": {
+        "ttl": {"pins": {str(p): {"mode": "scheduled"} for p in scheduled}}}}}
+    facade.get_protocol.side_effect = lambda n: dict(_PROTO) if n == "tones" else None
+
+
+class TestSessionProtocol:
+    def test_created_with_a_copy_of_the_library_protocol(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        r = rec.create_session("exp1", "all", protocol_name="tones")
+        assert r["success"] is True
+        assert rec.sessions[r["session_name"]].protocol == _PROTO
+
+    def test_unknown_protocol_refused(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        r = rec.create_session("exp1", "all", protocol_name="nope")
+        assert r["success"] is False and "No protocol" in r["error"]
+        assert rec.sessions == {}
+
+    def test_refused_naming_the_module_whose_pins_dont_fit(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade, scheduled=(2,))
+        r = rec.create_session("exp1", "all", protocol_name="tones")
+        assert r["success"] is False
+        assert "ttl_1" in r["error"] and "pin 17" in r["error"]
+
+    def test_refused_when_no_ttl_module_in_target(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        facade.get_modules_by_target.return_value = {"cam1": {"type": "camera"}}
+        r = rec.create_session("exp1", "camera", protocol_name="tones")
+        assert r["success"] is False and "no TTL module" in r["error"]
+
+    def test_no_protocol_is_the_default_and_sends_nothing_extra(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        r = rec.create_session("exp1", "camera")
+        session = rec.sessions[r["session_name"]]
+        assert session.protocol is None
+        assert rec._with_protocol(session, {"a": 1}) == {"a": 1}
+
+    def test_start_sends_protocol_and_session_t0(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        r = rec.create_session("exp1", "all", protocol_name="tones")
+        facade.get_modules_by_target.return_value = {"ttl_1": {"type": "ttl"}, "cam1": {"type": "camera"}}
+        facade.is_module_recording.return_value = False
+        rec.start_pending_session(r["session_name"])
+        calls = [c for c in facade.send_command.call_args_list if c.args[1] == "start_recording"]
+        assert calls, "no start_recording sent"
+        session = rec.sessions[r["session_name"]]
+        for c in calls:
+            params = c.args[2]
+            assert params["protocol"] == _PROTO
+            assert params["protocol_start_at"] == session.recording_start_at == params["start_at"]
+
+    def test_rearm_carries_the_same_t0(self):
+        rec, _facade = _make_recording()
+        session = _session(protocol=_PROTO, recording_start_at=1234.5)
+        params = rec._with_protocol(session, {"duration": 0, "session_name": "exp1"})
+        assert params["protocol"] == _PROTO and params["protocol_start_at"] == 1234.5
+
+    def test_longer_than_a_timed_session_warns_but_creates(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        long = {**_PROTO, "steps": [{"at_s": 600, "action": "pulse", "params": {"pin": 17, "width_s": 0.05}}]}
+        facade.get_protocol.side_effect = lambda n: long
+        r = rec.create_session("exp1", "all", duration_minutes=5, protocol_name="tones")
+        assert r["success"] is True
+
+    def test_survives_a_save_and_load(self, tmp_path):
+        path = str(tmp_path / "sessions.json")
+        rec, facade = _make_recording(sessions_file=path)
+        _ttl_facade(facade)
+        r = rec.create_session("exp1", "all", protocol_name="tones")
+        rec2, _ = _make_recording(sessions_file=path)
+        rec2._load_sessions()
+        assert rec2.sessions[r["session_name"]].protocol == _PROTO

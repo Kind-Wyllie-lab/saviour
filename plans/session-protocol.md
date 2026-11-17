@@ -3,9 +3,11 @@
 - **Status:** proposed 2026-11-16. Supersedes the TTL-only
   `ttl-session-schedule.md` (2026-11-12). **First slice built 2026-11-16,
   not yet on hardware** (see "Built so far"): the shared expansion and
-  validation, and the TTL runner with a `scheduled` pin mode, with the
-  protocol carried in the TTL module's config for now. Phase 1's final
-  format still waits on the requesting user's protocol.
+  validation, and the TTL runner with a `scheduled` pin mode. **Since
+  2026-11-17 the protocol is picked per session** (New Session form) and
+  sent by the controller with every `start_recording`; `ttl.protocol` in a
+  module's config is no longer run. Phase 1's final format still waits on
+  the requesting user's protocol.
 - **Created:** 2026-11-16
 - **Owner:** ascottg
 - **CLAUDE.md ref:** Reliability / UX → "Session protocols"
@@ -100,8 +102,9 @@ The TTL half of phase 1's runner, testable with one TTL module:
   saves t0 in `/var/lib/saviour/ttl_protocol_state.json` (session name +
   protocol hash), and a start without `start_at` in the same session with
   the same protocol resumes: past edges are skipped and counted as missed,
-  held levels restored (`protocol resume`). When protocols move to the
-  session, the controller should send the session t0 explicitly instead.
+  held levels restored (`protocol resume`). Since 2026-11-17 the controller
+  sends `protocol_start_at` (the session t0) and that wins; the file is the
+  fallback.
 
 Rig test 2026-11-16 (`ttl_2904`, GPIO2 scheduled → jumper → GPIO3 input,
 `tools/ttl_protocol_check.py --loopback-pin 3`):
@@ -126,7 +129,8 @@ Rig test 2026-11-16 (`ttl_2904`, GPIO2 scheduled → jumper → GPIO3 input,
   tenth, 0.033 ms in the last: no drift. All 3,600 on the loopback.
 - Late threshold set from that to 5 ms (`LATE_THRESHOLD_S`, was 20 ms).
 - Not yet: re-arm mid-protocol (needs a module dropout; restarting the
-  service is for the user to do).
+  service is for the user to do). Since 2026-11-17 the controller sends
+  the session t0 on every start, so this tests the controller path.
 
 **Editor and preview timeline (phase 2, first part), built 2026-11-16:** a
 Protocol tab on the TTL card (`ProtocolEditor.jsx`): steps as a table
@@ -152,9 +156,50 @@ when the module's copy differs from the library or the protocol was
 deleted from it. Driven end to end in a browser against `dev:mock`
 (edit/save, copy/rename, name clash, use on module, test + stop, delete in
 use, discard guard, hover, zoom). When protocols move onto the session,
-the library is where a session's protocol is picked from. Next: the
-after-session view (planned from `_protocol.json` vs actual from the CSV,
-late/missing marked), then live.
+the library is where a session's protocol is picked from.
+
+**Protocol on the session, built 2026-11-17 (decided with the user that
+day).** Where the designer belongs: a protocol can drive several modules
+(TTL now, sound next, steps naming a `module`), so it isn't a module
+setting. Build order agreed: (1) protocol on the session, picker in the New
+Session form, TTL only; (2) the module card keeps only hardware setup
+(Scheduled pins; sound files later) plus a check/Test routine; (3) sound
+joins with the same designer and library (`play` takes file, volume,
+duration_s). Steps 1 and 2 are done:
+
+- **Controller.** `create_session` / `create_scheduled_session` (Socket.IO
+  and `POST /api/v1/sessions`) take `protocol` = a library name.
+  `Recording._resolve_session_protocol` copies it from the library onto
+  `RecordingSession.protocol` (saved in `sessions.json`, in
+  `session_metadata.json`) after `protocol_library.check_for_session`:
+  refused if the name is unknown, no TTL module is in the target, or a TTL
+  module's Scheduled pins can't run it (error names the module); a
+  protocol longer than a timed session is a logged warning. Later library
+  edits don't change a session's copy.
+- **Sent with every `start_recording`** (first start, health-probe
+  re-arm, added module, back online, scheduled start) by `_with_protocol`:
+  `protocol` plus `protocol_start_at` = the session's `recording_start_at`,
+  so a re-arm resumes on the session clock without the module's state
+  file deciding (that file stays as a fallback for an older controller).
+  Habitat plan starts (`_start_plan`) don't carry protocols.
+- **Module.** `Recording.start_recording(..., protocol, protocol_start_at)`
+  stores them (reset on every start, so a session without one runs
+  nothing); the TTL module runs `recording.session_protocol`. A protocol
+  left in `ttl.protocol` is logged as unused.
+- **Frontend.** New Session form: Protocol picker (None by default,
+  remembered, carried by Copy Session) + Edit…/Designer… opening the same
+  modal, which validates and tests against the target's first TTL module.
+  The form runs the controller's check live (JS twin) and blocks Create on
+  an error. Session details: a Protocol row (name, steps, length, planned
+  timeline). TTL card Protocol tab: no picker into config any more; check
+  a library protocol against this module, preview, Test routine, and "Move
+  to library" for a leftover `ttl.protocol`. Designer pieces moved to
+  `components/Protocol/`. `dev:mock` gained `create_session` and
+  experiment metadata so the form works there.
+
+Next: rig check of a session protocol end to end; the after-session view
+(planned from `_protocol.json` vs actual from the CSV, late/missing
+marked), then live; then sound.
 
 ## Two execution tiers
 

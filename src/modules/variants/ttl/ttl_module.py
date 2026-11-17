@@ -105,7 +105,7 @@ class TTLModule(Module):
         self.pseudorandom_pins = []  # Pins configured as pseudorandom
         self.interval_pulse_pins = []  # Pins configured as interval_pulse
         self.experiment_start_pins = []  # Pins configured as experiment_start
-        self.scheduled_pins = []  # Pins driven by the session protocol (ttl.protocol)
+        self.scheduled_pins = []  # Pins driven by the session's protocol
         self.generator_threads = {}  # Store generator threads
 
         # Session protocol runner (plans/session-protocol.md, phase 1)
@@ -574,7 +574,7 @@ class TTLModule(Module):
         return {"result": "error", "message": message}
 
     def test_protocol(self, protocol: dict | None = None) -> dict:
-        """Run the protocol (*protocol*, default the saved ttl.protocol) on the
+        """Run *protocol* (default: the current session's) on the
         scheduled pins now, timed exactly as in a recording, without
         recording: nothing is written to a CSV or the session, and every
         scheduled pin is set inactive at the end (or on stop). Refused while
@@ -662,16 +662,29 @@ class TTLModule(Module):
             late=status.get("late", 0), max_late_ms=status.get("max_late_ms", 0.0),
             message=error)
 
+    def _session_protocol(self):
+        """The protocol the controller sent with this session's
+        start_recording, or None."""
+        return getattr(getattr(self, "recording", None), "session_protocol", None)
+
     def _expand_protocol(self, protocol=None):
-        """Expand ttl.protocol (or *protocol*) against this module's scheduled
-        pins. None when there's no protocol to run."""
+        """Expand *protocol* (default: the session's) against this module's
+        scheduled pins. None when there's no protocol to run.
+
+        Protocols come with the session (picked in the New Session form);
+        `ttl.protocol` in the module's settings is no longer run."""
         if protocol is None:
-            protocol = self.config.get("ttl.protocol", None)
+            protocol = self._session_protocol()
+            if self.config.get("ttl.protocol", None):
+                self.logger.warning(
+                    "ttl.protocol in this module's settings is no longer used: "
+                    "protocols are picked per session (move it to the library "
+                    "from the TTL card's Protocol tab)")
         if not protocol:
             if self.scheduled_pins:
                 self.logger.warning(
-                    f"Scheduled pin(s) {self.scheduled_pins} but no ttl.protocol "
-                    f"— they stay inactive")
+                    f"Scheduled pin(s) {self.scheduled_pins} but this session has "
+                    f"no protocol — they stay inactive")
             return None
         return session_protocol.expand(
             protocol,
@@ -680,7 +693,7 @@ class TTLModule(Module):
         )
 
     def validate_protocol(self, protocol: dict | None = None) -> dict:
-        """Check a protocol (default: the configured ttl.protocol) without
+        """Check a protocol (default: the current session's) without
         running it: errors, warnings, edge count, duration."""
         exp = self._expand_protocol(protocol)
         if exp is None:
@@ -715,8 +728,10 @@ class TTLModule(Module):
     def _resolve_protocol_start(self, protocol_hash: str) -> tuple[float, bool]:
         """t = 0 for the protocol, and whether this is a resume.
 
-        The controller's first start_recording carries the session's PTP
-        start time (start_at); its re-arms after a dropout don't. So the first
+        Normally the controller says (protocol_start_at, the session's
+        recording start). Without it (an older controller): the first
+        start_recording carries the session's PTP start time (start_at),
+        re-arms after a dropout don't. So the first
         start writes t0 to a small state file, and a start without start_at
         in the same session with the same protocol picks it up again (even
         after a module restart), keeping every step on the session's clock.
@@ -725,6 +740,18 @@ class TTLModule(Module):
         intended = getattr(recording, "recording_intended_start_at", None)
         session = self.facade.get_current_session_name()
         path = self._protocol_state_path()
+        # The controller sends the session's t = 0 with every start_recording
+        # of a protocol session: that's authoritative. It's a resume unless
+        # this is the session's first start (whose start_at is that t = 0).
+        sent_t0 = getattr(recording, "session_protocol_start_at", None)
+        if isinstance(sent_t0, (int, float)) and sent_t0 > 0:
+            resumed = intended is None or abs(float(intended) - float(sent_t0)) > 0.5
+            try:
+                with open(path, "w") as f:
+                    json.dump({"session": session, "t0": sent_t0, "hash": protocol_hash}, f)
+            except OSError:
+                pass
+            return float(sent_t0), resumed
         if intended is None and session:
             try:
                 with open(path) as f:
@@ -744,7 +771,7 @@ class TTLModule(Module):
         return float(t0), False
 
     def _start_protocol(self, expansion, csv_filename: str) -> None:
-        protocol = self.config.get("ttl.protocol", None)
+        protocol = self._session_protocol()
         t0, resumed = self._resolve_protocol_start(self._protocol_hash(protocol))
         now = time.time()
         edges = expansion.edges

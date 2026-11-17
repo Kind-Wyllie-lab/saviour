@@ -13,9 +13,11 @@ import "./ProtocolDesigner.css";
 //
 // start: { name } opens a library protocol, { protocol, name? } a new draft
 // (e.g. a module's unsaved copy). library: useProtocolLibrary().
-// usedName: the protocol this module has picked (marked in the list).
-// onUse(protocol): put this protocol on the module (the card then needs Save).
-// onSaved(name, protocol, previousName): after a save lands.
+// usedName / usedBadge: the protocol the opener has picked, marked in the list.
+// onUse(protocol) / useLabel: the footer's "use this one" action (e.g. pick it
+// for the session being created). onSaved(name, protocol, previousName):
+// after a save lands. moduleLabel: the TTL module validation and Test
+// routine run against (null = none in reach: checked for format only).
 
 function fmtWhen(ts) {
   if (!ts) return "";
@@ -24,8 +26,8 @@ function fmtWhen(ts) {
 }
 
 export default function ProtocolDesigner({
-  start, library, moduleLabel, usedName, scheduledPins, pinConfigs, moduleId,
-  renderTest, cursorT, canEdit, onUse, onSaved, onClose,
+  start, library, moduleLabel, usedName, usedBadge = "picked", scheduledPins, pinConfigs, moduleId,
+  renderTest, cursorT, canEdit, onUse, useLabel = "Use this protocol", onSaved, onClose,
 }) {
   const { items, error, clearError, change } = library;
   const [draft, setDraft] = useState(null); // { original, name, protocol }
@@ -117,8 +119,8 @@ export default function ProtocolDesigner({
   };
   const remove = () => {
     if (!draft?.original) return;
-    const inUse = usedName === draft.original
-      ? " This module keeps its own copy until you pick another." : "";
+    const inUse = usedName && usedName === draft.original
+      ? " It's picked here: that pick is cleared." : "";
     if (!window.confirm(`Delete “${draft.original}” from the library?${inUse}`)) return;
     setPending({ kind: "delete", name: draft.original });
     library.remove(draft.original);
@@ -138,8 +140,9 @@ export default function ProtocolDesigner({
         <header className="pdm-head">
           <h2>Protocol designer</h2>
           <span className="pdm-head-sub">
-            Protocols are saved on the controller and can be picked by any TTL module.
-            Checked against {moduleLabel}'s Scheduled pins.
+            Protocols are saved on the controller and picked for each session.
+            {moduleLabel ? ` Checked against ${moduleLabel}'s Scheduled pins.`
+              : " No TTL module in reach: checked for format only."}
           </span>
           <button type="button" className="pdm-x" onClick={close} aria-label="Close">✕</button>
         </header>
@@ -177,7 +180,7 @@ export default function ProtocolDesigner({
                     onClick={() => pick(it.name)}>
                     <span className="pdm-item-name">
                       {it.name}
-                      {usedName === it.name && <span className="pdm-badge">on this module</span>}
+                      {usedName && usedName === it.name && <span className="pdm-badge">{usedBadge}</span>}
                     </span>
                     <span className="pdm-item-meta">
                       {(it.protocol?.steps?.length ?? 0)} step{it.protocol?.steps?.length === 1 ? "" : "s"}
@@ -227,10 +230,10 @@ export default function ProtocolDesigner({
           {!error && canEdit && dirty && <span className="pdm-hint">Unsaved changes</span>}
           <div className="pdm-foot-buttons">
             {onUse && draft?.original && (
-              <button type="button" className="pe-small" disabled={dirty || usedName === draft.original}
-                title={dirty ? "Save first" : "Put this protocol on the module (then Save the module's settings)"}
+              <button type="button" className="pe-small" disabled={dirty}
+                title={dirty ? "Save first" : undefined}
                 onClick={() => { onUse(saved.protocol); onClose(); }}>
-                {usedName === draft.original ? "On this module" : "Use on this module"}
+                {useLabel}
               </button>
             )}
             {canEdit && dirty && draft?.original && (

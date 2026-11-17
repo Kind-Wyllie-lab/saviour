@@ -1010,7 +1010,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         )
 
     def _write_session_metadata(self, session_name: str, target: str) -> None:
-        """Write session_metadata.json to the NAS or local share.
+        """Write session_metadata.json to the NAS or local share (with the
+        session's protocol, when it has one).
 
         If the initial attempt fails (NAS temporarily unavailable), a background
         thread retries with exponential backoff.
@@ -1023,6 +1024,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             "target": target,
             **self.experiment_metadata,
         }
+        protocol = self.facade.get_session_protocol(session_name)
+        if protocol:
+            metadata["protocol"] = protocol
 
         if not self._try_write_metadata(session_name, metadata):
             self.logger.warning(
@@ -2199,16 +2203,19 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             duration_minutes = data.get("duration_minutes")  # None = infinite
             researcher = data.get("researcher") or None
             unattended = bool(data.get("unattended"))
+            protocol_name = data.get("protocol") or None
             self.logger.info(
                 f"Received request to create session {session_name} targeting {target} "
-                f"(duration_minutes={duration_minutes}, unattended={unattended})"
+                f"(duration_minutes={duration_minutes}, unattended={unattended}, "
+                f"protocol={protocol_name})"
             )
             nas_error = self._check_nas_free_space()
             if nas_error:
                 self.logger.error(f"NAS pre-check failed: {nas_error}")
                 self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
                 return
-            result = self.facade.create_session(session_name, target, duration_minutes, researcher, unattended=unattended)
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher,
+                                                unattended=unattended, protocol_name=protocol_name)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -2256,7 +2263,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
-            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher,
+                                                          protocol_name=data.get("protocol") or None)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):

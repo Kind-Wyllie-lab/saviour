@@ -197,7 +197,14 @@ duration_s). Steps 1 and 2 are done:
   `components/Protocol/`. `dev:mock` gained `create_session` and
   experiment metadata so the form works there.
 
-Next: rig check of a session protocol end to end; the after-session view
+Rig check 2026-11-17 (`ttl_2904`, GPIO2 → GPIO3 loopback): a session
+created by `POST /api/v1/sessions` with `protocol` (5 Hz × 20 train, then
+10 jittered pulses) ran 60/60 edges, output lateness median 0.028 ms, max
+0.071 ms, all 60 on the loopback; the protocol landed in
+`session_metadata.json` and `_protocol.json`. Refusals checked live: no
+TTL module in the target, unknown name, bad step parameters.
+
+Next: the after-session view
 (planned from `_protocol.json` vs actual from the CSV, late/missing
 marked), then live; then sound.
 

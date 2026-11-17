@@ -12,6 +12,8 @@ import { humanizeMinutes } from "../sessionFormat";
 import SessionProtocolField from "./SessionProtocolField";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// Daily time-window sessions are a habitat thing; other rigs don't offer them.
+const SCHEDULED_MODE_AVAILABLE = import.meta.env.VITE_VARIANT === "habitat";
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 const daysSerialize = (days) => JSON.stringify([...days]);
@@ -33,7 +35,10 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     return target !== "all" ? `${safe}-${target}-${ts}` : `${safe}-${ts}`;
   }, [experimentName, target, now]);
 
-  const [recordingMode, setRecordingMode] = usePersistedState("saviour_session_form_mode", "immediate");
+  const [storedMode, setRecordingMode] = usePersistedState("saviour_session_form_mode", "immediate");
+  // A remembered or copied "scheduled" falls back to immediate where the
+  // mode isn't offered.
+  const recordingMode = storedMode === "scheduled" && !SCHEDULED_MODE_AVAILABLE ? "immediate" : storedMode;
   // Library protocol for the session ("" = none), and whether it will run
   // on the target (SessionProtocolField's check, the controller's twin).
   const [protocolName, setProtocolName] = usePersistedState("saviour_session_form_protocol", "");
@@ -277,7 +282,9 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
           >
             <option value="immediate">Immediate - manual stop</option>
             <option value="timed">Timed - auto-stop after duration</option>
-            <option value="scheduled">Scheduled - daily time window</option>
+            {SCHEDULED_MODE_AVAILABLE && (
+              <option value="scheduled">Scheduled - daily time window</option>
+            )}
           </select>
         </div>
 

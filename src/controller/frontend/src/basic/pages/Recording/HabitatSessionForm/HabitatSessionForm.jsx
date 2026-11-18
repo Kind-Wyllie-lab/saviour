@@ -190,7 +190,7 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
 
   const [cohort, setCohort] = useState("");
   const [researcher, setResearcher] = useState("");
-  const [expectedDays, setExpectedDays] = useState(7);
+  const [expectedDays, setExpectedDays] = useState(63); // a 9-week cohort
 
   // habitat_<cohort>_<YYYYMMDD> — the whole session name comes from the
   // cohort ID + today's date; nothing else to type.
@@ -211,6 +211,13 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
   const estimateTimer = useRef(null);
 
   const expectedMinutes = Math.max(0, Number(expectedDays) || 0) * 1440;
+  // "9 weeks", "9 weeks 3 days", or "" for under a week / no value.
+  const weeksLabel = (() => {
+    const d = Math.floor(Number(expectedDays) || 0);
+    if (d < 7) return "";
+    const w = Math.floor(d / 7), r = d % 7;
+    return `${w} week${w === 1 ? "" : "s"}` + (r ? ` ${r} day${r === 1 ? "" : "s"}` : "");
+  })();
 
   useEffect(() => {
     const onEst = (d) => setEstimate(d);
@@ -310,6 +317,7 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
             aria-label="Expected length in days"
           />
           <span>days expected</span>
+          {weeksLabel && <span className="hsf-weeks">({weeksLabel})</span>}
           <label className="hsf-autostop">
             <input
               type="checkbox"

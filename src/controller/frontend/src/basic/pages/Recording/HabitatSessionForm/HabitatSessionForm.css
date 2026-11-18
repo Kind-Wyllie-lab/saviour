@@ -96,6 +96,10 @@
   text-align: center;
 }
 
+.hsf-weeks {
+  color: var(--secondary-text-color);
+}
+
 .hsf-autostop {
   display: flex;
   align-items: center;

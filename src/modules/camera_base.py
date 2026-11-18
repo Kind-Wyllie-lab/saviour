@@ -44,6 +44,20 @@ from src.modules import crop_geometry
 from src.shared.ratelimit_log import RateLimitedLogger
 
 
+def _ir_filter_removed(sensor_model: str) -> bool | None:
+    """Whether the sensor has no IR-cut filter, judged from libcamera's model
+    name alone. Official NoIR Camera Module 3s identify themselves (the
+    driver reads the variant off the module: imx708_noir, imx708_wide_noir),
+    so any imx708 is known either way. Other sensors (HQ imx477 etc.) report
+    the same name with or without the filter, so the answer is None."""
+    model = (sensor_model or "").lower()
+    if "noir" in model:
+        return True
+    if model.startswith("imx708"):
+        return False
+    return None
+
+
 @dataclass
 class FrameTiming:
     """Per-frame timing/CSV values computed once and shared with subclass hooks."""
@@ -132,6 +146,10 @@ class CameraBase(Module):
         self.sensor_modes = []
         self.sensor_model = ""
         self.has_autofocus = False
+        # True/False when the sensor model tells us (see _ir_filter_removed),
+        # None when it can't (e.g. an HQ imx477 with the filter cut off by
+        # hand looks identical to a stock one).
+        self.ir_filter_removed: bool | None = None
         # None once a sensor is confirmed present and configured; otherwise a
         # human-readable reason. Surfaced two ways: passively every heartbeat
         # via get_health(), and as the explicit failure reason from the
@@ -148,9 +166,11 @@ class CameraBase(Module):
             self.sensor_modes = self.picam2.sensor_modes
             self.sensor_model = self.picam2.camera_properties.get("Model", "").lower()
             self.has_autofocus = "imx708" in self.sensor_model
+            self.ir_filter_removed = _ir_filter_removed(self.sensor_model)
             self.logger.info(
                 f"Sensor model: {self.sensor_model!r}, "
-                f"autofocus: {self.has_autofocus}"
+                f"autofocus: {self.has_autofocus}, "
+                f"IR filter removed: {self.ir_filter_removed}"
             )
             time.sleep(0.1)
         except Exception as e:
@@ -356,6 +376,7 @@ class CameraBase(Module):
             "sensor_modes": enriched,
             "sensor_model": self.sensor_model,
             "has_autofocus": self.has_autofocus,
+            "ir_filter_removed": self.ir_filter_removed,
         }
 
 
@@ -1105,6 +1126,9 @@ class CameraBase(Module):
                 "deficit_vs_csv": (csv_rows_written - encoded
                                    if encoded is not None else None),
                 "fps_target": self.fps,
+                "sensor_model": self.sensor_model,
+                # From the model name only: null = can't tell (HQ etc.).
+                "ir_filter_removed": self.ir_filter_removed,
                 "sync_mode": self.config.get("camera.sync_mode", "none"),
                 "dropped_before_total": int(dropped_before_total),
                 # Whether _stop_recording's ffmpeg -c copy -reset_timestamps

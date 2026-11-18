@@ -220,12 +220,39 @@ function HefClassNames({ labels, onChange }) {
   );
 }
 
+function irFilterLabel(removed, model) {
+  if (!model || removed === undefined) return null;
+  if (removed === true) {
+    return (
+      <span key="ir" className="ir-filter-tag ir-filter-tag--noir"
+        title="NoIR camera: no IR-cut filter, so it sees infrared (reported by the camera module itself)">
+        NoIR
+      </span>
+    );
+  }
+  if (removed === false) {
+    return (
+      <span key="ir" title="Standard Camera Module 3 with its IR-cut filter: it will not see IR illumination">
+        IR filter fitted
+      </span>
+    );
+  }
+  return (
+    <span key="ir" title="This sensor reports the same model with or without its IR-cut filter (e.g. an HQ camera with the filter removed by hand), so the software can't tell">
+      IR filter: unknown
+    </span>
+  );
+}
+
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const { moduleList } = useModules();
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
+  // true / false from the sensor model name (official NoIR Camera Module 3s
+  // say so); null when the model can't tell (HQ etc.); undefined = no reply yet.
+  const [irFilterRemoved, setIrFilterRemoved] = useState(undefined);
   const [activePreset, setActivePreset] = useState("custom");
   const [activeTab, setActiveTab] = useHashTab("basic", ALL_TAB_KEYS);
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
@@ -248,6 +275,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         setSensorModes(data.sensor_modes);
         if (data.sensor_model !== undefined) setSensorModel(data.sensor_model);
         if (data.has_autofocus !== undefined) setHasAutofocus(data.has_autofocus);
+        if (data.ir_filter_removed !== undefined) setIrFilterRemoved(data.ir_filter_removed);
       }
     };
     socket.on("sensor_modes_response", onSensorModes);
@@ -517,7 +545,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         saveTransform={isApa ? apaSaveTransform : undefined}
         markSaved={markSaved}
         isDirty={isDirty}
-        deviceInfoExtras={[sensorModel]}
+        deviceInfoExtras={[sensorModel, irFilterLabel(irFilterRemoved, sensorModel)]}
         tabBadges={hasSyncWarning ? { record: "⚠" } : {}}
         sidebar={
           <>

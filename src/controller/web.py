@@ -5022,6 +5022,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "sensor_modes": status.get("sensor_modes", []),
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
+                            "ir_filter_removed": status.get("ir_filter_removed"),
                         })
                     elif command in self.LIGHTING_COMMANDS:
                         self.socketio.emit("lighting_state", {

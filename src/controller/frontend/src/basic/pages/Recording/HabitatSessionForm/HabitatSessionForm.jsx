@@ -54,12 +54,13 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
     <div className="hsf-plan">
       <div className="hsf-plan__head">
         <input
-          className="hsf-plan__label"
+          className="hsf-input hsf-plan__label"
           value={plan.label}
           onChange={(e) => set({ label: e.target.value })}
           placeholder="Plan name"
         />
         <select
+          className="hsf-input"
           value={plan.strategy}
           onChange={(e) =>
             set({
@@ -74,19 +75,22 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           <option value="continuous">Continuous (24/7)</option>
           <option value="windows">Time windows</option>
         </select>
-        <button type="button" className="hsf-x" onClick={onRemove} title="Remove plan">
+        <button type="button" className="hsf-x" onClick={onRemove} title="Remove plan"
+          aria-label="Remove plan">
           ✕
         </button>
       </div>
 
-      <div className="hsf-modules">
+      <div className="hsf-modules" role="group" aria-label="Modules in this plan">
         {allModules.map((m) => {
           const taken = usedElsewhere.has(m.id);
           return (
             <label
               key={m.id}
-              className={"hsf-mod" + (taken ? " hsf-mod--taken" : "")}
-              title={taken ? "already in another plan" : m.type}
+              className={"hsf-mod"
+                + (plan.modules.includes(m.id) ? " hsf-mod--on" : "")
+                + (taken ? " hsf-mod--taken" : "")}
+              title={taken ? "Already in another plan" : m.type}
             >
               <input
                 type="checkbox"
@@ -105,12 +109,14 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           {plan.windows.map((w, i) => (
             <div key={i} className="hsf-window">
               <input
+                className="hsf-input"
                 type="time"
                 value={w.start}
                 onChange={(e) => setWindow(i, { start: e.target.value })}
               />
-              <span>→</span>
+              <span className="hsf-window__arrow">→</span>
               <input
+                className="hsf-input"
                 type="time"
                 value={w.end}
                 onChange={(e) => setWindow(i, { end: e.target.value })}
@@ -119,6 +125,8 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
                 <button
                   type="button"
                   className="hsf-x"
+                  title="Remove window"
+                  aria-label="Remove window"
                   onClick={() =>
                     set({ windows: plan.windows.filter((_, j) => j !== i) })
                   }
@@ -130,26 +138,26 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           ))}
           <button
             type="button"
-            className="btn btn-small"
+            className="secondary-button hsf-small-btn"
             onClick={() =>
               set({ windows: [...plan.windows, { start: "04:00", end: "06:00" }] })
             }
           >
-            + window
+            + Window
           </button>
-          <div className="hsf-days">
+          <div className="hsf-days day-picker">
             {DAYS.map((d, i) => (
               <button
                 type="button"
                 key={d}
-                className={"hsf-day" + (plan.days.includes(i) ? " hsf-day--on" : "")}
+                className={"day-btn" + (plan.days.includes(i) ? " day-btn--active" : "")}
                 onClick={() => toggleDay(i)}
               >
                 {d}
               </button>
             ))}
             <span className="hsf-hint">
-              {plan.days.length ? "" : "every day"}
+              {plan.days.length ? "" : "Every day"}
             </span>
           </div>
         </div>
@@ -158,6 +166,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
       <label className="hsf-seg">
         Segment length
         <input
+          className="hsf-input"
           type="number"
           min="1"
           max="1440"
@@ -260,103 +269,122 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
     estimate && estimate.share_free_bytes != null && !estimate.fits;
 
   return (
-    <div className="hsf">
-      <div className="hsf-row">
-        <label className="form-field">
-          <span>Cohort ID</span>
-          <input
-            value={cohort}
-            onChange={(e) => setCohort(e.target.value)}
-            placeholder="e.g. CRLLT3"
-            autoFocus
-          />
-        </label>
-        <label className="form-field">
-          <span>Researcher <em>(optional)</em></span>
-          <input
-            value={researcher}
-            onChange={(e) => setResearcher(e.target.value)}
-          />
-        </label>
-      </div>
-      <div className="hsf-name-preview">
-        Session: <code>{sessionName || "habitat_<cohort>_" + startDate}</code>
-      </div>
+    <div className="hsf card">
+      <section className="hsf-section">
+        <h3 className="hsf-section__title">Cohort</h3>
+        <div className="hsf-row">
+          <label className="hsf-field">
+            <span>Cohort ID</span>
+            <input
+              className="hsf-input"
+              value={cohort}
+              onChange={(e) => setCohort(e.target.value)}
+              placeholder="e.g. CRLLT3"
+              autoFocus
+            />
+          </label>
+          <label className="hsf-field">
+            <span>Researcher <em>(optional)</em></span>
+            <input
+              className="hsf-input"
+              value={researcher}
+              onChange={(e) => setResearcher(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="hsf-name-preview">
+          Session name
+          <code>{sessionName || "habitat_<cohort>_" + startDate}</code>
+        </div>
+      </section>
 
-      <label className="form-field hsf-len">
-        <span>Expected length</span>
-        <input
-          type="number"
-          min="1"
-          value={expectedDays}
-          onChange={(e) => setExpectedDays(e.target.value)}
-        />
-        days
-        <label className="hsf-autostop">
+      <section className="hsf-section">
+        <h3 className="hsf-section__title">Length</h3>
+        <div className="hsf-len">
           <input
-            type="checkbox"
-            checked={autoStop}
-            onChange={(e) => setAutoStop(e.target.checked)}
+            className="hsf-input"
+            type="number"
+            min="1"
+            value={expectedDays}
+            onChange={(e) => setExpectedDays(e.target.value)}
+            aria-label="Expected length in days"
           />
-          auto-stop when it elapses
-        </label>
-      </label>
+          <span>days expected</span>
+          <label className="hsf-autostop">
+            <input
+              type="checkbox"
+              checked={autoStop}
+              onChange={(e) => setAutoStop(e.target.checked)}
+            />
+            Stop automatically when it elapses
+          </label>
+        </div>
+      </section>
 
-      <div className="hsf-plans">
-        {plans.map((p) => (
-          <PlanEditor
-            key={p.plan_id}
-            plan={p}
-            allModules={online}
-            usedElsewhere={usedByOthers(p.plan_id)}
-            onChange={(next) => setPlan(p.plan_id, next)}
-            onRemove={() =>
-              setPlans((ps) =>
-                ps.length > 1 ? ps.filter((x) => x.plan_id !== p.plan_id) : ps,
-              )
-            }
-          />
-        ))}
-        <button
-          type="button"
-          className="btn btn-small"
-          onClick={() => setPlans((ps) => [...ps, newPlan(`Plan ${ps.length + 1}`, [], "continuous")])}
-        >
-          + plan
-        </button>
-      </div>
+      <section className="hsf-section">
+        <h3 className="hsf-section__title">Recording plans</h3>
+        <p className="hsf-section__hint">
+          Each module belongs to one plan: record continuously, or only in
+          daily time windows.
+        </p>
+        <div className="hsf-plans">
+          {plans.map((p) => (
+            <PlanEditor
+              key={p.plan_id}
+              plan={p}
+              allModules={online}
+              usedElsewhere={usedByOthers(p.plan_id)}
+              onChange={(next) => setPlan(p.plan_id, next)}
+              onRemove={() =>
+                setPlans((ps) =>
+                  ps.length > 1 ? ps.filter((x) => x.plan_id !== p.plan_id) : ps,
+                )
+              }
+            />
+          ))}
+          <button
+            type="button"
+            className="secondary-button hsf-small-btn hsf-add-plan"
+            onClick={() => setPlans((ps) => [...ps, newPlan(`Plan ${ps.length + 1}`, [], "continuous")])}
+          >
+            + Plan
+          </button>
+        </div>
+      </section>
 
       {estimate?.plans && (
-        <div className={"hsf-vol" + (overSpace ? " hsf-vol--over" : "")}>
-          <div className="hsf-vol__title">
-            Projected over {expectedDays} days
-          </div>
+        <section className={"hsf-vol" + (overSpace ? " hsf-vol--over" : "")}>
+          <h3 className="hsf-section__title">
+            Storage over {expectedDays} days
+          </h3>
           {estimate.plans.map((p) => (
             <div key={p.plan_id} className="hsf-vol__row">
               <span>{p.label}</span>
-              <span>{Math.round(p.duty_fraction * 100)}% duty</span>
-              <span>{formatBytes(p.projected_bytes)}</span>
+              <span className="hsf-vol__duty">{Math.round(p.duty_fraction * 100)}% of the time</span>
+              <span className="hsf-vol__bytes">{formatBytes(p.projected_bytes)}</span>
             </div>
           ))}
           <div className="hsf-vol__row hsf-vol__row--total">
             <span>Total</span>
             <span />
-            <span>{formatBytes(estimate.projected_bytes_total)}</span>
+            <span className="hsf-vol__bytes">{formatBytes(estimate.projected_bytes_total)}</span>
           </div>
           {estimate.share_free_bytes != null && (
             <div className="hsf-vol__free">
-              {formatBytes(estimate.share_free_bytes)} free —{" "}
+              {formatBytes(estimate.share_free_bytes)} free on the share:{" "}
               {fits ? "fits" : "will NOT fit"}
             </div>
           )}
-        </div>
+        </section>
       )}
 
-      {error && <div className="compose-job__error">{error}</div>}
+      {error && <p className="form-warning">{error}</p>}
 
-      <button className="btn" onClick={submit} disabled={creating}>
-        {creating ? "Creating…" : "Create Habitat Session"}
-      </button>
+      <div className="button-row">
+        <button className="primary-button" onClick={submit} disabled={creating}>
+          {creating ? "Creating…" : "Create Habitat Session"}
+        </button>
+      </div>
     </div>
   );
 }

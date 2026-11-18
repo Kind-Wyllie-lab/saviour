@@ -49,7 +49,7 @@ import tempfile
 # Mirror of BUILTIN_FONTS in src/basic/utils/fonts.js -- keep in sync.
 RESERVED_IDS = frozenset({
     "system", "humanist", "geometric", "rounded", "industrial",
-    "transitional", "old-style", "mono",
+    "transitional", "old-style", "mono", "consolas",
 })
 
 MAX_FACES = 64

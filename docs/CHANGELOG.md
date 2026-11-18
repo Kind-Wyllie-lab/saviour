@@ -13,6 +13,7 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-18
 
+- [x] **Consolas font and Terminal theme** on the Frontend settings tab. **Consolas** is a built-in font (Consolas first, then the nearest installed monospace: it ships with Windows/Office only and is licensed, so it isn't served from the controller). **Terminal** is a built-in colour theme: phosphor green on black with amber as the second accent in dark mode, dark green on pale paper in light mode; button accent kept mid-green so white button text stays readable (4.2:1 dark, 5.1:1 light). Ids `consolas` / `terminal` reserved in `fonts.py` / `themes.py`. Not yet viewed in a browser.
 - [x] **Cameras report whether the sensor has an IR filter** (`camera_base._ir_filter_removed`, `TestIrFilterRemoved`). Judged from libcamera's model name only: official NoIR Camera Module 3s identify themselves (`imx708_noir`, `imx708_wide_noir`), so any imx708 is known either way; other sensors (HQ `imx477` etc.) report the same name with or without the filter, so the answer is `null`. `get_sensor_modes` returns `ir_filter_removed` (forwarded in `sensor_modes_response`), the camera config card shows **NoIR** / IR filter fitted / IR filter: unknown beside the model, and every segment's `_recording.json` records `sensor_model` and `ir_filter_removed`. A config key for HQ cameras with the filter removed by hand (and loading `imx477_noir.json` tuning for them) was discussed and deferred. Not yet viewed on the rig.
 
 ## 2026-11-17

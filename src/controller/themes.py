@@ -61,7 +61,8 @@ TOKEN_KEYS = (
 )
 
 # Built-in theme ids the frontend ships -- a custom theme may not shadow one.
-RESERVED_IDS = frozenset({"default", "sidb", "uofe", "wood", "kind", "pagan"})
+RESERVED_IDS = frozenset({"default", "sidb", "uofe", "wood", "kind", "pagan",
+                          "terminal"})
 
 # Mirror of PALETTE_ROLES in src/basic/utils/themes.js -- keep in sync.
 _ROLE_KEYS = ("bg", "card", "text", "accent", "accentAlt")

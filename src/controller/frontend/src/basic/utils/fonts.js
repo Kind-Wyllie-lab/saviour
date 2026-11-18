@@ -53,6 +53,12 @@ export const BUILTIN_FONTS = [
     stack: "ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, "
       + "'DejaVu Sans Mono', monospace",
   },
+  {
+    // Consolas ships with Windows and Office only (licensed, so not served
+    // from the controller); elsewhere this falls back to the nearest mono.
+    id: "consolas", name: "Consolas",
+    stack: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', ui-monospace, monospace",
+  },
 ];
 
 const SYSTEM_STACK = BUILTIN_FONTS[0].stack;

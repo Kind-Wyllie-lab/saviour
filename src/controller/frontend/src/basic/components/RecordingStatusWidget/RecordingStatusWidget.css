@@ -3,54 +3,11 @@
   user-select: none;
 }
 
-/* ── Full-width bar look ───────────────────────────────────────────────────
-   Overrides the shared .card (rounded corners, all-round border, box-shadow,
-   min-width) and .hrc (left-accent stripe) classes with higher-specificity
-   rules scoped to this widget only — .card/.hrc themselves are untouched,
-   so ConfigCard/HabitatRecordingControl/etc. keep their current look. Colour
-   comes from the same --card-bg-color/--text-color variables as every other
-   card, so it flips with light/dark mode like the rest of the app instead of
-   being fixed to one look. */
-.recording-status-widget.card {
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  margin: 0;
-  padding: 8px 20px;
-  border: none;
-  border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
-  box-shadow: none;
-  background-color: var(--card-bg-color);
-  color: var(--text-color);
-}
-
-.recording-status-widget.hrc {
-  border-left: none;
-}
+/* The bar look (no card border/shadow, bottom rule, state tints) comes
+   from the shared .hrc.card rules in HabitatRecordingControl.css. */
 
 .recording-status-widget:hover {
   background: color-mix(in srgb, var(--text-color) 8%, var(--card-bg-color));
-}
-
-/* Status accent colours (recording/starting/fault) are deliberately fixed
-   across both themes — same convention as index.css's --ready-color/
-   --recording-color, which are identical in the :root and body.dark-mode
-   blocks. Only the base surface (background/text/border above) is theme-
-   reactive. */
-.recording-status-widget.hrc--recording {
-  background-color: color-mix(in srgb, #2e7d32 20%, var(--card-bg-color));
-  border-bottom-color: color-mix(in srgb, #2e7d32 55%, var(--card-bg-color));
-}
-
-.recording-status-widget.hrc--starting {
-  background-color: color-mix(in srgb, #e8a020 20%, var(--card-bg-color));
-  border-bottom-color: color-mix(in srgb, #e8a020 55%, var(--card-bg-color));
-}
-
-.recording-status-widget.hrc--fault {
-  background-color: color-mix(in srgb, #c62828 20%, var(--card-bg-color));
-  border-bottom-color: color-mix(in srgb, #c62828 55%, var(--card-bg-color));
 }
 
 .recording-status-widget.hrc--ready {
@@ -118,6 +75,7 @@
 }
 
 .rsw-divider {
+  align-self: center;
   width: 1px;
   height: 14px;
   background: var(--border-color);

@@ -235,6 +235,33 @@ export const BUILTIN_THEMES = [
       "--button-color": "#1a8f36",
     },
   },
+  {
+    // Terminal amber -- #ffb000 amber-phosphor text on warm black; the
+    // button accent is a deeper amber so white button text stays readable
+    // (4.6:1 dark, 5.4:1 light). Light mode: brown ink on cream paper.
+    id: "terminal-amber",
+    name: "Terminal amber",
+    light: {
+      "--bg-color": "#f8f3e8",
+      "--card-bg-color": "#fffcf5",
+      "--text-color": "#4a2f00",
+      "--secondary-text-color": "#7a5a1f",
+      "--accent-color": "#9a5c00",
+      "--accent-color-alt": "#1a7f32",
+      "--border-color": "#e8dcc2",
+      "--button-color": "#9a5c00",
+    },
+    dark: {
+      "--bg-color": "#0c0a06",
+      "--card-bg-color": "#15110a",
+      "--text-color": "#ffb000",
+      "--secondary-text-color": "#c98a00",
+      "--accent-color": "#a86500",
+      "--accent-color-alt": "#ffd27a",
+      "--border-color": "#3a2c10",
+      "--button-color": "#a86500",
+    },
+  },
 ];
 
 /** Built-in themes followed by any operator-defined custom themes. */

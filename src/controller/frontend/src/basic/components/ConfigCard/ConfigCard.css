@@ -240,6 +240,13 @@ min-width: 300px;
   margin-top: 2px;
 }
 
+.ir-filter-tag--noir {
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+}
+
 .fov-label {
   font-size: 0.85em;
   padding: 4px 8px;

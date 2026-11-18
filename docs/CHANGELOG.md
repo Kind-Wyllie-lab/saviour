@@ -11,6 +11,10 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-18
+
+- [x] **Cameras report whether the sensor has an IR filter** (`camera_base._ir_filter_removed`, `TestIrFilterRemoved`). Judged from libcamera's model name only: official NoIR Camera Module 3s identify themselves (`imx708_noir`, `imx708_wide_noir`), so any imx708 is known either way; other sensors (HQ `imx477` etc.) report the same name with or without the filter, so the answer is `null`. `get_sensor_modes` returns `ir_filter_removed` (forwarded in `sensor_modes_response`), the camera config card shows **NoIR** / IR filter fitted / IR filter: unknown beside the model, and every segment's `_recording.json` records `sensor_model` and `ir_filter_removed`. A config key for HQ cameras with the filter removed by hand (and loading `imx477_noir.json` tuning for them) was discussed and deferred. Not yet viewed on the rig.
+
 ## 2026-11-17
 
 - [x] **Repeat blocks can spread repetitions over a window** (`src/shared/session_protocol.py` + JS twin, 4 new fixtures, `TestSpreadRepeat`). For the researcher's conditioning protocol (10 s light co-terminating with a 1 s footshock, trials pseudo-randomly over 20 min): a repeat with `spread_s` (window for the starts) and `min_gap_s` (start to start) instead of `every_s`/`jitter_s` places `times` repetitions uniformly at random among valid placements, the same for a given seed (so every animal gets the same schedule). Trial count, window and minimum gap are fields on the Repeat row (Spacing: Regular gaps / Spread over a window); too many trials for the window is an error naming the spread needed.

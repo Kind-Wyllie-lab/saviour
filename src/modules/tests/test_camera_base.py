@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from src.modules.camera_base import CameraBase, _FrameShim
+from src.modules.camera_base import CameraBase, _FrameShim, _ir_filter_removed
 from src.modules.crop_geometry import default_crop
 from src.shared.ratelimit_log import RateLimitedLogger
 
@@ -56,13 +56,15 @@ class TestGetSensorModes:
              "bit_depth": 10, "format": "SBGGR10"},
         ]
         cam = _make_camera(
-            sensor_modes=modes, sensor_model="imx708", has_autofocus=True
+            sensor_modes=modes, sensor_model="imx708_noir", has_autofocus=True,
+            ir_filter_removed=True,
         )
 
         result = cam.get_sensor_modes()
 
-        assert result["sensor_model"] == "imx708"
+        assert result["sensor_model"] == "imx708_noir"
         assert result["has_autofocus"] is True
+        assert result["ir_filter_removed"] is True
         full, partial = result["sensor_modes"]
         assert full["label"].endswith("Full FoV")
         assert partial["label"] == "Mode 1: 1280×720 @ 60fps — Partial FoV (50%)"
@@ -793,6 +795,20 @@ class TestCropEditing:
 
 
 # ---------------------------------------------------------------------------
+class TestIrFilterRemoved:
+    @pytest.mark.parametrize("model, expected", [
+        ("imx708_noir", True),
+        ("imx708_wide_noir", True),
+        ("IMX708_NOIR", True),
+        ("imx708", False),
+        ("imx708_wide", False),
+        ("imx477", None),          # HQ: same name with or without the filter
+        ("", None),
+    ])
+    def test_judged_from_model_name(self, model, expected):
+        assert _ir_filter_removed(model) is expected
+
+
 # _write_recording_json — the per-segment provenance sidecar (A3 of
 # plans/multicam-frame-alignment-and-sync-provenance.md)
 # ---------------------------------------------------------------------------
@@ -805,6 +821,7 @@ class TestRecordingJson:
         }.get(key, default)
         return _make_camera(
             config=cfg, fps=30, facade=MagicMock(),
+            sensor_model="imx477", ir_filter_removed=None,
         ), tmp_path
 
     def test_writes_pre_remux_authoritative_counts(self, tmp_path):
@@ -820,6 +837,8 @@ class TestRecordingJson:
         assert data["encoder_window_s"] == pytest.approx(60.0)
         assert data["sync_mode"] == "client"
         assert data["fps_target"] == 30
+        assert data["sensor_model"] == "imx477"
+        assert data["ir_filter_removed"] is None   # HQ: can't tell
         assert data["dropped_before_total"] == 4
         assert data["positioning_timestamps_remuxed"] is True
         # ffprobe absent in the test env -> encoded count unknown, not an error

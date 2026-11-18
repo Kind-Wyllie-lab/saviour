@@ -133,9 +133,7 @@ function RecordingLayout() {
                 {BUILT_VARIANT === "habitat" && (
                     <div className="recording-form-mode">
                         <span className="recording-form-mode__label">
-                            {habitatForm
-                                ? "Habitat Session — plan-based recording"
-                                : "Standard session"}
+                            {habitatForm ? "Habitat session" : "Standard session"}
                         </span>
                         <button
                             type="button"
@@ -148,6 +146,18 @@ function RecordingLayout() {
                                 ? "Switch to standard session"
                                 : "Switch to Habitat Session"}
                         </button>
+                        {habitatForm && (
+                            <p className="recording-form-mode__desc">
+                                Habitat uses special recording sessions that are
+                                intended to run for the duration of an entire
+                                cohort, e.g. 9 weeks. They can be paused and
+                                resumed for maintenance. Habitat sessions also
+                                allow special logic: for example, all cameras may
+                                record 24/7 for the whole session while microphones
+                                only record for a fixed window each day (e.g.
+                                20:00 to 02:00 the following day).
+                            </p>
+                        )}
                     </div>
                 )}
 

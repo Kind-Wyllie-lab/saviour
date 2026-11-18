@@ -89,6 +89,15 @@
   font-size: 0.85rem;
 }
 
+.recording-form-mode__desc {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-color);
+  opacity: 0.85;
+}
+
 .recording-form-mode__switch {
   background: none;
   border: none;

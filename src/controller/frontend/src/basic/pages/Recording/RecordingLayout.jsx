@@ -147,6 +147,7 @@ function RecordingLayout() {
                                 : "Switch to Habitat Session"}
                         </button>
                         {habitatForm && (
+                            <>
                             <p className="recording-form-mode__desc">
                                 Habitat uses special recording sessions that are
                                 intended to run for the duration of an entire
@@ -156,16 +157,19 @@ function RecordingLayout() {
                                 record 24/7 for the whole session while microphones
                                 only record for a fixed window each day (e.g.
                                 20:00 to 02:00 the following day).
-                                {" "}
+                            </p>
+                            <p className="recording-form-mode__desc">
+                                As Habitat sessions run for a long time
+                                autonomously, you may wish to{" "}
                                 <Link
                                     to="/settings#controller/alerts"
                                     onClick={() => setDrawerOpen(false)}
                                 >
-                                    As Habitat sessions run for a long time
-                                    autonomously, you may wish to set up alerts
-                                    (Teams/NTFY) to stay updated.
+                                    set up alerts
                                 </Link>
+                                {" "}(Teams/NTFY) to stay updated.
                             </p>
+                            </>
                         )}
                     </div>
                 )}

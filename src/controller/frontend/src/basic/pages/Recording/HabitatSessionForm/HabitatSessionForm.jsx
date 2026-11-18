@@ -181,7 +181,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
   );
 }
 
-const STEPS = ["Cohort", "Schedules", "Length", "Review"];
+const STEPS = ["Overview", "Cohort", "Length", "Schedules", "Review"];
 const REVIEW = STEPS.length - 1;
 
 // "9 weeks", "9 weeks 3 days", or "" for under a week / no value.
@@ -234,8 +234,8 @@ function fromSession(session, onlineIds) {
 }
 
 /**
- * Habitat Session setup: a step-by-step modal (Cohort, Recording schedules,
- * Length) ending
+ * Habitat Session setup: a step-by-step modal (Overview, Cohort, Length,
+ * Recording schedules) ending
  * on a Review page that must be passed through to create the session. Each
  * review section has Edit, which opens that step with "Back to review".
  * `copyFrom` (a session) opens straight on Review, pre-filled.
@@ -344,16 +344,16 @@ export default function HabitatSessionForm({
 
   // Why the given step can't be left yet ("" = fine).
   const stepProblem = (i) => {
-    if (i === 0 && !cleanCohort) return "Enter a cohort ID";
+    if (i === 1 && !cleanCohort) return "Enter a cohort ID";
     if (i === 2 && !(Number(expectedDays) > 0)) return "Enter the expected length in days";
-    if (i === 1) {
+    if (i === 3) {
       if (!plans.some((p) => p.modules.length)) return "Add at least one module to a schedule";
       const bad = plans.find((p) => p.strategy === "windows" && !p.windows.length);
       if (bad) return `"${bad.label || "Schedule"}" needs at least one time window`;
     }
     return "";
   };
-  const firstProblemStep = [0, 1, 2].find((i) => stepProblem(i));
+  const firstProblemStep = [1, 2, 3].find((i) => stepProblem(i));
   const problem = step < REVIEW ? stepProblem(step) : "";
 
   const goNext = () => {
@@ -460,28 +460,28 @@ export default function HabitatSessionForm({
 
         <div className="hsf-modal__body">
           {step === 0 && (
+            <section className="hsf-section hsf-intro">
+              <p>
+                Habitat uses special recording sessions that are intended to
+                run for the duration of an entire cohort, e.g. 9 weeks. They
+                can be paused and resumed for maintenance. Habitat sessions
+                allow for scheduling logic: for example, all cameras may record
+                24/7 for the whole session while microphones only record for a
+                fixed window each day (e.g. 20:00 to 02:00 the following day).
+              </p>
+              <p>
+                As Habitat sessions run for a long time autonomously, you may
+                wish to{" "}
+                <Link to="/settings#controller/alerts" onClick={() => onClose?.()}>
+                  set up alerts
+                </Link>{" "}
+                (Teams/NTFY) to stay updated.
+              </p>
+            </section>
+          )}
+
+          {step === 1 && (
             <section className="hsf-section">
-              {!seed && (
-                <div className="hsf-intro">
-                  <p>
-                    Habitat uses special recording sessions that are intended
-                    to run for the duration of an entire cohort, e.g. 9 weeks.
-                    They can be paused and resumed for maintenance. Habitat
-                    sessions also allow special logic: for example, all cameras
-                    may record 24/7 for the whole session while microphones
-                    only record for a fixed window each day (e.g. 20:00 to
-                    02:00 the following day).
-                  </p>
-                  <p>
-                    As Habitat sessions run for a long time autonomously, you
-                    may wish to{" "}
-                    <Link to="/settings#controller/alerts" onClick={() => onClose?.()}>
-                      set up alerts
-                    </Link>{" "}
-                    (Teams/NTFY) to stay updated.
-                  </p>
-                </div>
-              )}
               <div className="hsf-row">
                 <label className="hsf-field">
                   <span>Cohort ID</span>
@@ -529,7 +529,7 @@ export default function HabitatSessionForm({
             </section>
           )}
 
-          {step === 1 && (
+          {step === 3 && (
             <section className="hsf-section">
               <p className="hsf-section__hint">
                 Each module belongs to one schedule: record continuously, or only
@@ -571,13 +571,21 @@ export default function HabitatSessionForm({
                   Not online, left out: {seed.dropped.map(nameOf).join(", ")}
                 </p>
               )}
-              {reviewSection("Cohort", 0, (<>
+              {reviewSection("Cohort", 1, (<>
                 <dl className="hsf-review__dl">
                   <dt>Session</dt><dd><code>{sessionName || "—"}</code></dd>
                   <dt>Researcher</dt><dd>{researcher.trim() || "—"}</dd>
                 </dl>
               </>))}
-              {reviewSection("Recording schedules", 1, (<>
+              {reviewSection("Length", 2, (<>
+                <dl className="hsf-review__dl">
+                  <dt>Expected</dt>
+                  <dd>{expectedDays} days{weeks ? ` (${weeks})` : ""}</dd>
+                  <dt>Stop</dt>
+                  <dd>{autoStop ? "Automatically when it elapses" : "Manually"}</dd>
+                </dl>
+              </>))}
+              {reviewSection("Recording schedules", 3, (<>
                 <ul className="hsf-review__plans">
                   {plans.map((p) => (
                     <li key={p.plan_id}>
@@ -593,14 +601,6 @@ export default function HabitatSessionForm({
                     </li>
                   ))}
                 </ul>
-              </>))}
-              {reviewSection("Length", 2, (<>
-                <dl className="hsf-review__dl">
-                  <dt>Expected</dt>
-                  <dd>{expectedDays} days{weeks ? ` (${weeks})` : ""}</dd>
-                  <dt>Stop</dt>
-                  <dd>{autoStop ? "Automatically when it elapses" : "Manually"}</dd>
-                </dl>
               </>))}
               {storage}
               {error && <p className="form-warning">{error}</p>}

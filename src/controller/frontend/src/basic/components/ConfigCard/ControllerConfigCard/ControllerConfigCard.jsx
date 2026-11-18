@@ -91,8 +91,8 @@ function ControllerConfigCard() {
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
   const [ntfyTestStatus, setNtfyTestStatus] = useState(null);
-  // null == closed; "new" == the blank import flow; a theme object == editing
-  // that custom theme.
+  // null == closed; "new" == the blank import flow; {copy: theme} == a new
+  // theme starting from that one; a theme object == editing that custom theme.
   const [themeModal, setThemeModal] = useState(null);
   const [fontModal, setFontModal] = useState(false);
   // Which appearance the Frontend tab edits: this browser's own choices
@@ -509,6 +509,19 @@ function ControllerConfigCard() {
                             <span className="theme-swatch-dot" style={{ background: preview["--text-color"] }} />
                           </span>
                           <span className="theme-swatch-name">{t.name}</span>
+                          {loggedIn && (
+                            <button
+                              type="button"
+                              className="theme-swatch-copy"
+                              title={`Copy "${t.name}" into a new theme`}
+                              onClick={e => {
+                                e.preventDefault();
+                                setThemeModal({ copy: t });
+                              }}
+                            >
+                              ⧉
+                            </button>
+                          )}
                           {!BUILTIN_THEME_IDS.has(t.id) && loggedIn && (
                             <>
                               <button
@@ -687,8 +700,10 @@ function ControllerConfigCard() {
 
       {themeModal && (
         <ThemeImportModal
-          key={themeModal === "new" ? "new" : themeModal.id}
-          editingTheme={themeModal === "new" ? null : themeModal}
+          key={themeModal === "new" ? "new"
+            : themeModal.copy ? `copy-${themeModal.copy.id}` : themeModal.id}
+          editingTheme={themeModal === "new" || themeModal.copy ? null : themeModal}
+          copyFrom={themeModal.copy || null}
           onClose={() => setThemeModal(null)}
         />
       )}

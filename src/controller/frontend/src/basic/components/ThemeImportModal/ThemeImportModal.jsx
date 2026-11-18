@@ -65,32 +65,33 @@ function RoleSwatches({ roles, onSwap, onPick }) {
   );
 }
 
-// Reconstructs the editor's starting state from a saved custom theme.
-// `editingTheme.source` (see themes.py's module docstring) carries the
-// original palette and role assignment when the theme was saved through
-// this modal; older/hand-written theme files won't have it, so fall back to
-// treating the theme's own current light-mode colours as the "palette" --
-// editing still starts from something, it just can't recover the true
-// source. Returns null for "new theme" (editingTheme absent).
-function initialStateFor(editingTheme) {
-  if (!editingTheme) return null;
-  const src = editingTheme.source;
+// Reconstructs the editor's starting state from a saved theme: the one being
+// edited, or the one being copied (`copy` true: the name gets " copy" and the
+// save makes a new theme). `theme.source` (see themes.py's module docstring)
+// carries the original palette and role assignment when the theme was saved
+// through this modal; built-in and older/hand-written themes don't have it,
+// so their own colours in `mode` ("light" / "dark") become the five roles,
+// used as they are. Returns null for a blank new theme.
+function initialStateFor(theme, mode, copy) {
+  if (!theme) return null;
+  const name = copy ? `${theme.name} copy` : theme.name;
+  const src = theme.source;
   if (src?.palette?.length) {
     return {
-      name: editingTheme.name,
+      name,
       input: src.palette.join(" "),
       manualRoles: src.roles || null,
       rawColours: !!src.raw,
     };
   }
-  const light = editingTheme.light || {};
+  const map = theme[mode] || theme.light || {};
   const fallbackRoles = {
-    bg: light["--bg-color"], card: light["--card-bg-color"],
-    text: light["--text-color"], accent: light["--accent-color"],
-    accentAlt: light["--accent-color-alt"],
+    bg: map["--bg-color"], card: map["--card-bg-color"],
+    text: map["--text-color"], accent: map["--accent-color"],
+    accentAlt: map["--accent-color-alt"],
   };
   return {
-    name: editingTheme.name,
+    name,
     input: Object.values(fallbackRoles).join(" "),
     manualRoles: fallbackRoles,
     // These are already-final colours, not raw palette hexes -- don't push
@@ -99,8 +100,16 @@ function initialStateFor(editingTheme) {
   };
 }
 
-export default function ThemeImportModal({ onClose, editingTheme }) {
-  const initial = useMemo(() => initialStateFor(editingTheme), []); // eslint-disable-line react-hooks/exhaustive-deps
+export default function ThemeImportModal({ onClose, editingTheme, copyFrom }) {
+  // A copy starts from the copied theme's colours in the mode the page is
+  // showing (built-ins keep separate light and dark maps; the editor holds
+  // one set of five colours).
+  const initial = useMemo(() => {
+    const mode = document.body.classList.contains("dark-mode") ? "dark" : "light";
+    return copyFrom
+      ? initialStateFor(copyFrom, mode, true)
+      : initialStateFor(editingTheme, "light", false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [name, setName] = useState(initial?.name ?? "");
   // A new theme starts on DEFAULT_PALETTE, so the editor and preview show
   // straight away.
@@ -202,7 +211,7 @@ export default function ThemeImportModal({ onClose, editingTheme }) {
   return (
     <div className="modal-overlay theme-import-overlay" onClick={() => onClose(false)}>
       <div className="modal theme-import-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{editingTheme ? "Edit theme" : "New theme"}</h2>
+        <h2>{editingTheme ? "Edit theme" : copyFrom ? `Copy of ${copyFrom.name}` : "New theme"}</h2>
         <p className="modal-subtext">
           Click a colour below to change it, and drag one onto another to
           swap which role it plays. Or start from a{" "}

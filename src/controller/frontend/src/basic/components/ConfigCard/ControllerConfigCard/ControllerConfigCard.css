@@ -261,6 +261,7 @@
   margin-top: 8px;
 }
 
+.theme-swatch-copy,
 .theme-swatch-edit,
 .theme-swatch-delete {
   position: absolute;
@@ -288,8 +289,18 @@
   font-size: 13px;
 }
 
+/* Copy sits bottom-left: built-ins have no edit/delete, custom themes do. */
+.theme-swatch-copy {
+  top: auto;
+  bottom: -7px;
+  left: -7px;
+  font-size: 10px;
+}
+
+.theme-swatch:hover .theme-swatch-copy,
 .theme-swatch:hover .theme-swatch-edit,
 .theme-swatch:hover .theme-swatch-delete,
+.theme-swatch-copy:focus-visible,
 .theme-swatch-edit:focus-visible,
 .theme-swatch-delete:focus-visible {
   opacity: 1;

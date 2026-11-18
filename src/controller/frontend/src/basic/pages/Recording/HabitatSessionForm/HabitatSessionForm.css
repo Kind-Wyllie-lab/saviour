@@ -1,13 +1,239 @@
-/* Habitat session form. Matches the standard New Session form: a card with
-   the same padding, shared .primary-button / .secondary-button / .day-btn /
+/* Habitat session setup: a step-by-step modal (Cohort, Length, Plans,
+   Review). Shared .primary-button / .secondary-button / .day-btn /
    .form-warning, and theme tokens only (no hard-coded greys). */
 
-.hsf {
+/* ── Modal shell ── */
+.hsf-modal {
+  max-width: 720px;
+  width: calc(100% - 32px);
+  max-height: calc(100vh - 48px);
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px;
-  min-width: 0;
+  color: var(--text-color);
+}
+
+.hsf-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px 8px;
+}
+
+.hsf-modal__head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.hsf-modal__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hsf-modal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border-color);
+}
+
+.hsf-modal__foot-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.hsf-problem {
+  font-size: 0.8rem;
+  color: var(--secondary-text-color);
+}
+
+.hsf-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: color-mix(in srgb, var(--accent-color) 50%, var(--text-color));
+  font-size: 0.82rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ── Step indicator ── */
+.hsf-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 22px 12px;
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.hsf-steps__item {
+  flex: 1 1 0;
+  min-width: 90px;
+}
+
+.hsf-steps__item button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid var(--border-color);
+  color: var(--secondary-text-color);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hsf-steps__item button:disabled {
+  cursor: default;
+}
+
+.hsf-steps__item:not(.is-current) button:disabled {
+  opacity: 0.55;
+}
+
+.hsf-steps__num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.hsf-steps__item.is-done button {
+  color: var(--text-color);
+  border-bottom-color: color-mix(in srgb, var(--accent-color) 50%, var(--border-color));
+}
+
+.hsf-steps__item.is-current button {
+  color: var(--text-color);
+  border-bottom-color: var(--accent-color);
+}
+
+.hsf-steps__item.is-current .hsf-steps__num {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.hsf-intro {
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 25%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-color) 6%, var(--card-bg-color));
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.hsf-intro p {
+  margin: 0 0 6px;
+}
+
+.hsf-intro p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Review ── */
+.hsf-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hsf-review__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.hsf-review__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hsf-review__edit {
+  padding: 2px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.hsf-review__edit:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.hsf-review__dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.hsf-review__dl dt {
+  color: var(--secondary-text-color);
+}
+
+.hsf-review__dl dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.hsf-review__plans {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+
+.hsf-review__plans li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hsf-review__strategy {
+  color: var(--text-color);
+}
+
+.hsf-review__mods {
+  color: var(--secondary-text-color);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 520px) {
+  .hsf-steps__item { min-width: 0; }
+  .hsf-steps__item button { font-size: 0; gap: 0; justify-content: center; }
+  .hsf-steps__num { font-size: 0.75rem; }
 }
 
 .hsf-section {
@@ -104,9 +330,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
-  font-size: 0.82rem;
-  color: var(--secondary-text-color);
+  font-size: 0.84rem;
   cursor: pointer;
 }
 

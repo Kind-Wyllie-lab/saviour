@@ -206,6 +206,35 @@ export const BUILTIN_THEMES = [
       "--button-color": "#ff7f51",
     },
   },
+  {
+    // Terminal -- phosphor green on black, amber as the second accent.
+    // Buttons carry white text on --accent-color, so the accent is a mid
+    // green rather than the bright text green. Light mode is the same idea
+    // on pale paper (dark green ink). Pairs with the Consolas / Monospace
+    // fonts, which are picked separately.
+    id: "terminal",
+    name: "Terminal",
+    light: {
+      "--bg-color": "#f3f7f2",
+      "--card-bg-color": "#fbfdfa",
+      "--text-color": "#0b3d16",
+      "--secondary-text-color": "#3d6b47",
+      "--accent-color": "#1a7f32",
+      "--accent-color-alt": "#b36b00",
+      "--border-color": "#cfe0d1",
+      "--button-color": "#1a7f32",
+    },
+    dark: {
+      "--bg-color": "#0a0c0a",
+      "--card-bg-color": "#111611",
+      "--text-color": "#39ff6a",
+      "--secondary-text-color": "#22b04a",
+      "--accent-color": "#1a8f36",
+      "--accent-color-alt": "#ffb000",
+      "--border-color": "#1f3a25",
+      "--button-color": "#1a8f36",
+    },
+  },
 ];
 
 /** Built-in themes followed by any operator-defined custom themes. */

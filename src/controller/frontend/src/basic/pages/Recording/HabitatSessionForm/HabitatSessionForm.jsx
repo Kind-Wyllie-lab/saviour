@@ -58,7 +58,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           className="hsf-input hsf-plan__label"
           value={plan.label}
           onChange={(e) => set({ label: e.target.value })}
-          placeholder="Plan name"
+          placeholder="Schedule name"
         />
         <select
           className="hsf-input"
@@ -76,13 +76,13 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           <option value="continuous">Continuous (24/7)</option>
           <option value="windows">Time windows</option>
         </select>
-        <button type="button" className="hsf-x" onClick={onRemove} title="Remove plan"
-          aria-label="Remove plan">
+        <button type="button" className="hsf-x" onClick={onRemove} title="Remove schedule"
+          aria-label="Remove schedule">
           ✕
         </button>
       </div>
 
-      <div className="hsf-modules" role="group" aria-label="Modules in this plan">
+      <div className="hsf-modules" role="group" aria-label="Modules in this schedule">
         {allModules.map((m) => {
           const taken = usedElsewhere.has(m.id);
           return (
@@ -91,7 +91,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
               className={"hsf-mod"
                 + (plan.modules.includes(m.id) ? " hsf-mod--on" : "")
                 + (taken ? " hsf-mod--taken" : "")}
-              title={taken ? "Already in another plan" : m.type}
+              title={taken ? "Already in another schedule" : m.type}
             >
               <input
                 type="checkbox"
@@ -181,7 +181,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
   );
 }
 
-const STEPS = ["Cohort", "Length", "Plans", "Review"];
+const STEPS = ["Cohort", "Schedules", "Length", "Review"];
 const REVIEW = STEPS.length - 1;
 
 // "9 weeks", "9 weeks 3 days", or "" for under a week / no value.
@@ -234,7 +234,8 @@ function fromSession(session, onlineIds) {
 }
 
 /**
- * Habitat Session setup: a step-by-step modal (Cohort, Length, Plans) ending
+ * Habitat Session setup: a step-by-step modal (Cohort, Recording schedules,
+ * Length) ending
  * on a Review page that must be passed through to create the session. Each
  * review section has Edit, which opens that step with "Back to review".
  * `copyFrom` (a session) opens straight on Review, pre-filled.
@@ -271,7 +272,7 @@ export default function HabitatSessionForm({
     const p = [];
     if (cams.length) p.push(newPlan("Cameras", cams.map((m) => m.id), "continuous"));
     if (mics.length) p.push(newPlan("Night audio", mics.map((m) => m.id), "windows"));
-    if (!p.length) p.push(newPlan("Plan 1", [], "continuous"));
+    if (!p.length) p.push(newPlan("Schedule 1", [], "continuous"));
     return p;
   });
 
@@ -344,11 +345,11 @@ export default function HabitatSessionForm({
   // Why the given step can't be left yet ("" = fine).
   const stepProblem = (i) => {
     if (i === 0 && !cleanCohort) return "Enter a cohort ID";
-    if (i === 1 && !(Number(expectedDays) > 0)) return "Enter the expected length in days";
-    if (i === 2) {
-      if (!plans.some((p) => p.modules.length)) return "Add at least one module to a plan";
+    if (i === 2 && !(Number(expectedDays) > 0)) return "Enter the expected length in days";
+    if (i === 1) {
+      if (!plans.some((p) => p.modules.length)) return "Add at least one module to a schedule";
       const bad = plans.find((p) => p.strategy === "windows" && !p.windows.length);
-      if (bad) return `"${bad.label || "Plan"}" needs at least one time window`;
+      if (bad) return `"${bad.label || "Schedule"}" needs at least one time window`;
     }
     return "";
   };
@@ -503,7 +504,7 @@ export default function HabitatSessionForm({
             </section>
           )}
 
-          {step === 1 && (
+          {step === 2 && (
             <section className="hsf-section">
               <div className="hsf-len">
                 <input className="hsf-input" type="number" min="1" autoFocus
@@ -528,10 +529,10 @@ export default function HabitatSessionForm({
             </section>
           )}
 
-          {step === 2 && (
+          {step === 1 && (
             <section className="hsf-section">
               <p className="hsf-section__hint">
-                Each module belongs to one plan: record continuously, or only
+                Each module belongs to one schedule: record continuously, or only
                 in daily time windows.
               </p>
               <div className="hsf-plans">
@@ -550,8 +551,8 @@ export default function HabitatSessionForm({
                   />
                 ))}
                 <button type="button" className="secondary-button hsf-small-btn hsf-add-plan"
-                  onClick={() => setPlans((ps) => [...ps, newPlan(`Plan ${ps.length + 1}`, [], "continuous")])}>
-                  + Plan
+                  onClick={() => setPlans((ps) => [...ps, newPlan(`Schedule ${ps.length + 1}`, [], "continuous")])}>
+                  + Schedule
                 </button>
               </div>
               {storage}
@@ -576,19 +577,11 @@ export default function HabitatSessionForm({
                   <dt>Researcher</dt><dd>{researcher.trim() || "—"}</dd>
                 </dl>
               </>))}
-              {reviewSection("Length", 1, (<>
-                <dl className="hsf-review__dl">
-                  <dt>Expected</dt>
-                  <dd>{expectedDays} days{weeks ? ` (${weeks})` : ""}</dd>
-                  <dt>Stop</dt>
-                  <dd>{autoStop ? "Automatically when it elapses" : "Manually"}</dd>
-                </dl>
-              </>))}
-              {reviewSection("Plans", 2, (<>
+              {reviewSection("Recording schedules", 1, (<>
                 <ul className="hsf-review__plans">
                   {plans.map((p) => (
                     <li key={p.plan_id}>
-                      <strong>{p.label || "Plan"}</strong>
+                      <strong>{p.label || "Schedule"}</strong>
                       <span className="hsf-review__strategy">
                         {p.strategy === "continuous" ? "24/7" : windowsText(p)}
                         {p.segment_minutes !== "" && p.segment_minutes != null
@@ -600,6 +593,14 @@ export default function HabitatSessionForm({
                     </li>
                   ))}
                 </ul>
+              </>))}
+              {reviewSection("Length", 2, (<>
+                <dl className="hsf-review__dl">
+                  <dt>Expected</dt>
+                  <dd>{expectedDays} days{weeks ? ` (${weeks})` : ""}</dd>
+                  <dt>Stop</dt>
+                  <dd>{autoStop ? "Automatically when it elapses" : "Manually"}</dd>
+                </dl>
               </>))}
               {storage}
               {error && <p className="form-warning">{error}</p>}

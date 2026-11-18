@@ -361,7 +361,7 @@ export default function HabitatSessionPanel({ session, onDownloadReport }) {
       <p className="modal-subtext">
         {plans.length} plan{plans.length !== 1 ? "s" : ""} ·{" "}
         {isPaused
-          ? "all plans stopped — Resume re-arms whatever is in-window"
+          ? "all schedules stopped — Resume re-arms whatever is in-window"
           : `${recordingNow} recording now`}
       </p>
 

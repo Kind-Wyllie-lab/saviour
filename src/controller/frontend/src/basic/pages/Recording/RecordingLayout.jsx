@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Link, Outlet, useParams, useNavigate } from "react-router";
+import { Outlet, useParams, useNavigate } from "react-router";
 import "./Recording.css";
 
 import useModules from "/src/hooks/useModules";
@@ -40,14 +40,16 @@ function RecordingLayout() {
     const { sessionList } = useSessions();
     const navigate = useNavigate();
     const [drawerOpen, setDrawerOpen] = useState(false);
-    // Habitat builds open the drawer straight into the plan-based
-    // "Habitat Session" form (the common case for that rig); a link at the
-    // top switches to the standard single-strategy form. Other builds only
-    // ever see the standard form.
-    const [formMode, setFormMode] = useState(
-        BUILT_VARIANT === "habitat" ? "habitat" : "standard",
-    );
-    const habitatForm = BUILT_VARIANT === "habitat" && formMode === "habitat";
+    // Habitat Session setup is a step-by-step modal (HabitatSessionForm):
+    // null = closed, otherwise { copyFrom: session | null }. Habitat builds
+    // open it from "+ New Session" (the common case for that rig), with a
+    // link to the standard form in the drawer; Copy on a Habitat Session
+    // opens it on its Review page. Other builds only see the drawer.
+    const [habitatWizard, setHabitatWizard] = useState(null);
+    const openNewSession = () => {
+        if (BUILT_VARIANT === "habitat") setHabitatWizard({ copyFrom: null });
+        else setDrawerOpen(true);
+    };
 
     // Set by SessionDetailPage's "Copy" button (via the outlet context
     // below) to seed the New Session form with an existing session's
@@ -91,6 +93,10 @@ function RecordingLayout() {
     // persist globally across sessions on their own, and every session
     // name gets a fresh timestamp suffix regardless.
     const openCopyDrawer = (session) => {
+        if (session.plans?.length) {
+            setHabitatWizard({ copyFrom: session });
+            return;
+        }
         setTarget(session.target || "all");
         setCopyPrefill({
             mode: session.scheduled ? "scheduled" : session.duration_minutes ? "timed" : "immediate",
@@ -110,7 +116,7 @@ function RecordingLayout() {
                     <SessionList
                         sessionList={sessionList}
                         modules={moduleList}
-                        onNewSession={() => setDrawerOpen(true)}
+                        onNewSession={openNewSession}
                         selectedSessionName={selectedSessionName}
                     />
                 </div>
@@ -133,73 +139,53 @@ function RecordingLayout() {
                 {BUILT_VARIANT === "habitat" && (
                     <div className="recording-form-mode">
                         <span className="recording-form-mode__label">
-                            {habitatForm ? "Habitat session" : "Standard session"}
+                            Standard session
                         </span>
                         <button
                             type="button"
                             className="recording-form-mode__switch"
-                            onClick={() =>
-                                setFormMode(habitatForm ? "standard" : "habitat")
-                            }
+                            onClick={() => {
+                                setDrawerOpen(false);
+                                setCopyPrefill(null);
+                                setHabitatWizard({ copyFrom: null });
+                            }}
                         >
-                            {habitatForm
-                                ? "Switch to standard session"
-                                : "Switch to Habitat Session"}
+                            Set up a Habitat Session instead
                         </button>
-                        {habitatForm && (
-                            <>
-                            <p className="recording-form-mode__desc">
-                                Habitat uses special recording sessions that are
-                                intended to run for the duration of an entire
-                                cohort, e.g. 9 weeks. They can be paused and
-                                resumed for maintenance. Habitat sessions also
-                                allow special logic: for example, all cameras may
-                                record 24/7 for the whole session while microphones
-                                only record for a fixed window each day (e.g.
-                                20:00 to 02:00 the following day).
-                            </p>
-                            <p className="recording-form-mode__desc">
-                                As Habitat sessions run for a long time
-                                autonomously, you may wish to{" "}
-                                <Link
-                                    to="/settings#controller/alerts"
-                                    onClick={() => setDrawerOpen(false)}
-                                >
-                                    set up alerts
-                                </Link>
-                                {" "}(Teams/NTFY) to stay updated.
-                            </p>
-                            </>
-                        )}
                     </div>
                 )}
 
-                {habitatForm ? (
-                    <HabitatSessionForm
-                        modules={moduleList}
-                        onSessionCreated={(sessionName) => {
-                            setDrawerOpen(false);
-                            navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
-                        }}
-                    />
-                ) : (
-                    <>
-                        <NewSessionForm
-                            modules={moduleList}
-                            sessionList={sessionList}
-                            target={target}
-                            setTarget={setTarget}
-                            prefill={copyPrefill}
-                            onSessionCreated={(sessionName) => {
-                                setDrawerOpen(false);
-                                setCopyPrefill(null);
-                                navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
-                            }}
-                        />
-                        <ReadinessSummary modules={moduleList} target={target} />
-                    </>
-                )}
+                <NewSessionForm
+                    modules={moduleList}
+                    sessionList={sessionList}
+                    target={target}
+                    setTarget={setTarget}
+                    prefill={copyPrefill}
+                    onSessionCreated={(sessionName) => {
+                        setDrawerOpen(false);
+                        setCopyPrefill(null);
+                        navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
+                    }}
+                />
+                <ReadinessSummary modules={moduleList} target={target} />
             </Drawer>
+
+            {habitatWizard && (
+                <HabitatSessionForm
+                    key={habitatWizard.copyFrom?.session_name || "new"}
+                    modules={moduleList}
+                    copyFrom={habitatWizard.copyFrom}
+                    onClose={() => setHabitatWizard(null)}
+                    onUseStandard={() => {
+                        setHabitatWizard(null);
+                        setDrawerOpen(true);
+                    }}
+                    onSessionCreated={(sessionName) => {
+                        setHabitatWizard(null);
+                        navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
+                    }}
+                />
+            )}
         </div>
     );
 }

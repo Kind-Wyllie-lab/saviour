@@ -14,7 +14,7 @@ function newPlan(label, modules, strategy) {
     label,
     modules,
     strategy,
-    windows: strategy === "windows" ? [{ start: "20:00", end: "06:00" }] : [],
+    windows: strategy === "windows" ? [{ start: "20:00", end: "00:00" }] : [],
     days: [],
     segment_minutes: "",
   };
@@ -68,7 +68,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
               strategy: e.target.value,
               windows:
                 e.target.value === "windows" && !plan.windows.length
-                  ? [{ start: "20:00", end: "06:00" }]
+                  ? [{ start: "20:00", end: "00:00" }]
                   : plan.windows,
             })
           }

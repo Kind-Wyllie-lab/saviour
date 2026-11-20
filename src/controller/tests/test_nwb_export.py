@@ -217,3 +217,53 @@ def test_conversion_round_trip(tmp_path):
     assert got["audio_n"] == 3 * FRAME_NUM
     assert got["ttl17"] == [1, -1]
     assert got["marker"] == ["rat placed [ui]"]
+
+
+# --------------------------------------------------------------------------- #
+# Socket handlers                                                             #
+# --------------------------------------------------------------------------- #
+
+def _socket_client(tmp_path, admin: bool):
+    import logging
+
+    from flask import Flask
+    from flask_socketio import SocketIO
+
+    app = Flask(__name__)
+    sio = SocketIO(app, async_mode="threading")
+    jobs = nwb_export.NwbJobs(str(tmp_path), env=tmp_path / "no-env")
+    nwb_export.register_socket_handlers(
+        sio, jobs, is_admin=lambda: admin,
+        get_session=lambda name: {"start_time": "20261001-102440Z", "state": "stopped"},
+        logger=logging.getLogger("test"))
+    return sio.test_client(app)
+
+
+def _received(client, name):
+    return [m["args"][0] for m in client.get_received() if m["name"] == name]
+
+
+def test_status_reply_carries_session_streams_and_metadata(tmp_path):
+    _write_session(tmp_path, with_video=False)
+    client = _socket_client(tmp_path, admin=False)
+    client.emit("get_nwb_status", {"session_name": "sess"})
+    (reply,) = _received(client, "nwb_status")
+    assert reply["installed"] is False and reply["default_species"] == "Rattus norvegicus"
+    assert reply["session"]["audio"] and reply["metadata"]["rat_id"] == "R7"
+    assert reply["record"]["start_time"] == "20261001-102440Z"
+
+
+def test_install_needs_admin_and_export_needs_the_package(tmp_path):
+    _write_session(tmp_path, with_video=False)
+    client = _socket_client(tmp_path, admin=False)
+    client.emit("install_nwb_package", {})
+    client.emit("start_nwb_export", {"session_name": "sess", "options": {}})
+    errors = [e["error"] for e in _received(client, "nwb_error")]
+    assert "admin" in errors[0] and "Install" in errors[1]
+
+
+def test_status_for_an_unknown_session_says_so(tmp_path):
+    client = _socket_client(tmp_path, admin=True)
+    client.emit("get_nwb_status", {"session_name": "nope"})
+    (reply,) = _received(client, "nwb_status")
+    assert reply["session"] is None and "No exported data" in reply["session_error"]

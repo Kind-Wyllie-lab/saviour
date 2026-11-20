@@ -76,6 +76,27 @@ body.dark-mode {
   --border-color: #444;           /* Optional, card borders, dividers */
 }
 
+/* Scrollbars: thin and theme-coloured everywhere (the standard properties
+   for Chrome/Firefox, ::-webkit-scrollbar for Safari). */
+/* On body too: dark mode redefines the colours there, not on :root. */
+:root,
+body {
+  scrollbar-color: color-mix(in srgb, var(--text-color) 28%, transparent) transparent;
+}
+* { scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-color) 28%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--accent-color) 70%, transparent);
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
 .card {
 
   background-color: var(--card-bg-color);

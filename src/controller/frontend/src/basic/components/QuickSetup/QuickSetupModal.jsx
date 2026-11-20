@@ -71,6 +71,14 @@ function StepRail({ steps, step, setStep, locked }) {
   );
 }
 
+function syncLead(kind) {
+  const label = EXTERNAL_SYNC[kind]?.label?.replace(/ \(.*\)$/, "") ?? "external";
+  const system = systemName(syncApplication(kind));
+  const where = kind === "ephys" ? "the Open Ephys GUI" : system;
+  return `Always check the signal from your ${label.toLowerCase()} sync module can be seen in ${where}. `
+    + `For each line press Test line, watch for the pulses in ${system}, then press Seen in ${system}.`;
+}
+
 function StepHead({ title, lead }) {
   return (
     <header className="qs-step-head">
@@ -136,7 +144,10 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
     const onKey = (e) => {
       // Capture phase + stop: Escape closes this modal only, not a drawer
       // (New Session) it was opened from.
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); return; }
+      if (e.key === "Escape") {
+        if (document.querySelector(".ttl-guide-overlay")) return; // the guide on top closes first
+        e.stopPropagation(); onClose(); return;
+      }
       if (stepKey !== "previews" || e.target.closest?.("input, select, textarea")) return;
       if (e.key === "ArrowRight") setCurrent((c) => Math.min(modules.length - 1, c + 1));
       if (e.key === "ArrowLeft") setCurrent((c) => Math.max(0, c - 1));
@@ -153,14 +164,12 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
     if (steps[step - 1]?.key === "previews") setCurrent(Math.max(0, modules.length - 1));
     setStep(step - 1);
   };
+  // On Previews, Next means "looks OK": it confirms the module shown.
   const next = () => {
+    if (key === "previews" && mod) setConfirmed((c) => ({ ...c, [mod.id]: true }));
     if (key === "previews" && cur < modules.length - 1) { setCurrent(cur + 1); return; }
     if (steps[step + 1]?.key === "previews") setCurrent(0);
     setStep(step + 1);
-  };
-  const looksOk = (id) => {
-    setConfirmed((c) => ({ ...c, [id]: true }));
-    next();
   };
   const undo = (id) => setConfirmed((c) => { const n = { ...c }; delete n[id]; return n; });
 
@@ -229,7 +238,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                   expectGroups.map(([when, items]) => (
                     <div key={when || "always"} className="qs-expect-group">
                       <span className="qs-expect-group-title">
-                        {when ? `Only for ${EXTERNAL_SYNC[when]?.label ?? when} sessions` : "Every session"}
+                        {when ? `Only when syncing with ${EXTERNAL_SYNC[when]?.label ?? when}` : "Every session"}
                       </span>
                       {items.length ? (
                         <ul className="qs-expect-list">
@@ -278,7 +287,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
               </div>
               {(syncMissing.length > 0 || syncIssues.length > 0) && (
                 <div className="qs-card qs-card--warn">
-                  <h4 className="qs-card-title">Before an {EXTERNAL_SYNC[externalSync].label} session</h4>
+                  <h4 className="qs-card-title">Before syncing with {EXTERNAL_SYNC[externalSync].label}</h4>
                   <ul className="qs-plain-list">
                     {syncMissing.map((i) => (
                       <li key={i.label}>
@@ -300,7 +309,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
           {key === "modules" && (
             <section className="qs-step">
               <StepHead title="Expected modules"
-                lead={`What this rig should have${externalSync ? ` for ${EXTERNAL_SYNC[externalSync].label} sessions` : ""}, and what's connected.`} />
+                lead="This page lets you specify what modules you expect to be connected to this rig. This lets the system warn you if any go missing, e.g. due to an accidental disconnect." />
               <ExpectedModulesStep rig={rig} conditions={conditions} externalSync={externalSync}
                 modules={modules} offline={offline} onClose={onClose} />
             </section>
@@ -308,8 +317,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
 
           {key === "lines" && (
             <section className="qs-step">
-              <StepHead title="Sync lines"
-                lead={`Check each line reaches ${systemName(syncApplication(externalSync))}.`} />
+              <StepHead title="Sync lines" lead={syncLead(externalSync)} />
               <SyncLinesStep externalSync={externalSync} ttlLines={ttlLines} />
             </section>
           )}
@@ -317,7 +325,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
           {key === "previews" && (
             <section className="qs-step qs-step--fill">
               <StepHead title="Previews"
-                lead="Look at what each module sees or hears. Confirm it, or open its settings to fix it." />
+                lead="Look at what each module sees or hears. Next confirms it looks OK; if it doesn't, open its settings and fix it first." />
               {modules.length === 0 ? (
                 <p className="qs-muted">No modules are connected.</p>
               ) : (
@@ -377,13 +385,10 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                     </aside>
                   </div>
                   <div className="quick-setup__preview-actions">
-                    {confirmed[mod.id] ? (
-                      <button type="button" className="quick-setup__btn" onClick={() => undo(mod.id)}>
-                        ✓ Looks OK (undo)
-                      </button>
-                    ) : (
-                      <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={() => looksOk(mod.id)}>
-                        Looks OK
+                    {confirmed[mod.id] && (
+                      <button type="button" className="quick-setup__btn quick-setup__btn--small"
+                        onClick={() => undo(mod.id)} title="Mark this module as not confirmed">
+                        ✓ Confirmed · undo
                       </button>
                     )}
                     <a className="quick-setup__btn" href={`/settings#${mod.id}`} target="_blank" rel="noreferrer"
@@ -391,7 +396,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                       Open settings ↗
                     </a>
                     <span className="quick-setup__hint">
-                      {confirmedCount} of {modules.length} confirmed · Looks OK confirms and moves on
+                      {confirmedCount} of {modules.length} confirmed
                     </span>
                   </div>
                 </div>
@@ -455,8 +460,9 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
             <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={done}>Done</button>
           ) : (
             <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={next}>
-              {key === "previews" && cur < modules.length - 1
-                ? `Next module (${cur + 2} of ${modules.length}) →` : "Next →"}
+              {key !== "previews" || !modules.length ? "Next →"
+                : cur < modules.length - 1 ? `Looks OK, next module (${cur + 2} of ${modules.length}) →`
+                  : "Looks OK, next →"}
             </button>
           )}
         </div>

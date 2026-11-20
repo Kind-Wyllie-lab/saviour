@@ -17,9 +17,10 @@ import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
 import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
 import useProtocolTest from "../../Protocol/useProtocolTest";
 import TTLLinesEditor from "./TTLLinesEditor";
+import AddPinModal from "./AddPinModal";
 import useTTLLines from "/src/hooks/useTTLLines";
 import {
-  APPLICATIONS, APPLICATION_ORDER, DEFAULT_APPLICATION, applicationOf, applicationLabel,
+  APPLICATIONS, APPLICATION_ORDER, DEFAULT_APPLICATION, applicationOf, applicationLabel, pinLabel,
 } from "/src/basic/utils/ttlApplications";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
@@ -62,8 +63,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
-  const [newPin, setNewPin] = useState("");
-  const [newMode, setNewMode] = useState("");
+  const [addingPin, setAddingPin] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
@@ -90,9 +90,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const unassignedPins = availablePins.filter((p) => !assignedPins.includes(p));
   const sortedPins = Object.keys(ttlCfg.pins ?? {}).sort((a, b) => Number(a) - Number(b));
 
-  const addPin = () => {
-    const parsed = parseInt(newPin, 10);
-    if (isNaN(parsed) || !newMode) return;
+  const addPin = (parsed, newMode) => {
     const defaults = schema[`_${newMode}`] ?? {};
     setFormData((prev) => ({
       ...prev,
@@ -109,8 +107,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
         },
       },
     }));
-    setNewPin("");
-    setNewMode("");
   };
 
   const removePin = (pin) => {
@@ -335,7 +331,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                   ) : (<>
                   <div className="pin-list">
                     {sortedPins.length === 0 && (
-                      <p className="no-pins-hint">No pins configured. Add one below.</p>
+                      <p className="no-pins-hint">No pins configured. Press Add pin below.</p>
                     )}
                     {sortedPins.map((pin) => {
                       const settings = ttlCfg.pins[pin];
@@ -346,7 +342,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                       return (
                         <div key={pin} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
                           <div className="pin-card-header">
-                            <span className="pin-label">GPIO {pin}</span>
+                            <span className="pin-label">{pinLabel(pin)}</span>
                             <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
                               {isOutput ? "OUTPUT" : "INPUT"}
                             </span>
@@ -401,22 +397,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                   </div>
 
                   <div className="add-pin-row">
-                    <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
-                      <option value="">Pin…</option>
-                      {unassignedPins.map((p) => (
-                        <option key={p} value={p}>GPIO {p}</option>
-                      ))}
-                    </select>
-                    <select value={newMode} onChange={(e) => setNewMode(e.target.value)}>
-                      <option value="">Mode…</option>
-                      {availableModes.map((m) => (
-                        <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>
-                      ))}
-                    </select>
-                    <button type="button" onClick={addPin} disabled={!newPin || !newMode}>
-                      Add Pin
-                    </button>
+                    <button type="button" onClick={() => setAddingPin(true)}>Add pin</button>
                   </div>
+                  {addingPin && (
+                    <AddPinModal
+                      pins={unassignedPins}
+                      options={availableModes.map((m) => ({ value: m, label: MODE_LABELS[m] ?? m }))}
+                      choiceLabel="Mode"
+                      onAdd={addPin}
+                      onClose={() => setAddingPin(false)}
+                    />
+                  )}
                   </>)}
                 </>
               )}

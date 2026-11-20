@@ -33,6 +33,7 @@
     "roles": {
         "sync": {
             "label": "Sync line",
+            "detail": "pseudorandom",
             "description": "A pseudorandom pulse train the acquisition system records alongside its own data. Alignment matches these pulses on both sides.",
             "modes": ["pseudorandom"],
             "output": true,

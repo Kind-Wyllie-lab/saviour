@@ -2451,3 +2451,30 @@ class TestEphysSessions:
         facade.get_modules_by_target.return_value = {"cam1": {}}
         result = rec.create_session("exp1", "all", external_sync="telepathy")
         assert result["success"] is False and "external_sync" in result["error"]
+
+
+class TestQuickSetupStamp:
+    """plans/rig-quick-setup.md: the last Quick setup run is copied onto
+    the session."""
+
+    _RUN = {"at": 1000.0, "by": "admin", "external_sync": None,
+            "modules": {"cam1": {"name": "Top", "type": "camera", "confirmed": True}}}
+
+    def test_session_copies_last_run(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_quick_setup.return_value = self._RUN
+        name = rec.create_session("exp1", "all")["session_name"]
+        assert rec.sessions[name].quick_setup == self._RUN
+
+    def test_never_run_or_failing_is_none(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_quick_setup.return_value = None
+        name = rec.create_session("exp1", "all")["session_name"]
+        assert rec.sessions[name].quick_setup is None
+        facade.get_quick_setup.side_effect = RuntimeError("boom")
+        name = rec.create_session("exp2", "all")["session_name"]
+        assert rec.sessions[name].quick_setup is None

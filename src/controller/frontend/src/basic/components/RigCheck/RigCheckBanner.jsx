@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import useRigCheck, { rigShortfalls } from "/src/hooks/useRigCheck";
+import useQuickSetup from "/src/hooks/useQuickSetup";
+import QuickSetupModal from "/src/basic/components/QuickSetup/QuickSetupModal";
 import RigCheckList from "./RigCheckList";
 import "./RigCheck.css";
 
@@ -11,6 +13,10 @@ import "./RigCheck.css";
 export default function RigCheckBanner() {
   const rig = useRigCheck();
   const [open, setOpen] = useState(false);
+  // Quick setup is rendered here, outside the popover, which closes on any
+  // click outside it (the modal included).
+  const [quickSetup, setQuickSetup] = useState(false);
+  const lastRun = useQuickSetup();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -20,7 +26,9 @@ export default function RigCheckBanner() {
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
 
-  if (!rig || (rig.level !== "error" && rig.level !== "warning")) return null;
+  if (!rig || (rig.level !== "error" && rig.level !== "warning")) {
+    return quickSetup ? <QuickSetupModal lastRun={lastRun} onClose={() => setQuickSetup(false)} /> : null;
+  }
   const missing = rigShortfalls(rig);
   const tone = rig.level === "error" ? "error" : "warning";
   const text = missing
@@ -39,11 +47,16 @@ export default function RigCheckBanner() {
         <div className="rig-check-popover" role="dialog">
           <RigCheckList rig={rig} />
           <div className="rig-check-popover__foot">
+            <button type="button" className="rig-check-popover__qs"
+              onClick={() => { setOpen(false); setQuickSetup(true); }}>
+              Run quick setup →
+            </button>
             <Link to="/system" onClick={() => setOpen(false)}>System →</Link>
             <Link to="/settings#controller/rig" onClick={() => setOpen(false)}>Edit expected hardware →</Link>
           </div>
         </div>
       )}
+      {quickSetup && <QuickSetupModal lastRun={lastRun} onClose={() => setQuickSetup(false)} />}
     </div>
   );
 }

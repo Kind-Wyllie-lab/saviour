@@ -436,6 +436,19 @@ const ROUTER = {
     this._fire("quick_setup", { last_run: clone(state.quickSetup) });
   },
   get_rig_defaults() { this._fire("rig_defaults", rigDefaults()); },
+  // Quick setup's "Add expected item" (facade.add_rig_expected_item).
+  add_rig_expected_item({ item } = {}) {
+    const types = (item?.types || []).filter(Boolean);
+    if (!types.length) { this._fire("rig_expected_error", { error: "each expected item needs at least one module type" }); return; }
+    const entry = { label: item.label || types.join(" / "), types, min: Number(item.min ?? 1),
+      severity: item.severity || "required",
+      ...(item.application ? { application: item.application } : {}),
+      ...(item.when ? { when: item.when } : {}) };
+    const rig = state.controllerConfig.rig || (state.controllerConfig.rig = {});
+    rig.expected = [...(rig.expected || []), entry];
+    this._fire("rig_expected_added", { item: entry });
+    this._fireRigCheck();
+  },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
   get_network_overview() { this._fire("network_overview", mockNetworkOverview()); },
   release_dhcp_lease({ ip, mac } = {}) {

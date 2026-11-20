@@ -13,6 +13,11 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-20
 
+- [x] **Readiness checked on the session page, not before creating** (`SessionReadiness.jsx`; `TestCheckReady::test_explicit_module_list_wins_over_target`). Not yet watched in a browser.
+  - The New Session form no longer needs Check Ready: creating records nothing, and the old gate also lapsed after 120 s (`READY_TIMEOUT_SECS`). Check Ready and the form's PTP readout are gone from it (creation still runs its own PTP check); its mode text now says recording starts from the session page.
+  - A pending session's page runs the module readiness check (`check_ready`, now accepting an explicit `modules` list, PTP judged on those) on open, every 90 s while visible and whenever a module drops back to WAITING; lists each module (Ready / Checking / Not ready: reason) with Check again; **Start Recording** is enabled only while all are READY.
+  - Unchanged: the loom rig's own form (no session page in its routes) keeps Check Ready and its gate; scheduled sessions keep their pre-start check; REST `POST /api/v1/sessions` keeps its own live checks.
+
 - [x] **Quick setup: an on-demand rig walkthrough** (`plans/rig-quick-setup.md` phases 1-3, plan kept for its "Later" items; `test_quick_setup.py` (9), `TestQuickSetupStamp` (2) in `test_recording.py`). Not yet run on the rig or viewed in a browser.
   - **Button**: Settings title bar (first built on the Recording page, moved the same day: it's a rig overview, not a session step), System page header and the rig-check banner's popover. Never prompts, never blocks a session.
   - **Steps**: rig type (read-only, from `VITE_VARIANT`; change it with `saviour-config`) → external sync (becomes the New Session default) → expected modules (live rig check for that sync kind; connected modules no item counts get **Add as expected**; an **Add expected item** form; admin, socket `add_rig_expected_item`) → sync lines (only with an external sync: Test line + Seen in Open Ephys per line, same store as the TTL card) → previews (each connected module large, **Looks OK** or **Open settings ↗**, arrow keys) → summary.

@@ -7,7 +7,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import usePersistedState from "/src/hooks/usePersistedState";
 import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
-import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
+import { groupModulesByGroup, resolveTargetModules } from "../targetModules";
 import { humanizeMinutes } from "../sessionFormat";
 import SessionProtocolField from "./SessionProtocolField";
 import ExternalSyncField from "../ExternalSyncField";
@@ -50,15 +50,9 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   // on the target (SessionProtocolField's check, the controller's twin).
   const [protocolName, setProtocolName] = usePersistedState("saviour_session_form_protocol", "");
   const [protocolOk, setProtocolOk] = useState(true);
-  const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [dataRate, setDataRate] = useState(null);
 
-  useEffect(() => { setPtpSyncStatus(null); }, [target]);
-  useEffect(() => {
-    socket.on("ptp_sync_status", setPtpSyncStatus);
-    return () => socket.off("ptp_sync_status", setPtpSyncStatus);
-  }, []);
 
   // Pre-flight data-rate estimate for the chosen target — how much this
   // session will generate and how long the share holds at that rate.
@@ -159,7 +153,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     [target, modules, groups]
   );
 
-  const allTargetReady     = targetModules.length > 0 && targetModules.every(isModuleReady);
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
 
   const totalDurationMins = parseInt(durationHours || 0) * 60
@@ -167,9 +160,10 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     + parseInt(durationSeconds || 0) / 60;
   const timedDurationValid = recordingMode !== "timed" || totalDurationMins > 0;
 
-  const ptpOk = ptpSyncStatus === null || ptpSyncStatus.ok;
-  const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid && ptpOk
-    && protocolOk;
+  // Readiness isn't needed to create (nothing records yet): the session page
+  // checks its modules and gates Start Recording on them.
+  const canStart = experimentName && targetModules.length > 0 && !anyTargetRecording
+    && timedDurationValid && protocolOk;
   const canSchedule = !!experimentName && protocolOk;
 
   const nameAlreadyUsed = experimentName
@@ -245,12 +239,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     }
 
     setTarget("all");
-  };
-
-  const checkReady = (e) => {
-    e.preventDefault();
-    if (!experimentName) return;
-    socket.emit("check_ready", { target });
   };
 
   return (
@@ -369,10 +357,10 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
 
         <div className="session-description">
           {recordingMode === "immediate" && (
-            <p>Recording starts on {targetLabel} in ~3 seconds.</p>
+            <p>Creates the session on {targetLabel}. Recording starts when you press Start Recording on its page, once its modules are ready.</p>
           )}
           {recordingMode === "timed" && (
-            <p>{targetLabel} will record for {durationLabel}, then stop automatically.</p>
+            <p>Creates the session on {targetLabel}. Once you press Start Recording on its page, it records for {durationLabel}, then stops automatically.</p>
           )}
           {recordingMode === "scheduled" && (
             <p>{targetLabel} will record from {startHour}:{startMinute} to {endHour}:{endMinute}, {daysDescription}.</p>
@@ -391,22 +379,8 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         {!canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
         )}
-        {!canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
-          <p className="form-warning">Not all target modules are ready.</p>
-        )}
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
-        )}
-        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
-          <p className="form-warning">
-            PTP not synchronised -{" "}
-            {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
-          </p>
-        )}
-        {ptpSyncStatus?.ok && (
-          <p className="form-ok">
-            PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
-          </p>
         )}
         {dataRate?.total_mb_per_min > 0 && (
           <p className={`form-hint${
@@ -429,12 +403,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         )}
 
         <div className="button-row">
-          {/* Useful regardless of mode -- a scheduled session still benefits
-              from confirming modules are ready right now, even though the
-              actual start is deferred to the scheduled window. */}
-          <button type="button" className="secondary-button" onClick={checkReady}>
-            Check Ready
-          </button>
           <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
             {recordingMode === "scheduled" ? "Schedule Session" : "Create Session"}
           </button>

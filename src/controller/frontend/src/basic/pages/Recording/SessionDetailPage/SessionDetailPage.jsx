@@ -20,6 +20,7 @@ import HabitatSessionPanel from "./HabitatSessionPanel";
 import SessionExportStatus from "./SessionExportStatus";
 import ComposeJobRow from "./ComposeJobRow";
 import SessionProtocolRow from "./SessionProtocolRow";
+import SessionReadiness from "./SessionReadiness";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -158,6 +159,9 @@ export default function SessionDetailPage() {
   const [shareNoticeOpen, setShareNoticeOpen] = useState(false);
   const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
   const [forceStartError, setForceStartError] = useState(null);
+  // Every module READY (SessionReadiness checks them while the session is
+  // pending); gates Start Recording.
+  const [modulesReady, setModulesReady] = useState(false);
   const [editingPending, setEditingPending] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDurationHours, setEditDurationHours] = useState("0");
@@ -639,10 +643,13 @@ export default function SessionDetailPage() {
           )}
 
           {isPending && !editingPending && (
-            <p className="session-info-text">
-              Created — modules assigned, nothing recording yet. Press <strong>Start Recording</strong>{" "}
-              below when ready, or Discard to cancel.
-            </p>
+            <>
+              <p className="session-info-text">
+                Created — modules assigned, nothing recording yet. The modules are checked
+                automatically; <strong>Start Recording</strong> unlocks once they're all ready.
+              </p>
+              <SessionReadiness moduleIds={session.modules} modules={modules} onChange={setModulesReady} />
+            </>
           )}
 
           {isError && (
@@ -985,7 +992,8 @@ export default function SessionDetailPage() {
               <button
                 className="session-btn session-btn--start"
                 onClick={handleForceStart}
-                title="Begin recording now"
+                disabled={!modulesReady}
+                title={modulesReady ? "Begin recording now" : "Waiting for every module to pass its readiness check"}
               >
                 Start Recording
               </button>

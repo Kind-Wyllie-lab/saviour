@@ -38,7 +38,7 @@ function itemFor(m, modules) {
 
 const BLANK = { label: "", type: "", min: 1, severity: "required", when: "" };
 
-export default function ExpectedModulesStep({ rig, conditions, externalSync, modules, offline, onClose }) {
+export default function ExpectedModulesStep({ rig, conditions, modules, offline, onClose }) {
   const loggedIn = useIsLoggedIn();
   const [types, setTypes] = useState([]);
   const [form, setForm] = useState(null); // null = closed, else BLANK-shaped
@@ -89,19 +89,18 @@ export default function ExpectedModulesStep({ rig, conditions, externalSync, mod
   const adminHint = loggedIn ? undefined : "Sign in as admin to change the expected hardware";
 
   return (
-    <section>
-      {rig?.items?.length ? (
-        <>
-          <p>What this rig should have{externalSync ? ` for ${EXTERNAL_SYNC[externalSync].label} sessions` : ""}:</p>
+    <>
+      <div className="qs-card">
+        {rig?.items?.length ? (
           <RigCheckList rig={rig} conditions={conditions} />
-        </>
-      ) : (
-        <p>This rig doesn't list any expected hardware yet.</p>
-      )}
+        ) : (
+          <p className="qs-muted">This rig doesn't list any expected hardware yet.</p>
+        )}
+      </div>
 
       {unexpected.length > 0 && (
-        <div className="quick-setup__unexpected">
-          <h4>Connected, not expected</h4>
+        <div className="qs-card quick-setup__unexpected">
+          <h4 className="qs-card-title">Connected, not expected</h4>
           <ul>
             {unexpected.map((m) => {
               const item = itemFor(m, modules);
@@ -189,6 +188,6 @@ export default function ExpectedModulesStep({ rig, conditions, externalSync, mod
         {!loggedIn && "Sign in as admin to add to the list. "}
         <Link to="/settings#controller/rig" onClick={onClose}>Edit or remove items on the Rig tab →</Link>
       </p>
-    </section>
+    </>
   );
 }

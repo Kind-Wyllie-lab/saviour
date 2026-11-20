@@ -366,25 +366,33 @@
 
 /* ── Add pin dialog (AddPinModal) ─────────────────────────────────────── */
 .modal.ttl-add-pin-modal {
-  max-width: 760px;
+  max-width: 1000px;
   width: calc(100% - 32px);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
 }
-.ttl-add-pin-modal__pinout {
-  display: block;
-  width: 100%;
-  height: auto;
-  margin: 8px 0;
-  border-radius: 6px;
-  background: #fff;
+/* Pickers on the left, pinout on the right; stacked (pickers first) when narrow. */
+.ttl-add-pin-modal__body {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-top: 8px;
 }
 .ttl-add-pin-modal__fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 .ttl-add-pin-modal__fields select { width: 100%; }
-@media (max-width: 520px) {
-  .ttl-add-pin-modal__fields { grid-template-columns: 1fr; }
+.ttl-add-pin-modal__pinout {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  border-radius: 6px;
+  background: #fff;
+}
+@media (max-width: 700px) {
+  .ttl-add-pin-modal__body { grid-template-columns: 1fr; }
 }

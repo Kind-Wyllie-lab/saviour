@@ -50,8 +50,12 @@ export function rolesFor(app) {
 
 // Where a channel goes, in the application's own words.
 export function channelLabel(app) {
-  return app === "neurologger_sync" ? "Logger input" : "Digital In channel";
+  return app === "neurologger_sync" ? "Logger input No." : "Ephys Digital In Channel No.";
 }
+
+// The Open Ephys acquisition board's Digital In port carries 8 TTL channels
+// (one BNC each on the HDMI I/O board).
+export const DIGITAL_IN_CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 export function systemName(app) {
   return app === "neurologger_sync" ? "the logger" : "Open Ephys";

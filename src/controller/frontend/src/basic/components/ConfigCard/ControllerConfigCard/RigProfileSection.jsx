@@ -70,6 +70,7 @@ export default function RigProfileSection({ rig, onChange }) {
         <em> Records ephys</em> ticked.
       </p>
 
+      <div className="rig-profile-table-wrap">
       <table className="rig-profile-table">
         <thead>
           <tr>
@@ -149,38 +150,43 @@ export default function RigProfileSection({ rig, onChange }) {
           )}
         </tbody>
       </table>
+      </div>
       <datalist id="rig-module-types">
         {["*camera", ...moduleTypes].map((t) => <option key={t} value={t} />)}
       </datalist>
       {invalid && <p className="rig-profile-error">Every item needs at least one module type.</p>}
 
       <div className="rig-profile-actions">
-        <button type="button" onClick={add}>Add item</button>
-        <button type="button" onClick={resetDefaults}
+        <button type="button" className="teams-test-btn" onClick={add}>Add item</button>
+        <button type="button" className="teams-test-btn" onClick={resetDefaults}
           disabled={!defaults || !(defaults.expected || []).length}
           title="Replace the list with this rig type's shipped defaults (save to keep)">
           Reset to rig-type defaults
         </button>
       </div>
 
-      <div className="form-field">
-        <label>Grace after start-up (s)</label>
-        <input type="number" min={0} step={10} value={rig?.startup_grace_s ?? 120}
-          onChange={(ev) => setRig({ startup_grace_s: Number(ev.target.value) })} />
+      <div className="threshold-field">
+        <div className="form-field">
+          <label>Grace after start-up (s)</label>
+          <input type="number" min={0} step={10} value={rig?.startup_grace_s ?? 120}
+            onChange={(ev) => setRig({ startup_grace_s: Number(ev.target.value) })} />
+        </div>
+        <span className="field-hint">
+          After the controller (or a fleet update) restarts, wait this long for modules to
+          register before calling anything missing.
+        </span>
       </div>
-      <span className="field-hint">
-        After the controller (or a fleet update) restarts, wait this long for modules to
-        register before calling anything missing.
-      </span>
-      <div className="form-field">
-        <label>Alert after (s)</label>
-        <input type="number" min={0} step={60} value={rig?.alert_after_s ?? 600}
-          onChange={(ev) => setRig({ alert_after_s: Number(ev.target.value) })} />
+      <div className="threshold-field">
+        <div className="form-field">
+          <label>Alert after (s)</label>
+          <input type="number" min={0} step={60} value={rig?.alert_after_s ?? 600}
+            onChange={(ev) => setRig({ alert_after_s: Number(ev.target.value) })} />
+        </div>
+        <span className="field-hint">
+          Send one alert a day (Teams / ntfy, toggle on the Alerts tab) when a required
+          item has been missing this long.
+        </span>
       </div>
-      <span className="field-hint">
-        Send one alert a day (Teams / ntfy, toggle on the Alerts tab) when a required
-        item has been missing this long.
-      </span>
 
       {live?.items?.length > 0 && (
         <div className="rig-profile-live">

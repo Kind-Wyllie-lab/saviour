@@ -469,10 +469,12 @@ function SessionRow({
                 className={`session-state-label session-ephys-badge${
                   isStopped && !session.ephys_uploaded_at ? " session-ephys-badge--missing" : ""}`}
                 title={isStopped && !session.ephys_uploaded_at
-                  ? "Records ephys: the Open Ephys / logger data hasn't been uploaded yet (Post-Process → Ephys)"
-                  : session.ephys_uploaded_at ? "Records ephys: data uploaded" : "Records ephys"}
+                  ? "External sync: the Open Ephys / logger data hasn't been uploaded yet (Post-Process → Ephys)"
+                  : session.ephys_uploaded_at ? "External sync: data uploaded" : "External sync"}
               >
-                {isStopped && !session.ephys_uploaded_at ? "Ephys not uploaded" : "Ephys"}
+                {isStopped && !session.ephys_uploaded_at
+                  ? `${session.external_sync === "neurologger" ? "Logger" : "Ephys"} not uploaded`
+                  : session.external_sync === "neurologger" ? "Neurologger" : "Ephys"}
               </span>
             )}
           </div>

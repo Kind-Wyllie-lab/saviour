@@ -44,7 +44,9 @@ SEVERITIES = ("required", "optional")
 # only for sessions with that condition, e.g. an ephys sync module for a
 # session that records ephys. The live banner has no session, so it leaves
 # them out.
-CONDITIONS = ("ephys",)
+# Session conditions an item can be limited to (`when`): the external sync
+# kinds (ttl_applications.json "external_sync").
+CONDITIONS = tuple(ttl_application.EXTERNAL_SYNC) or ("ephys",)
 
 
 class RigProfileError(ValueError):

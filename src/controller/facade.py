@@ -58,14 +58,16 @@ class ControllerFacade:
             "level": "ok", "ok": True, "pending": False, "items": [],
             "summary": "No expected hardware set"}
 
-    def get_sync_wiring(self) -> list[dict]:
-        """Ephys / neurologger sync modules, their lines and whether each was
-        confirmed on the acquisition system (ttl_lines.py)."""
+    def get_sync_wiring(self, application: str | None = None) -> list[dict]:
+        """Ephys / neurologger sync modules (only those set to `application`
+        when given), their lines and whether each was confirmed on the
+        acquisition system (ttl_lines.py)."""
         from src.controller.ttl_lines import sync_wiring
         store = getattr(self.controller, "ttl_lines", None)
         if store is None:
             return []
-        return sync_wiring(store.status(self.get_modules()))
+        wiring = sync_wiring(store.status(self.get_modules()))
+        return [w for w in wiring if application is None or w["application"] == application]
 
     def record_ttl_alignment(self, module_id: str, session: str,
                              gpio: int | None, result: dict) -> None:
@@ -346,14 +348,14 @@ class ControllerFacade:
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)
 
-    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False, protocol_name=None, ephys=False) -> dict:
-        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended, protocol_name=protocol_name, ephys=ephys)
+    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False, protocol_name=None, ephys=False, external_sync=None) -> dict:
+        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended, protocol_name=protocol_name, ephys=ephys, external_sync=external_sync)
 
     def update_pending_session(self, session_name: str, new_session_name=None, duration_minutes=None) -> dict:
         return self.controller.recording.update_pending_session(session_name, new_session_name, duration_minutes)
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False, protocol_name=None, ephys=False) -> dict:
-        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name, protocol_name=protocol_name, ephys=ephys)
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False, protocol_name=None, ephys=False, external_sync=None) -> dict:
+        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name, protocol_name=protocol_name, ephys=ephys, external_sync=external_sync)
 
     def get_protocol(self, name: str) -> dict | None:
         """A library protocol by name (a copy), or None."""
@@ -370,7 +372,8 @@ class ControllerFacade:
         session = self.controller.recording.sessions.get(session_name)
         if session is None:
             return None
-        return {"ephys": bool(session.ephys), "wiring": session.ephys_wiring}
+        return {"ephys": bool(session.ephys), "external_sync": session.external_sync,
+                "wiring": session.ephys_wiring}
 
     def mark_ephys_uploaded(self, session_name: str) -> bool:
         return self.controller.recording.mark_ephys_uploaded(session_name)
@@ -394,9 +397,10 @@ class ControllerFacade:
 
     def create_habitat_session(self, session_name: str, plans: list,
                                researcher=None, duration_minutes=None,
-                               ephys=False) -> dict:
+                               ephys=False, external_sync=None) -> dict:
         return self.controller.recording.create_habitat_session(
-            session_name, plans, researcher, duration_minutes, ephys=ephys
+            session_name, plans, researcher, duration_minutes, ephys=ephys,
+            external_sync=external_sync
         )
 
     def pause_session(self, session_name: str) -> dict:

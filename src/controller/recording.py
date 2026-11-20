@@ -22,6 +22,7 @@ from enum import StrEnum
 from src.controller import framesync_check, recording_plans
 from src.controller.rig_check import describe_item, shortfalls
 from src.controller.ttl_lines import wiring_warnings
+from src.shared import ttl_application
 from src.shared.data_rate import estimate_recording_bytes_per_s
 from src.shared.supervised import supervise
 
@@ -194,6 +195,10 @@ class RecordingSession:
     # ephys sync module becomes required (rig items with when="ephys") and
     # the sync wiring is recorded. plans/ttl-applications-ephys-sync.md
     ephys:                     bool = False
+    # What it records alongside: "ephys" (Open Ephys) or "neurologger"
+    # (ttl_applications.json "external_sync"); None = nothing. `ephys` above
+    # is true whenever this is set (kept for older readers).
+    external_sync:             str | None = None
     # Snapshot of the sync modules' lines and whether each was confirmed on
     # the acquisition system, when the session was created / each run began
     # (ttl_lines.sync_wiring). None for a non-ephys session.
@@ -547,7 +552,8 @@ class Recording:
                        raw_name: bool = False,
                        unattended: bool = False,
                        protocol_name: str | None = None,
-                       ephys: bool = False) -> dict:
+                       ephys: bool = False,
+                       external_sync: str | None = None) -> dict:
         """Create a session in PENDING state -- modules assigned, nothing
         recording yet. Call start_pending_session() (via the unified
         force_start_session()) to actually begin recording.
@@ -557,6 +563,9 @@ class Recording:
 
         Returns a result dict so the caller can surface errors to the frontend.
         """
+        sync_kind, sync_err = self._sync_kind(external_sync, ephys)
+        if sync_err:
+            return {"success": False, "error": sync_err}
         if not session_name or not session_name.strip():
             self.logger.warning("create_session: empty session_name")
             return {"success": False, "error": "Session name cannot be empty"}
@@ -594,7 +603,8 @@ class Recording:
             researcher=researcher or None,
             unattended=bool(unattended),
             protocol=protocol,
-            ephys=bool(ephys),
+            ephys=sync_kind is not None,
+            external_sync=sync_kind,
         )
 
         with self._lock:
@@ -642,13 +652,23 @@ class Recording:
 
     def _stamp_hardware(self, session: RecordingSession) -> None:
         """Record the rig check (judged for this session's conditions) and,
-        for an ephys session, the sync wiring, on the session."""
-        session.rig_check = self._rig_check({"ephys"} if session.ephys else ())
-        session.ephys_wiring = self._sync_wiring() if session.ephys else None
+        for an externally synced session, its sync wiring, on the session."""
+        kind = session.external_sync or ("ephys" if session.ephys else None)
+        session.rig_check = self._rig_check({kind} if kind else ())
+        session.ephys_wiring = (self._sync_wiring(ttl_application.sync_application(kind))
+                                if kind else None)
 
-    def _sync_wiring(self) -> list | None:
+    @staticmethod
+    def _sync_kind(external_sync, ephys) -> tuple[str | None, str | None]:
+        """(kind, error) for a create call's external_sync / legacy ephys."""
         try:
-            wiring = self.facade.get_sync_wiring()
+            return ttl_application.external_sync_kind(external_sync, bool(ephys)), None
+        except ValueError as e:
+            return None, str(e)
+
+    def _sync_wiring(self, application: str | None = None) -> list | None:
+        try:
+            wiring = self.facade.get_sync_wiring(application)
         except Exception as e:
             self.logger.warning(f"sync wiring unavailable: {e}")
             return None
@@ -855,11 +875,15 @@ class Recording:
                                   researcher: str | None = None,
                                   raw_name: bool = False,
                                   protocol_name: str | None = None,
-                                  ephys: bool = False) -> dict:
+                                  ephys: bool = False,
+                       external_sync: str | None = None) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
         days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
         """
+        sync_kind, sync_err = self._sync_kind(external_sync, ephys)
+        if sync_err:
+            return {"success": False, "error": sync_err}
         if not session_name or not session_name.strip():
             return {"success": False, "error": "Session name cannot be empty"}
         if not start_time or not end_time:
@@ -895,7 +919,8 @@ class Recording:
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
             researcher=researcher or None,
-            ephys=bool(ephys),
+            ephys=sync_kind is not None,
+            external_sync=sync_kind,
         )
 
         with self._lock:
@@ -1072,10 +1097,14 @@ class Recording:
     def create_habitat_session(self, session_name: str, plans_raw: list,
                                researcher: str | None = None,
                                duration_minutes: float | None = None,
-                               ephys: bool = False) -> dict:
+                               ephys: bool = False,
+                       external_sync: str | None = None) -> dict:
         """Create a PENDING Habitat Session: one session whose modules are
         split into plans, each recording continuously or in nightly
         windows (see recording_plans). Always unattended-posture."""
+        sync_kind, sync_err = self._sync_kind(external_sync, ephys)
+        if sync_err:
+            return {"success": False, "error": sync_err}
         if not session_name or not session_name.strip():
             return {"success": False, "error": "Session name cannot be empty"}
         share_err = self._check_share_writable()
@@ -1114,7 +1143,8 @@ class Recording:
                 duration_minutes=duration_minutes,
                 unattended=True,
                 plans=plans,
-                ephys=bool(ephys),
+                ephys=sync_kind is not None,
+            external_sync=sync_kind,
             )
             session = self.sessions[session_name]
         self._stamp_hardware(session)

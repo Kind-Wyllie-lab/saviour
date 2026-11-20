@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import useRigCheck from "/src/hooks/useRigCheck";
 import RigCheckList from "/src/basic/components/RigCheck/RigCheckList";
-import { APPLICATIONS, APPLICATION_ORDER } from "/src/basic/utils/ttlApplications";
+import { APPLICATIONS, APPLICATION_ORDER, EXTERNAL_SYNC } from "/src/basic/utils/ttlApplications";
 
 // Rig tab: the hardware this rig is expected to have (rig.expected; checked
 // live by src/controller/rig_check.py and shown as the missing-hardware
@@ -65,9 +65,8 @@ export default function RigProfileSection({ rig, onChange }) {
         page, asks for confirmation before a session starts and is noted in the
         session record; an <em>optional</em> one shows amber. Types accept wildcards:
         <code> *camera</code> matches any camera type. <em>Used for</em> narrows a TTL
-        item to modules set to that job (e.g. Ephys sync); <em>Only for</em> ephys
-        sessions counts the item only when a session is created with
-        <em> Records ephys</em> ticked.
+        item to modules set to that job (e.g. Ephys sync); <em>Only for</em> counts the item only for sessions created with that
+        <em> External sync</em> choice (e.g. Ephys).
       </p>
 
       <div className="rig-profile-table-wrap">
@@ -134,7 +133,9 @@ export default function RigProfileSection({ rig, onChange }) {
                     setItems(expected.map((x, i) => (i === idx ? next : x)));
                   }}>
                   <option value="">Every session</option>
-                  <option value="ephys">Ephys sessions</option>
+                  {Object.entries(EXTERNAL_SYNC).map(([k, s]) => (
+                    <option key={k} value={k}>{s.label.replace(/ \(.*\)$/, "")} sessions</option>
+                  ))}
                 </select>
               </td>
               <td>

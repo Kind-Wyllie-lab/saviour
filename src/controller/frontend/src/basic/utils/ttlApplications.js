@@ -9,6 +9,13 @@ export const ROLES = defs.roles;
 export const DEFAULT_APPLICATION = defs.default_application;
 export const CONFIRM_MAX_AGE_DAYS = defs.confirm_max_age_days;
 export const SYNC_APPLICATIONS = ["ephys_sync", "neurologger_sync"];
+// What a session can be synchronised with: {kind: {label, application,
+// system, description}} (the New Session "External sync" choice).
+export const EXTERNAL_SYNC = defs.external_sync ?? {};
+
+export function syncApplication(kind) {
+  return EXTERNAL_SYNC[kind]?.application ?? null;
+}
 export const APPLICATION_ORDER = ["ephys_sync", "neurologger_sync", "stimulus_control", "mixed"];
 
 export function applicationOf(ttlCfg) {
@@ -96,10 +103,12 @@ export function validateTTL(ttlCfg) {
 
 // Sentences for sync lines that aren't currently confirmed, from the
 // controller's `ttl_lines` payload (src/controller/ttl_lines.py).
-export function syncWarnings(ttlLines) {
+// `application`: only modules set to it (e.g. "ephys_sync").
+export function syncWarnings(ttlLines, application = null) {
   const out = [];
   for (const m of Object.values(ttlLines?.modules ?? {})) {
     if (!SYNC_APPLICATIONS.includes(m.application)) continue;
+    if (application && m.application !== application) continue;
     const sync = (m.lines ?? []).find((l) => l.role === "sync");
     if (!sync) { out.push(`${m.name} has no sync line`); continue; }
     const where = `GPIO ${sync.gpio}${sync.channel ? ` → channel ${sync.channel}` : ""}`;

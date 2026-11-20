@@ -75,3 +75,17 @@ class TestLines:
         a = ta.sync_line(_ttl(g26=SYNC))
         b = ta.sync_line(_ttl(g26={**SYNC, "channel": 2}))
         assert ta.wiring_key(a) != ta.wiring_key(b)
+
+
+def test_external_sync_kinds():
+    from src.shared.ttl_application import external_sync_kind, sync_application
+    assert external_sync_kind(None) is None
+    assert external_sync_kind("none") is None
+    assert external_sync_kind(None, legacy_ephys=True) == "ephys"
+    assert external_sync_kind("neurologger") == "neurologger"
+    assert sync_application("ephys") == "ephys_sync"
+    assert sync_application("neurologger") == "neurologger_sync"
+    assert sync_application(None) is None
+    import pytest
+    with pytest.raises(ValueError):
+        external_sync_kind("telepathy")

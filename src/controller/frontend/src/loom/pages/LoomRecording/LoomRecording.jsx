@@ -12,6 +12,10 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import SessionList from "/src/basic/pages/Recording/SessionList/SessionList";
 import SessionName from "/src/basic/pages/Recording/SessionName/SessionName";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import EphysSessionField from "/src/basic/pages/Recording/EphysSessionField";
+import useTTLLines from "/src/hooks/useTTLLines";
+import { syncWarnings } from "/src/basic/utils/ttlApplications";
+import "/src/basic/pages/Recording/NewSessionForm/NewSessionForm.css";
 
 function padTwo(n) { return String(n).padStart(2, "0"); }
 
@@ -38,6 +42,8 @@ export default function LoomRecording() {
   const { moduleList } = useModules();
   const { sessionList } = useSessions();
   const rig = useRigCheck();
+  const { lines: ttlLines } = useTTLLines();
+  const [ephys, setEphys] = usePersistedState("saviour_session_form_ephys", false);
   const { experimentName, experimenter } = useExperimentTitle();
 
   const [now, setNow] = useState(() => new Date());
@@ -100,12 +106,14 @@ export default function LoomRecording() {
   const handleStart = () => {
     if (!experimentName) return;
     if (!confirmIfOtherAdmins("Start this session")) return;
-    if (!confirmRigShortfall(rig)) return;
+    if (!confirmRigShortfall(rig, "Start this session",
+      { ephys, syncWarnings: syncWarnings(ttlLines) })) return;
     socket.emit("create_session", {
       target,
       session_name: `${safeName(experimentName)}-${formatTs(now)}`,
       duration_minutes: timedEnabled ? totalDurationMins : null,
       researcher: experimenter || null,
+      ephys,
     });
   };
 
@@ -136,6 +144,8 @@ export default function LoomRecording() {
           <div className="loom-recording-preview">
             Session name: <strong>{sessionPreview}</strong>
           </div>
+
+          <EphysSessionField checked={ephys} onChange={setEphys} rig={rig} ttlLines={ttlLines} />
 
           <div className="loom-recording-duration">
             <label className="loom-recording-duration-toggle">

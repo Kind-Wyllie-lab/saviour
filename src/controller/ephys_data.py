@@ -261,9 +261,12 @@ def aux_ports(stream: Stream | None) -> dict[str, list[int]]:
 
 def sync_pin(csv_path: str) -> int:
     """The TTL pin carrying the shared sync pulse train in a SAVIOUR TTL
-    log: the pin logged in ``pseudorandom`` mode, else the only pin.
-    Raises EphysSelectionError when that's ambiguous."""
+    log: the pin declared as the sync line (``pin_role`` = ``sync``, logged
+    since plans/ttl-applications-ephys-sync.md), else the pin logged in
+    ``pseudorandom`` mode, else the only pin. Raises EphysSelectionError
+    when that's ambiguous."""
     pins: dict[int, set[str]] = {}
+    roles: dict[int, set[str]] = {}
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             try:
@@ -271,6 +274,10 @@ def sync_pin(csv_path: str) -> int:
             except ValueError:
                 continue
             pins.setdefault(pin, set()).add((row.get("pin_mode") or "").lower())
+            roles.setdefault(pin, set()).add((row.get("pin_role") or "").lower())
+    declared = [p for p, r in roles.items() if "sync" in r]
+    if len(declared) == 1:
+        return declared[0]
     pseudo = [p for p, modes in pins.items() if "pseudorandom" in modes]
     if len(pseudo) == 1:
         return pseudo[0]

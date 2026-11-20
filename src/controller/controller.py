@@ -61,6 +61,10 @@ from src.controller.protocol_library import (
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
 from src.controller.rig_check import RigMonitor
+from src.controller.ttl_lines import TTLLineStore
+from src.controller.ttl_lines import (
+    register_socket_handlers as register_ttl_line_handlers,
+)
 from src.controller.web import Web
 from src.shared import sd_watchdog
 from src.shared.netlink import LinkStats
@@ -146,6 +150,13 @@ class Controller(ABC):
         # Named session protocols (TTL Protocol designer), every variant.
         self.protocol_library = ProtocolLibrary()
         register_protocol_handlers(self.web.socketio, self.protocol_library,
+                                   require_auth=self.web._require_auth,
+                                   logger=self.logger)
+        # TTL lines confirmed on the acquisition system (Open Ephys etc.) and
+        # the last alignment that proved them (plans/ttl-applications-ephys-sync.md).
+        self.ttl_lines = TTLLineStore()
+        register_ttl_line_handlers(self.web.socketio, self.ttl_lines,
+                                   get_modules=self.modules.get_modules,
                                    require_auth=self.web._require_auth,
                                    logger=self.logger)
         # Expected hardware for this rig type (plans/rig-expected-hardware.md):

@@ -16,6 +16,16 @@
                 ],
                 "min": 1,
                 "severity": "optional"
+            },
+            {
+                "label": "Ephys sync",
+                "types": [
+                    "ttl"
+                ],
+                "application": "ephys_sync",
+                "min": 1,
+                "severity": "required",
+                "when": "ephys"
             }
         ],
         "startup_grace_s": 120,

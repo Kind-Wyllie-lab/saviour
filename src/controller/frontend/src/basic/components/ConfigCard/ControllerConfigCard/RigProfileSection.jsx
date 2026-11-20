@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import useRigCheck from "/src/hooks/useRigCheck";
 import RigCheckList from "/src/basic/components/RigCheck/RigCheckList";
+import { APPLICATIONS, APPLICATION_ORDER } from "/src/basic/utils/ttlApplications";
 
 // Rig tab: the hardware this rig is expected to have (rig.expected; checked
 // live by src/controller/rig_check.py and shown as the missing-hardware
@@ -63,7 +64,10 @@ export default function RigProfileSection({ rig, onChange }) {
         hardware fault. A missing <em>required</em> item shows a red banner on every
         page, asks for confirmation before a session starts and is noted in the
         session record; an <em>optional</em> one shows amber. Types accept wildcards:
-        <code> *camera</code> matches any camera type.
+        <code> *camera</code> matches any camera type. <em>Used for</em> narrows a TTL
+        item to modules set to that job (e.g. Ephys sync); <em>Only for</em> ephys
+        sessions counts the item only when a session is created with
+        <em> Records ephys</em> ticked.
       </p>
 
       <table className="rig-profile-table">
@@ -73,6 +77,8 @@ export default function RigProfileSection({ rig, onChange }) {
             <th>Module types</th>
             <th>Min</th>
             <th>Severity</th>
+            <th>Used for</th>
+            <th>Only for</th>
             <th aria-label="Remove" />
           </tr>
         </thead>
@@ -106,13 +112,38 @@ export default function RigProfileSection({ rig, onChange }) {
                 </select>
               </td>
               <td>
+                <select value={e.application || ""}
+                  title="TTL modules only: count those set to this job"
+                  onChange={(ev) => {
+                    const next = { ...e, application: ev.target.value };
+                    if (!ev.target.value) delete next.application;
+                    setItems(expected.map((x, i) => (i === idx ? next : x)));
+                  }}>
+                  <option value="">Any</option>
+                  {APPLICATION_ORDER.map((a) => (
+                    <option key={a} value={a}>{APPLICATIONS[a].label}</option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <select value={e.when || ""}
+                  onChange={(ev) => {
+                    const next = { ...e, when: ev.target.value };
+                    if (!ev.target.value) delete next.when;
+                    setItems(expected.map((x, i) => (i === idx ? next : x)));
+                  }}>
+                  <option value="">Every session</option>
+                  <option value="ephys">Ephys sessions</option>
+                </select>
+              </td>
+              <td>
                 <button type="button" className="rig-profile-remove"
                   onClick={() => remove(idx)} title="Remove">✕</button>
               </td>
             </tr>
           ))}
           {expected.length === 0 && (
-            <tr><td colSpan={5} className="rig-profile-empty">
+            <tr><td colSpan={7} className="rig-profile-empty">
               Nothing expected: no missing-hardware banner on this rig.
             </td></tr>
           )}

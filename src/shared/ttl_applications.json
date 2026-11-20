@@ -1,0 +1,62 @@
+{
+    "_comment": "What a TTL module is for (ttl.application) and the roles its pins can take (ttl.pins.<gpio>.role). One source for the module (validation), the controller (rig check, session record, post-processing) and the frontend (the card). plans/ttl-applications-ephys-sync.md",
+    "default_application": "mixed",
+    "confirm_max_age_days": 7,
+    "applications": {
+        "mixed": {
+            "label": "General TTL",
+            "description": "Every pin mode and setting, no guidance. Use this when the module does several unrelated jobs.",
+            "roles": null,
+            "requires": []
+        },
+        "ephys_sync": {
+            "label": "Ephys sync",
+            "description": "Sends a sync pulse train to an ephys acquisition system (Open Ephys) so its data can be aligned with every camera and microphone.",
+            "roles": ["sync", "experiment_start", "marker_in"],
+            "requires": ["sync"],
+            "guide": "open_ephys"
+        },
+        "neurologger_sync": {
+            "label": "Neurologger sync",
+            "description": "Sends a sync pulse train to a wireless neurologger so its data can be aligned with every camera and microphone.",
+            "roles": ["sync", "experiment_start", "marker_in"],
+            "requires": ["sync"],
+            "guide": "neurologger"
+        },
+        "stimulus_control": {
+            "label": "Stimulus control",
+            "description": "Drives stimuli (lights, shocks, tones via other hardware) from pulse trains or the session protocol.",
+            "roles": ["stimulus", "experiment_start", "marker_in"],
+            "requires": []
+        }
+    },
+    "roles": {
+        "sync": {
+            "label": "Sync line",
+            "description": "A pseudorandom pulse train the acquisition system records alongside its own data. Alignment matches these pulses on both sides.",
+            "modes": ["pseudorandom"],
+            "output": true,
+            "max": 1,
+            "channel": true
+        },
+        "experiment_start": {
+            "label": "Experiment start",
+            "description": "One pulse when recording starts.",
+            "modes": ["experiment_start"],
+            "output": true,
+            "channel": true
+        },
+        "stimulus": {
+            "label": "Stimulus",
+            "description": "A pulse train or the session protocol driving a stimulus.",
+            "modes": ["interval_pulse", "scheduled", "experiment_clock", "None"],
+            "output": true
+        },
+        "marker_in": {
+            "label": "Event marker (input)",
+            "description": "Logs each edge on an input line, e.g. a lever press or another system's trigger.",
+            "modes": ["input"],
+            "output": false
+        }
+    }
+}

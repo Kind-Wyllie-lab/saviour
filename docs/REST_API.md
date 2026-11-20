@@ -359,6 +359,7 @@ Request body:
 | `researcher` | string | `null` | |
 | `unattended` | bool | `false` | long-term posture: self-heal instead of terminal `ERROR` |
 | `autostart` | bool | `false` | if true, start recording immediately after creation |
+| `ephys` | bool | `false` | the session records ephys (Open Ephys or a logger) alongside SAVIOUR: rig items marked `"when": "ephys"` count (an Ephys sync TTL module becomes required) and the sync modules' lines, with whether each was confirmed on the acquisition system, are stored as `ephys_wiring`. Unconfirmed or stale sync lines add `rig_warnings` lines starting `Sync — `. Never refuses the session |
 | `protocol` | string | `null` | name of a protocol in the controller's protocol library (designed in the web UI). The session keeps a copy and each TTL module in the target runs it on its Scheduled pins, timed from the recording start. Refused (`409`) if the name is unknown, no TTL module is in the target, or a module's Scheduled pins can't run it |
 
 Preflight: the export share is checked for free space first — `503`
@@ -374,7 +375,10 @@ protocol that won't run) is `409` `session_rejected`. The session object
 carries `protocol` (the copy, or `null`), `rig_check` (the rig check when it was
 created) and `rig_warnings`: one line per expected item that was short or
 faulty (e.g. `"Required — Shock/motor controller: 0 of 1"`). A short rig
-never refuses the session.
+never refuses the session. Rig items may carry `application` (a TTL item
+that counts only modules with that `ttl.application`, e.g. `ephys_sync`) and
+`when` (`"ephys"`: counts only for ephys sessions); in `GET /api/v1/state`
+such an item has `"active": false` and doesn't affect `level`.
 
 ```bash
 curl -X POST "$base_url/api/v1/sessions" \

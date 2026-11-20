@@ -131,6 +131,17 @@ def test_sync_pin_ambiguous(tmp_path):
         ephys_data.sync_pin(ephys_data.saviour_ttl_csvs(sess)[0])
 
 
+def test_sync_pin_prefers_declared_role(tmp_path):
+    """Two pseudorandom pins would be ambiguous; the declared sync line
+    (pin_role column, plans/ttl-applications-ephys-sync.md) settles it."""
+    path = tmp_path / "t.csv"
+    path.write_text(
+        "Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description,pin_role\n"
+        "1,19,pseudorandom,TTLValue.HIGH,,custom\n"
+        "2,26,pseudorandom,TTLValue.HIGH,,sync\n")
+    assert ephys_data.sync_pin(str(path)) == 26
+
+
 # ------------------------------------------------------ ephys_accel ----
 
 def _process(tmp_path, poses, **kw):

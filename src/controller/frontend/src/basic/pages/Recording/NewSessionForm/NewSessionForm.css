@@ -184,3 +184,14 @@
 }
 .protocol-pick select { flex: 1; min-width: 0; }
 .protocol-pick .secondary-button { flex: 0 0 auto; }
+
+.ephys-session-field { margin: 8px 0; font-size: 0.9rem; }
+.ephys-session-field__check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.ephys-session-field__hint { opacity: 0.65; font-size: 0.82rem; }
+.ephys-session-field__warnings {
+  margin: 6px 0 0;
+  padding: 6px 8px 6px 24px;
+  border-left: 3px solid var(--warning-color);
+  font-size: 0.84rem;
+}
+.ephys-session-field__link { list-style: none; margin-left: -16px; margin-top: 4px; }

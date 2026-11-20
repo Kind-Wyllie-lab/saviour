@@ -94,6 +94,51 @@ function makeModules() {
         },
       },
     },
+    // An Ephys sync module (plans/ttl-applications-ephys-sync.md): sync line
+    // confirmed in Open Ephys (ttlLinesMock.js), experiment-start line not.
+    "ttl-ephys-2904": {
+      id: "ttl-ephys-2904",
+      name: "Ephys sync",
+      type: "ttl",
+      ip: "10.0.0.42",
+      status: "READY",
+      online: true,
+      ready: true,
+      checks: {},
+      group: "other",
+      version: "v0.6.1-mock",
+      config_sync_status: "SYNCED",
+      config: {
+        module: { name: "Ephys sync", group: "other" },
+        ttl: {
+          application: "ephys_sync",
+          _application_options: ["mixed", "ephys_sync", "neurologger_sync", "stimulus_control"],
+          active_logic: "active_low",
+          _active_logic_options: ["active_low", "active_high"],
+          _available_pins: [2, 3, 4, 17, 19, 22, 26, 27],
+          _available_modes: ["None", "pseudorandom", "experiment_clock", "interval_pulse",
+                             "experiment_start", "scheduled", "input"],
+          _mode_settings_schema: {
+            _pseudorandom: {
+              _min_interval: { type: "float", min: 0, default: 0.1 },
+              _max_interval: { type: "float", min: 0.1, default: 1 },
+              _pulse_duration: { type: "float", default: 0.2 },
+            },
+            _experiment_start: {
+              _delay_s: { type: "float", min: 0.001, default: 0.001 },
+              _pulse_duration_s: { type: "float", min: 0.001, default: 0.02 },
+            },
+            _input: { _debounce_ms: { type: "int", min: 0, default: 50 } },
+          },
+          pins: {
+            26: { mode: "pseudorandom", role: "sync", channel: 1,
+                  min_interval: 0.1, max_interval: 1, pulse_duration: 0.2 },
+            19: { mode: "experiment_start", role: "experiment_start", channel: 2,
+                  delay_s: 0.001, pulse_duration_s: 0.02 },
+          },
+        },
+      },
+    },
     "ttl-module-7788": {
       id: "ttl-module-7788",
       name: "TTL box",

@@ -15,9 +15,17 @@ function onRigCheck(data) {
 }
 socket.on("rig_check", onRigCheck);
 
-export function rigShortfalls(rig, severity) {
+// An item with `when` (e.g. "ephys") counts only for a session with that
+// condition (plans/ttl-applications-ephys-sync.md); the live result marks it
+// inactive, and a session form passes its own conditions.
+export function itemActive(item, conditions = []) {
+  return !item.when || conditions.includes(item.when);
+}
+
+export function rigShortfalls(rig, severity, conditions = []) {
   return (rig?.items || []).filter(
-    (i) => (i.status === "short" || i.status === "faulty")
+    (i) => itemActive(i, conditions)
+      && (i.status === "short" || i.status === "faulty")
       && (!severity || i.severity === severity));
 }
 
@@ -33,9 +41,14 @@ export default function useRigCheck() {
 
 // Before starting a session: if required hardware is missing, ask. Warns,
 // never blocks (a researcher may knowingly run without it). True = go ahead.
-export function confirmRigShortfall(rig, action = "Start this session") {
-  const missing = rigShortfalls(rig, "required");
-  if (!missing.length) return true;
+// `ephys`: the session records ephys, so conditional items count and
+// `syncWarnings` (unconfirmed sync lines, ttlApplications.syncWarnings) are
+// listed too.
+export function confirmRigShortfall(rig, action = "Start this session",
+  { ephys = false, syncWarnings = [] } = {}) {
+  const missing = rigShortfalls(rig, "required", ephys ? ["ephys"] : []);
+  const sync = ephys ? syncWarnings : [];
+  if (!missing.length && !sync.length) return true;
   const lines = missing.map((i) => {
     const notes = [
       ...(i.faulty || []).map((f) => `${f.name || f.id}: ${f.reason}`),
@@ -43,6 +56,11 @@ export function confirmRigShortfall(rig, action = "Start this session") {
     ];
     return `• ${i.label}: ${i.count} of ${i.min}${notes.length ? ` (${notes.join("; ")})` : ""}`;
   });
-  return window.confirm(
-    `This rig is missing required hardware:\n\n${lines.join("\n")}\n\n${action} anyway?`);
+  const parts = [];
+  if (lines.length) parts.push(`This rig is missing required hardware:\n\n${lines.join("\n")}`);
+  if (sync.length) {
+    parts.push(`Ephys sync lines to check (pulse each with Test line on its TTL card and confirm `
+      + `it in the acquisition software):\n\n${sync.map((w) => `• ${w}`).join("\n")}`);
+  }
+  return window.confirm(`${parts.join("\n\n")}\n\n${action} anyway?`);
 }

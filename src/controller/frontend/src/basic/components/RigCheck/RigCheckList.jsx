@@ -14,15 +14,19 @@ function names(list) {
 // Every expected item with its count, faulty modules (and why) and offline
 // ones. Used by the banner's popover, the System page and the New Session
 // form.
-export default function RigCheckList({ rig, onlyProblems = false }) {
+// `conditions`: judge conditional items (when: "ephys") as for a session with
+// these; without them those items are listed greyed, "ephys sessions only".
+export default function RigCheckList({ rig, onlyProblems = false, conditions = [] }) {
+  const isActive = (i) => !i.when || conditions.includes(i.when);
   const items = (rig?.items || []).filter(
-    (i) => !onlyProblems || i.status === "short" || i.status === "faulty");
+    (i) => !onlyProblems || (isActive(i) && (i.status === "short" || i.status === "faulty")));
   if (!items.length) return null;
   return (
     <ul className="rig-check-list">
       {items.map((i) => {
-        const bad = i.status === "short" || i.status === "faulty";
-        const tone = !bad ? i.status : i.severity === "required" ? "error" : "warning";
+        const active = isActive(i);
+        const bad = active && (i.status === "short" || i.status === "faulty");
+        const tone = !active ? "inactive" : !bad ? i.status : i.severity === "required" ? "error" : "warning";
         return (
           <li key={i.label} className={`rig-check-item rig-check-item--${tone}`}>
             <span className="rig-check-item__dot" aria-hidden="true" />
@@ -30,8 +34,11 @@ export default function RigCheckList({ rig, onlyProblems = false }) {
             <span className="rig-check-item__count">
               {i.count} of {i.min}
               {i.severity === "optional" && <span className="rig-check-item__opt"> · optional</span>}
+              {i.when && <span className="rig-check-item__opt"> · {i.when} sessions only</span>}
             </span>
-            <span className="rig-check-item__status">{STATUS_TEXT[i.status] ?? i.status}</span>
+            <span className="rig-check-item__status">
+              {active ? (STATUS_TEXT[i.status] ?? i.status) : "Not needed"}
+            </span>
             {(i.faulty.length > 0 || i.offline.length > 0 || (bad && i.present.length > 0)) && (
               <div className="rig-check-item__detail">
                 {i.faulty.map((f) => (

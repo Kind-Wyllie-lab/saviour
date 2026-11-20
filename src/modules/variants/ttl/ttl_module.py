@@ -30,8 +30,8 @@ import numpy as np
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
-from modules.module import Module
-from shared import session_protocol
+from modules.module import Module, check
+from shared import session_protocol, ttl_application
 
 
 # Global GPIO cleanup function
@@ -238,6 +238,18 @@ class TTLModule(Module):
             self.logger.info("TTL config changed — re-assigning pins")
             self.assign_pins()
 
+
+    @check()
+    def _check_ttl_application(self) -> tuple[bool, str]:
+        """The pins match what this module is for (ttl.application): e.g.
+        an ephys sync module has exactly one sync line, in pseudorandom
+        mode. plans/ttl-applications-ephys-sync.md"""
+        ttl_cfg = self.config.get("ttl", {}) or {}
+        problems = ttl_application.validate(ttl_cfg)
+        app = ttl_application.label(ttl_application.application_of(ttl_cfg))
+        if problems:
+            return False, f"{app}: " + "; ".join(problems)
+        return True, f"{app} lines OK"
 
     def _check_recording_alive(self) -> tuple[bool, str | None]:
         """Fail if a pin generator (experiment_clock/pseudorandom/interval_pulse)
@@ -1099,7 +1111,8 @@ class TTLModule(Module):
                 # line-buffered
                 self._ttl_file_handle = open(filename, "w", buffering=1)
                 self._ttl_file_handle.write(
-                    "Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
+                    "Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description,"
+                    "pin_role\n")
             except Exception as e:
                 self.logger.error(f"Failed to open TTL events file {filename}: {e}")
                 self._ttl_file_handle = None
@@ -1123,12 +1136,17 @@ class TTLModule(Module):
         """
         with self._ttl_file_lock:
             if self._ttl_file_handle:
-                mode = self.pin_configs[pin_number].get("mode")
-                description = self.pin_configs[pin_number].get("description") or ""
+                pin_config = self.pin_configs[pin_number]
+                mode = pin_config.get("mode")
+                description = pin_config.get("description") or ""
                 if source:
                     description = f"{description} [{source}]".strip()
+                # pin_role (plans/ttl-applications-ephys-sync.md) lets
+                # post-processing find the sync line instead of guessing.
+                role = ttl_application.pin_role(pin_config)
                 self._ttl_file_handle.write(
-                    f"{timestamp_ns},{pin_number},{mode},{state},{description}\n")
+                    f"{timestamp_ns},{pin_number},{mode},{state},{description},"
+                    f"{role}\n")
 
 
     def _close_ttl_event_file(self, filename=None):

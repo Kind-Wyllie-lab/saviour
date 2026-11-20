@@ -14,6 +14,7 @@ import NetworkPanel from "./NetworkPanel";
 import useRigCheck from "/src/hooks/useRigCheck";
 import { RigCheckSummary } from "../../components/RigCheck/RigCheckList";
 import "./System.css";
+import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
 
 const TABS = [
   ["system", "Devices"],
@@ -537,6 +538,9 @@ export default function System() {
                   <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                     <td>
                       <span className="device-name">{row.name}</span>
+                      {moduleKindLabel(modules[row.id]) && (
+                        <span className="cell--muted" style={{ marginLeft: 6 }}>{moduleKindLabel(modules[row.id])}</span>
+                      )}
                       {isOnline && row.audio_clip_pct != null && row.audio_clip_pct >= 0.5 && (
                         <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
                           title="Audio is clipping on the loudest AudioMoth — lower the gain">

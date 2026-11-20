@@ -281,18 +281,6 @@
 .quick-setup__problems { margin: 0 0 6px; padding-left: 18px; font-size: 0.82rem; color: var(--warning-color, #b26a00); }
 .quick-setup__warn-text { color: var(--warning-color, #b26a00); }
 
-/* "Last quick setup" line on the New Session form */
-.quick-setup-last {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 6px 0 10px;
-  font-size: 0.8rem;
-  opacity: 0.85;
-}
-.quick-setup-last--never { opacity: 0.7; }
-
 @media (max-width: 700px) {
   .quick-setup__previews { grid-template-columns: 1fr; }
   .quick-setup__thumbs { flex-direction: row; flex-wrap: wrap; max-height: none; }

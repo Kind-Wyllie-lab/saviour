@@ -5,8 +5,7 @@ import "./QuickSetup.css";
 
 // "Quick setup" button + its modal (plans/rig-quick-setup.md). Drop it in a
 // header; `className` styles the button like its neighbours.
-// `onDone({externalSync})`: after Done, e.g. so an open New Session form
-// picks up the external sync just chosen.
+// `onDone({externalSync})`: called after Done.
 export default function QuickSetupButton({ className = "quick-setup-btn", label = "Quick setup", onDone }) {
   const [open, setOpen] = useState(false);
   const lastRun = useQuickSetup();

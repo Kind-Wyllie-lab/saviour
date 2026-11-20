@@ -7,6 +7,7 @@ import ConfigCard from "/src/basic/components/ConfigCard/ConfigCard";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
+import QuickSetupButton from "/src/basic/components/QuickSetup/QuickSetupButton";
 
 // Hash format is "#<deviceId>/<tab>" — the tab half is owned by each config
 // card's useHashTab, this only ever reads/writes the device half so a tab
@@ -163,6 +164,9 @@ function Settings() {
           </div>
 
           <div className="settings-card-titlebar-actions">
+            {/* Overview of the whole rig in one walkthrough, rather than
+                checking each device's settings in turn. */}
+            <QuickSetupButton />
             {isController ? (
               <ControllerActionsMenu />
             ) : (

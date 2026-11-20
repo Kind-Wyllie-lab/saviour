@@ -11,7 +11,6 @@ import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../tar
 import { humanizeMinutes } from "../sessionFormat";
 import SessionProtocolField from "./SessionProtocolField";
 import ExternalSyncField from "../ExternalSyncField";
-import QuickSetupLastRun from "/src/basic/components/QuickSetup/QuickSetupLastRun";
 import useTTLLines from "/src/hooks/useTTLLines";
 import { syncApplication, syncWarnings } from "/src/basic/utils/ttlApplications";
 import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
@@ -367,7 +366,6 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         />
 
         <ExternalSyncField value={externalSync} onChange={setExternalSync} rig={rig} ttlLines={ttlLines} />
-        <QuickSetupLastRun onDone={({ externalSync: kind }) => setExternalSync(kind || "")} />
 
         <div className="session-description">
           {recordingMode === "immediate" && (

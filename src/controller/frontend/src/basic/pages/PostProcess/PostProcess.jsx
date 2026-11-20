@@ -10,6 +10,7 @@ import ComposeEditor from "./ComposeEditor";
 import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import useComposeJobs from "/src/hooks/useComposeJobs";
 import EphysAlignPanel from "./EphysAlignPanel";
+import NwbExportPanel from "./NwbExportPanel";
 import "./PostProcess.css";
 
 // Everything that turns a *recorded* session into a derived artefact —
@@ -98,8 +99,8 @@ export default function PostProcess() {
         )}
       </label>
       <p className="post-process__intro">
-        Build aligned videos, spectrograms and (with an uploaded recording)
-        ephys alignment from a finished session. Jobs run in the background —
+        Build aligned videos, spectrograms, (with an uploaded recording)
+        ephys alignment and NWB files from a finished session. Jobs run in the background —
         you can leave this page.
       </p>
 
@@ -116,6 +117,7 @@ export default function PostProcess() {
             onSelectSession={(name) => names.includes(name) && setSelected(name)}
           />
           <EphysAlignPanel sessionName={selected} />
+          <NwbExportPanel sessionName={selected} />
         </>
       )}
 

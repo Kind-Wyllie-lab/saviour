@@ -33,6 +33,28 @@ const EXPORT_BYTES_PER_TICK = 12_000_000;
 const APA_TICK_MS = 200;         // the module's arduino_state period
 const APA_LEASE_MS = 1000;       // shock.py SHOCK_LEASE_S
 
+function mockNwbJob(sock, kind, session_name) {
+  state.nwb ??= { installed: false, jobs: {} };
+  const id = Math.random().toString(16).slice(2, 14);
+  const job = { id, kind, session_name, state: "running", progress: 0, created_at: Date.now() / 1000,
+    stage: kind === "install" ? "Installing pynwb" : "Writing the NWB file", log: [], warnings: [], error: null };
+  state.nwb.jobs[id] = job;
+  const push = () => sock._fire("nwb_job", clone({ ...job, _t: undefined }));
+  push();
+  job._t = setInterval(() => {
+    job.progress = Math.min(1, job.progress + 0.2);
+    job.log.push(`step ${Math.round(job.progress * 5)}`);
+    if (job.progress >= 1) {
+      clearInterval(job._t);
+      job.state = "done";
+      if (kind === "install") { state.nwb.installed = true; job.stage = "Installed pynwb 4.2.0"; }
+      else { job.stage = "Done"; job.output = `${session_name}/${session_name}.nwb`; job.size_bytes = 210e6;
+        job.validation = { ran: true, errors: [] }; (state.nwb.files ??= {})[session_name] = 210e6; }
+    }
+    push();
+  }, 600);
+}
+
 function clone(v) {
   return typeof structuredClone === "function"
     ? structuredClone(v)
@@ -436,6 +458,36 @@ const ROUTER = {
     this._fire("quick_setup", { last_run: clone(state.quickSetup) });
   },
   get_rig_defaults() { this._fire("rig_defaults", rigDefaults()); },
+  // NWB export (src/controller/nwb_export.py): a fake install + export job.
+  get_nwb_status({ session_name } = {}) {
+    state.nwb ??= { installed: false, jobs: {} };
+    const out = (state.nwb.files ??= {})[session_name];
+    this._fire("nwb_status", {
+      installed: state.nwb.installed, version: state.nwb.installed ? "4.2.0" : null,
+      env: "env-nwb", error: null, default_species: "Rattus norvegicus",
+      jobs: clone(Object.values(state.nwb.jobs)), session_name,
+      session: {
+        days: ["20261001"],
+        cameras: [{ module: "camera_a", segments: 1, bytes: 52e6, tracking: false }],
+        audio: [{ label: "AM01", module: "mic1", file: "x.flac", seconds: 600, rate: 192000, pcm_bytes: 230e6 }],
+        audio_pcm_bytes: 230e6,
+        events: [{ module: "ttl1", kind: "ttl", file: "x.csv", rows: 120 }],
+        markers: 2,
+        existing: out ? { path: `${session_name}/${session_name}.nwb`, size_bytes: out, mtime: Date.now() / 1000 } : null,
+      },
+      metadata: { rat_id: "R12", strain: "Lister Hooded", experimenter: "Mock User", experiment: "Mock experiment" },
+      record: {},
+    });
+  },
+  install_nwb_package() { mockNwbJob(this, "install", null); },
+  start_nwb_export({ session_name } = {}) {
+    if (!state.nwb?.installed) { this._fire("nwb_error", { error: "Install the NWB export package first" }); return; }
+    mockNwbJob(this, "export", session_name);
+  },
+  cancel_nwb_job({ id } = {}) {
+    const j = state.nwb?.jobs[id];
+    if (j && j.state === "running") { clearInterval(j._t); Object.assign(j, { state: "cancelled", stage: "Cancelled" }); this._fire("nwb_job", clone({ ...j, _t: undefined })); }
+  },
   // Quick setup's "Add expected item" (facade.add_rig_expected_item).
   add_rig_expected_item({ item } = {}) {
     const types = (item?.types || []).filter(Boolean);

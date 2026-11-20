@@ -350,3 +350,99 @@ body.dark-mode .accel-chart {
 .ephys-panel__stage--error {
   color: var(--error-color, #c62828);
 }
+
+/* ---- NWB export panel ---------------------------------------------------- */
+.nwb-panel .nwb-install p {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+.nwb-existing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+.nwb-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px 12px;
+  margin: 0;
+}
+.nwb-form legend {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.nwb-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+}
+.nwb-form input,
+.nwb-form select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text-color);
+}
+.nwb-form__wide {
+  grid-column: 1 / -1;
+}
+.nwb-form--bad input {
+  border-color: var(--error-color, #c62828);
+}
+.nwb-form--include {
+  grid-template-columns: 1fr;
+}
+.nwb-form .nwb-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+.nwb-check__hint {
+  color: var(--text-muted, #888);
+  font-size: 0.78rem;
+}
+.nwb-job {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+.nwb-job__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nwb-job__stage {
+  flex: 1;
+  color: var(--text-muted, #888);
+}
+.nwb-job__done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nwb-job__ok { color: var(--success-color, #2e7d32); }
+.nwb-job__warn { color: var(--warning-color, #b26a00); }
+.nwb-job__log {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.72rem;
+  background: color-mix(in srgb, var(--border-color, #ccc) 20%, transparent);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin: 0;
+  white-space: pre-wrap;
+}

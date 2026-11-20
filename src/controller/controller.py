@@ -55,6 +55,8 @@ from src.controller.health import Health
 from src.controller.modules import Modules
 from src.controller.network import Network
 from src.controller.notify import Notifier
+from src.controller.nwb_export import NwbJobs
+from src.controller.nwb_export import register_socket_handlers as register_nwb_handlers
 from src.controller.ping_monitor import PingMonitor
 from src.controller.protocol_library import ProtocolLibrary
 from src.controller.protocol_library import (
@@ -184,6 +186,17 @@ class Controller(ABC):
         register_quick_setup_handlers(self.web.socketio, self.quick_setup,
                                       is_admin=self.web._is_authenticated,
                                       logger=self.logger)
+        # NWB export from Post-processing (plans/nwb-export.md): install the
+        # NWB venv on demand, run conversions as child processes.
+        self.nwb_jobs = NwbJobs(
+            self.config.get("export.mount_path", "/home/pi/controller_share"),
+            busy_check=self._nwb_busy_reason,
+            on_update=lambda job: self.web.socketio.emit("nwb_job", job),
+            logger=self.logger)
+        register_nwb_handlers(self.web.socketio, self.nwb_jobs,
+                              is_admin=self.web._is_authenticated,
+                              get_session=self._session_record,
+                              logger=self.logger)
         # Expected hardware for this rig type (plans/rig-expected-hardware.md):
         # re-evaluated every few seconds, changes pushed as `rig_check`.
         self.rig_monitor = RigMonitor(
@@ -263,6 +276,26 @@ class Controller(ABC):
                 self._early_status.append((topic, data))
                 return
         self.handle_status_update(topic, data)
+
+    def _nwb_busy_reason(self) -> str | None:
+        """Why an NWB export shouldn't start now (a session recording or
+        exporting), as for compose renders."""
+        from src.controller import compose
+        try:
+            return compose.any_session_busy_reason(
+                self.recording.get_recording_sessions(), self.export_queue.snapshot())
+        except Exception:                                   # noqa: BLE001 -- not ready: don't block
+            return None
+
+    def _session_record(self, session_name: str) -> dict | None:
+        """A session's record as a dict (start/end times for the NWB file)."""
+        s = self.recording.get_recording_sessions().get(session_name)
+        if s is None:
+            return None
+        if isinstance(s, dict):
+            return s
+        from dataclasses import asdict, is_dataclass
+        return asdict(s) if is_dataclass(s) else dict(vars(s))
 
     def _release_early_status(self) -> None:
         """Replay statuses held during construction, then pass new ones

@@ -16,6 +16,7 @@ import { RigCheckSummary } from "../../components/RigCheck/RigCheckList";
 import "./System.css";
 import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
 import QuickSetupButton from "/src/basic/components/QuickSetup/QuickSetupButton";
+import { formatUtc } from "/src/basic/utils/time";
 
 const TABS = [
   ["system", "Devices"],
@@ -669,7 +670,7 @@ export default function System() {
                   <span className="actions-modal__hint">
                     Restore snapshot {controllerBackups[0].version ?? ""} taken{" "}
                     {controllerBackups[0].created_at
-                      ? new Date(controllerBackups[0].created_at).toLocaleString()
+                      ? formatUtc(controllerBackups[0].created_at, { year: true })
                       : "before the last update"} and restart
                   </span>
                 </button>
@@ -721,7 +722,7 @@ export default function System() {
               <p className="modal-subtext modal-subtext--warn">
                 Restores the controller code captured before the most recent update
                 ({controllerBackups[0]?.created_at
-                  ? new Date(controllerBackups[0].created_at).toLocaleString()
+                  ? formatUtc(controllerBackups[0].created_at, { year: true })
                   : "last update"}), regenerates its service file, and restarts.
                 Any active recording sessions will be interrupted.
               </p>

@@ -9,13 +9,9 @@ import useHealth from "/src/hooks/useHealth";
 // habitat, so the bar renders as unstyled, unspaced text.
 import "/src/habitat/components/HabitatRecordingControl/HabitatRecordingControl.css";
 import "./RecordingStatusWidget.css";
+import { formatUtcTime, parseStamp } from "/src/basic/utils/time";
 
-function parseTimestamp(str) {
-  if (!str) return null;
-  const m = str.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-  if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-}
+const parseTimestamp = parseStamp;
 
 function formatElapsed(totalSeconds) {
   const h = Math.floor(totalSeconds / 3600);
@@ -28,7 +24,7 @@ function formatElapsed(totalSeconds) {
 
 function formatTime(date) {
   if (!date) return "-";
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return formatUtcTime(date, { utc: true });
 }
 
 // Below this many seconds remaining, the countdown switches to its "soon"

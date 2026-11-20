@@ -57,9 +57,9 @@ health / logs left as companion files). This plan covers how it is offered.
 - `src/controller/nwb_export.py`, run as a subprocess with `env-nwb/bin/python`
   (never imported by the controller process): reads the exported session dir,
   writes the file, prints JSON progress lines.
-- `session_start_time` from the session's UTC start (needs
-  `plans/utc-timestamps.md`; until then parse legacy local stamps with
-  Europe/London).
+- `session_start_time` from the session's start via
+  `src/shared/timestamps.parse()` (UTC `Z` stamps; older zone-less ones are
+  converted from Europe/London).
 - `tools/export_nwb.py` = the same converter with a CLI, for workstations.
 - Validate with `pynwb.validate` (and `nwbinspector` if installed); report
   warnings in the export log.
@@ -73,7 +73,6 @@ health / logs left as companion files). This plan covers how it is offered.
 
 ## Depends on
 
-- `plans/utc-timestamps.md` (session start in UTC).
 - A session's data being on the share (export complete).
 
 ## Open questions

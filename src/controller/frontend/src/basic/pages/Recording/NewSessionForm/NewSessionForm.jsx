@@ -14,6 +14,7 @@ import ExternalSyncField from "../ExternalSyncField";
 import useTTLLines from "/src/hooks/useTTLLines";
 import { syncApplication, syncWarnings } from "/src/basic/utils/ttlApplications";
 import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
+import { compactUtcStamp } from "/src/basic/utils/time";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // Daily time-window sessions are a habitat thing; other rigs don't offer them.
@@ -36,8 +37,8 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
 
   const sessionNamePreview = useMemo(() => {
     if (!experimentName) return "-";
-    const p = (n) => String(n).padStart(2, "0");
-    const ts = `${now.getFullYear()}${p(now.getMonth()+1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+    // Matches the controller's _format_session_name: UTC time of day + Z.
+    const ts = compactUtcStamp(now).slice(9);
     const safe = experimentName.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
     return target !== "all" ? `${safe}-${target}-${ts}` : `${safe}-${ts}`;
   }, [experimentName, target, now]);

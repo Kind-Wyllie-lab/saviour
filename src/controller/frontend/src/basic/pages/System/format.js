@@ -1,3 +1,4 @@
+import { formatUtcTime } from "/src/basic/utils/time";
 // Shared formatting for the System page's Sync and Network tabs.
 
 export function fmtAgo(epoch) {
@@ -22,5 +23,5 @@ export function fmtSpan(secs) {
 }
 
 export function fmtClock(epoch) {
-  return new Date(epoch * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatUtcTime(epoch, { utc: true });
 }

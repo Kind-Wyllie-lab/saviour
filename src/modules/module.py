@@ -63,7 +63,7 @@ from src.modules.health import Health
 from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.recording import Recording
-from src.shared import sd_watchdog
+from src.shared import sd_watchdog, timestamps
 from src.shared.dep_check import missing_dependencies
 from src.shared.zip_extract import extract_preserving_permissions
 
@@ -968,7 +968,7 @@ class Module(ABC):
             return False
 
         self.is_running = True
-        self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.start_time = timestamps.iso()
         self.logger.info(f"Module started at {self.start_time}")
 
         # Update start time in command handler
@@ -1070,7 +1070,7 @@ class Module(ABC):
         Returns:
             bool: True if the module stopped successfully, False otherwise.
         """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {timestamps.iso()}")
         if not self.is_running:
             self.logger.info("Module already stopped")
             return False
@@ -1098,13 +1098,13 @@ class Module(ABC):
 
         # Confirm the module is stopped
         self.is_running = False
-        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"Module stopped at {timestamps.iso()}")
         return True
 
 
     def generate_session_id(self, module_id="unknown"):
         """Start a new session for a module"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = timestamps.stamp()
         return f"REC_{timestamp}_{module_id}" # Generate a new session ID
 
 

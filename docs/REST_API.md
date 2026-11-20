@@ -304,6 +304,13 @@ All recording sessions (`{name: {...}}`) or one, serialised from the
 `duration_minutes`, `pending_exports`, `plans`, …). `404` for an unknown
 name.
 
+Times (`start_time`, `end_time`, `error_time`) are UTC with an explicit `Z`,
+compact form `20261120-143000Z`. Sessions recorded before 2026-11-20 carry the
+zone-less form `20261120-143000`, which is the controller's local time
+(Europe/London: an hour ahead of UTC in summer); `src/shared/timestamps.py`
+`parse()` reads both. New session names end in the UTC time of day plus `Z`
+(`exp-143000Z`).
+
 ### `GET /api/v1/exports`
 
 ```json

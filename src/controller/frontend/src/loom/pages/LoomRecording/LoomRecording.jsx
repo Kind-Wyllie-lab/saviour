@@ -16,12 +16,10 @@ import ExternalSyncField from "/src/basic/pages/Recording/ExternalSyncField";
 import useTTLLines from "/src/hooks/useTTLLines";
 import { syncApplication, syncWarnings } from "/src/basic/utils/ttlApplications";
 import "/src/basic/pages/Recording/NewSessionForm/NewSessionForm.css";
+import { compactUtcStamp } from "/src/basic/utils/time";
 
-function padTwo(n) { return String(n).padStart(2, "0"); }
 
-function formatTs(date) {
-  return `${date.getFullYear()}${padTwo(date.getMonth()+1)}${padTwo(date.getDate())}-${padTwo(date.getHours())}${padTwo(date.getMinutes())}${padTwo(date.getSeconds())}`;
-}
+const formatTs = compactUtcStamp;
 
 function safeName(str) {
   return (str || "").replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");

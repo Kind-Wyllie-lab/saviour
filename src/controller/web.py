@@ -52,6 +52,7 @@ from src.controller.fonts import MIME_BY_EXT as FONT_MIME_BY_EXT
 from src.controller.fonts import FontError, FontStore
 from src.controller.storage_forecast import fill_forecast
 from src.controller.themes import ThemeError, ThemeStore
+from src.shared import timestamps
 from src.shared.cifs import cifs_mount_cmd, unmount
 from src.shared.data_rate import (
     bytes_per_s_to_mb_per_min,
@@ -1803,7 +1804,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     return
 
                 if command == "start_recording":
-                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+                    params["experiment_name"] += ("-" + timestamps.stamp())
 
                 # Broadcast to every connected module when module_id is "all"
                 if module_id == "all":
@@ -2119,7 +2120,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     roots.append((session_dir, name))
             if not roots:
                 return "Not found", 404
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            stamp = timestamps.stamp()
             return _stream_zip_response(
                 roots, f"saviour-{len(roots)}-sessions-{stamp}.zip")
 
@@ -3385,7 +3386,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     "version":     version,
                     "filename":    filename,
                     "size_bytes":  len(assembled),
-                    "uploaded_at": datetime.now().isoformat(),
+                    "uploaded_at": timestamps.iso(),
                 }
                 with open(_UPDATE_META, "w") as f:
                     json.dump(meta, f, indent=2)
@@ -4277,7 +4278,6 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         modules' current logs, the session_events.log / metadata /
         per-module stop journals already on the share — zipped and handed
         back as a download token (same store/route as the fleet report)."""
-        import re
 
         self.socketio.emit("bug_report_status", {"status": "collecting"},
                            room=requester_sid)
@@ -4292,17 +4292,15 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                  else dict(session))
         mods = list(sdict.get("modules", []))
 
-        # journal window: 10 min before the session's start_time
-        # ("YYYYMMDD-HHMMSS"), so a module already in a bad state / PTP
+        # journal window: 10 min before the session's start_time (a
+        # timestamps.py stamp, UTC), so a module already in a bad state / PTP
         # already drifting before recording began is in the bundle too.
+        # journalctl takes the time with an explicit " UTC".
         from datetime import timedelta
         since = None
-        st = sdict.get("start_time") or ""
-        m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})", st)
-        if m:
-            start_dt = datetime(int(m[1]), int(m[2]), int(m[3]),
-                                int(m[4]), int(m[5]), int(m[6]))
-            since = (start_dt - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+        start_dt = timestamps.parse(sdict.get("start_time"))
+        if start_dt:
+            since = (start_dt - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S") + " UTC"
 
         modules = self.facade.get_modules() if self.facade else {}
         online = [mid for mid in mods if modules.get(mid, {}).get("online")]
@@ -4342,8 +4340,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             try:
                 hours = 24.0
                 if since:
-                    age = (datetime.now() - datetime.strptime(
-                        since, "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600
+                    age = (timestamps.utc_now() - (start_dt - timedelta(minutes=10))
+                           ).total_seconds() / 3600
                     hours = max(1.0, min(age + 1, 24 * 30))
                 zf.writestr(f"{root}/controller/ptp_history.csv",
                             "".join(self.facade.export_ptp_history_csv(hours)))
@@ -4849,7 +4847,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     recordings.append({
                         'filename': f"controller/{file.relative_to(self.habitat_share_dir)!s}",
                         'size': file.stat().st_size,
-                        'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'created': timestamps.iso(timestamps.from_epoch(file.stat().st_ctime)),
                         'is_exported': True,
                         'destination': 'controller'
                     })

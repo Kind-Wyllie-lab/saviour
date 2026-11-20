@@ -28,6 +28,7 @@ import subprocess
 import zipfile
 from datetime import UTC, datetime
 
+from src.shared import timestamps
 from src.shared.dep_check import missing_dependencies
 
 try:
@@ -285,7 +286,7 @@ def stage_zip(version: str = "unknown", src_root: str = SRC_ROOT,
         "version": version,
         "filename": f"saviour-{version}.zip",
         "size_bytes": size,
-        "uploaded_at": datetime.now().isoformat(),
+        "uploaded_at": timestamps.iso(),
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)

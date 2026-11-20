@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import socket from "/src/socket";
 import "./ClockModal.css";
 
+// The manual field is UTC like every time SAVIOUR shows: a datetime-local
+// input holding the UTC wall time, sent back with a Z.
 function toDatetimeLocal(date) {
-  const pad = n => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return date.toISOString().slice(0, 16);
 }
 
 function formatDrift(ms) {
@@ -84,7 +85,7 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
         <div className="clock-modal__divider">or set manually</div>
 
         <div className="clock-modal__section">
-          <label className="clock-modal__label" htmlFor="clock-input">Date &amp; time (local)</label>
+          <label className="clock-modal__label" htmlFor="clock-input">Date &amp; time (UTC)</label>
           <input
             id="clock-input"
             type="datetime-local"
@@ -95,7 +96,7 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
           />
           <button
             className="reset-button"
-            onClick={() => send(new Date(manualValue).toISOString())}
+            onClick={() => send(new Date(`${manualValue}:00Z`).toISOString())}
             disabled={isDone}
           >
             Set Manually

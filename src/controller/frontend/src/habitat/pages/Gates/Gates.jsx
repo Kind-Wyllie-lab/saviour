@@ -5,6 +5,7 @@ import HabitatGrid from "/src/habitat/components/HabitatGrid/HabitatGrid";
 import SimulatedBusPanel from "./SimulatedBusPanel";
 
 import "./Gates.css";
+import { formatUtc } from "/src/basic/utils/time";
 
 // RFID gate mapping (plans/rfid-gate-mapping.md): which reader unit is which
 // habitat gate. The controller (variants/habitat/gate_map_service.py) owns
@@ -22,7 +23,7 @@ const STATUS_LABEL = {
   faulty: "Faulty",
 };
 
-const fmtTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : "-");
+const fmtTime = (ts) => (ts ? formatUtc(ts, { seconds: true }) : "-");
 
 function useGateMap() {
   const [state, setState] = useState(null);

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import ProtocolEditor from "./ProtocolEditor";
 import { EMPTY_PROTOCOL, freeName, sameProtocol } from "./protocolLibrary";
 import "./ProtocolDesigner.css";
+import { formatUtc } from "/src/basic/utils/time";
 
 // The Protocol designer: the controller's library of named protocols on the
 // left (new / copy / delete), the selected one's editor on the right (name,
@@ -21,8 +22,7 @@ import "./ProtocolDesigner.css";
 
 function fmtWhen(ts) {
   if (!ts) return "";
-  const d = new Date(ts * 1000);
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return formatUtc(ts, { year: true });
 }
 
 export default function ProtocolDesigner({

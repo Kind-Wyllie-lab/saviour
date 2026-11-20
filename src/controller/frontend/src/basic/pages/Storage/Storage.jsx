@@ -7,6 +7,7 @@ import ResolveExportsButton from "../../components/ResolveExportsButton/ResolveE
 import MiniAreaChart from "../../components/MiniAreaChart/MiniAreaChart";
 import { triggerDownload } from "../Recording/sessionFormat";
 import "./Storage.css";
+import { formatUtcDate } from "/src/basic/utils/time";
 
 const GiB = 1024 ** 3;
 
@@ -59,9 +60,7 @@ function gbPerHour(mbPerMin) {
 }
 
 function fmtDate(epochS) {
-  return new Date(epochS * 1000).toLocaleDateString(undefined, {
-    weekday: "short", day: "numeric", month: "short", year: "numeric",
-  });
+  return formatUtcDate(epochS, { weekday: true });
 }
 
 // "23 days", "1 day 6 h", "9 hours": the countdown's headline.

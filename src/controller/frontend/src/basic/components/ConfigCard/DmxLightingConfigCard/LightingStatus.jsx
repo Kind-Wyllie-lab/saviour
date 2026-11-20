@@ -25,7 +25,7 @@ export function LightingSummary({ state }) {
         <span>
           {sch.phase !== state.mode && <>{PHASE_LABEL[sch.phase]} on schedule · </>}
           visible {sch.visible.toFixed(0)}%, IR {sch.ir.toFixed(0)}%
-          {" · "}{PHASE_LABEL[sch.next_change] ?? sch.next_change} at {fmtClock(sch.next_change_at)}
+          {" · "}{PHASE_LABEL[sch.next_change] ?? sch.next_change} at {fmtClock(sch.next_change_at)} local
           {nextIn != null && nextIn > 0 && <> (in {fmtDuration(nextIn)})</>}
         </span>
       )}

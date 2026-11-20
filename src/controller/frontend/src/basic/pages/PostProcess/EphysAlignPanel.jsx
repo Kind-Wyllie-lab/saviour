@@ -4,6 +4,7 @@ import { formatBytes } from "../Recording/sessionFormat";
 import AccelChart from "./AccelChart";
 // Short-lived token for the plain-HTTP upload / CSV download.
 import { getUploadToken as getToken } from "/src/basic/utils/uploadToken";
+import { formatUtc } from "/src/basic/utils/time";
 
 const busy = (job) => job?.state === "running" || job?.state === "queued";
 
@@ -15,10 +16,7 @@ function shortRel(rel) {
 
 function fmtStart(unixS) {
   if (unixS == null) return "start unknown";
-  return new Date(unixS * 1000).toLocaleString([], {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-    second: "2-digit", hour12: false,
-  });
+  return formatUtc(unixS, { seconds: true });
 }
 
 function JobState({ job }) {

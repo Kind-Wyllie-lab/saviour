@@ -1,13 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import useSessions from "/src/hooks/useSessions";
 import "./LoomRecordingTimer.css";
+import { parseStamp } from "/src/basic/utils/time";
 
-function parseTimestamp(str) {
-  if (!str) return null;
-  const m = str.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-  if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-}
+const parseTimestamp = parseStamp;
 
 function formatClock(totalSeconds) {
   const s = Math.max(0, Math.floor(totalSeconds));

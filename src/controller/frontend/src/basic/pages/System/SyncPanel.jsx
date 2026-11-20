@@ -8,6 +8,7 @@ import {
 import StatusChip from "./StatusChip";
 import { fmtAgo, fmtClock } from "./format";
 import "./SyncPanel.css";
+import { formatUtc, parseStamp } from "/src/basic/utils/time";
 
 // System → Sync tab. Read-only view over `get_sync_overview`
 // (src/controller/sync_overview.py): module + controller PTP with a trend per
@@ -34,8 +35,7 @@ function fmtNs(ns) {
 
 function fmtIso(iso) {
   if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return parseStamp(iso) ? formatUtc(iso, { seconds: true }) : iso;
 }
 
 const absMax = (...vals) => {

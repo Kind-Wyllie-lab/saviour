@@ -23,6 +23,7 @@ import SessionProtocolRow from "./SessionProtocolRow";
 import SessionReadiness from "./SessionReadiness";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
+import { formatUtc, formatUtcTime } from "/src/basic/utils/time";
 
 // "16 cameras · 4 microphones · 1 TTL" from a list of module ids + the loaded
 // module list — a full list of ids overflows the card for a habitat session.
@@ -552,12 +553,12 @@ export default function SessionDetailPage() {
             {session.protocol && <SessionProtocolRow protocol={session.protocol} />}
 
             <span className="session-meta-label">Start</span>
-            <span>{session.start_time || "-"}</span>
+            <span>{session.start_time ? formatUtc(session.start_time, { year: true, seconds: true }) : "-"}</span>
 
             {session.end_time && (
               <>
                 <span className="session-meta-label">End</span>
-                <span>{session.end_time}</span>
+                <span>{formatUtc(session.end_time, { year: true, seconds: true })}</span>
               </>
             )}
 
@@ -658,10 +659,7 @@ export default function SessionDetailPage() {
 
           {isActive && session.error_time && (
             <p className="session-past-fault-message">
-              Fault recorded at {session.error_time.replace(
-                /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/,
-                "$4:$5"
-              )}{session.error_message ? ` - ${session.error_message}` : ""}
+              Fault recorded at {formatUtcTime(session.error_time, { utc: true })}{session.error_message ? ` - ${session.error_message}` : ""}
             </p>
           )}
 

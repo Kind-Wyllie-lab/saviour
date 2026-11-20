@@ -7,6 +7,7 @@ import {
   APPLICATIONS, ROLES, CONFIRM_MAX_AGE_DAYS, SYNC_APPLICATIONS,
   rolesFor, roleLabel, pinLabel, channelLabel, systemName, validateTTL, DIGITAL_IN_CHANNELS,
 } from "/src/basic/utils/ttlApplications";
+import { formatUtc } from "/src/basic/utils/time";
 
 // The Lines tab of a TTL module with an application other than "mixed"
 // (plans/ttl-applications-ephys-sync.md): each pin is a line with a role
@@ -38,8 +39,7 @@ function defaultsFor(schema, mode) {
 
 function formatWhen(epochS) {
   if (!epochS) return "";
-  return new Date(epochS * 1000).toLocaleString([], {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return formatUtc(epochS);
 }
 
 function ModeFields({ schema, mode, settings, onChange }) {

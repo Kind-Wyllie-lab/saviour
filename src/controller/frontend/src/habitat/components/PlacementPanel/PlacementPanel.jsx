@@ -3,6 +3,7 @@ import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useAudioLevels, { isStale } from "../../hooks/useAudioLevels";
 import "./PlacementPanel.css";
+import { formatUtc } from "/src/basic/utils/time";
 
 // Which camera and AudioMoth is in which box (variants/habitat/placement.py).
 // A camera's box is its module name and an AudioMoth's box its label, so
@@ -226,7 +227,7 @@ function PlacementPanel({ modules, onClose }) {
           {state.changes.length === 0 && <li className="placement-empty">No changes yet.</li>}
           {state.changes.map((c, i) => (
             <li key={i}>
-              <span className="placement-log-time">{new Date(c.ts * 1000).toLocaleString()}</span>
+              <span className="placement-log-time">{formatUtc(c.ts, { year: true, seconds: true })}</span>
               {describe(c)} <span className="placement-log-meta">({c.reason}, {c.operator || "?"})</span>
             </li>
           ))}

@@ -59,6 +59,10 @@ from src.controller.protocol_library import (
     register_socket_handlers as register_protocol_handlers,
 )
 from src.controller.ptp import PTP, PTPRole
+from src.controller.quick_setup import QuickSetupStore
+from src.controller.quick_setup import (
+    register_socket_handlers as register_quick_setup_handlers,
+)
 from src.controller.recording import Recording
 from src.controller.rig_check import RigMonitor
 from src.controller.ttl_lines import TTLLineStore
@@ -159,6 +163,11 @@ class Controller(ABC):
                                    get_modules=self.modules.get_modules,
                                    require_auth=self.web._require_auth,
                                    logger=self.logger)
+        # Last run of the on-demand Quick setup walkthrough (plans/rig-quick-setup.md).
+        self.quick_setup = QuickSetupStore()
+        register_quick_setup_handlers(self.web.socketio, self.quick_setup,
+                                      is_admin=self.web._is_authenticated,
+                                      logger=self.logger)
         # Expected hardware for this rig type (plans/rig-expected-hardware.md):
         # re-evaluated every few seconds, changes pushed as `rig_check`.
         self.rig_monitor = RigMonitor(

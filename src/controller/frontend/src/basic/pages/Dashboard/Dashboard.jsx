@@ -8,14 +8,9 @@ import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCa
 import DraggableTile from "/src/basic/components/DraggableTile/DraggableTile";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import { streamInfo, isStreamModule } from "/src/basic/utils/moduleStreams";
 
 // MJPEG stream port by module type
-const STREAM_PORTS = {
-  camera:     8080,
-  microphone: 8081,
-  ttl:        8082,
-  rfid:       8083,
-};
 
 const COMPACT_BREAKPOINT = 1280;
 
@@ -145,26 +140,6 @@ function useElementSize() {
   return [setNode, size, node];
 }
 
-// Stream port + display label for a module, or null if it has no stream.
-function streamInfo(m) {
-  if (m.type?.includes("camera")) {
-    return { port: STREAM_PORTS.camera, label: m.name, isCamera: true };
-  }
-  if (m.type === "microphone") {
-    return { port: STREAM_PORTS.microphone, label: `${m.name} - Audio` };
-  }
-  if (m.type === "ttl") {
-    return { port: STREAM_PORTS.ttl, label: `${m.name} - TTL` };
-  }
-  if (m.type === "rfid") {
-    return {
-      port: m.config?.monitoring?._port ?? STREAM_PORTS.rfid,
-      label: `${m.name} - RFID`,
-    };
-  }
-  return null;
-}
-const isStreamModule = (m) => streamInfo(m) != null;
 
 // The default widget set for a fresh / unsaved view: every module stream
 // (cameras first) plus the two status widgets.

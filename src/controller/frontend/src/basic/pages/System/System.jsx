@@ -15,6 +15,7 @@ import useRigCheck from "/src/hooks/useRigCheck";
 import { RigCheckSummary } from "../../components/RigCheck/RigCheckList";
 import "./System.css";
 import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
+import QuickSetupButton from "/src/basic/components/QuickSetup/QuickSetupButton";
 
 const TABS = [
   ["system", "Devices"],
@@ -402,6 +403,7 @@ export default function System() {
           ))}
         </div>
         {tab === "system" && <div className="system-header-actions">
+          <QuickSetupButton className="refresh-btn" />
           <button className="refresh-btn" type="button" onClick={() => {
             refresh();
             socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });

@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import useModules from "/src/hooks/useModules";
-import useRigCheck from "/src/hooks/useRigCheck";
+import useRigCheck, { rigShortfalls } from "/src/hooks/useRigCheck";
 import useTTLLines from "/src/hooks/useTTLLines";
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import { saveQuickSetup, describeRun } from "/src/hooks/useQuickSetup";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
-import ExternalSyncField from "/src/basic/pages/Recording/ExternalSyncField";
 import {
-  EXTERNAL_SYNC, moduleKindLabel, syncModules, systemName, syncApplication, pinLabel,
+  EXTERNAL_SYNC, moduleKindLabel, syncModules, systemName, syncApplication, pinLabel, syncWarnings,
 } from "/src/basic/utils/ttlApplications";
 import { streamInfo } from "/src/basic/utils/moduleStreams";
 import { RIG_TYPES, BUILT_VARIANT } from "./rigTypes";
@@ -69,6 +68,30 @@ function StepRail({ steps, step, setStep }) {
   );
 }
 
+function StepHead({ title, lead }) {
+  return (
+    <header className="qs-step-head">
+      <h3>{title}</h3>
+      {lead && <p>{lead}</p>}
+    </header>
+  );
+}
+
+const STATUS_MARK = { ok: "✓", warn: "!", info: "…" };
+
+function SummaryCard({ title, status, value, children }) {
+  return (
+    <div className={`qs-card qs-summary-card qs-summary-card--${status}`}>
+      <span className="qs-summary-mark" aria-hidden="true">{STATUS_MARK[status]}</span>
+      <div className="qs-summary-body">
+        <span className="qs-summary-title">{title}</span>
+        <span className="qs-summary-value">{value}</span>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function QuickSetupModal({ lastRun, onClose, onDone }) {
   const { moduleList } = useModules();
   const rig = useRigCheck();
@@ -117,6 +140,12 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
     module_id: m.id, name: m.name, gpio: ln.gpio, role: ln.role,
     channel: Number.isInteger(ln.channel) ? ln.channel : null, state: ln.state })));
 
+  // What the chosen external sync would flag: its conditional rig items and
+  // unconfirmed sync lines (as ExternalSyncField on the New Session form).
+  const syncMissing = externalSync
+    ? rigShortfalls(rig, "required", [externalSync]).filter((i) => i.when) : [];
+  const syncIssues = externalSync ? syncWarnings(ttlLines, syncApplication(externalSync)) : [];
+
   const done = () => {
     try { sessionStorage.setItem(FORM_SYNC_KEY, JSON.stringify(externalSync)); } catch { /* storage unavailable */ }
     saveQuickSetup({
@@ -148,40 +177,103 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
 
         <div className="quick-setup__body">
           {key === "rig" && (
-            <section>
-              <h3>{rigType.label}</h3>
-              <p>{rigType.description}</p>
+            <section className="qs-step">
+              <StepHead title="Rig type" lead="What this controller is set up to run." />
+              <div className="qs-card qs-card--hero">
+                <span className="qs-eyebrow">This controller is a</span>
+                <h3 className="qs-hero-title">{rigType.label}</h3>
+                {rigType.description && <p className="qs-hero-text">{rigType.description}</p>}
+              </div>
+              <div className="qs-card">
+                <h4 className="qs-card-title">What this rig expects</h4>
+                {rig?.items?.length ? (
+                  <ul className="qs-expect-list">
+                    {rig.items.map((i) => (
+                      <li key={`${i.label}:${i.when ?? ""}`}>
+                        <span className="qs-expect-label">{i.label}</span>
+                        <span className="qs-expect-meta">
+                          at least {i.min}
+                          {i.severity === "optional" && " · optional"}
+                          {i.when && ` · ${EXTERNAL_SYNC[i.when]?.label ?? i.when} sessions`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="qs-muted">Nothing listed yet. You can add items in the Expected modules step.</p>
+                )}
+              </div>
               <p className="quick-setup__hint">
-                This controller is set up as a <strong>{rigType.label}</strong>. If that's wrong,
-                change it on the controller with <code>sudo saviour-config</code> (it rebuilds this
-                interface); it can't be changed from here.
+                Wrong rig type? Change it on the controller with <code>sudo saviour-config</code> (it
+                rebuilds this interface); it can't be changed from here.
               </p>
             </section>
           )}
 
           {key === "sync" && (
-            <section>
-              <p>Is anything recording alongside SAVIOUR that needs the sync pulses?</p>
-              <ExternalSyncField value={externalSync} onChange={setExternalSync} rig={rig} ttlLines={ttlLines} />
+            <section className="qs-step">
+              <StepHead title="External sync"
+                lead="Is anything recording alongside SAVIOUR that needs the sync pulses?" />
+              <div className="qs-options" role="radiogroup" aria-label="External sync">
+                {[["", { label: "None", description: "Nothing else records alongside SAVIOUR." }],
+                  ...Object.entries(EXTERNAL_SYNC)].map(([k, opt]) => (
+                  <button key={k || "none"} type="button" role="radio" aria-checked={externalSync === k}
+                    className={`qs-option${externalSync === k ? " is-selected" : ""}`}
+                    onClick={() => setExternalSync(k)}>
+                    <span className="qs-option-dot" aria-hidden="true" />
+                    <span className="qs-option-text">
+                      <span className="qs-option-title">{opt.label}</span>
+                      <span className="qs-option-desc">{opt.description}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {(syncMissing.length > 0 || syncIssues.length > 0) && (
+                <div className="qs-card qs-card--warn">
+                  <h4 className="qs-card-title">Before an {EXTERNAL_SYNC[externalSync].label} session</h4>
+                  <ul className="qs-plain-list">
+                    {syncMissing.map((i) => (
+                      <li key={i.label}>
+                        {i.label}: {i.count} of {i.min}. Set a TTL module's “Used for” to{" "}
+                        {EXTERNAL_SYNC[externalSync].label.replace(/ \(.*\)$/, "")} sync.
+                      </li>
+                    ))}
+                    {syncIssues.map((w) => <li key={w}>{w}</li>)}
+                  </ul>
+                </div>
+              )}
               <p className="quick-setup__hint">
-                Your choice becomes the New Session form's default. It doesn't change a session
-                that already exists.{externalSync && " A Sync lines step is added to check the wiring."}
+                Your choice becomes the New Session form's default; it doesn't change a session that
+                already exists.{externalSync && " A Sync lines step is added to check the wiring."}
               </p>
             </section>
           )}
 
           {key === "modules" && (
-            <ExpectedModulesStep rig={rig} conditions={conditions} externalSync={externalSync}
-              modules={modules} offline={offline} onClose={onClose} />
+            <section className="qs-step">
+              <StepHead title="Expected modules"
+                lead={`What this rig should have${externalSync ? ` for ${EXTERNAL_SYNC[externalSync].label} sessions` : ""}, and what's connected.`} />
+              <ExpectedModulesStep rig={rig} conditions={conditions} externalSync={externalSync}
+                modules={modules} offline={offline} onClose={onClose} />
+            </section>
           )}
 
-          {key === "lines" && <SyncLinesStep externalSync={externalSync} ttlLines={ttlLines} />}
+          {key === "lines" && (
+            <section className="qs-step">
+              <StepHead title="Sync lines"
+                lead={`Check each line reaches ${systemName(syncApplication(externalSync))}.`} />
+              <SyncLinesStep externalSync={externalSync} ttlLines={ttlLines} />
+            </section>
+          )}
 
           {key === "previews" && (
-            modules.length === 0 ? (
-              <p>No modules are connected.</p>
-            ) : (
-              <section className="quick-setup__previews">
+            <section className="qs-step qs-step--fill">
+              <StepHead title="Previews"
+                lead="Look at what each module sees or hears. Confirm it, or open its settings to fix it." />
+              {modules.length === 0 ? (
+                <p className="qs-muted">No modules are connected.</p>
+              ) : (
+              <div className="quick-setup__previews">
                 <div className="quick-setup__thumbs" role="tablist" aria-label="Modules">
                   {modules.map((m, i) => (
                     <button
@@ -231,42 +323,42 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                     </span>
                   </div>
                 </div>
-              </section>
-            )
+              </div>
+              )}
+            </section>
           )}
 
           {key === "summary" && (
-            <section>
-              <dl className="quick-setup__summary">
-                <dt>Rig type</dt><dd>{rigType.label}</dd>
-                <dt>External sync</dt><dd>{externalSync ? EXTERNAL_SYNC[externalSync].label : "None"}</dd>
-                <dt>Expected hardware</dt><dd>{rig?.summary ?? "Not known"}</dd>
+            <section className="qs-step">
+              <StepHead title="Summary" lead="Done saves this run on the controller. Nothing is enforced from it." />
+              <div className="qs-summary">
+                <SummaryCard title="Rig type" status="ok" value={rigType.label} />
+                <SummaryCard title="External sync" status="ok"
+                  value={externalSync ? EXTERNAL_SYNC[externalSync].label : "None"} />
+                <SummaryCard title="Expected hardware" status={rig ? (rig.level === "ok" ? "ok" : rig.level === "pending" ? "info" : "warn") : "info"}
+                  value={rig?.summary ?? "Not known"} />
                 {externalSync && (
-                  <>
-                    <dt>Sync lines</dt>
-                    <dd>
-                      {syncLines.length === 0 ? (
-                        `No ${EXTERNAL_SYNC[externalSync].label} sync lines set up`
-                      ) : (
-                        <ul className="quick-setup__unconfirmed">
-                          {syncLines.map((ln) => (
-                            <li key={`${ln.module_id}:${ln.gpio}`}
-                              className={ln.state === "confirmed" ? "" : "quick-setup__warn-text"}>
-                              {ln.name}: {pinLabel(ln.gpio)}{ln.channel ? ` → channel ${ln.channel}` : ""},{" "}
-                              {LINE_STATE[ln.state] ?? ln.state}
-                              {ln.state !== "confirmed" && ln.role === "sync" && ` in ${systemName(syncApplication(externalSync))}`}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </dd>
-                  </>
+                  <SummaryCard title="Sync lines"
+                    status={syncLines.length && syncLines.every((ln) => ln.state === "confirmed") ? "ok" : "warn"}
+                    value={syncLines.length
+                      ? `${syncLines.filter((ln) => ln.state === "confirmed").length} of ${syncLines.length} confirmed`
+                      : `No ${EXTERNAL_SYNC[externalSync].label} sync lines set up`}>
+                    {syncLines.some((ln) => ln.state !== "confirmed") && (
+                      <ul className="qs-plain-list">
+                        {syncLines.filter((ln) => ln.state !== "confirmed").map((ln) => (
+                          <li key={`${ln.module_id}:${ln.gpio}`}>
+                            {ln.name}: {pinLabel(ln.gpio)}{ln.channel ? ` → channel ${ln.channel}` : ""},{" "}
+                            {LINE_STATE[ln.state] ?? ln.state}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </SummaryCard>
                 )}
-                <dt>Previews</dt>
-                <dd>
-                  {confirmedCount} of {modules.length} confirmed
+                <SummaryCard title="Previews" status={modules.length && confirmedCount === modules.length ? "ok" : "warn"}
+                  value={`${confirmedCount} of ${modules.length} confirmed`}>
                   {confirmedCount < modules.length && (
-                    <ul className="quick-setup__unconfirmed">
+                    <ul className="qs-plain-list">
                       {modules.filter((m) => !confirmed[m.id]).map((m) => (
                         <li key={m.id}>
                           <button type="button" className="quick-setup__link"
@@ -277,9 +369,8 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                       ))}
                     </ul>
                   )}
-                </dd>
-              </dl>
-              <p className="quick-setup__hint">Done saves this run on the controller (only the latest is kept). Nothing is enforced from it.</p>
+                </SummaryCard>
+              </div>
             </section>
           )}
         </div>

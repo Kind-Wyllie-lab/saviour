@@ -2422,3 +2422,32 @@ class TestEphysSessions:
         assert rec.mark_ephys_uploaded(name) is True
         assert rec.sessions[name].ephys_uploaded_at is not None
         assert rec.mark_ephys_uploaded("nope") is False
+
+    def test_external_sync_neurologger(self):
+        """External sync "neurologger": judged with that condition, only the
+        Neurologger sync modules' wiring is recorded."""
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_sync_wiring.return_value = []
+        name = rec.create_session("exp1", "all", external_sync="neurologger")["session_name"]
+        facade.get_rig_check.assert_called_with({"neurologger"})
+        facade.get_sync_wiring.assert_called_with("neurologger_sync")
+        s = rec.sessions[name]
+        assert s.external_sync == "neurologger" and s.ephys is True
+
+    def test_legacy_ephys_flag_means_open_ephys(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_sync_wiring.return_value = []
+        name = rec.create_session("exp1", "all", ephys=True)["session_name"]
+        assert rec.sessions[name].external_sync == "ephys"
+        facade.get_sync_wiring.assert_called_with("ephys_sync")
+
+    def test_unknown_external_sync_refused(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        result = rec.create_session("exp1", "all", external_sync="telepathy")
+        assert result["success"] is False and "external_sync" in result["error"]

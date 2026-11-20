@@ -117,8 +117,8 @@ function SyncGuideModal({ app, lines, onClose }) {
           </li>
           <li>
             On the day: start the Open Ephys recording before the SAVIOUR session and stop it after,
-            so every sync pulse is captured, and tick <strong>Records ephys</strong> when you create
-            the session.
+            so every sync pulse is captured, and choose <strong>External sync: Ephys</strong> when you
+            create the session.
           </li>
         </ol>
       ) : (
@@ -127,8 +127,8 @@ function SyncGuideModal({ app, lines, onClose }) {
             shared ground.</li>
           <li>Press <strong>Test line</strong>, check the pulses appear in the logger's data, then press
             <strong> Seen in the logger</strong>.</li>
-          <li>Start logging before the SAVIOUR session and stop after it, and tick
-            <strong> Records ephys</strong> when you create the session.</li>
+          <li>Start logging before the SAVIOUR session and stop after it, and choose
+            <strong> External sync: Neurologger</strong> when you create the session.</li>
         </ol>
       )}
       <div className="ttl-guide-modal__foot">

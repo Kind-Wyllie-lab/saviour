@@ -41,13 +41,13 @@ export default function useRigCheck() {
 
 // Before starting a session: if required hardware is missing, ask. Warns,
 // never blocks (a researcher may knowingly run without it). True = go ahead.
-// `ephys`: the session records ephys, so conditional items count and
-// `syncWarnings` (unconfirmed sync lines, ttlApplications.syncWarnings) are
-// listed too.
+// `externalSync`: the session's external sync kind ("ephys", "neurologger"),
+// so items marked `when: <kind>` count and `syncWarnings` (that kind's
+// unconfirmed sync lines, ttlApplications.syncWarnings) are listed too.
 export function confirmRigShortfall(rig, action = "Start this session",
-  { ephys = false, syncWarnings = [] } = {}) {
-  const missing = rigShortfalls(rig, "required", ephys ? ["ephys"] : []);
-  const sync = ephys ? syncWarnings : [];
+  { externalSync = "", syncWarnings = [] } = {}) {
+  const missing = rigShortfalls(rig, "required", externalSync ? [externalSync] : []);
+  const sync = externalSync ? syncWarnings : [];
   if (!missing.length && !sync.length) return true;
   const lines = missing.map((i) => {
     const notes = [
@@ -59,7 +59,7 @@ export function confirmRigShortfall(rig, action = "Start this session",
   const parts = [];
   if (lines.length) parts.push(`This rig is missing required hardware:\n\n${lines.join("\n")}`);
   if (sync.length) {
-    parts.push(`Ephys sync lines to check (pulse each with Test line on its TTL card and confirm `
+    parts.push(`Sync lines to check (pulse each with Test line on its TTL card and confirm `
       + `it in the acquisition software):\n\n${sync.map((w) => `• ${w}`).join("\n")}`);
   }
   return window.confirm(`${parts.join("\n\n")}\n\n${action} anyway?`);

@@ -884,6 +884,7 @@ def create_api_blueprint(web) -> Blueprint:
             unattended=bool(data.get("unattended")),
             protocol_name=data.get("protocol") or None,
             ephys=bool(data.get("ephys")),
+            external_sync=data.get("external_sync") or None,
         )
         if not result or not result.get("success"):
             return _error(

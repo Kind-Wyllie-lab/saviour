@@ -27,6 +27,25 @@ APPLICATIONS: dict = DEFINITIONS["applications"]
 ROLES: dict = DEFINITIONS["roles"]
 DEFAULT_APPLICATION: str = DEFINITIONS["default_application"]
 CONFIRM_MAX_AGE_DAYS: float = float(DEFINITIONS["confirm_max_age_days"])
+# What a session can be synchronised with ("External sync" on New Session):
+# {kind: {label, application, system, description}}.
+EXTERNAL_SYNC: dict = DEFINITIONS.get("external_sync", {})
+
+
+def external_sync_kind(value: object = None, legacy_ephys: bool = False) -> str | None:
+    """A session's external sync kind (``"ephys"``, ``"neurologger"``) or
+    None. ``legacy_ephys``: the older boolean ``ephys`` flag. Raises
+    ValueError for an unknown kind."""
+    if value in (None, "", "none", False):
+        return "ephys" if legacy_ephys else None
+    if value not in EXTERNAL_SYNC:
+        raise ValueError(f"external_sync must be one of: none, {', '.join(EXTERNAL_SYNC)}")
+    return str(value)
+
+
+def sync_application(kind: str | None) -> str | None:
+    """The TTL application that drives external sync ``kind``."""
+    return (EXTERNAL_SYNC.get(kind) or {}).get("application") if kind else None
 
 
 def application_of(ttl_config: dict | None) -> str:

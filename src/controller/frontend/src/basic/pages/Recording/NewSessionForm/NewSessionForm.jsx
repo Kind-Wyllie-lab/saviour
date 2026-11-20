@@ -10,9 +10,9 @@ import TimeSelect from "./TimeSelect/TimeSelect";
 import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
 import { humanizeMinutes } from "../sessionFormat";
 import SessionProtocolField from "./SessionProtocolField";
-import EphysSessionField from "../EphysSessionField";
+import ExternalSyncField from "../ExternalSyncField";
 import useTTLLines from "/src/hooks/useTTLLines";
-import { syncWarnings } from "/src/basic/utils/ttlApplications";
+import { syncApplication, syncWarnings } from "/src/basic/utils/ttlApplications";
 import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -27,7 +27,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const { experimentName, experimenter } = useExperimentTitle();
   const rig = useRigCheck();
   const { lines: ttlLines } = useTTLLines();
-  const [ephys, setEphys] = usePersistedState("saviour_session_form_ephys", false);
+  const [externalSync, setExternalSync] = usePersistedState("saviour_session_form_external_sync", "");
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -216,7 +216,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
       ? "Schedule this session" : "Start this session")) return;
     if (!confirmRigShortfall(rig, recordingMode === "scheduled"
       ? "Schedule this session" : "Create this session",
-      { ephys, syncWarnings: syncWarnings(ttlLines) })) return;
+      { externalSync, syncWarnings: syncWarnings(ttlLines, syncApplication(externalSync)) })) return;
     setSubmitError(null);
 
     if (recordingMode === "scheduled") {
@@ -231,7 +231,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         days: daysArray,
         researcher: experimenter || null,
         protocol: protocolName || null,
-        ephys,
+        external_sync: externalSync || null,
       });
     } else {
       socket.emit("create_session", {
@@ -240,7 +240,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         duration_minutes: recordingMode === "timed" ? totalDurationMins : null,
         researcher: experimenter || null,
         protocol: protocolName || null,
-        ephys,
+        external_sync: externalSync || null,
       });
     }
 
@@ -365,7 +365,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
           onCheck={setProtocolOk}
         />
 
-        <EphysSessionField checked={ephys} onChange={setEphys} rig={rig} ttlLines={ttlLines} />
+        <ExternalSyncField value={externalSync} onChange={setExternalSync} rig={rig} ttlLines={ttlLines} />
 
         <div className="session-description">
           {recordingMode === "immediate" && (

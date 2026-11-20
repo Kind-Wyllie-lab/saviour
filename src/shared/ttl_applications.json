@@ -1,5 +1,5 @@
 {
-    "_comment": "What a TTL module is for (ttl.application) and the roles its pins can take (ttl.pins.<gpio>.role). One source for the module (validation), the controller (rig check, session record, post-processing) and the frontend (the card). plans/ttl-applications-ephys-sync.md",
+    "_comment": "What a TTL module is for (ttl.application) and the roles its pins can take (ttl.pins.<gpio>.role). One source for the module (validation), the controller (rig check, session record, post-processing) and the frontend (the card). plans/ttl-applications-ephys-sync.md external_sync: what a session can be synchronised with (the New Session 'External sync' choice); each names the TTL application that drives it.",
     "default_application": "mixed",
     "confirm_max_age_days": 7,
     "applications": {
@@ -12,21 +12,37 @@
         "ephys_sync": {
             "label": "Ephys sync",
             "description": "Sends a sync pulse train to an ephys acquisition system (Open Ephys) so its data can be aligned with every camera and microphone.",
-            "roles": ["sync", "experiment_start", "marker_in"],
-            "requires": ["sync"],
+            "roles": [
+                "sync",
+                "experiment_start",
+                "marker_in"
+            ],
+            "requires": [
+                "sync"
+            ],
             "guide": "open_ephys"
         },
         "neurologger_sync": {
             "label": "Neurologger sync",
             "description": "Sends a sync pulse train to a wireless neurologger so its data can be aligned with every camera and microphone.",
-            "roles": ["sync", "experiment_start", "marker_in"],
-            "requires": ["sync"],
+            "roles": [
+                "sync",
+                "experiment_start",
+                "marker_in"
+            ],
+            "requires": [
+                "sync"
+            ],
             "guide": "neurologger"
         },
         "stimulus_control": {
             "label": "Stimulus control",
             "description": "Drives stimuli (lights, shocks, tones via other hardware) from pulse trains or the session protocol.",
-            "roles": ["stimulus", "experiment_start", "marker_in"],
+            "roles": [
+                "stimulus",
+                "experiment_start",
+                "marker_in"
+            ],
             "requires": []
         }
     },
@@ -35,7 +51,9 @@
             "label": "Sync line",
             "detail": "pseudorandom",
             "description": "A pseudorandom pulse train the acquisition system records alongside its own data. Alignment matches these pulses on both sides.",
-            "modes": ["pseudorandom"],
+            "modes": [
+                "pseudorandom"
+            ],
             "output": true,
             "max": 1,
             "channel": true
@@ -43,21 +61,44 @@
         "experiment_start": {
             "label": "Experiment start",
             "description": "One pulse when recording starts.",
-            "modes": ["experiment_start"],
+            "modes": [
+                "experiment_start"
+            ],
             "output": true,
             "channel": true
         },
         "stimulus": {
             "label": "Stimulus",
             "description": "A pulse train or the session protocol driving a stimulus.",
-            "modes": ["interval_pulse", "scheduled", "experiment_clock", "None"],
+            "modes": [
+                "interval_pulse",
+                "scheduled",
+                "experiment_clock",
+                "None"
+            ],
             "output": true
         },
         "marker_in": {
             "label": "Event marker (input)",
             "description": "Logs each edge on an input line, e.g. a lever press or another system's trigger.",
-            "modes": ["input"],
+            "modes": [
+                "input"
+            ],
             "output": false
+        }
+    },
+    "external_sync": {
+        "ephys": {
+            "label": "Ephys (Open Ephys)",
+            "application": "ephys_sync",
+            "system": "Open Ephys",
+            "description": "An Open Ephys acquisition system records alongside SAVIOUR; an Ephys sync TTL module sends it the sync pulses."
+        },
+        "neurologger": {
+            "label": "Neurologger",
+            "application": "neurologger_sync",
+            "system": "the logger",
+            "description": "A wireless neurologger records alongside SAVIOUR; a Neurologger sync TTL module sends it the sync pulses."
         }
     }
 }

@@ -11,7 +11,7 @@
 `ttl.application` + pin roles (defined once in
 `src/shared/ttl_applications.json`), the Lines tab with wiring guide, Test
 line and "Seen in Open Ephys" confirmations kept on the controller
-(`src/controller/ttl_lines.py`), **Records ephys** sessions with
+(`src/controller/ttl_lines.py`), **External sync** sessions (None / Ephys / Neurologger; was a Records ephys tick) with
 `application` / `when: "ephys"` rig items, the declared sync pin in
 `ephys_data.sync_pin`, alignment results recorded on the module, and the
 "Ephys not uploaded" session badge. Full detail in the changelog.
@@ -39,7 +39,7 @@ race them.
   - set the desk TTL module to `ephys_sync` via `saviour-config` and via the
     card; check the readiness check, the Lines tab, Test line and the
     confirmation (and that a channel change marks it "Wiring changed");
-  - create a Records-ephys session with and without the module: confirm
+  - create a session with External sync: Ephys with and without the module: confirm
     dialog, `Rig check: Sync —` lines in `session_events.log`,
     `ephys_wiring` in `session_metadata.json`;
   - record, upload a real Open Ephys folder, align: `pin_role` in the CSV,

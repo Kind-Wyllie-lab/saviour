@@ -1033,6 +1033,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         ephys = self.facade.get_session_ephys(session_name)
         if isinstance(ephys, dict):
             metadata["ephys"] = bool(ephys.get("ephys"))
+            metadata["external_sync"] = ephys.get("external_sync")
             if ephys.get("wiring"):
                 metadata["ephys_wiring"] = ephys["wiring"]
 
@@ -2276,7 +2277,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 return
             result = self.facade.create_session(session_name, target, duration_minutes, researcher,
                                                 unattended=unattended, protocol_name=protocol_name,
-                                                ephys=bool(data.get("ephys")))
+                                                ephys=bool(data.get("ephys")),
+                                                external_sync=data.get("external_sync") or None)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -2326,7 +2328,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher,
                                                           protocol_name=data.get("protocol") or None,
-                                                          ephys=bool(data.get("ephys")))
+                                                          ephys=bool(data.get("ephys")),
+                                                          external_sync=data.get("external_sync") or None)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -2372,6 +2375,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 data.get("session_name"), data.get("plans") or [],
                 data.get("researcher") or None, data.get("duration_minutes"),
                 ephys=bool(data.get("ephys")),
+                external_sync=data.get("external_sync") or None,
             )
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})

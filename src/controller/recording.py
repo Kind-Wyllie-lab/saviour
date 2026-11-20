@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
 from src.controller import framesync_check, recording_plans
+from src.controller.rig_check import describe_item, shortfalls
 from src.shared.data_rate import estimate_recording_bytes_per_s
 from src.shared.supervised import supervise
 
@@ -185,6 +186,9 @@ class RecordingSession:
     # (protocol_start_at = recording_start_at, so a re-armed module resumes on
     # the session's clock). None = no protocol.
     protocol:                  dict | None = None
+    # Rig check (rig_check.py) when the session was created: which expected
+    # hardware was missing or faulty, so the record sits next to the data.
+    rig_check:                 dict | None = None
     # Long-term / unattended posture (weeks-long habitat runs). When True the
     # session self-heals instead of parking terminally in ERROR: a module
     # dropping its recording state stays ACTIVE while _monitor_sessions keeps
@@ -586,6 +590,7 @@ class Recording:
                 return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
 
+        session.rig_check = self._rig_check()
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -595,7 +600,28 @@ class Recording:
         self._log_session_event(session_name, "INFO",
             f"Session created — modules: {', '.join(modules)}")
         self._log_protocol(session_name, protocol, protocol_warnings)
-        return {"success": True, "session_name": session_name}
+        return {"success": True, "session_name": session_name,
+                "rig_warnings": self._log_rig_check(session)}
+
+    def _log_rig_check(self, session: RecordingSession) -> list[str]:
+        """Write the session's rig-check shortfalls to its event log and
+        return them as lines ("Required — Shock/motor: 0 of 1 ...")."""
+        lines = [f"{i['severity'].capitalize()} — {describe_item(i)}"
+                 for i in shortfalls(session.rig_check)]
+        for line in lines:
+            self._log_session_event(session.session_name, "WARNING",
+                                    f"Rig check: {line}")
+        return lines
+
+    def _rig_check(self) -> dict | None:
+        """The rig check now, or None if it can't be had (never blocks a
+        session)."""
+        try:
+            rig = self.facade.get_rig_check()
+        except Exception as e:
+            self.logger.warning(f"rig check unavailable: {e}")
+            return None
+        return rig if isinstance(rig, dict) else None
 
     def _resolve_session_protocol(self, protocol_name: str | None, target: str,
                                   duration_minutes: float | None,
@@ -1045,6 +1071,8 @@ class Recording:
                 unattended=True,
                 plans=plans,
             )
+            session = self.sessions[session_name]
+        session.rig_check = self._rig_check()
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self._log_session_event(
@@ -1054,7 +1082,8 @@ class Recording:
                 f"{p.label} ({p.strategy}, {len(p.modules)} mod)" for p in plans
             ),
         )
-        return {"success": True, "session_name": session_name}
+        return {"success": True, "session_name": session_name,
+                "rig_warnings": self._log_rig_check(session)}
 
     def _start_habitat_session(self, session_name: str) -> dict:
         """PENDING -> ACTIVE for a plan-driven session: nothing records
@@ -2485,18 +2514,24 @@ class Recording:
                     severity="warning",
                 )
 
-        # ── Expected module count ─────────────────────────────────────────────
-        expected_counts: dict = rec_cfg.get("expected_module_counts", {})
-        expected = expected_counts.get(session.target, 0)
-        if expected > 0 and len(available) < expected:
+        # ── Expected hardware (rig profile, rig_check.py) ────────────────────
+        rig = self._rig_check()
+        with self._lock:
+            session.rig_check = rig
+        missing = shortfalls(rig)
+        if missing:
+            self._log_session_event(session_name, "WARNING",
+                "Rig check: " + "; ".join(describe_item(i) for i in missing))
             if self._notify_enabled("notify_session_faults"):
                 self.facade.send_alert(
                     key=f"module_count_{session_name}_{today}",
-                    title=f"Low module count — {session_name}",
+                    title=f"Rig missing hardware — {session_name}",
                     message=(
-                        f"Session **{session_name}** ({today}): expected {expected} "
-                        f"'{session.target}' module(s) but only {len(available)} are online.\n\n"
-                        f"Online: {', '.join(available)}"
+                        f"Session **{session_name}** ({today}) is starting without "
+                        f"all of this rig's expected hardware:\n\n"
+                        + "\n".join(f"- {i['severity']}: {describe_item(i)}"
+                                    for i in missing)
+                        + "\n\nRecording will proceed."
                     ),
                     severity="warning",
                 )

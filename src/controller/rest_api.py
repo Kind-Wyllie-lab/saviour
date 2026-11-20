@@ -185,6 +185,13 @@ def create_api_blueprint(web) -> Blueprint:
     def _session_dict(name: str) -> dict:
         return asdict(_sessions()[name])
 
+    def _rig() -> dict | None:
+        """Expected-vs-present hardware (rig_check.py), or None."""
+        try:
+            return web.facade.get_rig_check()
+        except Exception:
+            return None
+
     def _ptp_gate_ns() -> int:
         return int(web.config.get("recording.ptp_start_gate_us", 50)) * 1000
 
@@ -274,6 +281,7 @@ def create_api_blueprint(web) -> Blueprint:
             },
             "disk": web._nas_health,
             "ui_clients": _ui_clients(),
+            "rig": _rig(),
         })
 
     @bp.get("/readiness")
@@ -336,6 +344,8 @@ def create_api_blueprint(web) -> Blueprint:
             "target": target,
             "ready": all(c["ok"] for c in checks.values()),
             "checks": checks,
+            # Advisory only: a short rig never blocks a start (`ready`).
+            "rig": _rig(),
         })
 
     @bp.get("/health")
@@ -796,6 +806,7 @@ def create_api_blueprint(web) -> Blueprint:
                 ip = web.facade.controller.network.ip
             except Exception:
                 ip = "localhost"
+            web.facade.restart_rig_grace()
             modules_notified = su.notify_modules(
                 web.facade.send_command,
                 list(web.facade.get_modules().keys()),
@@ -884,12 +895,14 @@ def create_api_blueprint(web) -> Blueprint:
         web._write_session_metadata(session_name, target)
 
         body = _session_dict(session_name)
+        rig_warnings = result.get("rig_warnings") or []
         if data.get("autostart"):
             start = web.facade.force_start_session(session_name)
             body = _session_dict(session_name)
             if not start or not start.get("success"):
                 body["autostart_error"] = (start or {}).get(
                     "error", "Could not start session")
+        body["rig_warnings"] = rig_warnings
         return jsonify(body), 201
 
     @bp.post("/sessions/<session_name>/stop")

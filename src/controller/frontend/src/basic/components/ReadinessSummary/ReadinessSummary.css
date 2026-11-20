@@ -115,3 +115,7 @@
 .readiness-summary__dot--waiting   { background: #bbb; }
 .readiness-summary__dot--fault     { background: #c62828; }
 .readiness-summary__dot--offline   { background: #888; }
+
+.readiness-summary__rig {
+  margin-bottom: 12px;
+}

@@ -1,0 +1,121 @@
+.rig-check-banner {
+  position: relative;
+  flex-shrink: 0;
+  font-size: 0.88em;
+  --rig-tone: var(--error-color, #e74c3c);
+  background: color-mix(in srgb, var(--rig-tone) 15%, var(--card-bg-color));
+  color: var(--rig-tone);
+  border-bottom: 1px solid var(--rig-tone);
+}
+
+.rig-check-banner--warning {
+  --rig-tone: var(--warning-color, #e6a23c);
+}
+
+.rig-check-banner__btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 8px 16px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.rig-check-banner__more {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+
+.rig-check-popover {
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  right: 16px;
+  max-width: 560px;
+  z-index: 50;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  padding: 10px 12px;
+}
+
+.rig-check-popover__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.9em;
+}
+
+.rig-check-popover__foot a {
+  color: var(--accent-color, inherit);
+}
+
+.rig-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rig-check-item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  column-gap: 8px;
+  font-size: 0.92em;
+  --rig-dot: var(--success-color, #2ecc71);
+}
+
+.rig-check-item--error   { --rig-dot: var(--error-color, #e74c3c); }
+.rig-check-item--warning { --rig-dot: var(--warning-color, #e6a23c); }
+.rig-check-item--pending { --rig-dot: var(--text-muted-color, #999); }
+
+.rig-check-item__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--rig-dot);
+}
+
+.rig-check-item__label {
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rig-check-item__count,
+.rig-check-item__opt {
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.rig-check-item__status {
+  color: var(--rig-dot);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rig-check-item__detail {
+  grid-column: 2 / -1;
+  font-size: 0.9em;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.rig-check-summary {
+  margin-bottom: 12px;
+}
+
+.rig-check-summary__title {
+  margin: 0 0 6px;
+  font-size: 1em;
+}

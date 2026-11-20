@@ -60,6 +60,7 @@ from src.controller.protocol_library import (
 )
 from src.controller.ptp import PTP, PTPRole
 from src.controller.recording import Recording
+from src.controller.rig_check import RigMonitor
 from src.controller.web import Web
 from src.shared import sd_watchdog
 from src.shared.netlink import LinkStats
@@ -147,6 +148,16 @@ class Controller(ABC):
         register_protocol_handlers(self.web.socketio, self.protocol_library,
                                    require_auth=self.web._require_auth,
                                    logger=self.logger)
+        # Expected hardware for this rig type (plans/rig-expected-hardware.md):
+        # re-evaluated every few seconds, changes pushed as `rig_check`.
+        self.rig_monitor = RigMonitor(
+            get_config=self.config.get_all,
+            get_modules=self.modules.get_modules,
+            get_health=self.health.get_module_health,
+            emit=self.web.socketio.emit,
+            send_alert=lambda **kw: self.facade.send_alert(**kw),
+            logger=logging.getLogger("rig_check"),
+        )
 
         # Register facade/callbacks
         self.network.facade = self.facade
@@ -501,6 +512,7 @@ class Controller(ABC):
             self.logger.info("Stopping health monitoring")
             self.health.stop_monitoring()
             self.ping_monitor.stop()
+            self.rig_monitor.stop()
 
             # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
@@ -588,6 +600,7 @@ class Controller(ABC):
         self._check_firewall()
 
         self.ping_monitor.start()
+        self.rig_monitor.start()
 
 
         # Start the modules manager

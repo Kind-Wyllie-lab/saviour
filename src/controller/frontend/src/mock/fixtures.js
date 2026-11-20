@@ -12,6 +12,7 @@
 
 import { LIGHTING_ID, lightingState, makeLightingModule } from "./lightingMock";
 import { habitatHealth, habitatModules } from "./habitatSim/fleet";
+import { rigDefaults } from "./rigMock";
 
 const HABITAT = import.meta.env.VITE_VARIANT === "habitat";
 
@@ -368,6 +369,7 @@ function makeControllerConfig() {
       export_stale_mins: 150,
     },
     alerts: { teams_webhook_url: "" },
+    rig: rigDefaults(),
     frontend: { theme_id: "default", dark_mode: true, accent_color: "#6495ed", custom_themes: [],
       font_body: "system", font_heading: "", custom_fonts: [] },
   };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Link } from "react-router";
 import socket from "/src/socket";
+import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
 import { formatBytes } from "../sessionFormat";
 import "./HabitatSessionForm.css";
 
@@ -243,6 +244,7 @@ function fromSession(session, onlineIds) {
 export default function HabitatSessionForm({
   modules, copyFrom, onClose, onSessionCreated, onUseStandard,
 }) {
+  const rig = useRigCheck();
   const online = useMemo(
     () => (modules || []).filter((m) => m.online !== false),
     [modules],
@@ -373,6 +375,7 @@ export default function HabitatSessionForm({
       setStep(firstProblemStep);
       return;
     }
+    if (!confirmRigShortfall(rig, "Create this session")) return;
     setCreating(true);
     socket.emit("create_habitat_session", {
       session_name: sessionName.trim(),

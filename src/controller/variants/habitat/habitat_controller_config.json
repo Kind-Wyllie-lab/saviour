@@ -11,10 +11,44 @@
         "nas_min_free_pct": 5,
         "nas_warn_free_pct": 15,
         "local_min_free_pct": 10,
-        "export_stale_mins": 150,
-        "expected_module_counts": {
-            "camera": 0,
-            "microphone": 0
-        }
+        "export_stale_mins": 150
+    },
+    "rig": {
+        "expected": [
+            {
+                "label": "Box cameras",
+                "types": [
+                    "*camera"
+                ],
+                "min": 16,
+                "severity": "required"
+            },
+            {
+                "label": "Microphone modules (one per column)",
+                "types": [
+                    "microphone"
+                ],
+                "min": 4,
+                "severity": "required"
+            },
+            {
+                "label": "RFID bus",
+                "types": [
+                    "rfid"
+                ],
+                "min": 1,
+                "severity": "optional"
+            },
+            {
+                "label": "DMX lighting",
+                "types": [
+                    "dmx_lighting"
+                ],
+                "min": 1,
+                "severity": "optional"
+            }
+        ],
+        "startup_grace_s": 120,
+        "alert_after_s": 600
     }
 }

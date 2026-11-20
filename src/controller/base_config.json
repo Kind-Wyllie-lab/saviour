@@ -46,7 +46,6 @@
         "nas_warn_free_pct": 15,
         "local_min_free_pct": 10,
         "export_stale_mins": 150,
-        "expected_module_counts": {},
         "ptp_gate_us": 50.0,
         "ptp_amber_us": 250.0,
         "framesync_detrended_p95_green_us": 20.0,
@@ -91,7 +90,8 @@
         "notify_ptp_degraded": true,
         "notify_recording_health": true,
         "notify_disk_space": true,
-        "notify_framesync": true
+        "notify_framesync": true,
+        "notify_rig_incomplete": true
     },
     "ntfy": {
         "url": "",

@@ -50,6 +50,26 @@ class ControllerFacade:
         return self.controller.health.get_health_summary()
 
 
+    def get_rig_check(self) -> dict:
+        """Expected-vs-present hardware for this rig (rig_check.py)."""
+        monitor = getattr(self.controller, "rig_monitor", None)
+        return monitor.latest() if monitor else {
+            "level": "ok", "ok": True, "pending": False, "items": [],
+            "summary": "No expected hardware set"}
+
+    def restart_rig_grace(self) -> None:
+        """Every module is about to restart (fleet update): read the rig
+        check as pending, not short, while they come back."""
+        monitor = getattr(self.controller, "rig_monitor", None)
+        if monitor:
+            monitor.restart_grace()
+
+    def get_rig_defaults(self) -> dict:
+        """The variant's shipped ``rig`` section (for "reset to defaults")."""
+        return dict(getattr(self.controller.config, "variant_defaults", {})
+                    .get("rig") or {})
+
+
     def get_module_config(self, module_id: str) -> dict:
         return self.controller.get_module_config(module_id)
 
@@ -318,6 +338,10 @@ class ControllerFacade:
     def get_session_protocol(self, session_name: str) -> dict | None:
         session = self.controller.recording.sessions.get(session_name)
         return session.protocol if session is not None else None
+
+    def get_session_rig_check(self, session_name: str) -> dict | None:
+        session = self.controller.recording.sessions.get(session_name)
+        return session.rig_check if session is not None else None
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)

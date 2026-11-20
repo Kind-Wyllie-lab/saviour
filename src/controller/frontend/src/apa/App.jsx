@@ -16,6 +16,7 @@ import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionO
 import RecordingStatusWidget from "../basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import FaultAlertModal from "../basic/components/FaultAlertModal/FaultAlertModal";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
+import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
 
 document.title = "APA";
 
@@ -37,6 +38,7 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <RecordingStatusWidget />
+        <RigCheckBanner />
         <div className="content-scroll">
           <Routes>
             <Route path="/" element={<APADashboard />} />

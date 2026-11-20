@@ -1027,6 +1027,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         protocol = self.facade.get_session_protocol(session_name)
         if protocol:
             metadata["protocol"] = protocol
+        rig = self.facade.get_session_rig_check(session_name)
+        if rig:
+            metadata["rig_check"] = rig
 
         if not self._try_write_metadata(session_name, metadata):
             self.logger.warning(
@@ -1556,6 +1559,20 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         self.socketio.emit('module_update', {"modules": modules}) # Use socketio.emit instead of individual handlers to ensure proper context
 
 
+    def _emit_rig_check(self, room=None) -> None:
+        try:
+            result = self.facade.get_rig_check()
+        except Exception as e:
+            self.logger.warning(f"rig check failed: {e}")
+            return
+        if not isinstance(result, dict):
+            return
+        if room is None:
+            self.socketio.emit("rig_check", result)
+        else:
+            self.socketio.emit("rig_check", result, room=room)
+
+
     def push_module_update(self, modules: dict):
         self.socketio.emit('modules_update', modules)
         self._publish_api_event("modules", {"modules": modules})
@@ -1661,7 +1678,23 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
 
             self.socketio.emit("client_self", {"id": self._client_id(request.sid)},
                                room=request.sid)
+            self._emit_rig_check(room=request.sid)
             self._broadcast_clients()
+
+
+        @self.socketio.on('get_rig_check')
+        def handle_get_rig_check(data=None):
+            """Expected-vs-present hardware (rig_check.py); also pushed as
+            `rig_check` whenever it changes."""
+            self._emit_rig_check(room=request.sid)
+
+
+        @self.socketio.on('get_rig_defaults')
+        def handle_get_rig_defaults(data=None):
+            """The variant's shipped `rig` section, for the Rig tab's
+            "Reset to defaults"."""
+            self.socketio.emit("rig_defaults", self.facade.get_rig_defaults(),
+                               room=request.sid)
 
 
         @self.socketio.on('disconnect')
@@ -3160,6 +3193,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 pass
             controller_url = f"http://{controller_ip}:5000"
             modules = list(self.facade.get_modules().keys())
+            # Every module restarts: don't flag them as missing meanwhile.
+            self.facade.restart_rig_grace()
             for mid in modules:
                 try:
                     self.facade.send_command(

@@ -99,6 +99,11 @@ controller's **cached** NAS health (no live mount, so it's safe to poll);
 until the periodic monitor has sampled the share at least once
 (`status: "unknown"`).
 
+The body also carries `rig` (the rig check, shape under `/state` below). It is
+advisory and **not** part of `ready`: a rig missing expected hardware never
+blocks a start. A script that wants to refuse can check `rig.level == "error"`
+itself.
+
 ### `GET /api/v1/state` — system rollup
 
 ```json
@@ -111,9 +116,30 @@ until the periodic monitor has sampled the share at least once
   "modules": {"total": 6, "online": 6, "offline": 0},
   "ptp": {"worst_offset_ns": 8200, "start_gate_ns": 50000, "synced": true},
   "disk": {"status": "ok", "free_gb": 812.4, "free_pct": 41.3, ...},
-  "ui_clients": {"total": 2, "admins": 1, "ips": ["10.0.0.23", "10.0.0.41"]}
+  "ui_clients": {"total": 2, "admins": 1, "ips": ["10.0.0.23", "10.0.0.41"]},
+  "rig": {
+    "level": "error", "ok": false, "pending": false,
+    "summary": "Shock/motor controller: 0 of 1 (apa_arduino_2904 offline)",
+    "items": [
+      {"label": "Shock/motor controller", "types": ["apa_arduino"], "min": 1,
+       "severity": "required", "count": 0, "status": "short",
+       "present": [], "faulty": [],
+       "offline": [{"id": "apa_arduino_2904", "name": "APA rig"}]}
+    ],
+    "alert_after_s": 600
+  }
 }
 ```
+
+`rig` compares the hardware this rig type is expected to have
+(`rig.expected` in controller config, edited on the web UI's Settings →
+Controller → **Rig** tab) with the modules present. A module counts when it is
+online and reports no `hardware_fault`; faulty ones are listed with their
+reason and offline ones by name (only modules seen since the controller
+started are known, so one that never appeared is only counted). `level`:
+`ok`, `pending` (within `rig.startup_grace_s` of a controller start or fleet
+update), `warning` (only optional items short) or `error` (a required item
+short). Item `status`: `ok` / `pending` / `short` / `faulty`.
 
 `ui_clients` counts web UI browser tabs connected over Socket.IO (each tab is one;
 REST callers aren't counted), how many of those are signed in, and their
@@ -345,7 +371,10 @@ session is still created `PENDING` and the body carries an
 recreate, or wait and call the start path via the web UI. A facade
 rejection (no online modules, name clash, modules already recording, a
 protocol that won't run) is `409` `session_rejected`. The session object
-carries `protocol` (the copy, or `null`).
+carries `protocol` (the copy, or `null`), `rig_check` (the rig check when it was
+created) and `rig_warnings`: one line per expected item that was short or
+faulty (e.g. `"Required — Shock/motor controller: 0 of 1"`). A short rig
+never refuses the session.
 
 ```bash
 curl -X POST "$base_url/api/v1/sessions" \

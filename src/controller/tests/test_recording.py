@@ -2314,3 +2314,66 @@ class TestSessionProtocol:
         rec2, _ = _make_recording(sessions_file=path)
         rec2._load_sessions()
         assert rec2.sessions[r["session_name"]].protocol == _PROTO
+
+
+# ---------------------------------------------------------------------------
+# Rig check (rig_check.py; plans/rig-expected-hardware.md)
+# ---------------------------------------------------------------------------
+
+_SHORT_RIG = {
+    "level": "error", "ok": False, "pending": False, "summary": "x",
+    "items": [
+        {"label": "Shock/motor", "types": ["apa_arduino"], "min": 1,
+         "severity": "required", "count": 0, "status": "short",
+         "present": [], "faulty": [], "offline": [{"id": "apa_arduino_1",
+                                                   "name": "apa_arduino_1"}]},
+        {"label": "Microphone", "types": ["microphone"], "min": 1,
+         "severity": "optional", "count": 1, "status": "ok",
+         "present": [{"id": "microphone_1", "name": "microphone_1"}],
+         "faulty": [], "offline": []},
+    ],
+}
+
+
+class TestRigCheckOnSessions:
+    def test_create_session_records_rig_check_and_warns(self):
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = _SHORT_RIG
+        result = rec.create_session("exp1", "all")
+        assert result["success"] is True
+        assert result["rig_warnings"] == [
+            "Required — Shock/motor: 0 of 1 (apa_arduino_1 offline)"]
+        assert rec.sessions[result["session_name"]].rig_check == _SHORT_RIG
+        assert any("Rig check" in c.args[2] and c.args[1] == "WARNING"
+                   for c in rec._log_session_event.call_args_list)
+
+    def test_create_session_with_mock_rig_check_is_ignored(self):
+        """A facade without a real rig check (e.g. a bare MagicMock) never
+        breaks or blocks session creation."""
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        result = rec.create_session("exp1", "all")
+        assert result["success"] is True and result["rig_warnings"] == []
+        assert rec.sessions[result["session_name"]].rig_check is None
+
+    def test_scheduled_preflight_alerts_on_rig_shortfall(self):
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        rec._save_sessions = MagicMock()
+        rec.sessions["sched"] = _session(
+            session_name="sched", target="all", state=SessionState.SCHEDULED,
+            scheduled=True, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {"cam1": {"status": "READY"}}
+        facade.get_rig_check.return_value = _SHORT_RIG
+        rec._readiness_checks["sched"] = time.time() - 60
+        # Stop just after the pre-flight warnings (NAS below the minimum).
+        rec._check_nas_space = lambda: {"ok": True, "free_pct": 1.0, "free_gb": 1}
+        rec._start_scheduled_session("sched", "2026-11-20")
+        titles = [c.kwargs.get("title", "") for c in facade.send_alert.call_args_list]
+        assert any("Rig missing hardware" in t for t in titles)
+        msg = next(c.kwargs["message"] for c in facade.send_alert.call_args_list
+                   if "Rig missing" in c.kwargs.get("title", ""))
+        assert "Shock/motor: 0 of 1" in msg and "Microphone" not in msg
+        assert rec.sessions["sched"].rig_check == _SHORT_RIG

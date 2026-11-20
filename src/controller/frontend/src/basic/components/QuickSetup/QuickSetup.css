@@ -17,8 +17,11 @@
 
 .modal.quick-setup {
   width: calc(100% - 32px);
-  max-width: 1040px;
-  max-height: calc(100vh - 32px);
+  max-width: 1100px;
+  /* A steady, tall frame: the same size on every step (no jump between a
+     short step and the previews), nearly the full window. */
+  height: min(960px, calc(100vh - 32px));
+  height: min(960px, calc(100dvh - 32px));
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -114,13 +117,14 @@
   display: grid;
   grid-template-columns: minmax(150px, 210px) 1fr;
   gap: 14px;
+  height: 100%;
   min-height: 0;
 }
 .quick-setup__thumbs {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 60vh;
+  min-height: 0;
   overflow-y: auto;
 }
 .quick-setup__thumb {
@@ -145,9 +149,9 @@
   color: var(--success-color, #2e7d32);
   font-weight: 700;
 }
-.quick-setup__preview { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.quick-setup__preview { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 .quick-setup__preview-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.quick-setup__preview .mjpeg-stream-card { max-height: 56vh; }
+.quick-setup__preview .mjpeg-stream-card { flex: 1; min-height: 0; max-height: none; }
 .quick-setup__no-preview {
   padding: 24px;
   border: 1px dashed var(--border-color);
@@ -283,5 +287,7 @@
 
 @media (max-width: 700px) {
   .quick-setup__previews { grid-template-columns: 1fr; }
-  .quick-setup__thumbs { flex-direction: row; flex-wrap: wrap; max-height: none; }
+  .quick-setup__previews { height: auto; }
+  .quick-setup__thumbs { flex-direction: row; flex-wrap: wrap; }
+  .quick-setup__preview .mjpeg-stream-card { flex: none; max-height: 50vh; }
 }

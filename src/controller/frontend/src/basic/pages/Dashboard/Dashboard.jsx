@@ -99,6 +99,7 @@ function fitStreamGrid(boxW, boxH, n, ratio) {
 
 const LS_VIEW = "saviour_dashboard_view";       // last-selected view id (per browser)
 const LS_LEGACY_LAYOUT = "saviour_dashboard_layout"; // dead Phase 1 key — cleared on mount
+const LS_TOOLBAR = "saviour_dashboard_toolbar_open"; // "1" = view toolbar shown (per browser)
 
 const SYNTHETIC = "__unsaved__";
 
@@ -212,6 +213,13 @@ function Dashboard() {
     setZOrder((o) => (o[o.length - 1] === id ? o : [...o.filter((x) => x !== id), id]));
 
   const [activeViewId, setActiveViewId] = useState(() => readLS(LS_VIEW, ""));
+  // The view toolbar stays tucked behind a tab at the top of the canvas until
+  // asked for, so the tiles get the full height; remembered per browser.
+  const [toolbarOpen, setToolbarOpenState] = useState(() => readLS(LS_TOOLBAR, "") === "1");
+  const setToolbarOpen = (open) => {
+    setToolbarOpenState(open);
+    writeLS(LS_TOOLBAR, open ? "1" : "");
+  };
   // Working copy of the active view. `id: null` == an unsaved bootstrap view
   // whose widget list is derived live from the connected modules.
   const [draft, setDraft] = useState({
@@ -546,7 +554,20 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      {!isCompact && (
+      {!isCompact && !toolbarOpen && !error && (
+        <button
+          type="button"
+          className="dashboard-toolbar-tab"
+          onClick={() => setToolbarOpen(true)}
+          aria-expanded="false"
+          title="Show the view toolbar: switch, save, rename views, add widgets, shuffle, reset"
+        >
+          {draft.id ? draft.name : "Default layout"}
+          {pendingSave && <span className="dashboard-toolbar-tab__saving"> · saving…</span>}
+          <span aria-hidden="true"> ▾</span>
+        </button>
+      )}
+      {!isCompact && (toolbarOpen || error) && (
         <div className="dashboard-toolbar">
           <div className="dashboard-view-picker">
             <label htmlFor="view-select">View:</label>
@@ -639,6 +660,17 @@ function Dashboard() {
               Shuffle
             </button>
             <span className="dashboard-saving-hint">{savingHint}</span>
+            {/* A tab hanging from the bar's top edge, like the show tab but
+                inside the open bar (ribbon style). */}
+            <button
+              type="button"
+              className="dashboard-toolbar-hide"
+              onClick={() => setToolbarOpen(false)}
+              aria-expanded="true"
+              title="Hide the view toolbar"
+            >
+              Hide<span aria-hidden="true"> ▴</span>
+            </button>
           </div>
 
           {error && (

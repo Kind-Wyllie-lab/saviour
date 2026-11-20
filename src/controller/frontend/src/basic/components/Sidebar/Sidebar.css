@@ -46,12 +46,39 @@
    button stays within its own chrome's box (sidebar's own right edge /
    the bare viewport edge) rather than protruding into .content, so neither
    can ever sit over page content. */
+/* Drag handle on the right edge (Sidebar.jsx startResize); the collapse
+   button sits above it so it stays clickable. */
+.sidebar-resize {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    z-index: 1;
+    cursor: col-resize;
+    touch-action: none;
+    transition: background 0.15s;
+}
+
+.sidebar-resize:hover,
+.sidebar-resize:focus-visible,
+body.sidebar-resizing .sidebar-resize {
+    outline: none;
+    background: color-mix(in srgb, var(--accent-color) 45%, transparent);
+}
+
+/* While dragging: no text selection, resize cursor everywhere. */
+body.sidebar-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
 .sidebar-collapse-btn {
     position: absolute;
     top: 50%;
     right: 4px;
     transform: translateY(-50%);
-    z-index: 1;
+    z-index: 2;
     border: none;
     background: transparent;
     color: var(--text-color);

@@ -1,9 +1,66 @@
 .dashboard {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ── Tab that reveals the hidden view toolbar ──────────────────────────── */
+
+/* Top-right corner of the canvas, clear of the tiles' usual top-left start. */
+.dashboard-toolbar-tab {
+  position: absolute;
+  top: 0;
+  right: 16px;
+  z-index: 20;
+  max-width: min(60%, 360px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78em;
+  padding: 2px 14px 3px;
+  border: 1px solid var(--border-color);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+  opacity: 0.75;
+  cursor: pointer;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.dashboard-toolbar-tab:hover,
+.dashboard-toolbar-tab:focus-visible {
+  opacity: 1;
+  border-color: var(--accent-color, #4a9eff);
+}
+.dashboard-toolbar-tab__saving { opacity: 0.6; }
+
+/* Hide, last in the open bar's row: a tab the full height of the bar (pulled
+   through its top and bottom padding), open at the top and rounded at the
+   bottom like .dashboard-toolbar-tab. */
+.dashboard-toolbar-hide {
+  align-self: stretch;
+  margin: -6px 0;
+  display: flex;
+  align-items: center;
+  font-size: 0.78em;
+  padding: 2px 14px 3px;
+  border: 1px solid var(--border-color);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+  opacity: 0.75;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.dashboard-toolbar-hide:hover,
+.dashboard-toolbar-hide:focus-visible {
+  opacity: 1;
+  border-color: var(--accent-color, #4a9eff);
 }
 
 /* ── Main body: one full-width canvas of tiles ──────────────────────────── */
@@ -37,9 +94,11 @@
   flex-wrap: wrap;
 }
 
-/* Push the widget/group controls to the right of the toolbar row. */
+/* Push the widget/group controls to the right of the toolbar row; full row
+   height so the Hide tab can hang from the bar's top edge. */
 .dashboard-toolbar-right {
   margin-left: auto;
+  align-self: stretch;
 }
 
 .dashboard-group-filter {

@@ -23,7 +23,9 @@ remembers the last run so it can be shown, not enforced.
 
 ### Where the button lives
 
-- Recording page, beside the New Session form header ("Quick setup").
+- Settings page title bar (moved there 2026-11-20 from the Recording page:
+  it's an overview of the whole rig instead of visiting each device's
+  settings, not a step of starting a session).
 - System page header, and the rig-check banner's popover ("Run quick
   setup").
 - Every variant (basic, APA, loom, acoustic startle, habitat): the modal is a
@@ -76,9 +78,8 @@ remembers the last run so it can be shown, not enforced.
   `save_quick_setup` → broadcast `quick_setup`. Guests can run it; saving
   needs no admin (it changes nothing on the rig), editing `rig.expected` in
   step 3 does.
-- Shown, never enforced: the New Session form's footer ("Quick setup run
-  today at 09:12 · 1 module not confirmed" / "not run since 18 Nov"), and the
-  System page.
+- Shown, never enforced: the modal header and the button's tooltip ("Last
+  run today 09:12 · 1 module not confirmed").
 - Each new session copies the latest run into `session_metadata.json`
   (`quick_setup`), so a dataset says whether and when the rig was checked and
   what was flagged.
@@ -92,9 +93,8 @@ remembers the last run so it can be shown, not enforced.
    `basic/components/QuickSetup/` (button, modal, rig type blurbs);
    `hooks/useQuickSetup.js`; preview helper moved to
    `basic/utils/moduleStreams.js`. Step 3 shows the live rig check read-only
-   with a link to the Rig tab. Button sits in the Sessions header (variants
-   whose session list has + New Session) and the System page header (every
-   variant using the basic System page), and the rig-check banner's popover.
+   with a link to the Rig tab. Button: Settings title bar, System page
+   header, rig-check banner popover.
 2. **Built 2026-11-20.** Step 3 editing (add expected item / add as expected) and step 5 (sync
    lines, reusing `TTLLinesEditor` pieces). As built: `ExpectedModulesStep.jsx`
    (connected modules no item counts, each with **Add as expected** = its
@@ -111,10 +111,9 @@ remembers the last run so it can be shown, not enforced.
 3. **Built 2026-11-20.** Session metadata copy and the "last run" line on New Session. As built:
    `RecordingSession.quick_setup` stamped with the rig check
    (`_stamp_hardware`, at create and at start) and written to
-   `session_metadata.json` (`quick_setup`); `QuickSetupLastRun` under
-   External sync on the standard New Session form ("Quick setup: today 09:12
-   · all modules confirmed" + Run again; a run started there updates the
-   form's External sync). Not on the scheduled habitat or loom forms.
+   `session_metadata.json` (`quick_setup`). The "last run" line on the New
+   Session form was built and then removed the same day with the move to
+   Settings; the last run shows in the modal header and the button tooltip.
 
 ## Decisions
 

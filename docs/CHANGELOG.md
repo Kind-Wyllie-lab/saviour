@@ -14,7 +14,7 @@ future condensing pass, the same way this batch was moved.
 ## 2026-11-20
 
 - [x] **Quick setup: an on-demand rig walkthrough** (`plans/rig-quick-setup.md` phases 1-3, plan kept for its "Later" items; `test_quick_setup.py` (9), `TestQuickSetupStamp` (2) in `test_recording.py`). Not yet run on the rig or viewed in a browser.
-  - **Button**: Sessions header (next to + New Session), System page header, the rig-check banner's popover, and a "last run" line under External sync on the New Session form. Never prompts, never blocks a session.
+  - **Button**: Settings title bar (first built on the Recording page, moved the same day: it's a rig overview, not a session step), System page header and the rig-check banner's popover. Never prompts, never blocks a session.
   - **Steps**: rig type (read-only, from `VITE_VARIANT`; change it with `saviour-config`) → external sync (becomes the New Session default) → expected modules (live rig check for that sync kind; connected modules no item counts get **Add as expected**; an **Add expected item** form; admin, socket `add_rig_expected_item`) → sync lines (only with an external sync: Test line + Seen in Open Ephys per line, same store as the TTL card) → previews (each connected module large, **Looks OK** or **Open settings ↗**, arrow keys) → summary.
   - **Record**: `src/controller/quick_setup.py` keeps only the last run (`/var/lib/saviour/controller/quick_setup.json`: who, when, external sync, rig summary, per-module confirmed, sync line states); `get_quick_setup` / `save_quick_setup` → `quick_setup`. Each session copies it (`RecordingSession.quick_setup`, `session_metadata.json`).
   - `dev:mock` handles all three new events; the dashboard's preview helper moved to `basic/utils/moduleStreams.js`.

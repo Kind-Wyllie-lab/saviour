@@ -11,7 +11,6 @@ import {
 import { SYNC_LABEL, SYNC_TITLE, worstSummary } from "../syncFormat";
 import { Countdown, Elapsed } from "../sessionFormatComponents";
 import "./SessionList.css";
-import QuickSetupButton from "/src/basic/components/QuickSetup/QuickSetupButton";
 
 // Ask before starting a single zip bigger than this.
 const CONFIRM_DOWNLOAD_BYTES = 5 * 1024 ** 3;
@@ -208,7 +207,6 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
               {selectMode ? "Done ✕" : "Select"}
             </button>
           )}
-          {onNewSession && <QuickSetupButton />}
           {onNewSession && (
             <button
               type="button"

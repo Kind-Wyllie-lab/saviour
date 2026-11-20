@@ -24,6 +24,7 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared import timestamps
 from src.shared.health import ModuleHealthSnapshot, decode_throttled
 from src.shared.supervised import REGISTRY, crash_looping, supervise
 
@@ -524,7 +525,7 @@ class Health:
         health['last_probe_time'] = None
 
         last_hb = health.get('last_heartbeat', 0)
-        last_hb_str = time.strftime('%H:%M:%S', time.localtime(last_hb)) if last_hb else 'never'
+        last_hb_str = timestamps.clock(timestamps.from_epoch(last_hb)) if last_hb else 'never'
 
         cpu  = health.get('cpu_usage')
         temp = health.get('cpu_temp')
@@ -638,7 +639,7 @@ class Health:
         probe_count = health.get('probe_count', 0)
 
         last_hb = health.get('last_heartbeat', 0)
-        last_hb_str = time.strftime('%H:%M:%S', time.localtime(last_hb)) if last_hb else 'never'
+        last_hb_str = timestamps.clock(timestamps.from_epoch(last_hb)) if last_hb else 'never'
 
         cpu  = health.get('cpu_usage')
         temp = health.get('cpu_temp')

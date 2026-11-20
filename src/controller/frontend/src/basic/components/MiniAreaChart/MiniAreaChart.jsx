@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import "./MiniAreaChart.css";
+import { formatUtc } from "/src/basic/utils/time";
 
 /**
  * Dependency-free time-series area chart (single series).
@@ -69,10 +70,7 @@ export default function MiniAreaChart({
   }, [yMin, yMax]);
 
   const fmtV = (v) => `${v.toFixed(decimals)}${unit}`;
-  const fmtT = (t) => {
-    const d = new Date(t * 1000);
-    return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  };
+  const fmtT = (t) => formatUtc(t);
 
   const nearest = useMemo(() => {
     if (hoverX == null || pts.length === 0) return null;

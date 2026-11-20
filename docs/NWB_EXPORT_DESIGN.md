@@ -54,7 +54,8 @@ writing — see `src/modules/camera_base.py`, `src/modules/examples/microphone/m
 | Config snapshot | `{date}/{module}/config.json` | JSON, module's active config at export time | — |
 
 Note `RecordingSession.start_time`/`end_time` (the controller's in-memory/`sessions.json` record, not
-exported to the NAS) are **local controller time, not UTC** — a gap flagged below.
+exported to the NAS) were local controller time until 2026-11-20; they are now UTC with a `Z`
+(`plans/utc-timestamps.md`), and `src/shared/timestamps.parse()` converts the old form.
 
 ## Proposed NWB mapping
 
@@ -76,7 +77,8 @@ exported to the NAS) are **local controller time, not UTC** — a gap flagged be
 - **No `species` field anywhere.** Needed for `Subject.species`; DANDI validation expects NCBI
   taxonomy format. Smallest fix: add `species` to `experiment_metadata` (`src/controller/web.py:107-115`)
   and the `update_experiment_metadata` frontend form, defaulting empty.
-- **`RecordingSession.start_time`/`end_time` are naive local time, not UTC or timezone-aware**
+- **(Fixed 2026-11-20: now UTC with `Z`; legacy stamps converted by `timestamps.parse()`.)**
+  **`RecordingSession.start_time`/`end_time` are naive local time, not UTC or timezone-aware**
   (`src/controller/recording.py`, `datetime.now().strftime("%Y%m%d-%H%M%S")`). `NWBFile.session_start_time`
   *requires* a timezone-aware `datetime`. This needs either (a) a real fix upstream — storing UTC on
   `RecordingSession` the way `session_metadata.json`'s `created_at` already correctly does — or (b) the

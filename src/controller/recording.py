@@ -22,7 +22,7 @@ from enum import StrEnum
 from src.controller import framesync_check, recording_plans
 from src.controller.rig_check import describe_item, shortfalls
 from src.controller.ttl_lines import wiring_warnings
-from src.shared import ttl_application
+from src.shared import timestamps, ttl_application
 from src.shared.data_rate import estimate_recording_bytes_per_s
 from src.shared.supervised import supervise
 
@@ -834,7 +834,7 @@ class Recording:
         with self._lock:
             session.modules = modules
             session.state = SessionState.ACTIVE
-            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.start_time = timestamps.stamp()
             session.module_stop_states = {m: "recording" for m in modules}
             session.module_export_states = {m: "idle" for m in modules}
             session.recording_start_at = start_at
@@ -1181,7 +1181,7 @@ class Recording:
         start_at = time.time() + LEAD_SECS
         with self._lock:
             session.state = SessionState.ACTIVE
-            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.start_time = timestamps.stamp()
             session.recording_start_at = start_at
             session.module_stop_states = {m: "stopped" for m in session.modules}
             session.module_export_states = {m: "idle" for m in session.modules}
@@ -1636,7 +1636,8 @@ class Recording:
         if not failed_modules:
             return {"result": "error", "error": "No failed exports to retry"}
 
-        date = (session.start_time or "")[:8]
+        # The modules' date folder is the UTC date (their file names are UTC).
+        date = timestamps.utc_date(session.start_time) or (session.start_time or "")[:8]
         for module_id in failed_modules:
             export_path = f"{session_name}/{date}/{module_id}"
             self.facade.enqueue_export(module_id, export_path)
@@ -2079,7 +2080,7 @@ class Recording:
 
             session.error_message = f"{module_id} is offline"
             if session.state != SessionState.ERROR:
-                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.error_time = timestamps.stamp()
             # Unattended sessions self-heal rather than parking in ERROR — see
             # report_module_fault / _check_session_recording_liveness.
             if not session.unattended:
@@ -2145,7 +2146,7 @@ class Recording:
 
         session.error_message = f"{module_id}: {message}"
         if session.state != SessionState.ERROR:
-            session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.error_time = timestamps.stamp()
         # An unattended (long-term) session never parks terminally in ERROR --
         # it stays ACTIVE / PAUSED so the monitor loop's self-heal keeps
         # running. The fault is still recorded (badge + event log) and the
@@ -2198,7 +2199,7 @@ class Recording:
             session.self_stopped_modules[module_id] = {
                 "reason": reason,
                 "detail": detail,
-                "at": datetime.now().strftime("%Y%m%d-%H%M%S"),
+                "at": timestamps.stamp(),
                 "resume_free_pct": data.get("resume_free_pct"),
             }
         self._not_recording_strikes.pop((session_name, module_id), None)
@@ -2452,7 +2453,7 @@ class Recording:
     # -----------------------------------------------------------------------
 
     def _format_session_name(self, session_name: str, target: str = "all") -> str:
-        timestamp = datetime.now().strftime("%H%M%S")
+        timestamp = timestamps.utc_now().strftime("%H%M%SZ")
         safe = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe = safe.replace(' ', '_')
         if target and target != "all":
@@ -2487,7 +2488,7 @@ class Recording:
                 new_state = SessionState.SCHEDULED
             else:
                 session.state = SessionState.STOPPED
-                session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.end_time = timestamps.stamp()
                 session.stopped_epoch = time.time()
                 new_state = SessionState.STOPPED
 
@@ -2666,7 +2667,7 @@ class Recording:
             with self._lock:
                 session.state = SessionState.ERROR
                 session.error_message = err
-                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.error_time = timestamps.stamp()
                 session.scheduled_last_start_date = today
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
@@ -2717,7 +2718,7 @@ class Recording:
             with self._lock:
                 session.state = SessionState.ERROR
                 session.error_message = ptp["error"]
-                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.error_time = timestamps.stamp()
                 session.scheduled_last_start_date = today
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
@@ -2746,7 +2747,7 @@ class Recording:
         with self._lock:
             session.state = SessionState.ACTIVE
             session.scheduled_last_start_date = today
-            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.start_time = timestamps.stamp()
             session.module_stop_states = {m: "recording" for m in session.modules}
             session.module_export_states = {m: "idle" for m in session.modules}
             session.recording_start_at = start_at
@@ -2786,7 +2787,7 @@ class Recording:
         with self._lock:
             for module_id in session.modules:
                 session.module_stop_states[module_id] = "stopping"
-            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.end_time = timestamps.stamp()
             # Mark as SCHEDULED_STOPPING so _check_all_stopped knows to
             # return to SCHEDULED rather than STOPPED.
             session.scheduled_stopping = True
@@ -3468,7 +3469,7 @@ class Recording:
             if faulted_now:
                 session.error_message = msg
                 if not session.error_time:
-                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    session.error_time = timestamps.stamp()
                 if wants_error_state:
                     session.state = SessionState.ERROR
                 self.facade.update_sessions(self.sessions)
@@ -3562,7 +3563,7 @@ class Recording:
                         if s == "failed"
                     ]
                 if session.state == SessionState.ACTIVE:
-                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    session.error_time = timestamps.stamp()
                     session.error_message = "Controller restarted during active session"
                     if session.plans:
                         # Reconcile each plan against the clock: an in-window
@@ -3783,7 +3784,7 @@ class Recording:
         affect session operation or propagate exceptions to the caller.
         """
         log_path = os.path.join(self._get_share_root(), session_name, "session_events.log")
-        line = f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} [{level:<8}] {message}\n"
+        line = f"{timestamps.iso()} [{level:<8}] {message}\n"
         try:
             session_dir = os.path.dirname(log_path)
             os.makedirs(session_dir, exist_ok=True)
@@ -3823,7 +3824,7 @@ class Recording:
             return {"success": False, "error": "Marker label cannot be empty"}
 
         recv_ns = time.time_ns()
-        recv_iso = datetime.now().isoformat(timespec="microseconds")
+        recv_iso = datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
         path = os.path.join(self._get_share_root(), session_name, "markers.csv")
         row = [recv_ns, recv_iso, label, source or "",
                client_wall_ns if client_wall_ns else ""]

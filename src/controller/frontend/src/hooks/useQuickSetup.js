@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import socket from "../socket";
+import { formatUtcDate, formatUtcTime, utcDateKey } from "/src/basic/utils/time";
 
 // The last Quick setup run, kept on the controller (src/controller/quick_setup.py).
 // undefined = not loaded yet, null = never run.
@@ -27,10 +28,9 @@ export function saveQuickSetup(run) {
 // "today 09:12 · 1 module not confirmed" / "18 Nov 14:05 · all confirmed".
 export function describeRun(run) {
   if (!run?.at) return null;
-  const when = new Date(run.at * 1000);
-  const today = new Date().toDateString() === when.toDateString();
-  const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const day = today ? "today" : when.toLocaleDateString([], { day: "numeric", month: "short" });
+  const today = utcDateKey(run.at) === utcDateKey();
+  const time = formatUtcTime(run.at, { utc: true });
+  const day = today ? "today" : formatUtcDate(run.at, { year: false });
   const mods = Object.values(run.modules ?? {});
   const open = mods.filter((m) => !m.confirmed).length;
   const tail = !mods.length ? "no modules" : open ? `${open} module${open > 1 ? "s" : ""} not confirmed` : "all modules confirmed";

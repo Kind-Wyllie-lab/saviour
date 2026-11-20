@@ -45,7 +45,7 @@ export function makeProtocolRoutes(getModules, getSessions) {
         .filter((m) => d.target === "all" || m.id === d.target || m.group === d.target).map((m) => m.id);
       const p = (n) => String(n).padStart(2, "0");
       const t = new Date();
-      const full = `${name.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_")}-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`;
+      const full = `${name.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_")}-${p(t.getUTCHours())}${p(t.getUTCMinutes())}${p(t.getUTCSeconds())}Z`;
       const sessions = getSessions();
       sessions[full] = {
         session_name: full, target: d.target || "all", state: "pending", modules: mods,

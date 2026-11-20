@@ -5,6 +5,7 @@ import {
   formatBytes, formatDuration, formatEta, composeJobDownload, composeJobSummary,
   triggerDownload,
 } from "../sessionFormat";
+import { formatUtc } from "/src/basic/utils/time";
 
 /** Seconds left for a running render, from the progress this browser has
  *  seen it make (not the controller's clock, which may differ from ours).
@@ -52,8 +53,7 @@ export default function ComposeJobRow({ job, showSession = false, onShowSession 
       ? formatDuration((job.finished_at - job.started_at) / 60)
       : null;
   const when = job.created_at
-    ? new Date(job.created_at * 1000).toLocaleString([], {
-      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    ? formatUtc(job.created_at)
     : "";
   const session = job.spec?.session_name;
 

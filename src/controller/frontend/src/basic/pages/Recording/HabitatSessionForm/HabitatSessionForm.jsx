@@ -147,6 +147,7 @@ function PlanEditor({ plan, allModules, usedElsewhere, onChange, onRemove }) {
           >
             + Window
           </button>
+          <span className="hsf-hint">Windows are local time (the controller's clock); everything else SAVIOUR shows is UTC.</span>
           <div className="hsf-days day-picker">
             {DAYS.map((d, i) => (
               <button

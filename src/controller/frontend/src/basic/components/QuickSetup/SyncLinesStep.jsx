@@ -6,6 +6,7 @@ import {
   EXTERNAL_SYNC, ROLES, CONFIRM_MAX_AGE_DAYS, syncApplication, syncModules, roleLabel, pinLabel,
   systemName,
 } from "/src/basic/utils/ttlApplications";
+import { formatUtc } from "/src/basic/utils/time";
 
 // Quick setup's Sync lines step (plans/rig-quick-setup.md), shown when an
 // external sync is chosen: each line of that kind's sync TTL modules, with
@@ -21,8 +22,7 @@ const STATE = {
 };
 
 function when(epochS) {
-  return epochS ? new Date(epochS * 1000).toLocaleString([], {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  return epochS ? formatUtc(epochS) : "";
 }
 
 export default function SyncLinesStep({ externalSync, ttlLines }) {

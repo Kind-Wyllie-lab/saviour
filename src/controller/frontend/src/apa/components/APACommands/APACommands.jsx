@@ -7,6 +7,7 @@ import useShockState, { getShockState, subscribeShockState, MODE_LABELS } from "
 
 // Styling and components
 import "./APACommands.css";
+import { formatUtcTime } from "/src/basic/utils/time";
 
 // Grid state and shock mode live on the controller
 // (variants/apa/shock_automation.py; ../../shockState.js keeps one copy for
@@ -482,7 +483,7 @@ function AutoStatus({ state }) {
             {ev && (
                 <div className="apa-auto-status__last">
                     Last: {ev.event.replaceAll("_", " ")}{ev.reason ? ` (${ev.reason})` : ""}
-                    {" "}at {new Date(ev.time_utc).toLocaleTimeString()}
+                    {" "}at {formatUtcTime(ev.time_utc, { seconds: true, utc: true })}
                 </div>
             )}
         </div>

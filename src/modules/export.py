@@ -13,7 +13,6 @@ Author: Andrew SG
 Created: 12/06/2025
 """
 
-import datetime
 import logging
 import os
 import pathlib
@@ -24,6 +23,7 @@ import threading
 import time
 
 from src.modules.config import Config
+from src.shared import timestamps
 from src.shared.cifs import cifs_mount_cmd
 
 _COPY_CHUNK = 4 * 1024 * 1024
@@ -680,7 +680,7 @@ class Export:
             str: Name of the created manifest file
         """
         try:
-            manifest_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            manifest_timestamp = timestamps.stamp()
             manifest_filename = f"export_manifest_{manifest_timestamp}.txt"
             manifest_path = os.path.join(export_folder, manifest_filename)
 
@@ -699,7 +699,7 @@ class Export:
                     if os.path.exists(file_path):
                         stat = os.stat(file_path)
                         size_mb = stat.st_size / (1024 * 1024)  # Convert to MB
-                        mod_time = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        mod_time = timestamps.iso(timestamps.from_epoch(stat.st_mtime))
                         f.write(f"  Size: {size_mb:.2f} MB\n")
                         f.write(f"  Modified: {mod_time}\n")
 

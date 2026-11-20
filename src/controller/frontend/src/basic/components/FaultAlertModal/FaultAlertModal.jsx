@@ -1,17 +1,13 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import "./FaultAlertModal.css";
+import { formatUtcTime, parseStamp } from "/src/basic/utils/time";
 
-function parseTimestamp(str) {
-  if (!str) return null;
-  const m = str.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-  if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-}
+const parseTimestamp = parseStamp;
 
 function formatDateTime(date) {
   if (!date) return "-";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return formatUtcTime(date, { seconds: true, utc: true });
 }
 
 function levelClass(line) {

@@ -1379,7 +1379,7 @@ class TestSendCommandDispatch:
             })
 
             _, _, params = facade.send_command.call_args[0]
-            assert re.fullmatch(r"exp-\d{8}_\d{6}", params["experiment_name"])
+            assert re.fullmatch(r"exp-\d{8}-\d{6}Z", params["experiment_name"])
 
 
 class TestTtlEdgeStatus:

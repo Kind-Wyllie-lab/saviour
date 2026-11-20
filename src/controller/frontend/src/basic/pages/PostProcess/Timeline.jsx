@@ -1,9 +1,8 @@
 import React, { useRef, useState } from "react";
 import { SPEEDS, formatSpan, nsToMs, parseSpan } from "./composeLayout";
+import { formatUtcTime } from "/src/basic/utils/time";
 
-const clock = (ms) => new Date(ms).toLocaleTimeString([], {
-  hour: "2-digit", minute: "2-digit", second: "2-digit",
-});
+const clock = (ms) => formatUtcTime(new Date(ms), { seconds: true });
 
 /** An offset from the window start, typed as h:mm:ss; applied on Enter or
  *  leaving the field. */

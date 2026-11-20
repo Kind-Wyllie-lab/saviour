@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatUtcTime } from "/src/basic/utils/time";
 
 // Headstage accelerometer summary: three stacked charts on one time axis
 // (acceleration per axis, head tilt, movement intensity), drawn from the
@@ -50,9 +51,7 @@ function fmtNum(v, unit) {
 }
 
 function fmtClock(ns) {
-  return new Date(ns / 1e6).toLocaleTimeString([], {
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
+  return formatUtcTime(new Date(ns / 1e6), { seconds: true });
 }
 
 function fmtSeconds(s) {

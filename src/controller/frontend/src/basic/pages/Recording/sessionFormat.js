@@ -6,6 +6,7 @@
 // export either components or plain values, not both.
 
 import socket from "/src/socket";
+import { formatUtcTime, parseStamp, utcDateKey } from "/src/basic/utils/time";
 
 export const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -70,14 +71,13 @@ export async function triggerDownload(url, filename) {
 }
 
 export function formatFaultTime(error_time) {
-  if (!error_time) return null;
-  const m = error_time.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
-  return m ? `${m[4]}:${m[5]}` : null;
+  if (!error_time || !parseStamp(error_time)) return null;
+  return formatUtcTime(error_time, { utc: true });
 }
 
 export function formatEpochTime(epochSeconds) {
   if (!epochSeconds) return null;
-  return new Date(epochSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return formatUtcTime(epochSeconds, { seconds: true, utc: true });
 }
 
 export function levelClass(line) {
@@ -209,26 +209,24 @@ export function formatRecordingMode(session) {
 export const UPCOMING_GROUP = "upcoming";
 export const UNDATED_GROUP = "undated";
 
+// Sessions are grouped by UTC day, like every time SAVIOUR shows.
 export function localDateKey(date = new Date()) {
-  const p = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+  return utcDateKey(date);
 }
 
 export function sessionDateKey(session) {
   if (session.state === "pending" || session.state === "scheduled") return UPCOMING_GROUP;
-  const m = (session.start_time || "").match(/^(\d{4})(\d{2})(\d{2})/);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : UNDATED_GROUP;
+  return utcDateKey(session.start_time) || UNDATED_GROUP;
 }
 
 export function dateGroupLabel(key, today = localDateKey()) {
   if (key === UPCOMING_GROUP) return "Upcoming";
   if (key === UNDATED_GROUP) return "Undated";
-  const d = new Date(`${key}T12:00:00`);
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
+  const d = new Date(`${key}T12:00:00Z`);
+  const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86400000);
   if (key === today) return `Today · ${key}`;
-  if (key === localDateKey(yesterday)) return `Yesterday · ${key}`;
-  return `${d.toLocaleDateString([], { weekday: "short" })} · ${key}`;
+  if (key === utcDateKey(yesterday)) return `Yesterday · ${key}`;
+  return `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()]} · ${key}`;
 }
 
 // [{ key, sessions }] -- Upcoming first, then days newest-first, Undated

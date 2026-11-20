@@ -16,6 +16,11 @@ import ProtocolDesigner from "../../Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
 import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
 import useProtocolTest from "../../Protocol/useProtocolTest";
+import TTLLinesEditor from "./TTLLinesEditor";
+import useTTLLines from "/src/hooks/useTTLLines";
+import {
+  APPLICATIONS, APPLICATION_ORDER, DEFAULT_APPLICATION, applicationOf, applicationLabel,
+} from "/src/basic/utils/ttlApplications";
 
 // "None" is a real output mode (a plain output pin held inactive, with no
 // automatic generator) added so test_pin()/the REST /pulse endpoint have a
@@ -68,6 +73,14 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const isRecording = module.status === "RECORDING";
 
   const ttlCfg = formData?.ttl ?? {};
+  // What this module is for (plans/ttl-applications-ephys-sync.md): "mixed"
+  // keeps the free per-pin modes below; anything else gets role-based lines.
+  const application = applicationOf(ttlCfg);
+  const savedApplication = applicationOf(module.config?.ttl);
+  const { lines: ttlLines } = useTTLLines(JSON.stringify(module.config?.ttl?.pins ?? {}) + savedApplication);
+  const lineStatus = ttlLines?.modules?.[id] ?? null;
+  const tabs = TABS.map((t) => (t.key === "pins" && application !== DEFAULT_APPLICATION
+    ? { ...t, label: "Lines" } : t));
   const availablePins = module.config?.ttl?._available_pins ?? [];
   const availableModes = module.config?.ttl?._available_modes ?? [];
   const schema = module.config?.ttl?._mode_settings_schema ?? {};
@@ -226,6 +239,9 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
             {module.name || id} {collapsed ? "(+)" : "(-)"}
           </h3>
+          {savedApplication !== DEFAULT_APPLICATION && (
+            <span className="ttl-application-badge">{applicationLabel(savedApplication)}</span>
+          )}
           <div className="card-header-actions">
             <HeaderSaveButton onSave={saveConfig} isDirty={isDirty} />
             <ModuleActionsMenu id={id} name={module.name || id} isOnline={!!module.online} />
@@ -244,7 +260,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
             <div className="config-tabs-layout">
             <div className="config-tabs">
-              {TABS.map(t => (
+              {tabs.map(t => (
                 <button key={t.key} type="button"
                   className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
                   onClick={() => setActiveTab(t.key)}>
@@ -270,6 +286,19 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                       value={formData?.module?.group ?? ""}
                       onChange={e => handleChange(["module", "group"], e)} />
                   </div>
+                  <div className="form-field">
+                    <label>Used for:</label>
+                    <select
+                      value={application}
+                      onChange={(e) => setFormData((prev) => ({
+                        ...prev, ttl: { ...prev.ttl, application: e.target.value } }))}
+                    >
+                      {APPLICATION_ORDER.map((a) => (
+                        <option key={a} value={a}>{APPLICATIONS[a].label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="field-hint">{APPLICATIONS[application].description}</p>
                 </>
               )}
 
@@ -290,6 +319,20 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     </select>
                   </div>
 
+                  {application !== DEFAULT_APPLICATION ? (
+                    <TTLLinesEditor
+                      id={id}
+                      module={module}
+                      ttlCfg={{ ...ttlCfg, application }}
+                      schema={schema}
+                      availablePins={availablePins}
+                      setFormData={setFormData}
+                      loggedIn={loggedIn}
+                      testPin={testPin}
+                      pinTestState={pinTestState}
+                      status={lineStatus}
+                    />
+                  ) : (<>
                   <div className="pin-list">
                     {sortedPins.length === 0 && (
                       <p className="no-pins-hint">No pins configured. Add one below.</p>
@@ -374,6 +417,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                       Add Pin
                     </button>
                   </div>
+                  </>)}
                 </>
               )}
 

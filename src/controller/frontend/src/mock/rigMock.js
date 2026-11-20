@@ -12,6 +12,8 @@ const BASIC_DEMO = {
     { label: "Cameras", types: ["*camera"], min: 2, severity: "required" },
     { label: "Microphone", types: ["microphone"], min: 1, severity: "required" },
     { label: "TTL", types: ["ttl"], min: 1, severity: "optional" },
+    { label: "Ephys sync", types: ["ttl"], application: "ephys_sync", min: 1,
+      severity: "required", when: "ephys" },
   ],
   startup_grace_s: 120,
   alert_after_s: 600,
@@ -30,6 +32,7 @@ function globToRegExp(glob) {
 }
 
 const isOnline = (m) => m.online !== false && m.status !== "OFFLINE";
+const ttlApp = (m) => (m.type === "ttl" ? (m.config?.ttl?.application || "mixed") : null);
 
 export function evaluateRig(rig, modules, health) {
   const expected = (rig?.expected || []).filter((e) => (e.types || []).length);
@@ -38,6 +41,7 @@ export function evaluateRig(rig, modules, health) {
     const present = [], faulty = [], offline = [];
     for (const [id, m] of Object.entries(modules || {}).sort()) {
       if (!res.some((r) => r.test(m.type || ""))) continue;
+      if (e.application && ttlApp(m) !== e.application) continue;
       const who = { id, name: m.name || id };
       const fault = health?.[id]?.hardware_fault;
       if (!isOnline(m)) offline.push(who);
@@ -48,9 +52,10 @@ export function evaluateRig(rig, modules, health) {
     const status = present.length >= min ? "ok" : faulty.length ? "faulty" : "short";
     return { label: e.label || e.types.join(" / "), types: e.types, min,
       severity: e.severity || "required", count: present.length, status,
-      present, faulty, offline };
+      present, faulty, offline, active: !e.when,
+      ...(e.application ? { application: e.application } : {}), ...(e.when ? { when: e.when } : {}) };
   });
-  const bad = items.filter((i) => i.status !== "ok");
+  const bad = items.filter((i) => i.active && i.status !== "ok");
   const level = bad.some((i) => i.severity === "required") ? "error" : bad.length ? "warning" : "ok";
   const summary = bad.length
     ? bad.map((i) => `${i.label}: ${i.count} of ${i.min}`).join("; ")

@@ -276,3 +276,68 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Applications and role-based lines (TTLLinesEditor) ──────────────── */
+.ttl-application-badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--accent-color);
+  color: var(--accent-color);
+  white-space: nowrap;
+}
+.ttl-lines .field-hint, .ttl-config-col .field-hint {
+  font-size: 0.82rem;
+  opacity: 0.75;
+  margin: 4px 0 10px;
+}
+.ttl-lines__problems {
+  margin: 0 0 10px;
+  padding: 8px 8px 8px 24px;
+  border-left: 3px solid var(--warning-color);
+  font-size: 0.85rem;
+}
+.ttl-lines__verified {
+  font-size: 0.85rem;
+  color: var(--success-color);
+  margin: 0 0 10px;
+}
+.ttl-guide {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 0.88rem;
+}
+.ttl-guide summary { cursor: pointer; font-weight: 600; }
+.ttl-guide__steps { padding-left: 20px; margin: 8px 0 0; }
+.ttl-guide__steps li { margin-bottom: 8px; }
+.ttl-guide__steps img {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  margin-top: 6px;
+  border-radius: 4px;
+}
+.ttl-guide__more { margin: 4px 0 0; }
+.ttl-line-role {
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+.ttl-line-timing summary { cursor: pointer; font-size: 0.85rem; margin: 4px 0; }
+.ttl-line-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+  font-size: 0.85rem;
+}
+.ttl-line-confirm__state { flex: 1; min-width: 120px; }
+.ttl-line-confirm--confirmed .ttl-line-confirm__state { color: var(--success-color); }
+.ttl-line-confirm--stale .ttl-line-confirm__state,
+.ttl-line-confirm--changed .ttl-line-confirm__state,
+.ttl-line-confirm--unconfirmed .ttl-line-confirm__state { color: var(--warning-color); }

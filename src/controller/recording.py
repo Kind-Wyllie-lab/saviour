@@ -21,6 +21,7 @@ from enum import StrEnum
 
 from src.controller import framesync_check, recording_plans
 from src.controller.rig_check import describe_item, shortfalls
+from src.controller.ttl_lines import wiring_warnings
 from src.shared.data_rate import estimate_recording_bytes_per_s
 from src.shared.supervised import supervise
 
@@ -189,6 +190,17 @@ class RecordingSession:
     # Rig check (rig_check.py) when the session was created: which expected
     # hardware was missing or faulty, so the record sits next to the data.
     rig_check:                 dict | None = None
+    # The session records ephys (or neurologger) data alongside SAVIOUR: an
+    # ephys sync module becomes required (rig items with when="ephys") and
+    # the sync wiring is recorded. plans/ttl-applications-ephys-sync.md
+    ephys:                     bool = False
+    # Snapshot of the sync modules' lines and whether each was confirmed on
+    # the acquisition system, when the session was created / each run began
+    # (ttl_lines.sync_wiring). None for a non-ephys session.
+    ephys_wiring:              list | None = None
+    # When the session's ephys data was uploaded (Post-Process); an ephys
+    # session without it is flagged in the session list.
+    ephys_uploaded_at:         float | None = None
     # Long-term / unattended posture (weeks-long habitat runs). When True the
     # session self-heals instead of parking terminally in ERROR: a module
     # dropping its recording state stays ACTIVE while _monitor_sessions keeps
@@ -534,7 +546,8 @@ class Recording:
                        researcher: str | None = None,
                        raw_name: bool = False,
                        unattended: bool = False,
-                       protocol_name: str | None = None) -> dict:
+                       protocol_name: str | None = None,
+                       ephys: bool = False) -> dict:
         """Create a session in PENDING state -- modules assigned, nothing
         recording yet. Call start_pending_session() (via the unified
         force_start_session()) to actually begin recording.
@@ -581,6 +594,7 @@ class Recording:
             researcher=researcher or None,
             unattended=bool(unattended),
             protocol=protocol,
+            ephys=bool(ephys),
         )
 
         with self._lock:
@@ -590,7 +604,7 @@ class Recording:
                 return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
 
-        session.rig_check = self._rig_check()
+        self._stamp_hardware(session)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -604,20 +618,47 @@ class Recording:
                 "rig_warnings": self._log_rig_check(session)}
 
     def _log_rig_check(self, session: RecordingSession) -> list[str]:
-        """Write the session's rig-check shortfalls to its event log and
-        return them as lines ("Required — Shock/motor: 0 of 1 ...")."""
+        """Write the session's rig-check shortfalls (and, for an ephys
+        session, unconfirmed sync lines) to its event log and return them as
+        lines ("Required — Shock/motor: 0 of 1 ...")."""
         lines = [f"{i['severity'].capitalize()} — {describe_item(i)}"
                  for i in shortfalls(session.rig_check)]
+        lines += [f"Sync — {w}" for w in wiring_warnings(session.ephys_wiring or [])]
         for line in lines:
             self._log_session_event(session.session_name, "WARNING",
                                     f"Rig check: {line}")
         return lines
 
-    def _rig_check(self) -> dict | None:
-        """The rig check now, or None if it can't be had (never blocks a
-        session)."""
+    def mark_ephys_uploaded(self, session_name: str) -> bool:
+        """An upload into the session's ``_ephys/`` folder landed."""
+        with self._lock:
+            session = self.sessions.get(session_name)
+            if session is None:
+                return False
+            session.ephys_uploaded_at = time.time()
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        return True
+
+    def _stamp_hardware(self, session: RecordingSession) -> None:
+        """Record the rig check (judged for this session's conditions) and,
+        for an ephys session, the sync wiring, on the session."""
+        session.rig_check = self._rig_check({"ephys"} if session.ephys else ())
+        session.ephys_wiring = self._sync_wiring() if session.ephys else None
+
+    def _sync_wiring(self) -> list | None:
         try:
-            rig = self.facade.get_rig_check()
+            wiring = self.facade.get_sync_wiring()
+        except Exception as e:
+            self.logger.warning(f"sync wiring unavailable: {e}")
+            return None
+        return wiring if isinstance(wiring, list) else None
+
+    def _rig_check(self, conditions=()) -> dict | None:
+        """The rig check now (for a session with these conditions), or None
+        if it can't be had (never blocks a session)."""
+        try:
+            rig = self.facade.get_rig_check(conditions)
         except Exception as e:
             self.logger.warning(f"rig check unavailable: {e}")
             return None
@@ -813,7 +854,8 @@ class Recording:
                                   days: list | None = None,
                                   researcher: str | None = None,
                                   raw_name: bool = False,
-                                  protocol_name: str | None = None) -> dict:
+                                  protocol_name: str | None = None,
+                                  ephys: bool = False) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
         days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
@@ -853,6 +895,7 @@ class Recording:
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
             researcher=researcher or None,
+            ephys=bool(ephys),
         )
 
         with self._lock:
@@ -1028,7 +1071,8 @@ class Recording:
 
     def create_habitat_session(self, session_name: str, plans_raw: list,
                                researcher: str | None = None,
-                               duration_minutes: float | None = None) -> dict:
+                               duration_minutes: float | None = None,
+                               ephys: bool = False) -> dict:
         """Create a PENDING Habitat Session: one session whose modules are
         split into plans, each recording continuously or in nightly
         windows (see recording_plans). Always unattended-posture."""
@@ -1070,9 +1114,10 @@ class Recording:
                 duration_minutes=duration_minutes,
                 unattended=True,
                 plans=plans,
+                ephys=bool(ephys),
             )
             session = self.sessions[session_name]
-        session.rig_check = self._rig_check()
+        self._stamp_hardware(session)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self._log_session_event(
@@ -2515,10 +2560,12 @@ class Recording:
                 )
 
         # ── Expected hardware (rig profile, rig_check.py) ────────────────────
-        rig = self._rig_check()
         with self._lock:
-            session.rig_check = rig
+            self._stamp_hardware(session)
+        rig = session.rig_check
         missing = shortfalls(rig)
+        for w in wiring_warnings(session.ephys_wiring or []):
+            self._log_session_event(session_name, "WARNING", f"Rig check: Sync — {w}")
         if missing:
             self._log_session_event(session_name, "WARNING",
                 "Rig check: " + "; ".join(describe_item(i) for i in missing))

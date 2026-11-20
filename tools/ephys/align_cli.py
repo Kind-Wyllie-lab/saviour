@@ -80,7 +80,7 @@ def _fit(oe_root: str, session_dir: str, pin: int | None, invert: bool, out: str
         raise FileNotFoundError(f"No SAVIOUR TTL CSV found under {session_dir}")
     csv_path = csvs[0]
     oe_ts, oe_states = load_oe_ttl(ttl_dir)
-    if pin is None:  # the pin logged in pseudorandom mode, else the only pin
+    if pin is None:  # the declared sync line, else the pseudorandom pin, else the only one
         pin = ephys_data.sync_pin(csv_path)
     sv_ts, sv_states, sv_t0 = load_saviour_ttl(csv_path, pin, invert=invert)
 
@@ -116,6 +116,7 @@ def _fit(oe_root: str, session_dir: str, pin: int | None, invert: bool, out: str
         "oe_recording": rec.rel,
         "oe_recording_reason": reason,
         "pc_clock_offset_s": pc_offset,
+        "pin_number": pin,
     }
 
 

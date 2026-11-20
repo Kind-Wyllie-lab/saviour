@@ -50,12 +50,37 @@ class ControllerFacade:
         return self.controller.health.get_health_summary()
 
 
-    def get_rig_check(self) -> dict:
-        """Expected-vs-present hardware for this rig (rig_check.py)."""
+    def get_rig_check(self, conditions=()) -> dict:
+        """Expected-vs-present hardware for this rig (rig_check.py), judged
+        for a session with these conditions (e.g. ``{"ephys"}``)."""
         monitor = getattr(self.controller, "rig_monitor", None)
-        return monitor.latest() if monitor else {
+        return monitor.for_session(conditions) if monitor else {
             "level": "ok", "ok": True, "pending": False, "items": [],
             "summary": "No expected hardware set"}
+
+    def get_sync_wiring(self) -> list[dict]:
+        """Ephys / neurologger sync modules, their lines and whether each was
+        confirmed on the acquisition system (ttl_lines.py)."""
+        from src.controller.ttl_lines import sync_wiring
+        store = getattr(self.controller, "ttl_lines", None)
+        if store is None:
+            return []
+        return sync_wiring(store.status(self.get_modules()))
+
+    def record_ttl_alignment(self, module_id: str, session: str,
+                             gpio: int | None, result: dict) -> None:
+        store = getattr(self.controller, "ttl_lines", None)
+        if store is not None:
+            store.record_alignment(module_id, session, gpio, result)
+
+    def broadcast_ttl_lines(self) -> None:
+        store = getattr(self.controller, "ttl_lines", None)
+        if store is None:
+            return
+        from src.shared import ttl_application
+        self.controller.web.socketio.emit("ttl_lines", {
+            "modules": store.status(self.get_modules()),
+            "confirm_max_age_days": ttl_application.CONFIRM_MAX_AGE_DAYS})
 
     def restart_rig_grace(self) -> None:
         """Every module is about to restart (fleet update): read the rig
@@ -321,14 +346,14 @@ class ControllerFacade:
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)
 
-    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False, protocol_name=None) -> dict:
-        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended, protocol_name=protocol_name)
+    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False, protocol_name=None, ephys=False) -> dict:
+        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended, protocol_name=protocol_name, ephys=ephys)
 
     def update_pending_session(self, session_name: str, new_session_name=None, duration_minutes=None) -> dict:
         return self.controller.recording.update_pending_session(session_name, new_session_name, duration_minutes)
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False, protocol_name=None) -> dict:
-        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name, protocol_name=protocol_name)
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False, protocol_name=None, ephys=False) -> dict:
+        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name, protocol_name=protocol_name, ephys=ephys)
 
     def get_protocol(self, name: str) -> dict | None:
         """A library protocol by name (a copy), or None."""
@@ -338,6 +363,17 @@ class ControllerFacade:
     def get_session_protocol(self, session_name: str) -> dict | None:
         session = self.controller.recording.sessions.get(session_name)
         return session.protocol if session is not None else None
+
+    def get_session_ephys(self, session_name: str) -> dict | None:
+        """``{"ephys": bool, "wiring": [...]}`` for session_metadata.json, or
+        None for an unknown session."""
+        session = self.controller.recording.sessions.get(session_name)
+        if session is None:
+            return None
+        return {"ephys": bool(session.ephys), "wiring": session.ephys_wiring}
+
+    def mark_ephys_uploaded(self, session_name: str) -> bool:
+        return self.controller.recording.mark_ephys_uploaded(session_name)
 
     def get_session_rig_check(self, session_name: str) -> dict | None:
         session = self.controller.recording.sessions.get(session_name)
@@ -357,9 +393,10 @@ class ControllerFacade:
             session_name, since_ns, limit)
 
     def create_habitat_session(self, session_name: str, plans: list,
-                               researcher=None, duration_minutes=None) -> dict:
+                               researcher=None, duration_minutes=None,
+                               ephys=False) -> dict:
         return self.controller.recording.create_habitat_session(
-            session_name, plans, researcher, duration_minutes
+            session_name, plans, researcher, duration_minutes, ephys=ephys
         )
 
     def pause_session(self, session_name: str) -> dict:

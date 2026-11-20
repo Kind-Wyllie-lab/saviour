@@ -719,6 +719,51 @@ select_module_type() {
         "\nWhat type of module is this device?" "$HW_SUGGEST"
 }
 
+# What a TTL module is for (ttl.application, plans/ttl-applications-ephys-sync.md).
+# Choices mirror src/shared/ttl_applications.json. Defaults to the current
+# value when re-configuring the same module.
+MODULE_ACTIVE_CONFIG="/etc/saviour/module/active_config.json"
+
+current_ttl_application() {
+    python3 - "$MODULE_ACTIVE_CONFIG" <<'PY' 2>/dev/null || echo mixed
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        print((json.load(f).get("ttl") or {}).get("application") or "mixed")
+except Exception:
+    print("mixed")
+PY
+}
+
+select_ttl_application() {
+    wt --title "TTL Module Application" --default-item "$(current_ttl_application)" \
+        --menu "\nWhat is this TTL module for?\n\nThis picks its settings page and guidance; it can be changed later on its card." \
+        $H $W 4 \
+        ephys_sync       "Ephys sync (sync pulses to Open Ephys)" \
+        neurologger_sync "Neurologger sync (sync pulses to a logger)" \
+        stimulus_control "Stimulus control (pulse trains, protocols)" \
+        mixed            "General TTL (every mode, no guidance)"
+}
+
+# Write ttl.application into the module's active config (created if the
+# module hasn't run yet; the module fills in the rest on its first start).
+write_ttl_application() {
+    python3 - "$MODULE_ACTIVE_CONFIG" "$1" <<'PY'
+import json, os, sys
+path, app = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    with open(path) as f:
+        cfg = json.load(f)
+cfg.setdefault("ttl", {})["application"] = app
+os.makedirs(os.path.dirname(path), exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=4)
+os.replace(tmp, path)
+PY
+}
+
 select_gateway_mode() {
     local detected_gw detected_wan
     detected_gw=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}' || true)
@@ -788,6 +833,11 @@ configure_device() {
     DEVICE_ROLE="$role"
     DEVICE_TYPE="$type"
 
+    local ttl_app=""
+    if [ "$role" = "module" ] && [ "$type" = "ttl" ]; then
+        ttl_app=$(select_ttl_application) || return
+    fi
+
     # Step 3: check for changes. Re-selecting the current role/type is allowed
     # through deliberately -- it's the supported shortcut for re-applying
     # network-level settings (mDNS/iptables/forwarding) without an actual
@@ -808,6 +858,7 @@ configure_device() {
     local summary="\nNew configuration:\n\n"
     summary+="  Role     :  $role\n"
     summary+="  Type     :  $type\n"
+    [ -n "$ttl_app" ] && summary+="  Used for :  $ttl_app\n"
     summary+="  Hostname :  $new_hn\n"
     if [ "$role" = "controller" ]; then
         summary+="\nWill enable  : PTP grandmaster, Samba, DHCP, mDNS, iptables"
@@ -830,6 +881,12 @@ configure_device() {
             --msgbox "\nAn error occurred during configuration.\n\nSee $LOG for details." \
             9 $W || true
         return
+    fi
+
+    if [ -n "$ttl_app" ]; then
+        write_ttl_application "$ttl_app" \
+            && log "TTL application set to $ttl_app" \
+            || log "Could not write TTL application ($ttl_app)"
     fi
 
     # run_configuration() prints plain progress lines (see progress() above)

@@ -1,0 +1,317 @@
+import { useState } from "react";
+import { Link } from "react-router";
+import socket from "/src/socket";
+import { docImages } from "/src/docs/loadDocs.js";
+import {
+  APPLICATIONS, ROLES, CONFIRM_MAX_AGE_DAYS, SYNC_APPLICATIONS,
+  rolesFor, channelLabel, systemName, validateTTL,
+} from "/src/basic/utils/ttlApplications";
+
+// The Lines tab of a TTL module with an application other than "mixed"
+// (plans/ttl-applications-ephys-sync.md): each pin is a line with a role
+// (sync, experiment start, stimulus, event marker) instead of a free mode,
+// and sync applications get wiring guidance plus a "seen on the acquisition
+// system" confirmation per line, kept on the controller (ttl_lines.py).
+
+const MODE_LABELS = {
+  None: "Manual output",
+  pseudorandom: "Pseudorandom pulses",
+  experiment_start: "One pulse at start",
+  interval_pulse: "Regular pulses",
+  experiment_clock: "Clock",
+  scheduled: "Session protocol",
+  input: "Input",
+};
+
+const STATE_TEXT = {
+  confirmed: "Confirmed",
+  stale: "Confirm again",
+  changed: "Wiring changed",
+  unconfirmed: "Not confirmed",
+};
+
+function defaultsFor(schema, mode) {
+  return Object.fromEntries(
+    Object.entries(schema[`_${mode}`] ?? {}).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""]));
+}
+
+function formatWhen(epochS) {
+  if (!epochS) return "";
+  return new Date(epochS * 1000).toLocaleString([], {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function ModeFields({ schema, mode, settings, onChange }) {
+  return Object.entries(schema[`_${mode}`] ?? {}).map(([k, meta]) => {
+    const field = k.replace(/^_/, "");
+    return (
+      <div key={k} className="field">
+        <label title={meta.description}>{field.replace(/_/g, " ")}</label>
+        <input
+          type={meta.type === "float" || meta.type === "int" ? "number" : "text"}
+          min={meta.min} max={meta.max}
+          step={meta.type === "float" ? "any" : undefined}
+          value={settings[field] ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            let val = raw;
+            if (meta.type === "float") val = raw === "" ? "" : parseFloat(raw);
+            else if (meta.type === "int") val = raw === "" ? "" : parseInt(raw, 10);
+            onChange(field, Number.isNaN(val) ? raw : val);
+          }}
+        />
+      </div>
+    );
+  });
+}
+
+function SyncGuide({ app, lines, open, onToggle }) {
+  const ephys = app === "ephys_sync";
+  const img = (name) => docImages[`images/${name}`];
+  return (
+    <details className="ttl-guide" open={open} onToggle={(e) => onToggle(e.currentTarget.open)}>
+      <summary>Wiring and checking {ephys ? "the ephys sync" : "the logger sync"}</summary>
+      {ephys ? (
+        <ol className="ttl-guide__steps">
+          <li>
+            Use the acquisition board's <strong>Digital In</strong> HDMI port only (one of the four on
+            its back). Researchers have lost data to a cable in the wrong port.
+            {img("in_out_label.webp") && (
+              <img src={img("in_out_label.webp")} alt="The acquisition board's digital I/O ports, Digital In labelled" />
+            )}
+          </li>
+          <li>
+            Break Digital In out to BNCs with an HDMI I/O board, then wire each line below to its
+            BNC channel, with the TTL module's ground to the I/O board's ground:
+            {img("io-board.png-2.webp") && (
+              <img src={img("io-board.png-2.webp")} alt="HDMI to BNC I/O board" />
+            )}
+            <ul>
+              {lines.length === 0 && <li>No lines yet: add the sync line below.</li>}
+              {lines.map(([gpio, pin]) => (
+                <li key={gpio}>
+                  GPIO {gpio} ({ROLES[pin.role]?.label ?? "no role"}) → channel{" "}
+                  {pin.channel || <em>not set</em>}
+                </li>
+              ))}
+            </ul>
+          </li>
+          <li>
+            Press <strong>Test line</strong> and watch for the pulses on that channel in the Open Ephys
+            GUI (a coloured column per channel), then press <strong>Seen in Open Ephys</strong>.
+            {img("ephys-gui-ttls.webp") && (
+              <img src={img("ephys-gui-ttls.webp")} alt="Open Ephys GUI showing TTL pulses as coloured columns" />
+            )}
+          </li>
+          <li>
+            On the day: start the Open Ephys recording before the SAVIOUR session and stop it after,
+            so every sync pulse is captured, and tick <strong>Records ephys</strong> when you create
+            the session.
+          </li>
+        </ol>
+      ) : (
+        <ol className="ttl-guide__steps">
+          <li>Wire the sync line to the logger's digital (TTL) input, following its manual, with a
+            shared ground.</li>
+          <li>Press <strong>Test line</strong>, check the pulses appear in the logger's data, then press
+            <strong> Seen in the logger</strong>.</li>
+          <li>Start logging before the SAVIOUR session and stop after it, and tick
+            <strong> Records ephys</strong> when you create the session.</li>
+        </ol>
+      )}
+      {ephys && <p className="ttl-guide__more"><Link to="/guide#open_ephys">Full guide: Using with Ephys →</Link></p>}
+    </details>
+  );
+}
+
+export default function TTLLinesEditor({
+  id, module, ttlCfg, schema, availablePins, setFormData, loggedIn,
+  testPin, pinTestState, status,
+}) {
+  const app = ttlCfg.application;
+  const spec = APPLICATIONS[app];
+  const roles = rolesFor(app) ?? [];
+  const isSync = SYNC_APPLICATIONS.includes(app);
+  const [newPin, setNewPin] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const pins = Object.entries(ttlCfg.pins ?? {}).sort(([a], [b]) => Number(a) - Number(b));
+  const unassigned = availablePins.filter((p) => !(String(p) in (ttlCfg.pins ?? {})));
+  const problems = validateTTL(ttlCfg);
+  const lineState = Object.fromEntries((status?.lines ?? []).map((l) => [String(l.gpio), l]));
+  const anyUnconfirmed = isSync && pins.some(([g, p]) =>
+    ROLES[p.role]?.channel && lineState[g]?.state !== "confirmed");
+  const [guideOpen, setGuideOpen] = useState(anyUnconfirmed);
+  const savedPins = module.config?.ttl?.pins ?? {};
+
+  const setPin = (gpio, next) => setFormData((prev) => ({
+    ...prev, ttl: { ...prev.ttl, pins: { ...prev.ttl.pins, [gpio]: next } } }));
+
+  const changeRole = (gpio, role) => {
+    const pin = ttlCfg.pins[gpio];
+    const modes = ROLES[role]?.modes ?? [];
+    const mode = modes.includes(pin.mode) ? pin.mode : modes[0];
+    const base = mode === pin.mode ? pin : { mode, ...defaultsFor(schema, mode) };
+    const next = { ...base, mode, role, label: pin.label ?? "" };
+    if (ROLES[role]?.channel) next.channel = pin.channel ?? "";
+    else delete next.channel;
+    setPin(gpio, next);
+  };
+  const changeMode = (gpio, mode) => {
+    const pin = ttlCfg.pins[gpio];
+    setPin(gpio, { role: pin.role, label: pin.label ?? "", channel: pin.channel,
+      mode, ...defaultsFor(schema, mode) });
+  };
+  const changeField = (gpio, field, val) =>
+    setPin(gpio, { ...ttlCfg.pins[gpio], [field]: val });
+  const removePin = (gpio) => setFormData((prev) => {
+    const next = { ...prev.ttl.pins };
+    delete next[gpio];
+    return { ...prev, ttl: { ...prev.ttl, pins: next } };
+  });
+  const addLine = () => {
+    const gpio = parseInt(newPin, 10);
+    if (Number.isNaN(gpio) || !newRole) return;
+    const mode = ROLES[newRole].modes[0];
+    setPin(gpio, { mode, role: newRole, label: "",
+      ...(ROLES[newRole].channel ? { channel: "" } : {}), ...defaultsFor(schema, mode) });
+    setNewPin("");
+    setNewRole("");
+  };
+
+  // A confirmation is tied to the saved wiring; unsaved edits to the line
+  // would make it describe something the module isn't doing.
+  const unsaved = (gpio) => {
+    const a = ttlCfg.pins[gpio] ?? {}, b = savedPins[gpio] ?? {};
+    return a.role !== b.role || a.mode !== b.mode || String(a.channel ?? "") !== String(b.channel ?? "");
+  };
+  const confirm = (gpio) => socket.emit("confirm_ttl_line", { module_id: id, gpio: Number(gpio) });
+  const clear = (gpio) => socket.emit("clear_ttl_line", { module_id: id, gpio: Number(gpio) });
+
+  return (
+    <div className="ttl-lines">
+      <p className="field-hint">{spec.description}</p>
+      {problems.length > 0 && (
+        <ul className="ttl-lines__problems">
+          {problems.map((p) => <li key={p}>{p}</li>)}
+        </ul>
+      )}
+      {isSync && status?.last_verified && (
+        <p className="ttl-lines__verified">
+          ✓ Sync verified by the alignment of <strong>{status.last_verified.session}</strong>
+          {status.last_verified.r2 != null && <> (R² {Number(status.last_verified.r2).toFixed(6)})</>}
+          {" "}on {formatWhen(status.last_verified.at)}
+        </p>
+      )}
+      {isSync && (
+        <SyncGuide app={app} lines={pins.filter(([, p]) => ROLES[p.role]?.channel)}
+          open={guideOpen} onToggle={setGuideOpen} />
+      )}
+
+      <div className="pin-list">
+        {pins.length === 0 && <p className="no-pins-hint">No lines yet. Add one below.</p>}
+        {pins.map(([gpio, pin]) => {
+          const role = ROLES[pin.role];
+          const isOutput = role ? role.output : pin.mode !== "input";
+          const ls = lineState[gpio];
+          const testing = pinTestState[gpio];
+          return (
+            <div key={gpio} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
+              <div className="pin-card-header">
+                <span className="pin-label">GPIO {gpio}</span>
+                <span className="ttl-line-role">{role?.label ?? "No role"}</span>
+                {isOutput && (
+                  <button type="button"
+                    className={`btn-test-pin${testing === "testing" ? " btn-test-pin--active" : testing === "done" ? " btn-test-pin--done" : ""}`}
+                    disabled={testing === "testing" || unsaved(gpio)}
+                    title={unsaved(gpio) ? "Save first" : "Run the line for 5 seconds so you can see it downstream"}
+                    onClick={() => testPin(gpio)}>
+                    {testing === "testing" ? "Testing…" : testing === "done" ? "Done" : "Test line"}
+                  </button>
+                )}
+                <button className="btn-remove" type="button" onClick={() => removePin(gpio)}>✕</button>
+              </div>
+
+              <div className="field">
+                <label>Role</label>
+                <select value={pin.role ?? ""} onChange={(e) => changeRole(gpio, e.target.value)}>
+                  {!pin.role && <option value="">Choose…</option>}
+                  {roles.map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
+                </select>
+              </div>
+              {role && role.modes.length > 1 && (
+                <div className="field">
+                  <label>Drives</label>
+                  <select value={pin.mode} onChange={(e) => changeMode(gpio, e.target.value)}>
+                    {role.modes.map((m) => <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>)}
+                  </select>
+                </div>
+              )}
+              {role?.channel && (
+                <div className="field">
+                  <label>{channelLabel(app)}</label>
+                  <input type="number" min={1} max={64} step={1} value={pin.channel ?? ""}
+                    onChange={(e) => changeField(gpio, "channel",
+                      e.target.value === "" ? "" : parseInt(e.target.value, 10))} />
+                </div>
+              )}
+              <div className="field">
+                <label>Label</label>
+                <input type="text" value={pin.label ?? ""} placeholder="optional"
+                  onChange={(e) => changeField(gpio, "label", e.target.value)} />
+              </div>
+              {pin.role === "sync" ? (
+                <details className="ttl-line-timing">
+                  <summary>Pulse timing</summary>
+                  <ModeFields schema={schema} mode={pin.mode} settings={pin}
+                    onChange={(f, v) => changeField(gpio, f, v)} />
+                </details>
+              ) : (
+                <ModeFields schema={schema} mode={pin.mode} settings={pin}
+                  onChange={(f, v) => changeField(gpio, f, v)} />
+              )}
+
+              {isSync && role?.channel && (
+                <div className={`ttl-line-confirm ttl-line-confirm--${ls?.state ?? "unconfirmed"}`}>
+                  <span className="ttl-line-confirm__state">
+                    {STATE_TEXT[ls?.state] ?? STATE_TEXT.unconfirmed}
+                    {ls?.confirmed_at && ls.state !== "unconfirmed" && ` · ${formatWhen(ls.confirmed_at)}`}
+                  </span>
+                  <button type="button" className="copy-btn"
+                    disabled={!loggedIn || unsaved(gpio) || !pin.channel}
+                    title={!loggedIn ? "Sign in as admin"
+                      : unsaved(gpio) ? "Save first: the confirmation is for the saved wiring"
+                      : !pin.channel ? `Set the ${channelLabel(app).toLowerCase()} first`
+                      : `You saw this line's pulses in ${systemName(app)}`}
+                    onClick={() => confirm(gpio)}>
+                    Seen in {systemName(app)}
+                  </button>
+                  {ls?.confirmed_at && loggedIn && (
+                    <button type="button" className="copy-btn" onClick={() => clear(gpio)}>Clear</button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {isSync && (
+        <p className="field-hint">
+          A confirmation lasts {CONFIRM_MAX_AGE_DAYS} days, or until the line's pin, timing mode or
+          channel changes.
+        </p>
+      )}
+
+      <div className="add-pin-row">
+        <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
+          <option value="">Pin…</option>
+          {unassigned.map((p) => <option key={p} value={p}>GPIO {p}</option>)}
+        </select>
+        <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+          <option value="">Role…</option>
+          {roles.map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
+        </select>
+        <button type="button" onClick={addLine} disabled={!newPin || !newRole}>Add line</button>
+      </div>
+    </div>
+  );
+}

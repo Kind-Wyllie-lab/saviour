@@ -407,28 +407,71 @@ class TestWriteTtlEvent:
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(123, 4, TTLValue.LOW)
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "123,4,input,TTLValue.LOW,lever\n"
+        assert line == "123,4,input,TTLValue.LOW,lever,custom\n"
 
     def test_missing_description_writes_empty_not_literal_none(self):
         m = _make_ttl(pin_configs={4: {"mode": "input"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(123, 4, TTLValue.LOW)
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "123,4,input,TTLValue.LOW,\n"
+        assert line == "123,4,input,TTLValue.LOW,,custom\n"
 
     def test_source_appended_to_description(self):
         m = _make_ttl(pin_configs={19: {"mode": "None", "description": "marker"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(1, 19, TTLValue.HIGH, source="api")
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1,19,None,TTLValue.HIGH,marker [api]\n"
+        assert line == "1,19,None,TTLValue.HIGH,marker [api],custom\n"
 
     def test_source_with_no_description(self):
         m = _make_ttl(pin_configs={19: {"mode": "None"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(1, 19, TTLValue.HIGH, source="api")
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1,19,None,TTLValue.HIGH,[api]\n"
+        assert line == "1,19,None,TTLValue.HIGH,[api],custom\n"
+
+
+class TestPinRoleColumn:
+    """plans/ttl-applications-ephys-sync.md: the role travels with the data."""
+
+    def test_role_written_as_last_column(self):
+        m = _make_ttl(pin_configs={26: {"mode": "pseudorandom", "role": "sync",
+                                        "channel": 1}})
+        m._ttl_file_handle = MagicMock()
+        m._write_ttl_event(5, 26, TTLValue.HIGH)
+        assert m._ttl_file_handle.write.call_args.args[0] == \
+            "5,26,pseudorandom,TTLValue.HIGH,,sync\n"
+
+    def test_header_has_pin_role(self, tmp_path):
+        m = _make_ttl()
+        path = tmp_path / "t.csv"
+        m._open_ttl_file(str(path))
+        m._close_ttl_event_file()
+        assert path.read_text().splitlines()[0].endswith(",pin_description,pin_role")
+
+
+class TestCheckTtlApplication:
+    def _module(self, ttl):
+        m = _make_ttl()
+        m.config.get.side_effect = lambda k, d=None: ttl if k == "ttl" else d
+        return m
+
+    def test_mixed_without_roles_is_fine(self):
+        ok, msg = self._module({"pins": {"19": {"mode": "experiment_clock"}}}
+                               )._check_ttl_application()
+        assert ok and "General TTL" in msg
+
+    def test_ephys_sync_needs_a_sync_line(self):
+        ok, msg = self._module({"application": "ephys_sync", "pins": {
+            "19": {"mode": "experiment_start", "role": "experiment_start"}}}
+        )._check_ttl_application()
+        assert not ok and "needs a sync line" in msg
+
+    def test_ephys_sync_ok(self):
+        ok, _ = self._module({"application": "ephys_sync", "pins": {
+            "26": {"mode": "pseudorandom", "role": "sync", "channel": 1}}}
+        )._check_ttl_application()
+        assert ok
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +491,7 @@ class TestSendEdgeStatus:
             m._handle_input_pin_low(pin_obj)
 
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1000,4,input,TTLValue.LOW,lever\n"
+        assert line == "1000,4,input,TTLValue.LOW,lever,custom\n"
         m.communication.send_status.assert_called_once_with({
             "type": "ttl_edge",
             "pin": 4,

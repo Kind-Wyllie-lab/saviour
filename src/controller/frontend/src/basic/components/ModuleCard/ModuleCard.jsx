@@ -6,6 +6,7 @@ import socket from "../../../socket";
 
 // Style imports
 import './ModuleCard.css';
+import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
 
 function ModuleCard({ module }) {
     const [showOptionsModal, setShowOptionsModal] = useState(false); // A modal for optional commands to do with module
@@ -54,7 +55,7 @@ function ModuleCard({ module }) {
             <div className={`module-card ${borderClass}`} onClick={() => {if (!showOptionsModal) setShowOptionsModal(true)}}>
                 <h3>{module.name}</h3>
                 <p>IP: {module.ip}</p>
-                <p>Type: {module.type}</p>
+                <p>Type: {module.type}{moduleKindLabel(module) ? ` (${moduleKindLabel(module)})` : ""}</p>
                 {module.status === "NOT_READY" ? (
                     <p>Status: {module.status} : {module.ready_message}</p>
                 ) : (

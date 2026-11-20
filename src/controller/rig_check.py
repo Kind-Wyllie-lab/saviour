@@ -34,11 +34,17 @@ import time
 from collections.abc import Callable
 from datetime import date
 
+from src.shared import ttl_application
 from src.shared.supervised import supervise
 
 DEFAULT_GRACE_S = 120
 DEFAULT_ALERT_AFTER_S = 600
 SEVERITIES = ("required", "optional")
+# Session conditions an item can depend on (``when``): such an item counts
+# only for sessions with that condition, e.g. an ephys sync module for a
+# session that records ephys. The live banner has no session, so it leaves
+# them out.
+CONDITIONS = ("ephys",)
 
 
 class RigProfileError(ValueError):
@@ -68,7 +74,20 @@ def normalise_entry(entry: object) -> dict:
     if severity not in SEVERITIES:
         raise RigProfileError(f"'severity' must be one of {', '.join(SEVERITIES)}")
     label = str(entry.get("label") or "").strip() or " / ".join(types)
-    return {"label": label, "types": types, "min": minimum, "severity": severity}
+    out = {"label": label, "types": types, "min": minimum, "severity": severity}
+    application = entry.get("application")
+    if application:
+        if application not in ttl_application.APPLICATIONS:
+            raise RigProfileError(
+                f"'application' must be one of "
+                f"{', '.join(ttl_application.APPLICATIONS)}")
+        out["application"] = application
+    when = entry.get("when")
+    if when:
+        if when not in CONDITIONS:
+            raise RigProfileError(f"'when' must be one of {', '.join(CONDITIONS)}")
+        out["when"] = when
+    return out
 
 
 def validate_profile(expected: object) -> list[dict]:
@@ -123,12 +142,20 @@ def matches(types: list[str], module_type: str) -> bool:
     return any(fnmatch.fnmatchcase(module_type or "", t) for t in types)
 
 
+def matches_entry(entry: dict, module: dict) -> bool:
+    """Type glob, plus the TTL application when the entry names one."""
+    if not matches(entry["types"], module.get("type") or ""):
+        return False
+    app = entry.get("application")
+    return not app or ttl_application.module_application(module) == app
+
+
 def _is_online(m: dict) -> bool:
     return bool(m.get("online", True)) and m.get("status") != "OFFLINE"
 
 
 def evaluate(expected: list[dict], modules: dict, health: dict | None = None,
-             *, pending: bool = False) -> dict:
+             *, pending: bool = False, conditions=()) -> dict:
     """Compare the expected list with the live modules.
 
     ``modules``: id -> module dict (``type``, ``name``, ``online``,
@@ -139,13 +166,18 @@ def evaluate(expected: list[dict], modules: dict, health: dict | None = None,
     Returns ``{"level": ok|pending|warning|error, "ok": bool, "pending":
     bool, "items": [...], "summary": str}``; ``error`` = a required item is
     short or faulty, ``warning`` = only optional ones are.
+
+    ``conditions``: the session's (e.g. ``{"ephys"}``). An item with a
+    ``when`` outside them is still evaluated but marked ``active: False``
+    and left out of the level, summary and shortfalls; see
+    ``with_conditions`` to re-judge a result for a session.
     """
     health = health or {}
     items = []
     for e in expected:
         present, faulty, offline = [], [], []
         for mid, m in sorted(modules.items()):
-            if not matches(e["types"], m.get("type") or ""):
+            if not matches_entry(e, m):
                 continue
             who = {"id": mid, "name": m.get("name") or mid}
             fault = (health.get(mid) or {}).get("hardware_fault")
@@ -165,22 +197,34 @@ def evaluate(expected: list[dict], modules: dict, health: dict | None = None,
             status = "short"
         items.append({**e, "count": len(present), "status": status,
                       "present": present, "faulty": faulty, "offline": offline})
+    return with_conditions({"items": items}, conditions)
 
-    bad = [i for i in items if i["status"] in ("short", "faulty")]
+
+def with_conditions(result: dict, conditions=()) -> dict:
+    """``result`` re-judged for a session with these conditions: which
+    conditional items are active, and the level/summary over active ones.
+    Returns a new dict (other keys kept)."""
+    conds = set(conditions or ())
+    items = [{**i, "active": not i.get("when") or i["when"] in conds}
+             for i in (result or {}).get("items") or []]
+    live = [i for i in items if i["active"]]
+    bad = [i for i in live if i["status"] in ("short", "faulty")]
     if any(i["severity"] == "required" for i in bad):
         level = "error"
     elif bad:
         level = "warning"
-    elif any(i["status"] == "pending" for i in items):
+    elif any(i["status"] == "pending" for i in live):
         level = "pending"
     else:
         level = "ok"
     return {
+        **(result or {}),
         "level": level,
         "ok": level == "ok",
         "pending": level == "pending",
         "items": items,
-        "summary": summarise(items),
+        "conditions": sorted(conds),
+        "summary": summarise(live),
     }
 
 
@@ -209,7 +253,8 @@ def shortfalls(result: dict | None, severity: str | None = None) -> list[dict]:
     if not isinstance(result, dict):
         return []
     return [i for i in result.get("items") or []
-            if i["status"] in ("short", "faulty")
+            if i.get("active", True)
+            and i["status"] in ("short", "faulty")
             and (severity is None or i["severity"] == severity)]
 
 
@@ -275,6 +320,10 @@ class RigMonitor:
             if self._latest is not None:
                 return self._latest
         return self.tick(emit=False)
+
+    def for_session(self, conditions=()) -> dict:
+        """The latest result re-judged for a session (e.g. ``{"ephys"}``)."""
+        return with_conditions(self.latest(), conditions)
 
     def tick(self, emit: bool = True) -> dict:
         result = self.evaluate_now()

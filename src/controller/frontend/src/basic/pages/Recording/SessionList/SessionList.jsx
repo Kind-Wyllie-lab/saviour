@@ -464,6 +464,17 @@ function SessionRow({
                 {SYNC_LABEL[session.framesync_verdict.status]}
               </span>
             )}
+            {session.ephys && (
+              <span
+                className={`session-state-label session-ephys-badge${
+                  isStopped && !session.ephys_uploaded_at ? " session-ephys-badge--missing" : ""}`}
+                title={isStopped && !session.ephys_uploaded_at
+                  ? "Records ephys: the Open Ephys / logger data hasn't been uploaded yet (Post-Process → Ephys)"
+                  : session.ephys_uploaded_at ? "Records ephys: data uploaded" : "Records ephys"}
+              >
+                {isStopped && !session.ephys_uploaded_at ? "Ephys not uploaded" : "Ephys"}
+              </span>
+            )}
           </div>
 
           <div className="session-row__type">

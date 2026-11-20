@@ -2377,3 +2377,48 @@ class TestRigCheckOnSessions:
                    if "Rig missing" in c.kwargs.get("title", ""))
         assert "Shock/motor: 0 of 1" in msg and "Microphone" not in msg
         assert rec.sessions["sched"].rig_check == _SHORT_RIG
+
+
+class TestEphysSessions:
+    """plans/ttl-applications-ephys-sync.md"""
+
+    _WIRING = [{"module_id": "ttl_2904", "name": "Sync box",
+                "application": "ephys_sync", "lines": [], "last_verified": None,
+                "sync": {"gpio": 26, "role": "sync", "mode": "pseudorandom",
+                         "channel": 1, "label": "", "state": "unconfirmed",
+                         "confirmed_at": None}}]
+
+    def test_ephys_session_checks_with_condition_and_records_wiring(self):
+        rec, facade = _make_recording()
+        rec._log_session_event = MagicMock()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_sync_wiring.return_value = self._WIRING
+        result = rec.create_session("exp1", "all", ephys=True)
+        facade.get_rig_check.assert_called_with({"ephys"})
+        s = rec.sessions[result["session_name"]]
+        assert s.ephys is True and s.ephys_wiring == self._WIRING
+        assert result["rig_warnings"] == [
+            "Sync — Sync box: sync line (GPIO 26 → channel 1) never confirmed on "
+            "the acquisition system"]
+
+    def test_plain_session_has_no_wiring(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        result = rec.create_session("exp1", "all")
+        facade.get_rig_check.assert_called_with(())
+        facade.get_sync_wiring.assert_not_called()
+        s = rec.sessions[result["session_name"]]
+        assert s.ephys is False and s.ephys_wiring is None
+
+    def test_mark_ephys_uploaded(self):
+        rec, facade = _make_recording()
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_rig_check.return_value = {"level": "ok", "items": []}
+        facade.get_sync_wiring.return_value = []
+        name = rec.create_session("exp1", "all", ephys=True)["session_name"]
+        assert rec.sessions[name].ephys_uploaded_at is None
+        assert rec.mark_ephys_uploaded(name) is True
+        assert rec.sessions[name].ephys_uploaded_at is not None
+        assert rec.mark_ephys_uploaded("nope") is False

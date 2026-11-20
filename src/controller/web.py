@@ -1030,6 +1030,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         rig = self.facade.get_session_rig_check(session_name)
         if rig:
             metadata["rig_check"] = rig
+        ephys = self.facade.get_session_ephys(session_name)
+        if isinstance(ephys, dict):
+            metadata["ephys"] = bool(ephys.get("ephys"))
+            if ephys.get("wiring"):
+                metadata["ephys_wiring"] = ephys["wiring"]
 
         if not self._try_write_metadata(session_name, metadata):
             self.logger.warning(
@@ -1243,7 +1248,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             return (ephys_data.list_recordings(ephys_dir)
                     if os.path.isdir(ephys_dir) else [])
 
-        def _run_ephys_job(event, session_name, cmd, stage, done_stage, name):
+        def _run_ephys_job(event, session_name, cmd, stage, done_stage, name,
+                           on_done=None):
             """Run a subprocess that prints a one-line JSON result
             (align_cli / ephys_accel) and report progress on `event`."""
             import shlex
@@ -1268,6 +1274,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 if proc.returncode == 0 and payload.get("ok"):
                     payload["state"] = "done"
                     payload["stage"] = done_stage(payload)
+                    if on_done is not None:
+                        try:
+                            on_done(payload)
+                        except Exception as exc:  # noqa: BLE001 -- never fails the job
+                            self.logger.warning("%s on_done: %s", name, exc)
                 else:
                     payload["state"] = "error"
                     payload.setdefault(
@@ -1367,8 +1378,19 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                         f"{p.get('residual_max_ms', '?')} ms"
                         + (f", ephys PC clock {off:+.1f} s" if off is not None else ""))
 
+            def _record(p):
+                """The alignment worked, so the sync line reached the
+                acquisition system: note it on the session's sync module(s)
+                (plans/ttl-applications-ephys-sync.md)."""
+                wiring = (self.facade.get_session_ephys(session_name) or {}).get("wiring")
+                for w in wiring or []:
+                    if w.get("application") == "ephys_sync":
+                        self.facade.record_ttl_alignment(
+                            w["module_id"], session_name, p.get("pin_number"), p)
+                self.facade.broadcast_ttl_lines()
+
             _run_ephys_job("ephys_align_update", session_name, cmd,
-                           "fitting model", _done, "ephys-align")
+                           "fitting model", _done, "ephys-align", on_done=_record)
 
         @self.socketio.on("run_ephys_accel")
         def handle_run_ephys_accel(data=None):
@@ -2110,6 +2132,11 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             self.logger.info(
                 f"Ephys upload: {written} file(s), {total} bytes -> {dest_root}"
             )
+            if written:
+                try:
+                    self.facade.mark_ephys_uploaded(session_name)
+                except Exception as e:  # noqa: BLE001 -- the upload itself worked
+                    self.logger.warning(f"mark_ephys_uploaded({session_name}): {e}")
             return jsonify({"files": written, "bytes": total, "dir": dest_root})
 
         @self.app.route("/fonts/<font_id>/<filename>")
@@ -2248,7 +2275,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
                 return
             result = self.facade.create_session(session_name, target, duration_minutes, researcher,
-                                                unattended=unattended, protocol_name=protocol_name)
+                                                unattended=unattended, protocol_name=protocol_name,
+                                                ephys=bool(data.get("ephys")))
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -2297,7 +2325,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher,
-                                                          protocol_name=data.get("protocol") or None)
+                                                          protocol_name=data.get("protocol") or None,
+                                                          ephys=bool(data.get("ephys")))
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -2342,6 +2371,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             result = self.facade.create_habitat_session(
                 data.get("session_name"), data.get("plans") or [],
                 data.get("researcher") or None, data.get("duration_minutes"),
+                ephys=bool(data.get("ephys")),
             )
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})

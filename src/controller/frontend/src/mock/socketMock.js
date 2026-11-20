@@ -24,6 +24,7 @@ const mockExperimentName = (md) =>
     .filter(Boolean).join("-") || null;
 import { simSnapshot } from "./habitatSim/index";
 import { evaluateRig, rigDefaults } from "./rigMock";
+import { makeTTLLineRoutes, ttlLinesPayload } from "./ttlLinesMock";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
@@ -422,6 +423,7 @@ const ROUTER = {
   ...gateMapRoutes,
   ...placementRoutes,
   ...ephysRoutes,
+  ...makeTTLLineRoutes(() => state.modules),
   // bootstrap reads
   get_system_state() { this._fire("system_state", clone(state.systemState)); },
   get_modules() { this._fire("modules_update", clone(state.modules)); },
@@ -596,6 +598,16 @@ const ROUTER = {
     if (lightingSave(this, payload, state, clone)) return;
     const id = payload?.id;
     if (id) state.moduleConfigs[id] = payload.config || {};
+    // TTL: the card's lines, rig check and ttl_lines all read module.config.
+    const m = id && state.modules[id];
+    if (m?.type === "ttl" && payload.config?.ttl) {
+      m.config = { ...m.config, ...payload.config,
+        ttl: { ...Object.fromEntries(Object.entries(m.config?.ttl ?? {}).filter(([k]) => k.startsWith("_"))),
+          ...payload.config.ttl } };
+      this._fire("modules_update", clone(state.modules));
+      this._fireRigCheck();
+      this._fire("ttl_lines", ttlLinesPayload(state.modules));
+    }
     this._fire("module_status", { module_id: id, type: "config_saved" });
   },
   start_recording() {

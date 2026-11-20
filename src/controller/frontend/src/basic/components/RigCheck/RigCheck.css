@@ -78,6 +78,7 @@
 .rig-check-item--error   { --rig-dot: var(--error-color, #e74c3c); }
 .rig-check-item--warning { --rig-dot: var(--warning-color, #e6a23c); }
 .rig-check-item--pending { --rig-dot: var(--text-muted-color, #999); }
+.rig-check-item--inactive { --rig-dot: transparent; opacity: 0.6; }
 
 .rig-check-item__dot {
   width: 9px;

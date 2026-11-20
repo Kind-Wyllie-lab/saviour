@@ -3,8 +3,18 @@
         "group": "ttl"
     },
     "ttl": {
+        "application": "mixed",
+        "_application_options": [
+            "mixed",
+            "ephys_sync",
+            "neurologger_sync",
+            "stimulus_control"
+        ],
         "active_logic": "active_low",
-        "_active_logic_options": ["active_low", "active_high"],
+        "_active_logic_options": [
+            "active_low",
+            "active_high"
+        ],
         "pins": {
             "19": {
                 "mode": "experiment_clock",
@@ -30,35 +40,96 @@
         ],
         "_mode_settings_schema": {
             "_pseudorandom": {
-                "_min_interval": {"type": "float", "min": 0, "default": 0.1},
-                "_max_interval": {"type": "float", "min": 0.1, "default": 1},
-                "_pulse_duration": {"type": "float", "default": 0.2}
+                "_min_interval": {
+                    "type": "float",
+                    "min": 0,
+                    "default": 0.1
+                },
+                "_max_interval": {
+                    "type": "float",
+                    "min": 0.1,
+                    "default": 1
+                },
+                "_pulse_duration": {
+                    "type": "float",
+                    "default": 0.2
+                }
             },
             "_experiment_clock": {
-                "_duty_cycle": {"type": "float", "min": 0.1, "max": 1.0, "default": "0.75"},
-                "_period": {"type": "float", "default": 1}
+                "_duty_cycle": {
+                    "type": "float",
+                    "min": 0.1,
+                    "max": 1.0,
+                    "default": "0.75"
+                },
+                "_period": {
+                    "type": "float",
+                    "default": 1
+                }
             },
             "_interval_pulse": {
-                "_interval_s": {"type": "float", "min": 0.001, "default": 120.0, "description": "Onset-to-onset period in seconds (e.g. 120 = every 2 minutes)"},
-                "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"},
-                "_repeat_count": {"type": "int", "min": 0, "default": 15, "description": "Number of pulses to deliver; 0 = run until recording stops"}
+                "_interval_s": {
+                    "type": "float",
+                    "min": 0.001,
+                    "default": 120.0,
+                    "description": "Onset-to-onset period in seconds (e.g. 120 = every 2 minutes)"
+                },
+                "_pulse_duration_s": {
+                    "type": "float",
+                    "min": 0.001,
+                    "default": 0.02,
+                    "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"
+                },
+                "_repeat_count": {
+                    "type": "int",
+                    "min": 0,
+                    "default": 15,
+                    "description": "Number of pulses to deliver; 0 = run until recording stops"
+                }
             },
             "_experiment_start": {
-                "_delay_s": {"type": "float", "min": 0.001, "default": 0.001, "description": "Delay after recording starts before the pulse fires, in seconds (e.g. 0.001 = as close to immediate as the schema allows)"},
-                "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"}
+                "_delay_s": {
+                    "type": "float",
+                    "min": 0.001,
+                    "default": 0.001,
+                    "description": "Delay after recording starts before the pulse fires, in seconds (e.g. 0.001 = as close to immediate as the schema allows)"
+                },
+                "_pulse_duration_s": {
+                    "type": "float",
+                    "min": 0.001,
+                    "default": 0.02,
+                    "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"
+                }
             },
             "_scheduled": {},
             "_input": {
-                "_debounce_ms": {"type": "int", "min": 0, "default": 50}
+                "_debounce_ms": {
+                    "type": "int",
+                    "min": 0,
+                    "default": 50
+                }
             }
         },
         "recording": {
             "_recording_filetype": "mp4"
         },
-        "_available_pins": [4,5,6,12,13,16,17,22,23,24,25,26,27]
+        "_available_pins": [
+            4,
+            5,
+            6,
+            12,
+            13,
+            16,
+            17,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27
+        ]
     },
     "recording": {
         "segment_length_mins": 120
     }
-
 }

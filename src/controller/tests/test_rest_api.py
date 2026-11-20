@@ -718,7 +718,8 @@ class TestSessionCreate:
         assert resp.get_json()["session_name"] == "MyExp_all_20260907"
         assert resp.get_json()["state"] == "pending"
         web.facade.create_session.assert_called_once_with(
-            "MyExp", "all", None, "asg", unattended=False, protocol_name=None)
+            "MyExp", "all", None, "asg", unattended=False, protocol_name=None,
+            ephys=False)
         web._write_session_metadata.assert_called_once()
         web.facade.force_start_session.assert_not_called()
 

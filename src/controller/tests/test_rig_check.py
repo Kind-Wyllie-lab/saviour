@@ -251,3 +251,60 @@ class TestRigMonitor:
         m = RigMonitor(get_config=lambda: CFG, get_modules=lambda: {},
                        get_health=boom, clock=lambda: 0.0)
         assert m.tick()["level"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# application / when (plans/ttl-applications-ephys-sync.md)
+# ---------------------------------------------------------------------------
+
+EPHYS_ITEM = {"label": "Ephys sync", "types": ["ttl"], "application": "ephys_sync",
+              "min": 1, "severity": "required", "when": "ephys"}
+
+
+def _ttl_mod(app=None, online=True):
+    cfg = {"ttl": {"application": app}} if app else {}
+    return {"type": "ttl", "online": online, "status": "READY", "name": "",
+            "config": cfg}
+
+
+class TestConditionalItems:
+    def test_validates_application_and_when(self):
+        assert validate_profile([EPHYS_ITEM])[0]["when"] == "ephys"
+        with pytest.raises(RigProfileError, match="application"):
+            validate_profile([{**EPHYS_ITEM, "application": "nope"}])
+        with pytest.raises(RigProfileError, match="when"):
+            validate_profile([{**EPHYS_ITEM, "when": "sometimes"}])
+
+    def test_inactive_without_the_condition(self):
+        r = evaluate([EPHYS_ITEM], {})
+        assert r["level"] == "ok" and r["items"][0]["active"] is False
+        assert shortfalls(r) == []
+
+    def test_active_for_an_ephys_session(self):
+        r = evaluate([EPHYS_ITEM], {}, conditions={"ephys"})
+        assert r["level"] == "error" and r["items"][0]["active"]
+        assert [i["label"] for i in shortfalls(r)] == ["Ephys sync"]
+
+    def test_application_must_match(self):
+        mods = {"ttl_1": _ttl_mod("stimulus_control")}
+        assert evaluate([EPHYS_ITEM], mods, conditions={"ephys"})["level"] == "error"
+        mods["ttl_2"] = _ttl_mod("ephys_sync")
+        r = evaluate([EPHYS_ITEM], mods, conditions={"ephys"})
+        assert r["ok"] and [p["id"] for p in r["items"][0]["present"]] == ["ttl_2"]
+
+    def test_with_conditions_rejudges(self):
+        from src.controller.rig_check import with_conditions
+        live = evaluate([EPHYS_ITEM], {})
+        assert with_conditions(live, {"ephys"})["level"] == "error"
+        assert with_conditions(live, ())["level"] == "ok"
+
+    def test_monitor_for_session(self):
+        m, clock, _, alert = _monitor({"rig": {"expected": [EPHYS_ITEM],
+                                                "startup_grace_s": 0,
+                                                "alert_after_s": 0}}, {})
+        clock.t += 1
+        assert m.tick()["level"] == "ok"
+        assert m.for_session({"ephys"})["level"] == "error"
+        clock.t += 10
+        m.tick()
+        alert.assert_not_called()  # conditional items never alert live

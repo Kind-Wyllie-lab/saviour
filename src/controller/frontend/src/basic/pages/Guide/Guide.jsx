@@ -76,7 +76,11 @@ function DocPage({ docId, onNavigate }) {
 }
 
 function Guide() {
-  const [activeTab, setActiveTab] = useState(TABS[0].id);
+  // /guide#open_ephys opens that tab (the TTL card links here).
+  const [activeTab, setActiveTab] = useState(() => {
+    const hash = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    return TABS.some((t) => t.id === hash) ? hash : TABS[0].id;
+  });
   const pageRef = useRef(null);
 
   const outline = useMemo(

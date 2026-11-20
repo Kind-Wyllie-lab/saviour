@@ -6,6 +6,7 @@ import useModules from "/src/hooks/useModules";
 import ConfigCard from "/src/basic/components/ConfigCard/ConfigCard";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
+import { moduleKindLabel } from "/src/basic/utils/ttlApplications";
 
 // Hash format is "#<deviceId>/<tab>" — the tab half is owned by each config
 // card's useHashTab, this only ever reads/writes the device half so a tab
@@ -104,7 +105,8 @@ function Settings() {
   const moduleGroups = {};
   for (const [id, module] of Object.entries(modules)) {
     const type = module.type || "other";
-    (moduleGroups[type] ??= []).push({ id, name: module.name ? `${module.name} (${id})` : id });
+    (moduleGroups[type] ??= []).push({ id, name: (module.name ? `${module.name} (${id})` : id)
+      + (moduleKindLabel(module) ? ` · ${moduleKindLabel(module)}` : "") });
   }
   for (const group of Object.values(moduleGroups)) {
     group.sort((a, b) => a.name.localeCompare(b.name));

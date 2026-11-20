@@ -1006,3 +1006,6 @@
   flex-basis: 100%;
   font-size: 0.8rem;
 }
+
+.session-ephys-badge { background: var(--accent-color, #3a6ea5); }
+.session-ephys-badge--missing { background: #b26a00; }

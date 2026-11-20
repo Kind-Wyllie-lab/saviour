@@ -318,3 +318,41 @@ class TestRfidDbPush:
                            "result": "success", "config": {"a": 1}})
         Controller.handle_status_update(ctx, "status/rfid_ab12", data)
         ctx.push_rfid_db_settings.assert_called_once_with("rfid_ab12")
+
+
+# ---------------------------------------------------------------------------
+# Status messages arriving while the controller is being built are held and
+# replayed at start() ("'BasicController' object has no attribute 'web'").
+# ---------------------------------------------------------------------------
+
+class _GateCtx:
+    def __init__(self, maxlen=1000):
+        import threading
+        from collections import deque
+        self.logger = MagicMock()
+        self._status_gate = threading.Lock()
+        self._status_ready = False
+        self._early_status = deque(maxlen=maxlen)
+        self._early_status_dropped = 0
+        self.handled = []
+        self.handle_status_update = lambda t, d: self.handled.append((t, d))
+
+
+def test_status_held_until_released_then_replayed_in_order():
+    ctx = _GateCtx()
+    Controller._on_status(ctx, "status/a", "1")
+    Controller._on_status(ctx, "status/b", "2")
+    assert ctx.handled == []
+    Controller._release_early_status(ctx)
+    assert ctx.handled == [("status/a", "1"), ("status/b", "2")]
+    Controller._on_status(ctx, "status/a", "3")
+    assert ctx.handled[-1] == ("status/a", "3") and len(ctx._early_status) == 0
+
+
+def test_status_hold_is_bounded_keeping_newest():
+    ctx = _GateCtx(maxlen=2)
+    for i in range(5):
+        Controller._on_status(ctx, "status/a", str(i))
+    assert ctx._early_status_dropped == 3
+    Controller._release_early_status(ctx)
+    assert [d for _, d in ctx.handled] == ["3", "4"]

@@ -20,8 +20,10 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import logging  # for logging and debugging
+import threading
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Any  # for type hinting
 
 # Check if running under systemd
@@ -72,6 +74,10 @@ from src.controller.ttl_lines import (
 from src.controller.web import Web
 from src.shared import sd_watchdog
 from src.shared.netlink import LinkStats
+
+# Module status messages held while the controller is being built (see
+# Controller.__init__); a fleet's first few seconds of heartbeats fit easily.
+EARLY_STATUS_MAX = 1000
 
 
 def resolve_listen_host(listen_on: str | None, lan_ip: str) -> str:
@@ -136,8 +142,18 @@ class Controller(ABC):
         # handle_status_update with no self.modules yet ("'HabitatController'
         # object has no attribute 'modules'", basic->habitat switch 2026-11-05).
         self.modules = Modules()
+        # Communication's listener starts in its constructor, before Web,
+        # Health, the facade and the variant's own state exist, so a status
+        # arriving now ("'BasicController' object has no attribute 'web'",
+        # every restart since 2026-11-16) is held and replayed, in order, at
+        # the top of start(), once the whole controller (variants included)
+        # is built.
+        self._status_gate = threading.Lock()
+        self._status_ready = False
+        self._early_status: deque[tuple[str, str]] = deque(maxlen=EARLY_STATUS_MAX)
+        self._early_status_dropped = 0
         self.communication = Communication(
-            status_callback=self.handle_status_update, bind_host=self.listen_host)
+            status_callback=self._on_status, bind_host=self.listen_host)
         self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
         self.web.host = "0.0.0.0" if self.listen_host == "*" else self.listen_host
@@ -237,6 +253,32 @@ class Controller(ABC):
         self.logger.info(f"New list: {self.modules.get_modules().keys()}")
         self.communication.send_command(module_id, "shutdown", {})
 
+
+    def _on_status(self, topic: str, data: str) -> None:
+        """Communication's status callback: held until start() (see __init__)."""
+        with self._status_gate:
+            if not self._status_ready:
+                if len(self._early_status) == self._early_status.maxlen:
+                    self._early_status_dropped += 1
+                self._early_status.append((topic, data))
+                return
+        self.handle_status_update(topic, data)
+
+    def _release_early_status(self) -> None:
+        """Replay statuses held during construction, then pass new ones
+        straight through. Replayed under the gate, so a status arriving
+        meanwhile waits and is handled after them, keeping the order."""
+        with self._status_gate:
+            held = list(self._early_status)
+            self._early_status.clear()
+            if held:
+                dropped = (f" ({self._early_status_dropped} oldest dropped)"
+                           if self._early_status_dropped else "")
+                self.logger.info(f"Replaying {len(held)} module status message(s) "
+                                 f"received during startup{dropped}")
+            for topic, data in held:
+                self.handle_status_update(topic, data)
+            self._status_ready = True
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -596,6 +638,7 @@ class Controller(ABC):
         """
         self.logger.info("Starting controller")
         self.start_time = time.time()
+        self._release_early_status()
 
         # Register controller network for module discovery
         self.logger.info("Registering controller service...")

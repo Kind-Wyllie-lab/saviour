@@ -1,6 +1,13 @@
 # NWB Export — Design Scoping
 
-**Status: proposal, not implemented.** Nothing described here exists yet. (`src/controller/database.py`
+**Status: built 2026-11-20** (`src/controller/nwb_convert.py`, `nwb_export.py`, Post-processing →
+NWB export, `tools/export_nwb.py`; write-up in `docs/CHANGELOG.md`). What was built differs from the
+proposal below in three ways: species is asked at export time (default *Rattus norvegicus*) rather
+than added to session metadata; APA shocks and markers are pynwb 4 `EventsTable`s (`AnnotationSeries`
+is deprecated); session times are UTC, so the timezone gap below is closed. The text below is the
+original scoping.
+
+Original status: proposal. (`src/controller/database.py`
 — which carried a dead `import pynwb` predating this document — was deleted 2026-08-28 as dead code;
 it was never any part of this proposal.) This doc exists so that when someone picks this up, the
 mapping work below doesn't have to be re-derived from scratch.

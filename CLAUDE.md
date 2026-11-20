@@ -74,6 +74,14 @@ python3 tools/usv_detect.py /path/to/session/<DATE> [--out DIR] [--contrast-db 8
 ```
 
 ```bash
+# NWB export of a session folder (same converter as Post-processing → NWB
+# export; needs pynwb: `pip install -e ".[nwb]"`). On the controller the page
+# installs it into its own env-nwb venv (sees the main env's packages via a
+# .pth). Video is linked by relative path, audio embedded.
+python3 tools/export_nwb.py /path/to/share/<session> [--species "Rattus norvegicus"] [--subject-id R7] [--no-audio] [--output out.nwb]
+```
+
+```bash
 # Automated camera-config × framesync sweep — needs only `requests` + key-based
 # SSH to the controller (no env2). Drives PATCH /api/v1/modules/<id>/config +
 # the session lifecycle, SSH-pulls each session's framesync_report.json /
@@ -224,7 +232,6 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - Rig profiles: each rig type expects a hardware set (`rig.expected`, defaults per variant, editable on the controller config **Rig** tab); `rig_check.py` flags missing/faulty modules live (banner on every variant, System block, session-start confirm, session record, `rig` on `/api/v1/state`, daily alert). Built 2026-11-20, not yet on the rig or viewed in a browser; roster persistence (name a never-seen module) and habitat-by-layout remain → `plans/rig-expected-hardware.md`.
 - TTL applications: `ttl.application` (`ephys_sync` / `neurologger_sync` / `stimulus_control` / `mixed`) with pin roles (`src/shared/ttl_applications.json`), the Lines tab with wiring guide and "Seen in Open Ephys" confirmations (`ttl_lines.py`, 7-day expiry), **External sync** on sessions (None / Ephys / Neurologger) with conditional rig items (`when: "ephys"|"neurologger"`), declared sync pin in `ephys_data`. Built 2026-11-20, not yet on the rig or in a browser; neurologger guidance, a stimulus-control layout and a loopback check on Test line remain → `plans/ttl-applications-ephys-sync.md`.
 - Quick setup: an on-demand button (Settings / System pages) opening a step-by-step modal: rig type, external sync default, expected modules (add to the list), each module's preview with Looks OK / Open settings, sync lines, summary; last run kept and copied into session metadata, never enforced. Built 2026-11-20 (all three phases, incl. adding expected items, the sync-lines step and the session metadata copy), not yet run on the rig or viewed in a browser → `plans/rig-quick-setup.md`.
-- NWB export: Post-processing button turning an exported session into one `.nwb` (species asked at export, default Rattus norvegicus), with an "Install NWB export package" button that installs `pynwb` into a separate venv. Planned, nothing built (session times are UTC with `Z` since 2026-11-20, `src/shared/timestamps.py`) → `plans/nwb-export.md` (mapping in `docs/NWB_EXPORT_DESIGN.md`).
 - Frontend: `FaultAlertModal` missing from acoustic_startle; per-module "not ready" reasons hidden in 4 variants; bulk Update/Reboot All need a home on `System.jsx`; preview FPS overlay shows sensor rate.
 - Field install leftovers: live mic spectrogram blip (waiting on evidence from the site) and the exposure warning overlapping the timestamp → `plans/backlog.md`.
 - Per-AudioMoth settings: gain per AudioMoth built (not yet confirmed on the rig); internal/external mic chosen per AudioMoth (default external when present; dropdown not yet used on the rig), internal for the sync self-test (one calibration serves both inputs, measured with an EM258); per-device sample rate/filter → `plans/per-audiomoth-settings.md`.
@@ -238,7 +245,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 **Maintenance / architecture**
 - One module-status dispatch table (left over from the pre-v1.0 cleanup); the last unsupervised controller threads; gap causes `plan_window`/`ptp_regressed` → `plans/backlog.md`.
 - No ZMQ correlation IDs; `docs/PROTOCOL_V1.md` stale; small latent bugs listed in the backlog.
-- After v1.0: `Module` god object, `web.py` blueprints, Samba → rsync, invariant variant launcher, NWB export, telemetry, habitat-scale UI (design docs in `docs/`).
+- After v1.0: `Module` god object, `web.py` blueprints, Samba → rsync, invariant variant launcher, telemetry, habitat-scale UI (design docs in `docs/`).
 - In-flight / unvalidated-on-hardware features (REST API under load, compose/ephys, basler, occupancy trigger, cadence check, ML training pipelines): `plans/backlog.md` → "In-flight".
 
 ## Hardware gotchas (condensed; full findings in `docs/HARDWARE_NOTES.md`)

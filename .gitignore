@@ -13,6 +13,7 @@ pyvenv.cfg
  .env
 .venv
 env/
+env-nwb/
 venv/
 ENV/
 env.bak/

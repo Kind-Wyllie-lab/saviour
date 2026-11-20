@@ -11,6 +11,13 @@ import SIDBLogo from "/src/assets/logos/sidb_logo_alpha.png";
 
 const CHUNK_SIZE = 256 * 1024; // 256 KiB
 
+const SIDEBAR_WIDTH_KEY = "saviour_sidebar_width";
+// The narrowest the sidebar's own CSS clamp allows, up to roughly twice its
+// automatic maximum.
+const SIDEBAR_MIN_W = 112;
+const SIDEBAR_MAX_W = 320;
+const clampSidebarWidth = (w) => Math.round(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w)));
+
 function Sidebar({ navItems }) {
   const [showPowerModal, setShowPowerModal]   = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -55,6 +62,52 @@ function Sidebar({ navItems }) {
     catch { /* storage unavailable — collapse still works for this session */ }
     return next;
   });
+
+  // Drag-to-resize from the right edge, within SIDEBAR_MIN_W..SIDEBAR_MAX_W.
+  // null = automatic (the CSS clamp on .sidebar); remembered per browser.
+  // Double-click the handle to go back to automatic.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+      return v ? clampSidebarWidth(v) : null;
+    } catch { return null; }
+  });
+  const sidebarRef = useRef(null);
+  const saveSidebarWidth = (w) => {
+    setSidebarWidth(w);
+    try {
+      if (w == null) localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+      else localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
+    } catch { /* storage unavailable — the width still applies this session */ }
+  };
+  const startResize = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarRef.current?.getBoundingClientRect().width ?? SIDEBAR_MIN_W;
+    let latest = startW;
+    const onMove = (ev) => {
+      latest = clampSidebarWidth(startW + ev.clientX - startX);
+      setSidebarWidth(latest);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("sidebar-resizing");
+      saveSidebarWidth(latest);
+    };
+    document.body.classList.add("sidebar-resizing");
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  const resizeByKey = (e) => {
+    const step = e.shiftKey ? 40 : 10;
+    const current = sidebarWidth ?? sidebarRef.current?.getBoundingClientRect().width ?? SIDEBAR_MIN_W;
+    if (e.key === "ArrowLeft") { e.preventDefault(); saveSidebarWidth(clampSidebarWidth(current - step)); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); saveSidebarWidth(clampSidebarWidth(current + step)); }
+    else if (e.key === "Home") { e.preventDefault(); saveSidebarWidth(SIDEBAR_MIN_W); }
+    else if (e.key === "End") { e.preventDefault(); saveSidebarWidth(SIDEBAR_MAX_W); }
+  };
 
   useEffect(() => onAuthChange(() => {
     setLoggedIn(isLoggedIn());
@@ -360,7 +413,25 @@ function Sidebar({ navItems }) {
           »
         </button>
       )}
-      <header className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
+      <header
+        ref={sidebarRef}
+        className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}
+        style={sidebarWidth ? { width: sidebarWidth } : undefined}
+      >
+        <div
+          className="sidebar-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_MIN_W}
+          aria-valuemax={SIDEBAR_MAX_W}
+          aria-valuenow={sidebarWidth ? Math.round(sidebarWidth) : undefined}
+          tabIndex={0}
+          title="Drag to resize · double-click for automatic width"
+          onPointerDown={startResize}
+          onDoubleClick={() => saveSidebarWidth(null)}
+          onKeyDown={resizeByKey}
+        />
         <button
           type="button"
           className="sidebar-collapse-btn"

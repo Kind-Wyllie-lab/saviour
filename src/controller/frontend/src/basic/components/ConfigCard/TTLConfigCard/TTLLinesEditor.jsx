@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { Link } from "react-router";
 import socket from "/src/socket";
-import { docImages } from "/src/docs/loadDocs.js";
 import AddPinModal from "./AddPinModal";
+import SyncGuideModal from "./SyncGuideModal";
 import {
   APPLICATIONS, ROLES, CONFIRM_MAX_AGE_DAYS, SYNC_APPLICATIONS,
   rolesFor, roleLabel, pinLabel, channelLabel, systemName, validateTTL, DIGITAL_IN_CHANNELS,
@@ -65,80 +64,6 @@ function ModeFields({ schema, mode, settings, onChange }) {
       </div>
     );
   });
-}
-
-function SyncGuideModal({ app, lines, onClose }) {
-  const ephys = app === "ephys_sync";
-  const img = (name) => docImages[`images/${name}`];
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal ttl-guide-modal" role="dialog" aria-modal="true"
-        aria-label="Wiring and checking the sync" onClick={(e) => e.stopPropagation()}>
-      <div className="ttl-guide-modal__head">
-        <h3>Wiring and checking {ephys ? "the ephys sync" : "the logger sync"}</h3>
-        <button type="button" className="btn-remove" onClick={onClose} aria-label="Close">✕</button>
-      </div>
-      {ephys ? (
-        <ol className="ttl-guide__steps">
-          <li>
-            Use the acquisition board's <strong>Digital In</strong> HDMI port only (one of the four on
-            its back). Researchers have lost data to a cable in the wrong port.
-            {img("in_out_label.webp") && (
-              <img src={img("in_out_label.webp")} alt="The acquisition board's digital I/O ports, Digital In labelled" />
-            )}
-          </li>
-          <li>
-            Break Digital In out to BNCs with an HDMI I/O board, then wire each line below to its
-            BNC channel, with the TTL module's ground to the I/O board's ground:
-            {img("io-board.png-2.webp") && (
-              <img src={img("io-board.png-2.webp")} alt="HDMI to BNC I/O board" />
-            )}
-            <ul>
-              {lines.length === 0 && <li>No lines yet: add the sync line below.</li>}
-              {lines.map(([gpio, pin]) => (
-                <li key={gpio}>
-                  GPIO {gpio} ({roleLabel(pin.role)}) → channel{" "}
-                  {pin.channel || <em>not set</em>}
-                </li>
-              ))}
-            </ul>
-          </li>
-          <li>
-            Press <strong>Test line</strong> and watch for the pulses on that channel in the Open Ephys
-            GUI (a coloured column per channel), then press <strong>Seen in Open Ephys</strong>.
-            {img("ephys-gui-ttls.webp") && (
-              <img src={img("ephys-gui-ttls.webp")} alt="Open Ephys GUI showing TTL pulses as coloured columns" />
-            )}
-          </li>
-          <li>
-            On the day: start the Open Ephys recording before the SAVIOUR session and stop it after,
-            so every sync pulse is captured, and choose <strong>External sync: Ephys</strong> when you
-            create the session.
-          </li>
-        </ol>
-      ) : (
-        <ol className="ttl-guide__steps">
-          <li>Wire the sync line to the logger's digital (TTL) input, following its manual, with a
-            shared ground.</li>
-          <li>Press <strong>Test line</strong>, check the pulses appear in the logger's data, then press
-            <strong> Seen in the logger</strong>.</li>
-          <li>Start logging before the SAVIOUR session and stop after it, and choose
-            <strong> External sync: Neurologger</strong> when you create the session.</li>
-        </ol>
-      )}
-      <div className="ttl-guide-modal__foot">
-        {ephys ? <Link to="/guide#open_ephys" onClick={onClose}>Full guide: Using with Ephys →</Link> : <span />}
-        <button type="button" className="save-button" onClick={onClose}>Close</button>
-      </div>
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 export default function TTLLinesEditor({

@@ -112,7 +112,7 @@ export default function ExpectedModulesStep({ rig, conditions, modules, offline,
                   </span>
                   <button type="button" className="quick-setup__btn quick-setup__btn--small"
                     disabled={!loggedIn || busy} title={adminHint
-                      ?? `Expect ${item.min} × ${item.label}${item.when ? ` (${EXTERNAL_SYNC[item.when]?.label} sessions)` : ""}`}
+                      ?? `Expect ${item.min} × ${item.label}${item.when ? ` (when syncing with ${EXTERNAL_SYNC[item.when]?.label})` : ""}`}
                     onClick={() => add(item)}>
                     Add as expected
                   </button>
@@ -158,7 +158,7 @@ export default function ExpectedModulesStep({ rig, conditions, modules, offline,
               <select value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })}>
                 <option value="">Every session</option>
                 {Object.entries(EXTERNAL_SYNC).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label} sessions only</option>
+                  <option key={k} value={k}>Only when syncing with {v.label}</option>
                 ))}
               </select>
             </label>

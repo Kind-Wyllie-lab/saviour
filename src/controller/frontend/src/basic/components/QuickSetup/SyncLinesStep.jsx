@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import SyncGuideModal from "/src/basic/components/ConfigCard/TTLConfigCard/SyncGuideModal";
 import {
   EXTERNAL_SYNC, ROLES, CONFIRM_MAX_AGE_DAYS, syncApplication, syncModules, roleLabel, pinLabel,
   systemName,
@@ -27,6 +28,7 @@ function when(epochS) {
 export default function SyncLinesStep({ externalSync, ttlLines }) {
   const loggedIn = useIsLoggedIn();
   const [testing, setTesting] = useState({}); // "mid:gpio" -> "testing" | "done"
+  const [guide, setGuide] = useState(false);
   const timers = useRef([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
@@ -61,10 +63,17 @@ export default function SyncLinesStep({ externalSync, ttlLines }) {
 
   return (
     <section className="quick-setup__sync">
-      <p>
-        For each line: press <strong>Test line</strong>, watch for the pulses in {system}, then
-        press <strong>Seen in {system}</strong>.
-      </p>
+      <div className="quick-setup__guide-bar">
+        <button type="button" className="quick-setup__btn quick-setup__btn--small" onClick={() => setGuide(true)}>
+          What to expect ▸
+        </button>
+        <span className="quick-setup__hint">Photos of the wiring and an animation of the pulses arriving.</span>
+      </div>
+      {guide && (
+        <SyncGuideModal app={app} onClose={() => setGuide(false)}
+          lines={mods.flatMap((m) => (m.lines ?? []).filter((ln) => ROLES[ln.role]?.channel)
+            .map((ln) => [ln.gpio, { role: ln.role, channel: ln.channel }]))} />
+      )}
       {mods.map((m) => (
         <div key={m.id} className="quick-setup__sync-module">
           <div className="quick-setup__sync-head">

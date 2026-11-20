@@ -381,6 +381,7 @@
 .quick-setup__msg--error { color: var(--danger-color, #c62828); }
 
 /* Sync lines step */
+.quick-setup__guide-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .quick-setup__sync-module {
   margin: 0 0 12px;
   padding: 10px 12px;

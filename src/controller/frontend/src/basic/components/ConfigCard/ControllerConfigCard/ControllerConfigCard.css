@@ -468,33 +468,65 @@
 .rig-profile-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+}
+
+.rig-profile-section > .field-hint { margin-top: 0; }
+
+/* Seven columns: scroll sideways inside the card rather than squash. */
+.rig-profile-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
 }
 
 .rig-profile-table {
   width: 100%;
+  min-width: 760px;
   border-collapse: collapse;
-  font-size: 0.92em;
+  font-size: 0.88em;
 }
 
 .rig-profile-table th {
   text-align: left;
   font-weight: 600;
-  padding: 4px 6px;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
 }
 
 .rig-profile-table td {
-  padding: 4px 6px;
+  padding: 5px 8px;
   vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
 }
 
+.rig-profile-table tbody tr:last-child td { border-bottom: none; }
+
+/* Same field look as .form-field inputs (ConfigCard.css). */
 .rig-profile-table input[type="text"],
+.rig-profile-table input[type="number"],
 .rig-profile-table select {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-size: 1em;
+}
+
+.rig-profile-table input:focus,
+.rig-profile-table select:focus {
+  outline: none;
+  border-color: var(--accent-color);
 }
 
 .rig-profile-table input[type="number"] {
@@ -521,6 +553,7 @@
 .rig-profile-empty {
   opacity: 0.7;
   font-style: italic;
+  padding: 10px 8px !important;
 }
 
 .rig-profile-error {
@@ -535,8 +568,15 @@
   flex-wrap: wrap;
 }
 
+.rig-profile-live {
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
 .rig-profile-live h4 {
-  margin: 8px 0 6px;
+  margin: 0 0 6px;
+  font-size: 0.9em;
+  font-weight: 600;
 }
 
 @media (max-width: 640px) {

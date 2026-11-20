@@ -32,12 +32,7 @@ export default function AddPinModal({
           <h3>Add pin</h3>
           <button type="button" className="btn-remove" onClick={onClose} aria-label="Close">✕</button>
         </div>
-        <img className="ttl-add-pin-modal__pinout" src={pinoutUrl}
-          alt="Raspberry Pi 5 40-pin header: GPIO numbers against physical pin numbers" />
-        <p className="field-hint">
-          GPIO numbers are not header pin numbers: GPIO 17 is pin 11. Wire the line's ground
-          to any Ground pin.
-        </p>
+        <div className="ttl-add-pin-modal__body">
         <div className="ttl-add-pin-modal__fields">
           <div className="field">
             <label htmlFor="ttl-add-pin-gpio">Pin</label>
@@ -53,9 +48,16 @@ export default function AddPinModal({
               {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
+          <p className="field-hint">
+            GPIO numbers are not header pin numbers: GPIO 17 is pin 11. Wire the line's ground
+            to any Ground pin.
+          </p>
+          {hint && <p className="field-hint">{hint}</p>}
+          {pins.length === 0 && <p className="field-hint">Every available pin is already in use.</p>}
         </div>
-        {hint && <p className="field-hint">{hint}</p>}
-        {pins.length === 0 && <p className="field-hint">Every available pin is already in use.</p>}
+        <img className="ttl-add-pin-modal__pinout" src={pinoutUrl}
+          alt="Raspberry Pi 5 40-pin header: GPIO numbers against physical pin numbers" />
+        </div>
         <div className="ttl-guide-modal__foot">
           <span />
           <div className="modal-buttons">

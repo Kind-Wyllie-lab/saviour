@@ -6,7 +6,7 @@ import { docImages } from "/src/docs/loadDocs.js";
 import AddPinModal from "./AddPinModal";
 import {
   APPLICATIONS, ROLES, CONFIRM_MAX_AGE_DAYS, SYNC_APPLICATIONS,
-  rolesFor, roleLabel, pinLabel, channelLabel, systemName, validateTTL,
+  rolesFor, roleLabel, pinLabel, channelLabel, systemName, validateTTL, DIGITAL_IN_CHANNELS,
 } from "/src/basic/utils/ttlApplications";
 
 // The Lines tab of a TTL module with an application other than "mixed"
@@ -275,9 +275,15 @@ export default function TTLLinesEditor({
               {role?.channel && (
                 <div className="field">
                   <label>{channelLabel(app)}</label>
-                  <input type="number" min={1} max={64} step={1} value={pin.channel ?? ""}
+                  <select value={pin.channel ?? ""}
                     onChange={(e) => changeField(gpio, "channel",
-                      e.target.value === "" ? "" : parseInt(e.target.value, 10))} />
+                      e.target.value === "" ? "" : parseInt(e.target.value, 10))}>
+                    <option value="">Choose…</option>
+                    {/* keep a saved value outside 1-8 visible rather than dropping it */}
+                    {[...new Set([...DIGITAL_IN_CHANNELS,
+                      ...(pin.channel ? [Number(pin.channel)] : [])])].sort((a, b) => a - b)
+                      .map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
               )}
               <div className="field">
@@ -306,7 +312,7 @@ export default function TTLLinesEditor({
                     disabled={!loggedIn || unsaved(gpio) || !pin.channel}
                     title={!loggedIn ? "Sign in as admin"
                       : unsaved(gpio) ? "Save first: the confirmation is for the saved wiring"
-                      : !pin.channel ? `Set the ${channelLabel(app).toLowerCase()} first`
+                      : !pin.channel ? `Choose the ${channelLabel(app)} first`
                       : `You saw this line's pulses in ${systemName(app)}`}
                     onClick={() => confirm(gpio)}>
                     Seen in {systemName(app)}

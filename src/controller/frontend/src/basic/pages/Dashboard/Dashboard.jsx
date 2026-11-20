@@ -42,6 +42,40 @@ const PANEL_MIN_H = 160;
 const TILE_GRIP_PX = 20;      // .dash-tile__grip height — the drag strip above every body
 const STREAM_TILE_CHROME = 46; // grip + stream-card header, per stream-tile row
 
+// Random non-overlapping positions for tiles of the given sizes inside a
+// canvas `boxW` wide (`boxH` tall when it fits; the canvas scrolls, so a
+// tile with no free spot on screen goes to the first free spot below).
+// Largest first, each tries random spots that keep `gap` from those placed.
+function shuffleRects(sizes, boxW, boxH, gap = ARRANGE_GAP, tries = 400) {
+  const placed = [];
+  const clash = (r) => placed.some((p) =>
+    r.x < p.x + p.w + gap && p.x < r.x + r.w + gap &&
+    r.y < p.y + p.h + gap && p.y < r.y + r.h + gap);
+  const out = {};
+  const order = [...sizes].sort((a, b) => b.w * b.h - a.w * a.h);
+  for (const s of order) {
+    const maxX = Math.max(0, boxW - s.w);
+    const maxY = Math.max(0, boxH - s.h);
+    let spot = null;
+    for (let i = 0; i < tries && !spot; i++) {
+      const r = { x: Math.random() * maxX, y: Math.random() * maxY, w: s.w, h: s.h };
+      if (!clash(r)) spot = r;
+    }
+    // No room on screen: scan rows from the top for the first free spot.
+    for (let y = 0; !spot; y += 20) {
+      for (let x = 0; x <= maxX; x += 20) {
+        const r = { x, y, w: s.w, h: s.h };
+        if (!clash(r)) { spot = r; break; }
+      }
+    }
+    spot.x = Math.round(spot.x);
+    spot.y = Math.round(spot.y);
+    placed.push(spot);
+    out[s.id] = { x: spot.x, y: spot.y };
+  }
+  return out;
+}
+
 // Largest aspect-locked cell (w = h * ratio) for `n` tiles laid out in some
 // cols x rows grid that still fits a boxW x boxH area — tries every column
 // count and keeps the one giving the biggest cell. Used so the default view's
@@ -109,7 +143,7 @@ function useElementSize() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [node]);
-  return [setNode, size];
+  return [setNode, size, node];
 }
 
 // Stream port + display label for a module, or null if it has no stream.
@@ -161,7 +195,7 @@ function Dashboard() {
   } = useDashboardViews();
 
   const isCompact = useIsCompact();
-  const [canvasRef, canvasSize] = useElementSize();
+  const [canvasRef, canvasSize, canvasNode] = useElementSize();
   const [ratios, setRatios] = useState({});
   const noteRatio = (id) => (r) => {
     setRatios((p) => (p[id] === r ? p : { ...p, [id]: r }));
@@ -409,6 +443,26 @@ function Dashboard() {
     });
   };
   const resetLayout = () => setDraft((d) => ({ ...d, layout: {} }));
+  // Shuffle: every visible tile keeps its size and moves to a random spot,
+  // none overlapping (sizes measured from the rendered tiles).
+  const shuffleLayout = () => {
+    const canvas = canvasNode;
+    if (!canvas) return;
+    const sizes = [...canvas.querySelectorAll("[data-tile-id]")].map((el) => ({
+      id: el.dataset.tileId, w: el.offsetWidth, h: el.offsetHeight }));
+    if (!sizes.length) return;
+    const spots = shuffleRects(sizes, canvas.clientWidth, canvas.clientHeight);
+    setDraft((d) => {
+      const layout = { ...d.layout };
+      for (const [id, pos] of Object.entries(spots)) {
+        layout[id] = {
+          ...(d.layout[id] || effLayoutRef.current[id] || { width: DEFAULT_TILE_W }),
+          ...pos,
+        };
+      }
+      return { ...d, layout };
+    });
+  };
 
   // ── view management (all admin-gated server-side) ────────────────────
   const newView = () => {
@@ -559,6 +613,14 @@ function Dashboard() {
             >
               Reset layout
             </button>
+            <button
+              type="button"
+              className="dashboard-panel-toggle"
+              onClick={shuffleLayout}
+              title="Move every tile to a random spot, keeping sizes, none overlapping"
+            >
+              Shuffle
+            </button>
             <span className="dashboard-saving-hint">{savingHint}</span>
           </div>
 
@@ -617,6 +679,7 @@ function Dashboard() {
               return (
                 <DraggableTile
                   key={w.id}
+                  tileId={w.id}
                   x={t.x}
                   y={t.y}
                   width={t.width}

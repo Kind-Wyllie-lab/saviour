@@ -9,7 +9,8 @@ import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCa
 import {
   EXTERNAL_SYNC, moduleKindLabel, syncModules, systemName, syncApplication, pinLabel, syncWarnings,
 } from "/src/basic/utils/ttlApplications";
-import { streamInfo } from "/src/basic/utils/moduleStreams";
+import { streamInfo, moduleSettingsSummary } from "/src/basic/utils/moduleStreams";
+import socket from "/src/socket";
 import { RIG_TYPES, BUILT_VARIANT } from "./rigTypes";
 import ExpectedModulesStep from "./ExpectedModulesStep";
 import SyncLinesStep from "./SyncLinesStep";
@@ -48,7 +49,7 @@ function moduleTitle(m) {
   return `${m.name || m.id}${kind ? ` · ${kind}` : ""}`;
 }
 
-function StepRail({ steps, step, setStep }) {
+function StepRail({ steps, step, setStep, locked }) {
   return (
     <ol className="quick-setup__rail">
       {steps.map((s, i) => (
@@ -57,6 +58,8 @@ function StepRail({ steps, step, setStep }) {
             type="button"
             className={`quick-setup__rail-step${i === step ? " is-current" : ""}${i < step ? " is-done" : ""}`}
             onClick={() => setStep(i)}
+            disabled={locked?.(s.key)}
+            title={locked?.(s.key) ? "Go through every preview first" : undefined}
             aria-current={i === step ? "step" : undefined}
           >
             <span className="quick-setup__rail-num">{i < step ? "✓" : i + 1}</span>
@@ -104,6 +107,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
   const setStep = (i) => setStepKey(steps[Math.max(0, Math.min(steps.length - 1, i))].key);
   const [confirmed, setConfirmed] = useState({}); // module id -> true
   const [current, setCurrent] = useState(0);      // index into `modules` on the Previews step
+  const [viewed, setViewed] = useState(() => new Set()); // module ids whose preview was shown
 
   const rigType = RIG_TYPES[BUILT_VARIANT] ?? { label: BUILT_VARIANT, description: "" };
   const conditions = externalSync ? [externalSync] : [];
@@ -112,8 +116,21 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
     .sort((a, b) => (a.type || "").localeCompare(b.type || "")
       || (a.name || a.id).localeCompare(b.name || b.id)), [moduleList]);
   const offline = moduleList.filter((m) => m.online === false);
-  const mod = modules[Math.min(current, Math.max(0, modules.length - 1))];
+  const cur = Math.min(current, Math.max(0, modules.length - 1));
+  const mod = modules[cur];
   const confirmedCount = modules.filter((m) => confirmed[m.id]).length;
+  const allViewed = modules.every((m) => viewed.has(m.id));
+
+  // Module configs ride on the module list once asked for (resolution,
+  // sample rate... beside each preview).
+  useEffect(() => { socket.emit("get_module_configs"); }, []);
+
+  // A preview counts as gone through once it's been on screen.
+  const onPreviews = stepKey === "previews";
+  const modId = mod?.id;
+  useEffect(() => {
+    if (onPreviews && modId) setViewed((v) => (v.has(modId) ? v : new Set(v).add(modId)));
+  }, [onPreviews, modId]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -123,15 +140,27 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
       if (stepKey !== "previews" || e.target.closest?.("input, select, textarea")) return;
       if (e.key === "ArrowRight") setCurrent((c) => Math.min(modules.length - 1, c + 1));
       if (e.key === "ArrowLeft") setCurrent((c) => Math.max(0, c - 1));
+      // (Arrow keys only move between previews; Next leaves the step.)
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose, stepKey, modules.length]);
 
+  // On the Previews step the footer's Back / Next walk the modules one by
+  // one; past the first / last they leave the step.
+  const back = () => {
+    if (key === "previews" && cur > 0) { setCurrent(cur - 1); return; }
+    if (steps[step - 1]?.key === "previews") setCurrent(Math.max(0, modules.length - 1));
+    setStep(step - 1);
+  };
+  const next = () => {
+    if (key === "previews" && cur < modules.length - 1) { setCurrent(cur + 1); return; }
+    if (steps[step + 1]?.key === "previews") setCurrent(0);
+    setStep(step + 1);
+  };
   const looksOk = (id) => {
     setConfirmed((c) => ({ ...c, [id]: true }));
-    const next = modules.findIndex((m, i) => i > current && !confirmed[m.id] && m.id !== id);
-    if (next >= 0) setCurrent(next);
+    next();
   };
   const undo = (id) => setConfirmed((c) => { const n = { ...c }; delete n[id]; return n; });
 
@@ -171,6 +200,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
 
   const key = steps[step].key;
   const info = mod ? streamInfo(mod) : null;
+  const settings = mod ? moduleSettingsSummary(mod) : [];
 
   return createPortal(
     <div className="modal-overlay quick-setup-overlay" onClick={onClose}>
@@ -181,7 +211,8 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
           {lastRun && <span className="quick-setup__last">Last run {describeRun(lastRun)}</span>}
           <button type="button" className="quick-setup__close" onClick={onClose} aria-label="Close">✕</button>
         </div>
-        <StepRail steps={steps} step={step} setStep={setStep} />
+        <StepRail steps={steps} step={step} setStep={setStep}
+          locked={(k) => k === "summary" && !allViewed && key !== "summary"} />
 
         <div className="quick-setup__body">
           {key === "rig" && (
@@ -312,15 +343,39 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                     <strong>{moduleTitle(mod)}</strong>
                     <span className="quick-setup__hint">{mod.type} · {mod.id}</span>
                   </div>
-                  {info ? (
-                    <MJPEGStreamCard key={mod.id} ip={mod.ip} port={info.port} label={info.label}
-                      isRecording={mod.status === "RECORDING"} />
-                  ) : (
-                    <p className="quick-setup__no-preview">
-                      No live preview for this module type. Status: {mod.status ?? "unknown"}
-                      {mod.ready_message ? ` (${mod.ready_message})` : ""}
-                    </p>
-                  )}
+                  <div className="quick-setup__preview-main">
+                    {info ? (
+                      <MJPEGStreamCard key={mod.id} ip={mod.ip} port={info.port} label={info.label}
+                        isRecording={mod.status === "RECORDING"} />
+                    ) : (
+                      <p className="quick-setup__no-preview">
+                        No live preview for this module type. Status: {mod.status ?? "unknown"}
+                        {mod.ready_message ? ` (${mod.ready_message})` : ""}
+                      </p>
+                    )}
+                    <aside className="quick-setup__params" aria-label="Key settings">
+                      <h4 className="qs-card-title">Settings</h4>
+                      {settings.length ? (
+                        <dl>
+                          {settings.map((p) => (
+                            <div key={p.label} className="quick-setup__param">
+                              <dt>{p.label}</dt><dd>{p.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p className="qs-muted">{mod.config ? "Nothing to summarise for this type." : "Loading…"}</p>
+                      )}
+                      <dl>
+                        <div className="quick-setup__param quick-setup__param--meta">
+                          <dt>Status</dt><dd>{mod.status ?? "unknown"}</dd>
+                        </div>
+                        <div className="quick-setup__param quick-setup__param--meta">
+                          <dt>IP</dt><dd>{mod.ip ?? "–"}</dd>
+                        </div>
+                      </dl>
+                    </aside>
+                  </div>
                   <div className="quick-setup__preview-actions">
                     {confirmed[mod.id] ? (
                       <button type="button" className="quick-setup__btn" onClick={() => undo(mod.id)}>
@@ -336,7 +391,7 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                       Open settings ↗
                     </a>
                     <span className="quick-setup__hint">
-                      {confirmedCount} of {modules.length} confirmed · ← → to move
+                      {confirmedCount} of {modules.length} confirmed · Looks OK confirms and moves on
                     </span>
                   </div>
                 </div>
@@ -393,14 +448,15 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
         </div>
 
         <div className="quick-setup__foot">
-          <button type="button" className="quick-setup__btn" onClick={() => setStep(step - 1)} disabled={step === 0}>
-            ← Back
+          <button type="button" className="quick-setup__btn" onClick={back} disabled={step === 0}>
+            {key === "previews" && cur > 0 ? "← Previous module" : "← Back"}
           </button>
           {key === "summary" ? (
             <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={done}>Done</button>
           ) : (
-            <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={() => setStep(step + 1)}>
-              Next →
+            <button type="button" className="quick-setup__btn quick-setup__btn--primary" onClick={next}>
+              {key === "previews" && cur < modules.length - 1
+                ? `Next module (${cur + 2} of ${modules.length}) →` : "Next →"}
             </button>
           )}
         </div>

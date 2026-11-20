@@ -1130,6 +1130,25 @@ class TestCheckReady:
 
             assert mock_sleep.call_args_list == [call(0.75)]
 
+    def test_explicit_module_list_wins_over_target(self):
+        """A pending session's page checks its own modules (which can differ
+        from its target): unknown ids are dropped and PTP is judged on
+        exactly those modules."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules_by_target.return_value = {"cam1": {}, "cam2": {}, "mic1": {}}
+            facade.check_ptp_sync.return_value = {}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch.object(web.socketio, "sleep"):
+                client.emit("check_ready", {"modules": ["cam2", "gone"], "target": "all"})
+
+            readiness = [c.args[0] for c in facade.send_command.call_args_list
+                         if c.args[1] == "validate_readiness"]
+            assert readiness == ["cam2"]
+            facade.check_ptp_sync.assert_called_once_with("all", ["cam2"])
+
 
 class TestSaveModuleConfig:
     """save_module_config: blocked while the target module is recording,

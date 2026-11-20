@@ -1865,8 +1865,17 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
         def handle_check_ready(data):
             if not self._require_auth("auth_required"):
                 return
+            data = data if isinstance(data, dict) else {}
             target = data.get("target")
-            modules = list(self.facade.get_modules_by_target(target).keys())
+            # An explicit module list (a pending session's own modules, which
+            # can differ from its target after editing) wins over the target.
+            if isinstance(data.get("modules"), list):
+                known = self.facade.get_modules_by_target("all")
+                modules = [str(m) for m in data["modules"] if str(m) in known]
+                explicit = True
+            else:
+                modules = list(self.facade.get_modules_by_target(target).keys())
+                explicit = False
             # get_health is a cheap in-memory read on the module side — fire it at
             # every module immediately, no staggering needed.
             for mid in modules:
@@ -1886,7 +1895,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             # before running the PTP check.  get_health is an in-memory read on the
             # module side; ZMQ round-trip on a PoE LAN is < 5 ms, so 750 ms is ample.
             self.socketio.sleep(0.75)
-            ptp = self.facade.check_ptp_sync(target)
+            ptp = self.facade.check_ptp_sync(target, modules if explicit else None)
             self.socketio.emit("ptp_sync_status", ptp)
 
 

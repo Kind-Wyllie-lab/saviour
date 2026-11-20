@@ -640,9 +640,10 @@ const ROUTER = {
     state.systemState.recording = false;
     this._fire("modules_update", clone(state.modules));
   },
-  check_ready() {
+  check_ready({ modules } = {}) {
     for (const m of Object.values(state.modules)) {
       if (m.status === "OFFLINE") continue;
+      if (Array.isArray(modules) && !modules.includes(m.id)) continue;
       m.ready = !m.hardware_fault;
       m.status = m.ready ? "READY" : "NOT_READY";
     }

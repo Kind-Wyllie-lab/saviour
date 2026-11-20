@@ -369,8 +369,10 @@ class ControllerFacade:
             # No managed session — send command directly as a fallback
             self.controller.communication.send_command(target, "stop_recording", {})
 
-    def check_ptp_sync(self, target: str) -> dict:
-        modules = list(self.get_modules_by_target(target).keys())
+    def check_ptp_sync(self, target: str, modules: list[str] | None = None) -> dict:
+        """PTP start gate for a target, or for an explicit module list."""
+        if modules is None:
+            modules = list(self.get_modules_by_target(target).keys())
         if not modules:
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)

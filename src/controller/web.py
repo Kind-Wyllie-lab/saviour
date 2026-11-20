@@ -1036,6 +1036,9 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             metadata["external_sync"] = ephys.get("external_sync")
             if ephys.get("wiring"):
                 metadata["ephys_wiring"] = ephys["wiring"]
+        quick_setup = self.facade.get_session_quick_setup(session_name)
+        if quick_setup:
+            metadata["quick_setup"] = quick_setup
 
         if not self._try_write_metadata(session_name, metadata):
             self.logger.warning(
@@ -1710,6 +1713,26 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             """Expected-vs-present hardware (rig_check.py); also pushed as
             `rig_check` whenever it changes."""
             self._emit_rig_check(room=request.sid)
+
+
+        @self.socketio.on('add_rig_expected_item')
+        def handle_add_rig_expected_item(data=None):
+            """Quick setup: append one item to `rig.expected` (admin)."""
+            if not self._require_auth("rig_expected_error"):
+                return
+            from src.controller.rig_check import RigProfileError
+            item = (data or {}).get("item") if isinstance(data, dict) else None
+            try:
+                entry = self.facade.add_rig_expected_item(item)
+            except RigProfileError as e:
+                self.socketio.emit("rig_expected_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.logger.info(f"Rig expected item added: {entry}")
+            self.socketio.emit("rig_expected_added", {"item": entry}, room=request.sid)
+            self.socketio.emit("controller_config_response",
+                               {"config": self._controller_config_payload()})
+            self._emit_rig_check()
 
 
         @self.socketio.on('get_rig_defaults')

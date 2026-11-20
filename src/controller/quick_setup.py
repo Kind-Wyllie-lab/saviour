@@ -14,7 +14,9 @@ One JSON file, written atomically::
                   "external_sync": "ephys" | null,
                   "rig": {"level": "ok", "summary": "..."},
                   "modules": {module_id: {"name": ..., "type": ...,
-                                          "confirmed": bool}}}}
+                                          "confirmed": bool}},
+                  "sync_lines": [{"module_id", "name", "gpio", "role",
+                                  "channel", "state"}]}}
 
 Socket.IO: ``get_quick_setup`` -> ``quick_setup`` ({"last_run": ... | None});
 ``save_quick_setup`` {run} stores it and broadcasts ``quick_setup``; failures
@@ -34,6 +36,7 @@ from collections.abc import Callable
 STORE_FILE = "/var/lib/saviour/controller/quick_setup.json"
 # A run lists one entry per module; this only stops a runaway payload.
 MAX_MODULES = 256
+MAX_LINES = 256
 MAX_TEXT = 200
 
 
@@ -68,6 +71,29 @@ def clean_run(run: object, *, now: float, by: str) -> dict:
             "type": _text(m.get("type"), 40),
             "confirmed": bool(m.get("confirmed")),
         }
+    lines_in = run.get("sync_lines")
+    if lines_in is None:
+        lines_in = []
+    if not isinstance(lines_in, list):
+        raise QuickSetupError("sync_lines must be a list")
+    if len(lines_in) > MAX_LINES:
+        raise QuickSetupError(f"at most {MAX_LINES} sync lines")
+    sync_lines = []
+    for ln in lines_in:
+        ln = ln if isinstance(ln, dict) else {}
+        try:
+            gpio = int(ln.get("gpio"))
+        except (TypeError, ValueError):
+            continue
+        channel = ln.get("channel")
+        sync_lines.append({
+            "module_id": _text(ln.get("module_id"), 80),
+            "name": _text(ln.get("name")),
+            "gpio": gpio,
+            "role": _text(ln.get("role"), 40),
+            "channel": channel if isinstance(channel, int) else None,
+            "state": _text(ln.get("state"), 20),
+        })
     rig = run.get("rig") if isinstance(run.get("rig"), dict) else {}
     return {
         "at": now,
@@ -78,6 +104,7 @@ def clean_run(run: object, *, now: float, by: str) -> dict:
         "rig": {"level": _text(rig.get("level"), 20),
                 "summary": _text(rig.get("summary"), 500)},
         "modules": modules,
+        "sync_lines": sync_lines,
     }
 
 

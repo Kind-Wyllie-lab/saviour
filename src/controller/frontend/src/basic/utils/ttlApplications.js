@@ -16,6 +16,16 @@ export const EXTERNAL_SYNC = defs.external_sync ?? {};
 export function syncApplication(kind) {
   return EXTERNAL_SYNC[kind]?.application ?? null;
 }
+
+// The sync TTL modules (with their lines) for an external sync kind, from
+// the controller's `ttl_lines` payload: [{id, name, online, lines, ...}].
+export function syncModules(ttlLines, kind) {
+  const app = syncApplication(kind);
+  if (!app) return [];
+  return Object.entries(ttlLines?.modules ?? {})
+    .filter(([, m]) => m.application === app)
+    .map(([id, m]) => ({ id, ...m }));
+}
 export const APPLICATION_ORDER = ["ephys_sync", "neurologger_sync", "stimulus_control", "mixed"];
 
 export function applicationOf(ttlCfg) {

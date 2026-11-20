@@ -1,6 +1,6 @@
 # Quick setup: one button that walks through the rig before recording
 
-- **Status:** phase 1 built 2026-11-20 (not yet run on the rig); phases 2-3 open
+- **Status:** phases 1-3 built 2026-11-20, not yet run on the rig or viewed in a browser; "Later" items open
 - **Created:** 2026-11-20
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -94,10 +94,27 @@ remembers the last run so it can be shown, not enforced.
    `basic/utils/moduleStreams.js`. Step 3 shows the live rig check read-only
    with a link to the Rig tab. Button sits in the Sessions header (variants
    whose session list has + New Session) and the System page header (every
-   variant using the basic System page). Not yet in the rig-check banner.
-2. Step 3 editing (add expected item / add as expected) and step 5 (sync
-   lines, reusing `TTLLinesEditor` pieces).
-3. Session metadata copy and the "last run" line on New Session.
+   variant using the basic System page), and the rig-check banner's popover.
+2. **Built 2026-11-20.** Step 3 editing (add expected item / add as expected) and step 5 (sync
+   lines, reusing `TTLLinesEditor` pieces). As built: `ExpectedModulesStep.jsx`
+   (connected modules no item counts, each with **Add as expected** = its
+   type, TTL application and the `when` of a sync application, `min` = how
+   many are connected; an **Add expected item** form: type, label, at least,
+   required/optional, every session or one external sync kind) → socket
+   `add_rig_expected_item` (admin; `facade.add_rig_expected_item` validates
+   with `rig_check.normalise_entry`, appends, keeps legacy counts when
+   `rig.expected` was never set, re-runs the rig check). Removing or editing
+   items stays on the Rig tab. `SyncLinesStep.jsx`: the chosen kind's sync
+   modules, each line with Test line (`test_pin`, 5 s) and **Seen in Open
+   Ephys / the logger** (`confirm_ttl_line`, admin). The run stores each
+   line's state (`sync_lines`).
+3. **Built 2026-11-20.** Session metadata copy and the "last run" line on New Session. As built:
+   `RecordingSession.quick_setup` stamped with the rig check
+   (`_stamp_hardware`, at create and at start) and written to
+   `session_metadata.json` (`quick_setup`); `QuickSetupLastRun` under
+   External sync on the standard New Session form ("Quick setup: today 09:12
+   · all modules confirmed" + Run again; a run started there updates the
+   form's External sync). Not on the scheduled habitat or loom forms.
 
 ## Decisions
 

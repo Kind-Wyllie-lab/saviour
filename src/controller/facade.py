@@ -91,6 +91,33 @@ class ControllerFacade:
         if monitor:
             monitor.restart_grace()
 
+    def refresh_rig_check(self) -> dict | None:
+        """Re-evaluate the rig check now (pushing `rig_check` if it changed),
+        e.g. straight after `rig.expected` was edited."""
+        monitor = getattr(self.controller, "rig_monitor", None)
+        return monitor.tick() if monitor else None
+
+    def add_rig_expected_item(self, item: object) -> dict:
+        """Append one item to ``rig.expected`` (Quick setup's "Add expected
+        item"). Validated by rig_check.normalise_entry (RigProfileError on a
+        bad one). With no ``rig.expected`` set yet, the list the rig check is
+        using now (legacy counts) is kept and the item added to it."""
+        from src.controller.rig_check import load_profile, normalise_entry
+        entry = normalise_entry(item)
+        config = self.get_config() or {}
+        rig = config.get("rig") if isinstance(config.get("rig"), dict) else {}
+        current = rig.get("expected")
+        if not isinstance(current, list):
+            current = load_profile(config)["expected"]
+        self.set_config({"rig": {"expected": [*current, entry]}})
+        self.refresh_rig_check()
+        return entry
+
+    def get_quick_setup(self) -> dict | None:
+        """The last Quick setup run (quick_setup.py), or None."""
+        store = getattr(self.controller, "quick_setup", None)
+        return store.last_run() if store is not None else None
+
     def get_rig_defaults(self) -> dict:
         """The variant's shipped ``rig`` section (for "reset to defaults")."""
         return dict(getattr(self.controller.config, "variant_defaults", {})
@@ -374,6 +401,10 @@ class ControllerFacade:
             return None
         return {"ephys": bool(session.ephys), "external_sync": session.external_sync,
                 "wiring": session.ephys_wiring}
+
+    def get_session_quick_setup(self, session_name: str) -> dict | None:
+        session = self.controller.recording.sessions.get(session_name)
+        return session.quick_setup if session is not None else None
 
     def mark_ephys_uploaded(self, session_name: str) -> bool:
         return self.controller.recording.mark_ephys_uploaded(session_name)

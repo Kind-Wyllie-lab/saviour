@@ -203,6 +203,10 @@ class RecordingSession:
     # the acquisition system, when the session was created / each run began
     # (ttl_lines.sync_wiring). None for a non-ephys session.
     ephys_wiring:              list | None = None
+    # The last Quick setup run (quick_setup.py) when the session was created
+    # / started, so a dataset says whether and when the rig was walked
+    # through and which modules' previews were confirmed. None = never run.
+    quick_setup:               dict | None = None
     # When the session's ephys data was uploaded (Post-Process); an ephys
     # session without it is flagged in the session list.
     ephys_uploaded_at:         float | None = None
@@ -657,6 +661,16 @@ class Recording:
         session.rig_check = self._rig_check({kind} if kind else ())
         session.ephys_wiring = (self._sync_wiring(ttl_application.sync_application(kind))
                                 if kind else None)
+        session.quick_setup = self._quick_setup()
+
+    def _quick_setup(self) -> dict | None:
+        """The last Quick setup run, or None (never blocks a session)."""
+        try:
+            run = self.facade.get_quick_setup()
+        except Exception as e:
+            self.logger.warning(f"quick setup record unavailable: {e}")
+            return None
+        return run if isinstance(run, dict) else None
 
     @staticmethod
     def _sync_kind(external_sync, ephys) -> tuple[str | None, str | None]:

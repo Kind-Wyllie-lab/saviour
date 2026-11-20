@@ -42,38 +42,36 @@ const PANEL_MIN_H = 160;
 const TILE_GRIP_PX = 20;      // .dash-tile__grip height — the drag strip above every body
 const STREAM_TILE_CHROME = 46; // grip + stream-card header, per stream-tile row
 
-// Random non-overlapping positions for tiles of the given sizes inside a
-// canvas `boxW` wide (`boxH` tall when it fits; the canvas scrolls, so a
-// tile with no free spot on screen goes to the first free spot below).
-// Largest first, each tries random spots that keep `gap` from those placed.
-function shuffleRects(sizes, boxW, boxH, gap = ARRANGE_GAP, tries = 400) {
-  const placed = [];
-  const clash = (r) => placed.some((p) =>
-    r.x < p.x + p.w + gap && p.x < r.x + r.w + gap &&
-    r.y < p.y + p.h + gap && p.y < r.y + r.h + gap);
-  const out = {};
+// Random non-overlapping positions for tiles of the given sizes, all inside
+// a boxW x boxH canvas with `gap` between tiles and from the edges (so a
+// shuffle never adds scrollbars). Largest first, random spots; a dead end
+// restarts the whole arrangement. null when no arrangement was found.
+function shuffleRects(sizes, boxW, boxH, gap = ARRANGE_GAP, restarts = 80, tries = 300) {
   const order = [...sizes].sort((a, b) => b.w * b.h - a.w * a.h);
-  for (const s of order) {
-    const maxX = Math.max(0, boxW - s.w);
-    const maxY = Math.max(0, boxH - s.h);
-    let spot = null;
-    for (let i = 0; i < tries && !spot; i++) {
-      const r = { x: Math.random() * maxX, y: Math.random() * maxY, w: s.w, h: s.h };
-      if (!clash(r)) spot = r;
-    }
-    // No room on screen: scan rows from the top for the first free spot.
-    for (let y = 0; !spot; y += 20) {
-      for (let x = 0; x <= maxX; x += 20) {
-        const r = { x, y, w: s.w, h: s.h };
-        if (!clash(r)) { spot = r; break; }
+  for (let attempt = 0; attempt < restarts; attempt++) {
+    const placed = [];
+    const clash = (r) => placed.some((p) =>
+      r.x < p.x + p.w + gap && p.x < r.x + r.w + gap &&
+      r.y < p.y + p.h + gap && p.y < r.y + r.h + gap);
+    let ok = true;
+    for (const s of order) {
+      const spanX = boxW - s.w - 2 * gap;
+      const spanY = boxH - s.h - 2 * gap;
+      if (spanX < 0 || spanY < 0) return null; // this tile alone doesn't fit
+      let spot = null;
+      for (let i = 0; i < tries && !spot; i++) {
+        const r = { id: s.id, x: gap + Math.random() * spanX, y: gap + Math.random() * spanY,
+          w: s.w, h: s.h };
+        if (!clash(r)) spot = r;
       }
+      if (!spot) { ok = false; break; }
+      placed.push(spot);
     }
-    spot.x = Math.round(spot.x);
-    spot.y = Math.round(spot.y);
-    placed.push(spot);
-    out[s.id] = { x: spot.x, y: spot.y };
+    if (ok) {
+      return Object.fromEntries(placed.map((p) => [p.id, { x: Math.round(p.x), y: Math.round(p.y) }]));
+    }
   }
-  return out;
+  return null;
 }
 
 // Largest aspect-locked cell (w = h * ratio) for `n` tiles laid out in some
@@ -448,17 +446,36 @@ function Dashboard() {
   const shuffleLayout = () => {
     const canvas = canvasNode;
     if (!canvas) return;
-    const sizes = [...canvas.querySelectorAll("[data-tile-id]")].map((el) => ({
+    const measured = [...canvas.querySelectorAll("[data-tile-id]")].map((el) => ({
       id: el.dataset.tileId, w: el.offsetWidth, h: el.offsetHeight }));
-    if (!sizes.length) return;
-    const spots = shuffleRects(sizes, canvas.clientWidth, canvas.clientHeight);
+    if (!measured.length) return;
+    const isStreamId = (id) => id.startsWith("stream:");
+    // Everything must land inside the visible canvas. If it won't at the
+    // current sizes, shrink the stream tiles (aspect-locked: only the video
+    // part scales, the header strip doesn't) a step at a time until it does.
+    let spots = null;
+    let scale = 1;
+    for (; scale >= 0.3 && !spots; scale = +(scale - 0.1).toFixed(2)) {
+      const sizes = measured.map((m) => (isStreamId(m.id) && scale < 1
+        ? { id: m.id, w: Math.floor(m.w * scale),
+            h: Math.ceil(STREAM_TILE_CHROME + (m.h - STREAM_TILE_CHROME) * scale) }
+        : m));
+      spots = shuffleRects(sizes, canvas.clientWidth, canvas.clientHeight);
+      if (spots) break;
+    }
+    if (!spots) return; // can't fit even at 30%: leave the layout alone
+    const heights = Object.fromEntries(measured.map((m) => [m.id, m.h]));
     setDraft((d) => {
       const layout = { ...d.layout };
       for (const [id, pos] of Object.entries(spots)) {
-        layout[id] = {
-          ...(d.layout[id] || effLayoutRef.current[id] || { width: DEFAULT_TILE_W }),
-          ...pos,
-        };
+        const prev = d.layout[id] || effLayoutRef.current[id] || { width: DEFAULT_TILE_W };
+        const next = { ...prev, ...pos };
+        if (isStreamId(id) && scale < 1) next.width = Math.floor((prev.width || DEFAULT_TILE_W) * scale);
+        // A content-sized panel keeps its measured height on this screen, so
+        // it can't grow past the bottom from its new spot (maxHeight isn't
+        // saved; see materialisedLayout).
+        if (!isStreamId(id) && next.height == null) next.maxHeight = heights[id] - TILE_GRIP_PX;
+        layout[id] = next;
       }
       return { ...d, layout };
     });

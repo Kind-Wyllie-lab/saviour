@@ -44,6 +44,7 @@ class Config:
         self.base_config_path = os.path.abspath(base_config_path)
         self.active_config_path = os.path.abspath(active_config_path)
         self.config: dict[str, Any] = {}
+        self.variant_defaults: dict[str, Any] = {}
         self._lock = threading.Lock()
 
         # One-time migration: copy active config from old in-tree location if needed
@@ -104,6 +105,8 @@ class Config:
             return
 
         controller_config = self._load_json(controller_path)
+        # Kept for "reset to variant defaults" (e.g. the Rig tab's rig.expected).
+        self.variant_defaults = controller_config
 
         # Extract keys from config and flatten to dot notation for easy comparison
         self.controller_config_keys = self._flatten_keys(controller_config)

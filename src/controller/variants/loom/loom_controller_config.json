@@ -1,1 +1,24 @@
-{}
+{
+    "rig": {
+        "expected": [
+            {
+                "label": "Loom camera",
+                "types": [
+                    "loom_camera"
+                ],
+                "min": 1,
+                "severity": "required"
+            },
+            {
+                "label": "Microphone",
+                "types": [
+                    "microphone"
+                ],
+                "min": 1,
+                "severity": "optional"
+            }
+        ],
+        "startup_grace_s": 120,
+        "alert_after_s": 600
+    }
+}

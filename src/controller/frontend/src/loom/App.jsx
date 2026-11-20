@@ -16,6 +16,7 @@ import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/Connectio
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import { LoomStageProvider } from "/src/loom/LoomStageContext";
+import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
 
 document.title = "Loom";
 
@@ -47,6 +48,7 @@ function App() {
         <Sidebar navItems={pages} />
         <div className="content">
           <RecordingStatusWidget />
+          <RigCheckBanner />
           <div className="content-scroll">
             <Routes>
               <Route path="/"          element={<Dashboard />} />

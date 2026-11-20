@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import socket from "/src/socket";
 import { confirmIfOtherAdmins } from "/src/clients";
+import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
 import "./LoomRecording.css";
 
 import { useLoomStage, StageToggle, CAMERA_TYPES, HABITUATION_GROUP } from "/src/loom/LoomStageContext";
@@ -36,6 +37,7 @@ export default function LoomRecording() {
   const { stage } = useLoomStage();
   const { moduleList } = useModules();
   const { sessionList } = useSessions();
+  const rig = useRigCheck();
   const { experimentName, experimenter } = useExperimentTitle();
 
   const [now, setNow] = useState(() => new Date());
@@ -98,6 +100,7 @@ export default function LoomRecording() {
   const handleStart = () => {
     if (!experimentName) return;
     if (!confirmIfOtherAdmins("Start this session")) return;
+    if (!confirmRigShortfall(rig)) return;
     socket.emit("create_session", {
       target,
       session_name: `${safeName(experimentName)}-${formatTs(now)}`,

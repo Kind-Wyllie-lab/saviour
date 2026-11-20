@@ -10,6 +10,7 @@ import TimeSelect from "./TimeSelect/TimeSelect";
 import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
 import { humanizeMinutes } from "../sessionFormat";
 import SessionProtocolField from "./SessionProtocolField";
+import useRigCheck, { confirmRigShortfall } from "/src/hooks/useRigCheck";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // Daily time-window sessions are a habitat thing; other rigs don't offer them.
@@ -21,6 +22,7 @@ const daysDeserialize = (str) => new Set(JSON.parse(str));
 
 function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated, prefill }) {
   const { experimentName, experimenter } = useExperimentTitle();
+  const rig = useRigCheck();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -207,6 +209,8 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     if (!experimentName) return;
     if (!confirmIfOtherAdmins(recordingMode === "scheduled"
       ? "Schedule this session" : "Start this session")) return;
+    if (!confirmRigShortfall(rig, recordingMode === "scheduled"
+      ? "Schedule this session" : "Create this session")) return;
     setSubmitError(null);
 
     if (recordingMode === "scheduled") {

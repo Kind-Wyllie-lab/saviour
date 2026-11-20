@@ -18,6 +18,7 @@ import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertMod
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
+import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
 
 
 document.title="Habitat";
@@ -43,6 +44,7 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <HabitatRecordingControl />
+        <RigCheckBanner />
         <div className="content-scroll">
           <Routes>
             <Route path="/" element={<HabitatDashboard />} />

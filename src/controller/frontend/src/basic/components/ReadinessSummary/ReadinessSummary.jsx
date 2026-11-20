@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../../pages/Recording/targetModules";
 import "./ReadinessSummary.css";
+import useRigCheck, { rigShortfalls } from "/src/hooks/useRigCheck";
+import RigCheckList from "../RigCheck/RigCheckList";
 
 // Distinct from ModuleList (full fleet table: name/status/group/IP/version,
 // Update All/Reboot All) -- this is scoped to whatever target is currently
@@ -27,6 +29,8 @@ export default function ReadinessSummary({ modules, target }) {
   // Per-group manual open/closed override -- undefined means "not touched
   // yet, use the health-based default" (see isOpen below).
   const [manuallyToggled, setManuallyToggled] = useState({});
+  const rig = useRigCheck();
+  const rigProblems = rigShortfalls(rig).length > 0;
 
   const groups = useMemo(() => groupModulesByGroup(modules), [modules]);
   const targetModules = useMemo(
@@ -44,12 +48,25 @@ export default function ReadinessSummary({ modules, target }) {
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [targetModules]);
 
+  const rigBlock = rigProblems && (
+    <div className="readiness-summary__rig">
+      <h3 className="readiness-summary__title">Rig hardware</h3>
+      <RigCheckList rig={rig} onlyProblems />
+    </div>
+  );
+
   if (targetModules.length === 0) {
-    return <p className="readiness-summary__empty">No modules match this target.</p>;
+    return (
+      <>
+        {rigBlock}
+        <p className="readiness-summary__empty">No modules match this target.</p>
+      </>
+    );
   }
 
   return (
     <div className="readiness-summary">
+      {rigBlock}
       <h3 className="readiness-summary__title">Module Readiness</h3>
       {byGroup.map(([groupName, groupModules]) => {
         const readyCount = groupModules.filter(isModuleReady).length;

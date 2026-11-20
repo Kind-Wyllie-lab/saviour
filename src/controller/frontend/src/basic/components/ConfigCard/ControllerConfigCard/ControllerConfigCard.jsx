@@ -8,6 +8,7 @@ import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "./ExportConfigSection";
 import RfidDbSection from "./RfidDbSection";
+import RigProfileSection from "./RigProfileSection";
 import ConfigActionBar, { HeaderSaveButton } from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
@@ -30,6 +31,7 @@ const TABS = [
   { key: "thresholds", label: "Thresholds" },
   { key: "export",     label: "Export"     },
   { key: "rfid",       label: "RFID DB"    },
+  { key: "rig",        label: "Rig"        },
   { key: "alerts",     label: "Alerts"     },
   { key: "frontend",   label: "Frontend"   },
 ];
@@ -200,6 +202,7 @@ function ControllerConfigCard() {
     { key: "notify_ptp_degraded",      label: "PTP sync degrades mid-recording" },
     { key: "notify_recording_health",  label: "A module self-reports its recording as unhealthy" },
     { key: "notify_disk_space",        label: "Low disk space (local & NAS)" },
+    { key: "notify_rig_incomplete",    label: "Required rig hardware missing (Rig tab)" },
   ];
 
   return (
@@ -285,6 +288,14 @@ function ControllerConfigCard() {
               <RfidDbSection
                 rfidDb={formData?.rfid_db}
                 handleChange={handleChange}
+              />
+            )}
+
+            {/* RIG (expected hardware; rig_check.py) */}
+            {activeTab === "rig" && (
+              <RigProfileSection
+                rig={formData?.rig}
+                onChange={(rig) => setFormData(fd => ({ ...fd, rig }))}
               />
             )}
 

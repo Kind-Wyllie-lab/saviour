@@ -15,6 +15,7 @@ import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/Acou
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
+import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
 
 document.title="Acoustic Startle";
 
@@ -36,6 +37,7 @@ function App() {
             <Sidebar navItems={pages} />
             <div className="content">
             <RecordingStatusWidget />
+            <RigCheckBanner />
             <div className="content-scroll">
             <Routes>
                 <Route path="/" element={<Dashboard />} />

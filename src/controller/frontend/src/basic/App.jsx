@@ -21,6 +21,7 @@ import RecordingStatusWidget from "./components/RecordingStatusWidget/RecordingS
 import useClockOnce from "/src/hooks/useClockOnce";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import socket from "/src/socket";
+import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
 
 
 document.title="SAVIOUR";
@@ -76,6 +77,7 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <RecordingStatusWidget />
+        <RigCheckBanner />
         {(nasHealth?.status === "error" || nasHealth?.status === "warn") && (
           <div className="nas-warning-banner">
             {nasHealth.reachable === false

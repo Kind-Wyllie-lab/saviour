@@ -23,6 +23,7 @@ const mockExperimentName = (md) =>
   ["experiment", "rat_id", "stage", "trial"].map((k) => String(md?.[k] ?? "").trim())
     .filter(Boolean).join("-") || null;
 import { simSnapshot } from "./habitatSim/index";
+import { evaluateRig, rigDefaults } from "./rigMock";
 
 const RESPONSE_DELAY_MS = 120;   // fake a little network latency
 const HEALTH_TICK_MS = 3000;     // jitter health so charts move
@@ -125,6 +126,11 @@ class MockSocket {
     this._fire("storage_overview", clone(state.storageOverview));
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
     this._fire("system_state", clone(state.systemState));
+    this._fireRigCheck();
+  }
+
+  _fireRigCheck() {
+    this._fire("rig_check", evaluateRig(state.controllerConfig.rig, state.modules, state.health));
   }
 
   _shockEvent(event, reason) {
@@ -420,6 +426,8 @@ const ROUTER = {
   get_system_state() { this._fire("system_state", clone(state.systemState)); },
   get_modules() { this._fire("modules_update", clone(state.modules)); },
   get_module_health() { this._fire("module_health_update", { module_health: clone(state.health) }); },
+  get_rig_check() { this._fireRigCheck(); },
+  get_rig_defaults() { this._fire("rig_defaults", rigDefaults()); },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
   get_network_overview() { this._fire("network_overview", mockNetworkOverview()); },
   release_dhcp_lease({ ip, mac } = {}) {
@@ -545,6 +553,7 @@ const ROUTER = {
   save_controller_config(payload) {
     Object.assign(state.controllerConfig, payload?.config || {});
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
+    this._fireRigCheck();
   },
   save_custom_theme(payload) {
     const fe = (state.controllerConfig.frontend ||= { custom_themes: [] });

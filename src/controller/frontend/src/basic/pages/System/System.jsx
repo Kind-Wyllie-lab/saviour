@@ -11,6 +11,8 @@ import { triggerDownload } from "../Recording/sessionFormat";
 import usePersistedState from "/src/hooks/usePersistedState";
 import SyncPanel from "./SyncPanel";
 import NetworkPanel from "./NetworkPanel";
+import useRigCheck from "/src/hooks/useRigCheck";
+import { RigCheckSummary } from "../../components/RigCheck/RigCheckList";
 import "./System.css";
 
 const TABS = [
@@ -155,6 +157,7 @@ export default function System() {
   const loggedIn = useIsLoggedIn();
   const { moduleHealth, controllerHealth, refresh } = useHealth();
   const { modules, moduleList } = useModules();
+  const rig = useRigCheck();
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
@@ -427,6 +430,8 @@ export default function System() {
 
       {tab === "sync" && <SyncPanel />}
       {tab === "network" && <NetworkPanel />}
+
+      {tab === "system" && <RigCheckSummary rig={rig} />}
 
       {tab === "system" && <div className="system-table-wrapper">
         <table className="system-table">

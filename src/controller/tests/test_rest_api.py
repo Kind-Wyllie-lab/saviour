@@ -33,6 +33,9 @@ def _web(**config_overrides):
     facade.get_uptime.return_value = 123
     facade.get_ptp_sync.return_value = 0
     facade.get_modules_by_target.return_value = {}
+    facade.get_rig_check.return_value = {
+        "level": "ok", "ok": True, "pending": False, "items": [],
+        "summary": "No expected hardware set"}
     facade.is_module_recording.return_value = False
     facade.check_ptp_sync.return_value = {
         "ok": True, "max_offset_us": 5.0, "threshold_us": 50}
@@ -1445,3 +1448,24 @@ class TestSecretsMasked:
             json={"export": {"share_password": "new-pw"}}, headers=_auth(password))
         assert web.facade.send_command.call_args[0][2]["export"]["share_password"] \
             == "new-pw"
+
+
+class TestRigCheckRoutes:
+    def test_state_includes_rig(self):
+        web, password = _web()
+        body = web.app.test_client().get(
+            "/api/v1/state", headers=_auth(password)).get_json()
+        assert body["rig"]["level"] == "ok"
+
+    def test_readiness_includes_rig_but_not_in_ready(self):
+        web, password = _web()
+        web.facade.get_rig_check.return_value = {
+            "level": "error", "ok": False, "items": [], "summary": "missing"}
+        web.facade.get_modules_by_target.return_value = {
+            "cam1": {"online": True}}
+        web._nas_health = {"status": "ok"}
+        web._recording_module_ids = lambda ids: []
+        body = web.app.test_client().get(
+            "/api/v1/readiness", headers=_auth(password)).get_json()
+        assert body["rig"]["summary"] == "missing"
+        assert "rig" not in body["checks"]

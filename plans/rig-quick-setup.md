@@ -1,6 +1,6 @@
 # Quick setup: one button that walks through the rig before recording
 
-- **Status:** proposed
+- **Status:** phase 1 built 2026-11-20 (not yet run on the rig); phases 2-3 open
 - **Created:** 2026-11-20
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -85,10 +85,16 @@ remembers the last run so it can be shown, not enforced.
 
 ## Phasing
 
-1. Modal shell + steps 1, 2, 4, 6 (rig type, external sync default,
+1. **Built 2026-11-20.** Modal shell + steps 1, 2, 4, 6 (rig type, external sync default,
    previews with Looks OK / Open settings, summary) and the store; button on the
    Recording and System pages. `dev:mock` support (mock streams already
-   exist).
+   exist). As built: `quick_setup.py` + `tests/test_quick_setup.py`;
+   `basic/components/QuickSetup/` (button, modal, rig type blurbs);
+   `hooks/useQuickSetup.js`; preview helper moved to
+   `basic/utils/moduleStreams.js`. Step 3 shows the live rig check read-only
+   with a link to the Rig tab. Button sits in the Sessions header (variants
+   whose session list has + New Session) and the System page header (every
+   variant using the basic System page). Not yet in the rig-check banner.
 2. Step 3 editing (add expected item / add as expected) and step 5 (sync
    lines, reusing `TTLLinesEditor` pieces).
 3. Session metadata copy and the "last run" line on New Session.

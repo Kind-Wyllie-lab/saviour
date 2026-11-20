@@ -429,6 +429,12 @@ const ROUTER = {
   get_modules() { this._fire("modules_update", clone(state.modules)); },
   get_module_health() { this._fire("module_health_update", { module_health: clone(state.health) }); },
   get_rig_check() { this._fireRigCheck(); },
+  // Quick setup's last run (src/controller/quick_setup.py), kept in memory.
+  get_quick_setup() { this._fire("quick_setup", { last_run: clone(state.quickSetup ?? null) }); },
+  save_quick_setup({ run } = {}) {
+    state.quickSetup = { ...run, at: Date.now() / 1000, by: "admin" };
+    this._fire("quick_setup", { last_run: clone(state.quickSetup) });
+  },
   get_rig_defaults() { this._fire("rig_defaults", rigDefaults()); },
   get_controller_health() { this._fire("controller_health_response", clone(state.controllerHealth)); },
   get_network_overview() { this._fire("network_overview", mockNetworkOverview()); },

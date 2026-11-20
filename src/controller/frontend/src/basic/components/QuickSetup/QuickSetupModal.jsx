@@ -142,6 +142,14 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
 
   // What the chosen external sync would flag: its conditional rig items and
   // unconfirmed sync lines (as ExternalSyncField on the New Session form).
+  // The rig's expected items grouped: every session first, then one group
+  // per external sync kind (items with `when`), so an "Ephys sync" item
+  // doesn't read as always expected.
+  const expectGroups = (() => {
+    const items = rig?.items ?? [];
+    const kinds = [...new Set(items.map((i) => i.when).filter(Boolean))];
+    return [["", items.filter((i) => !i.when)], ...kinds.map((k) => [k, items.filter((i) => i.when === k)])];
+  })();
   const syncMissing = externalSync
     ? rigShortfalls(rig, "required", [externalSync]).filter((i) => i.when) : [];
   const syncIssues = externalSync ? syncWarnings(ttlLines, syncApplication(externalSync)) : [];
@@ -187,18 +195,27 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
               <div className="qs-card">
                 <h4 className="qs-card-title">What this rig expects</h4>
                 {rig?.items?.length ? (
-                  <ul className="qs-expect-list">
-                    {rig.items.map((i) => (
-                      <li key={`${i.label}:${i.when ?? ""}`}>
-                        <span className="qs-expect-label">{i.label}</span>
-                        <span className="qs-expect-meta">
-                          at least {i.min}
-                          {i.severity === "optional" && " · optional"}
-                          {i.when && ` · ${EXTERNAL_SYNC[i.when]?.label ?? i.when} sessions`}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  expectGroups.map(([when, items]) => (
+                    <div key={when || "always"} className="qs-expect-group">
+                      <span className="qs-expect-group-title">
+                        {when ? `Only for ${EXTERNAL_SYNC[when]?.label ?? when} sessions` : "Every session"}
+                      </span>
+                      {items.length ? (
+                        <ul className="qs-expect-list">
+                          {items.map((i) => (
+                            <li key={i.label}>
+                              <span className="qs-expect-label">{i.label}</span>
+                              <span className="qs-expect-meta">
+                                at least {i.min}{i.severity === "optional" && " · optional"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="qs-muted">Nothing required for every session.</p>
+                      )}
+                    </div>
+                  ))
                 ) : (
                   <p className="qs-muted">Nothing listed yet. You can add items in the Expected modules step.</p>
                 )}

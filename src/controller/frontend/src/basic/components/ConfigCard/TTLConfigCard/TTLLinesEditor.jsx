@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import socket from "/src/socket";
 import { docImages } from "/src/docs/loadDocs.js";
+import AddPinModal from "./AddPinModal";
 import {
   APPLICATIONS, ROLES, CONFIRM_MAX_AGE_DAYS, SYNC_APPLICATIONS,
-  rolesFor, channelLabel, systemName, validateTTL,
+  rolesFor, roleLabel, pinLabel, channelLabel, systemName, validateTTL,
 } from "/src/basic/utils/ttlApplications";
 
 // The Lines tab of a TTL module with an application other than "mixed"
@@ -65,12 +67,22 @@ function ModeFields({ schema, mode, settings, onChange }) {
   });
 }
 
-function SyncGuide({ app, lines, open, onToggle }) {
+function SyncGuideModal({ app, lines, onClose }) {
   const ephys = app === "ephys_sync";
   const img = (name) => docImages[`images/${name}`];
-  return (
-    <details className="ttl-guide" open={open} onToggle={(e) => onToggle(e.currentTarget.open)}>
-      <summary>Wiring and checking {ephys ? "the ephys sync" : "the logger sync"}</summary>
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal ttl-guide-modal" role="dialog" aria-modal="true"
+        aria-label="Wiring and checking the sync" onClick={(e) => e.stopPropagation()}>
+      <div className="ttl-guide-modal__head">
+        <h3>Wiring and checking {ephys ? "the ephys sync" : "the logger sync"}</h3>
+        <button type="button" className="btn-remove" onClick={onClose} aria-label="Close">✕</button>
+      </div>
       {ephys ? (
         <ol className="ttl-guide__steps">
           <li>
@@ -90,7 +102,7 @@ function SyncGuide({ app, lines, open, onToggle }) {
               {lines.length === 0 && <li>No lines yet: add the sync line below.</li>}
               {lines.map(([gpio, pin]) => (
                 <li key={gpio}>
-                  GPIO {gpio} ({ROLES[pin.role]?.label ?? "no role"}) → channel{" "}
+                  GPIO {gpio} ({roleLabel(pin.role)}) → channel{" "}
                   {pin.channel || <em>not set</em>}
                 </li>
               ))}
@@ -119,8 +131,13 @@ function SyncGuide({ app, lines, open, onToggle }) {
             <strong> Records ephys</strong> when you create the session.</li>
         </ol>
       )}
-      {ephys && <p className="ttl-guide__more"><Link to="/guide#open_ephys">Full guide: Using with Ephys →</Link></p>}
-    </details>
+      <div className="ttl-guide-modal__foot">
+        {ephys ? <Link to="/guide#open_ephys" onClick={onClose}>Full guide: Using with Ephys →</Link> : <span />}
+        <button type="button" className="save-button" onClick={onClose}>Close</button>
+      </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -132,15 +149,14 @@ export default function TTLLinesEditor({
   const spec = APPLICATIONS[app];
   const roles = rolesFor(app) ?? [];
   const isSync = SYNC_APPLICATIONS.includes(app);
-  const [newPin, setNewPin] = useState("");
-  const [newRole, setNewRole] = useState("");
+  const [adding, setAdding] = useState(false);
   const pins = Object.entries(ttlCfg.pins ?? {}).sort(([a], [b]) => Number(a) - Number(b));
   const unassigned = availablePins.filter((p) => !(String(p) in (ttlCfg.pins ?? {})));
   const problems = validateTTL(ttlCfg);
   const lineState = Object.fromEntries((status?.lines ?? []).map((l) => [String(l.gpio), l]));
   const anyUnconfirmed = isSync && pins.some(([g, p]) =>
     ROLES[p.role]?.channel && lineState[g]?.state !== "confirmed");
-  const [guideOpen, setGuideOpen] = useState(anyUnconfirmed);
+  const [guideOpen, setGuideOpen] = useState(false);
   const savedPins = module.config?.ttl?.pins ?? {};
 
   const setPin = (gpio, next) => setFormData((prev) => ({
@@ -168,14 +184,10 @@ export default function TTLLinesEditor({
     delete next[gpio];
     return { ...prev, ttl: { ...prev.ttl, pins: next } };
   });
-  const addLine = () => {
-    const gpio = parseInt(newPin, 10);
-    if (Number.isNaN(gpio) || !newRole) return;
-    const mode = ROLES[newRole].modes[0];
-    setPin(gpio, { mode, role: newRole, label: "",
-      ...(ROLES[newRole].channel ? { channel: "" } : {}), ...defaultsFor(schema, mode) });
-    setNewPin("");
-    setNewRole("");
+  const addLine = (gpio, role) => {
+    const mode = ROLES[role].modes[0];
+    setPin(gpio, { mode, role, label: "",
+      ...(ROLES[role].channel ? { channel: "" } : {}), ...defaultsFor(schema, mode) });
   };
 
   // A confirmation is tied to the saved wiring; unsaved edits to the line
@@ -203,12 +215,26 @@ export default function TTLLinesEditor({
         </p>
       )}
       {isSync && (
-        <SyncGuide app={app} lines={pins.filter(([, p]) => ROLES[p.role]?.channel)}
-          open={guideOpen} onToggle={setGuideOpen} />
+        <div className="ttl-guide-bar">
+          <button type="button"
+            className={`copy-btn${anyUnconfirmed ? " ttl-guide-bar__btn--todo" : ""}`}
+            onClick={() => setGuideOpen(true)}>
+            Wiring and checking guide
+          </button>
+          {anyUnconfirmed && (
+            <span className="ttl-guide-bar__hint">
+              Some lines aren't confirmed in {systemName(app)} yet
+            </span>
+          )}
+        </div>
+      )}
+      {isSync && guideOpen && (
+        <SyncGuideModal app={app} lines={pins.filter(([, p]) => ROLES[p.role]?.channel)}
+          onClose={() => setGuideOpen(false)} />
       )}
 
       <div className="pin-list">
-        {pins.length === 0 && <p className="no-pins-hint">No lines yet. Add one below.</p>}
+        {pins.length === 0 && <p className="no-pins-hint">No lines yet. Press Add pin below.</p>}
         {pins.map(([gpio, pin]) => {
           const role = ROLES[pin.role];
           const isOutput = role ? role.output : pin.mode !== "input";
@@ -217,8 +243,8 @@ export default function TTLLinesEditor({
           return (
             <div key={gpio} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
               <div className="pin-card-header">
-                <span className="pin-label">GPIO {gpio}</span>
-                <span className="ttl-line-role">{role?.label ?? "No role"}</span>
+                <span className="pin-label">{pinLabel(gpio)}</span>
+                <span className="ttl-line-role">{roleLabel(pin.role)}</span>
                 {isOutput && (
                   <button type="button"
                     className={`btn-test-pin${testing === "testing" ? " btn-test-pin--active" : testing === "done" ? " btn-test-pin--done" : ""}`}
@@ -235,7 +261,7 @@ export default function TTLLinesEditor({
                 <label>Role</label>
                 <select value={pin.role ?? ""} onChange={(e) => changeRole(gpio, e.target.value)}>
                   {!pin.role && <option value="">Choose…</option>}
-                  {roles.map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
+                  {roles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
                 </select>
               </div>
               {role && role.modes.length > 1 && (
@@ -302,16 +328,17 @@ export default function TTLLinesEditor({
       )}
 
       <div className="add-pin-row">
-        <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
-          <option value="">Pin…</option>
-          {unassigned.map((p) => <option key={p} value={p}>GPIO {p}</option>)}
-        </select>
-        <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
-          <option value="">Role…</option>
-          {roles.map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
-        </select>
-        <button type="button" onClick={addLine} disabled={!newPin || !newRole}>Add line</button>
+        <button type="button" onClick={() => setAdding(true)}>Add pin</button>
       </div>
+      {adding && (
+        <AddPinModal
+          pins={unassigned}
+          options={roles.map((r) => ({ value: r, label: roleLabel(r) }))}
+          choiceLabel="Role"
+          onAdd={addLine}
+          onClose={() => setAdding(false)}
+        />
+      )}
     </div>
   );
 }

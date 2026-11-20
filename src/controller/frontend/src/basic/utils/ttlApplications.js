@@ -32,6 +32,14 @@ export function moduleKindLabel(module) {
   return app && app !== DEFAULT_APPLICATION ? applicationLabel(app) : null;
 }
 
+// "Sync line (pseudorandom)": the role's label plus its `detail`, for
+// pickers and headers (validation messages use the bare label).
+export function roleLabel(role) {
+  const r = ROLES[role];
+  if (!r) return "No role";
+  return r.detail ? `${r.label} (${r.detail})` : r.label;
+}
+
 export function pinRole(pin) {
   return ROLES[pin?.role] ? pin.role : "custom";
 }
@@ -96,4 +104,17 @@ export function syncWarnings(ttlLines) {
     else if (sync.state === "stale") out.push(`${m.name}: sync line (${where}) last confirmed more than ${CONFIRM_MAX_AGE_DAYS} days ago`);
   }
   return out;
+}
+
+// BCM GPIO number -> physical pin on the Pi 5's 40-pin header, so the
+// picker can say "GPIO 17 (pin 11)" next to the pinout picture.
+const HEADER_PIN = {
+  2: 3, 3: 5, 4: 7, 17: 11, 27: 13, 22: 15, 10: 19, 9: 21, 11: 23, 0: 27, 5: 29,
+  6: 31, 13: 33, 19: 35, 26: 37, 14: 8, 15: 10, 18: 12, 23: 16, 24: 18, 25: 22,
+  8: 24, 7: 26, 1: 28, 12: 32, 16: 36, 20: 38, 21: 40,
+};
+
+export function pinLabel(gpio) {
+  const header = HEADER_PIN[Number(gpio)];
+  return header ? `GPIO ${gpio} (pin ${header})` : `GPIO ${gpio}`;
 }

@@ -302,24 +302,46 @@
   color: var(--success-color);
   margin: 0 0 10px;
 }
-.ttl-guide {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 8px 12px;
+.ttl-guide-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
-  font-size: 0.88rem;
 }
-.ttl-guide summary { cursor: pointer; font-weight: 600; }
+.ttl-guide-bar__btn--todo { border-color: var(--warning-color); }
+.ttl-guide-bar__hint { font-size: 0.82rem; color: var(--warning-color); }
+.modal.ttl-guide-modal {
+  max-width: 640px;
+  width: calc(100% - 32px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  font-size: 0.9rem;
+}
+.ttl-guide-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.ttl-guide-modal__head h3 { margin: 0; font-size: 1.05rem; }
+.ttl-guide-modal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
 .ttl-guide__steps { padding-left: 20px; margin: 8px 0 0; }
 .ttl-guide__steps li { margin-bottom: 8px; }
 .ttl-guide__steps img {
   display: block;
   max-width: 100%;
-  max-height: 180px;
+  max-height: 220px;
   margin-top: 6px;
   border-radius: 4px;
 }
-.ttl-guide__more { margin: 4px 0 0; }
 .ttl-line-role {
   font-size: 0.78rem;
   font-weight: 600;
@@ -341,3 +363,28 @@
 .ttl-line-confirm--stale .ttl-line-confirm__state,
 .ttl-line-confirm--changed .ttl-line-confirm__state,
 .ttl-line-confirm--unconfirmed .ttl-line-confirm__state { color: var(--warning-color); }
+
+/* ── Add pin dialog (AddPinModal) ─────────────────────────────────────── */
+.modal.ttl-add-pin-modal {
+  max-width: 760px;
+  width: calc(100% - 32px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.ttl-add-pin-modal__pinout {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+  background: #fff;
+}
+.ttl-add-pin-modal__fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ttl-add-pin-modal__fields select { width: 100%; }
+@media (max-width: 520px) {
+  .ttl-add-pin-modal__fields { grid-template-columns: 1fr; }
+}

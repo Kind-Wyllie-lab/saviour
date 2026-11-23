@@ -348,16 +348,18 @@ export default function EphysAlignPanel({ sessionName, onSummary }) {
   const modelOnOther = model?.oe_recording && model.oe_recording !== recording;
 
   // Card header summary.
+  // `state` lets the page order its cards and tell Compose / NWB what's
+  // still missing: checking | error | busy | none | uploaded | aligned.
   let summary;
-  if (!info) summary = { text: "checking…", tone: "muted" };
-  else if (info.error) summary = { text: info.error, tone: "bad" };
-  else if (busy(alignJob)) summary = { text: "aligning…", tone: "active" };
-  else if (!uploaded) summary = { text: "no recording uploaded", tone: "muted" };
-  else if (!model) summary = { text: `${recs.length} recording${recs.length === 1 ? "" : "s"} uploaded, not aligned`, tone: "warn" };
-  else summary = { text: `aligned · worst residual ${model.residual_max_ms} ms`, tone: "ok" };
+  if (!info) summary = { text: "checking…", tone: "muted", state: "checking" };
+  else if (info.error) summary = { text: info.error, tone: "bad", state: "error" };
+  else if (busy(alignJob)) summary = { text: "aligning…", tone: "active", state: "busy" };
+  else if (!uploaded) summary = { text: "no recording uploaded", tone: "muted", state: "none" };
+  else if (!model) summary = { text: `${recs.length} recording${recs.length === 1 ? "" : "s"} uploaded, not aligned`, tone: "warn", state: "uploaded" };
+  else summary = { text: `aligned · worst residual ${model.residual_max_ms} ms`, tone: "ok", state: "aligned" };
   useEffect(() => {
     onSummary?.(summary);
-  }, [summary.text, summary.tone, onSummary]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [summary.text, summary.tone, summary.state, onSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runAlign = () => socket.emit("run_ephys_align", {
     session_name: sessionName,

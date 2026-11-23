@@ -857,13 +857,16 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
                     template: str = "auto", audio_mode: str = "none",
                     streams: list[str] | None = None, mics: list[str] | None = None,
                     spectrogram: dict | None = None,
-                    canvas: dict | None = None) -> dict:
+                    canvas: dict | None = None,
+                    headstage: dict | None = None) -> dict:
     """A built-in starting layout for the editor: one of the old layout
     keywords (`auto | side | stack | grid`) with an old audio arrangement
     (`none | track | strip | panel`) over the chosen cameras and AudioMoths,
     as a layout document. With `canvas` ({width, height}) the arrangement
     is scaled to fit that canvas and centred on it; without, the canvas is
-    the arrangement's natural size."""
+    the arrangement's natural size. `headstage` ({"source":
+    "ephys/accel/<port>", "show": "trace" | "orientation" | "both"}) adds an
+    aligned headstage accelerometer (see _add_headstage)."""
     raw = {"session_name": session_name, "date_dir": date_dir, "layout": template,
            "streams": streams or None,
            "audio": {"mode": audio_mode, "sources": mics or [],
@@ -875,6 +878,9 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
     resolved = resolve_layout(resolve_date_dir(session_dir, spec.date_dir), spec,
                               strict_audio=False)
     doc = resolved.doc
+    if headstage and headstage.get("source") and headstage.get("show", "none") != "none":
+        doc = _add_headstage(doc, session_dir, str(headstage["source"]),
+                             str(headstage.get("show", "trace")))
     if canvas:
         try:
             target = compose_layout.validate_canvas(
@@ -884,6 +890,60 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
         doc = compose_layout.fit_to_canvas(doc, target["width"], target["height"])
         doc["canvas"]["background"] = target["background"]
     return doc
+
+
+HEADSTAGE_SHOW = ("trace", "orientation", "both")
+
+
+def _add_headstage(doc: dict, session_dir: str, source: str, show: str) -> dict:
+    """`doc` plus a headstage accelerometer: a trace as a strip added under
+    the arrangement (the canvas grows; overlaid on the bottom instead if
+    that would pass the canvas limit), orientation as a square inset at the
+    top right, above the cameras. The headstage must be aligned to the
+    session (Ephys panel: Align, then Process accelerometer)."""
+    if show not in HEADSTAGE_SHOW:
+        raise ComposeError(f"headstage show must be one of {', '.join(HEADSTAGE_SHOW)}")
+    src = next((a for a in list_accel_sources(session_dir) if a["id"] == source), None)
+    if src is None:
+        raise ComposeError(f"no accelerometer output for {source}")
+    if not src["aligned"]:
+        raise ComposeError(f"{src['label']} isn't aligned to the session yet: "
+                           "run Align, then Process accelerometer, on the Ephys panel")
+    doc = json.loads(json.dumps(doc))
+    canvas = doc["canvas"]
+    W, H = canvas["width"], canvas["height"]
+    tiles = doc["tiles"]
+    want = 2 if show == "both" else 1
+    if len(tiles) + want > compose_layout.MAX_TILES:
+        raise ComposeError(f"a layout has at most {compose_layout.MAX_TILES} tiles")
+    taken = {t["id"] for t in tiles}
+
+    def new_id() -> str:
+        n = 1
+        while f"e{n}" in taken:
+            n += 1
+        taken.add(f"e{n}")
+        return f"e{n}"
+
+    top_z = max((t.get("z", 0) for t in tiles), default=0) + 1
+    if show in ("trace", "both"):
+        h = _even(min(320, max(96, H * 0.25)))
+        if H + h <= compose_layout.MAX_CANVAS_H:
+            canvas["height"] = H + h
+            rect = [0, H, W, h]
+        else:
+            rect = [0, H - h, W, h]
+        tiles.append({"id": new_id(), "kind": "accel_trace", "source": source,
+                      "rect": rect, "z": top_z, "options": {}})
+    if show in ("orientation", "both"):
+        side = _even(max(compose_layout.MIN_TILE, min(W, H) / 4))
+        tiles.append({"id": new_id(), "kind": "orientation", "source": source,
+                      "rect": [W - side, 0, side, side], "z": top_z, "options": {}})
+    try:
+        # Fills in each new tile's option defaults.
+        return compose_layout.validate_layout(doc)
+    except compose_layout.LayoutError as exc:
+        raise ComposeError(str(exc)) from exc
 
 
 def _tile_label(resolved: ResolvedLayout, tile: dict) -> str:

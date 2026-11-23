@@ -36,6 +36,7 @@ const UNDO_DEPTH = 50;
  */
 export default function ComposeEditor({
   sessionName, session, files, onSelectSession, active = true, onSummary,
+  ephysSession = false, ephysState, onOpenEphys,
 }) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
@@ -64,6 +65,9 @@ export default function ComposeEditor({
   const [excludedCams, setExcludedCams] = useState([]);
   const [excludedMics, setExcludedMics] = useState([]);
   const [partOnly, setPartOnly] = useState(false);
+  // Simple: how to show an aligned headstage accelerometer, and which one.
+  const [headShow, setHeadShow] = usePersistedState("compose_headstage_show", "trace");
+  const [headSource, setHeadSource] = useState("");
   // True once the layout was changed by hand (not by a template), so going
   // back to Simple, which rebuilds it, asks first.
   const editedRef = useRef(false);
@@ -246,12 +250,14 @@ export default function ComposeEditor({
       session_name: sessionName, date_dir: dateDir,
       streams: camKey ? camKey.split("|") : undefined,
     });
-  }, [sessionName, dateDir, camKey]);
+    // ephysState: re-read the headstage list after an Ephys job finishes.
+  }, [sessionName, dateDir, camKey, ephysState]);
 
   useEffect(() => {
     setExcludedCams([]);
     setExcludedMics([]);
     setPartOnly(false);
+    setHeadSource("");
   }, [sessionName, dateDir]);
 
   useEffect(() => {
@@ -263,6 +269,7 @@ export default function ComposeEditor({
   const applyTemplate = (tpl = template, audio = templateAudio, {
     streams = cameras.map((c) => c.name), mics = micDevices.map((d) => d.id),
     range = doc?.range, canvas = keepCanvas && doc ? doc.canvas : undefined,
+    headstage,
   } = {}) => {
     templateReqId.current += 1;
     templateRangeRef.current = range;
@@ -280,6 +287,7 @@ export default function ComposeEditor({
         gain: DEFAULT_SPECTROGRAM.gain,
       },
       canvas,
+      headstage,
     });
   };
 
@@ -291,12 +299,15 @@ export default function ComposeEditor({
   // Simple: every choice rebuilds the layout from its template.
   const simpleCams = cameras.map((c) => c.name).filter((n) => !excludedCams.includes(n));
   const simpleMics = micDevices.map((d) => d.id).filter((m) => !excludedMics.includes(m));
+  const headId = accelSources.some((a) => a.id === headSource)
+    ? headSource : accelSources[0]?.id || "";
+  const simpleHead = headId && headShow !== "none" ? { source: headId, show: headShow } : undefined;
   const simpleKey = [sessionName, dateDir, template, templateAudio,
-    simpleCams.join(","), simpleMics.join(",")].join("|");
+    simpleCams.join(","), simpleMics.join(","), simpleHead ? `${headId}:${headShow}` : ""].join("|");
   useEffect(() => {
     if (!simple || !infoReady || !simpleCams.length) return;
     applyTemplate(template, templateAudio, {
-      streams: simpleCams, mics: simpleMics, canvas: undefined,
+      streams: simpleCams, mics: simpleMics, canvas: undefined, headstage: simpleHead,
       range: partOnly && doc?.range ? doc.range : { start_ns: null, end_ns: null, speed: 1 },
     });
   }, [simple, infoReady, simpleKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -352,6 +363,25 @@ export default function ComposeEditor({
     ...d, range: { start_ns: null, end_ns: null, ...(d.range || {}), speed: v },
   }));
 
+  // An ephys session whose headstage accelerometer can't be placed yet:
+  // say what's missing (the Ephys card comes first on the page for these).
+  let headstageNote = null;
+  if (ephysSession && infoReady && !accelSources.length) {
+    if (accelAll.length) {
+      headstageNote = "The headstage accelerometer isn't aligned to this session yet: "
+        + "run Align, then Process accelerometer, on the Ephys card.";
+    } else if (ephysState === "aligned") {
+      headstageNote = "Ephys is aligned; process the headstage accelerometer on the "
+        + "Ephys card to add it to the video.";
+    } else if (ephysState === "uploaded") {
+      headstageNote = "The ephys recording isn't aligned yet: run Align, then Process "
+        + "accelerometer, on the Ephys card to add the headstage to the video.";
+    } else if (ephysState === "none") {
+      headstageNote = "No ephys recording uploaded: upload and align it on the Ephys card "
+        + "to add the headstage accelerometer to the video.";
+    }
+  }
+
   // Card header summary.
   const sessionJobs = Object.values(jobs)
     .filter((j) => (j.spec?.session_name || sessionName) === sessionName)
@@ -376,6 +406,10 @@ export default function ComposeEditor({
       summaryTone = last.state === "done" ? "ok" : last.state === "failed" ? "bad" : "muted";
     }
     summaryText = parts.join(" · ") || "loading…";
+    if (headstageNote && !busyJob) {
+      summaryText = `headstage not ready · ${summaryText}`;
+      summaryTone = "warn";
+    }
   }
   useEffect(() => {
     onSummary?.({ text: summaryText, tone: summaryTone });
@@ -495,6 +529,17 @@ export default function ComposeEditor({
 
       {info?.error && <div className="compose-job__error">{info.error}</div>}
 
+      {headstageNote && (
+        <div className="post-process__note post-process__note--warn">
+          {headstageNote}
+          {onOpenEphys && (
+            <button type="button" className="btn btn-small" onClick={onOpenEphys}>
+              Open Ephys
+            </button>
+          )}
+        </div>
+      )}
+
       {simple ? (
         <div className="compose-simple">
           <div className="compose-simple__form">
@@ -551,6 +596,24 @@ export default function ComposeEditor({
                     );
                   })}
                 </div>
+              </div>
+            )}
+            {accelSources.length > 0 && (
+              <div className="compose-simple__row">
+                <span className="compose-simple__label">Headstage</span>
+                {accelSources.length > 1 && (
+                  <select value={headId} onChange={(e) => setHeadSource(e.target.value)}
+                    aria-label="Headstage">
+                    {accelSources.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                  </select>
+                )}
+                <select value={headShow} onChange={(e) => setHeadShow(e.target.value)}
+                  aria-label="Show the headstage as">
+                  <option value="trace">Movement trace under the video</option>
+                  <option value="orientation">Head orientation inset</option>
+                  <option value="both">Trace and orientation</option>
+                  <option value="none">Don&apos;t show</option>
+                </select>
               </div>
             )}
             <div className="compose-simple__row">

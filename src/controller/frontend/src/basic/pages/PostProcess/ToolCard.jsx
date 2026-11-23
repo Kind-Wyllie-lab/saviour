@@ -7,11 +7,13 @@ import React from "react";
  * panel's socket listeners keep its summary live.
  *
  * summary: { text, tone } with tone one of muted | ok | active | warn | bad.
+ * muted: the tool doesn't apply to this session (header dimmed, still opens).
  */
-export default function ToolCard({ title, summary, open, onToggle, children }) {
+export default function ToolCard({ id, title, summary, open, onToggle, muted, children }) {
   const tone = summary?.tone || "muted";
   return (
-    <section className={`card tool-card${open ? " tool-card--open" : ""}`}>
+    <section id={id}
+      className={`card tool-card${open ? " tool-card--open" : ""}${muted ? " tool-card--muted" : ""}`}>
       <button type="button" className="tool-card__head" onClick={onToggle} aria-expanded={open}>
         <span className="tool-card__chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
         <span className="tool-card__title">{title}</span>

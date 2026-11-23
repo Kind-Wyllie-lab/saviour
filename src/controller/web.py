@@ -1167,6 +1167,7 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     mics=data.get("mics") or None,
                     spectrogram=data.get("spectrogram") or None,
                     canvas=data.get("canvas") or None,
+                    headstage=data.get("headstage") or None,
                 )
             except compose.ComposeError as exc:
                 reply["error"] = str(exc)

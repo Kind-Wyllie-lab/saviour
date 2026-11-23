@@ -79,6 +79,10 @@ python3 tools/usv_detect.py /path/to/session/<DATE> [--out DIR] [--contrast-db 8
 # installs it into its own env-nwb venv (sees the main env's packages via a
 # .pth). Video is linked by relative path, audio embedded.
 python3 tools/export_nwb.py /path/to/share/<session> [--species "Rattus norvegicus"] [--subject-id R7] [--no-audio] [--output out.nwb]
+
+# DANDI check of an .nwb (nwbinspector, DANDI config + subject ID check; run
+# after every page export, report saved as <file>-inspection.json)
+env-nwb/bin/python -m src.controller.nwb_inspect /path/to/share/<session>/<session>.nwb [--json]
 ```
 
 ```bash

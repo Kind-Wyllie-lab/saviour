@@ -2,6 +2,8 @@ import React from "react";
 import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import { formatBytes, triggerDownload } from "../Recording/sessionFormat";
 import { formatUtc } from "/src/basic/utils/time";
+import socket from "/src/socket";
+import DandiReport from "./DandiReport";
 
 const KIND_LABEL = {
   compose: "Video",
@@ -10,7 +12,7 @@ const KIND_LABEL = {
 };
 
 /** A job row for the non-compose kinds, styled like ComposeJobRow. */
-function SimpleRow({ state, title, meta, progress, error, actions }) {
+function SimpleRow({ state, title, meta, progress, error, actions, children }) {
   const pct = progress != null ? Math.round(progress * 100) : null;
   return (
     <div className={`compose-job compose-job--${state}`}>
@@ -26,6 +28,7 @@ function SimpleRow({ state, title, meta, progress, error, actions }) {
         </div>
       )}
       {error && <div className="compose-job__error">{error}</div>}
+      {children}
     </div>
   );
 }
@@ -36,7 +39,7 @@ function SimpleRow({ state, title, meta, progress, error, actions }) {
  * the New job modal on a tool (to see a job's detail, edit a copy, or
  * export again).
  */
-export default function JobsList({ sessionName, items, onOpen }) {
+export default function JobsList({ sessionName, items, onOpen, nwb, checking, checkError, onCheck }) {
   const downloadNwb = () => triggerDownload(
     `/api/sessions/${encodeURIComponent(sessionName)}/download/${encodeURIComponent(`${sessionName}.nwb`)}`,
     `${sessionName}.nwb`);
@@ -68,20 +71,29 @@ export default function JobsList({ sessionName, items, onOpen }) {
                       ? { nwbSettings: { settings: it.file.settings, nonce: Date.now() } } : {})}>
                     Export again
                   </button>
-                </>} />
+                </>}>
+                <DandiReport compact report={it.file.inspection} error={checkError}
+                  checking={checking}
+                  onCheck={nwb?.inspector ? () => {
+                    onCheck?.();
+                    socket.emit("inspect_nwb_file", { session_name: sessionName });
+                  } : undefined} />
+              </SimpleRow>
             );
             break;
           case "nwb-running":
             row = (
               <SimpleRow state="running"
-                title={it.job.kind === "install" ? "Installing the NWB package" : "Exporting NWB"}
+                title={{ install: "Installing the NWB package", inspect: "Checking the NWB file for DANDI" }[it.job.kind]
+                  || "Exporting NWB"}
                 meta={it.job.stage} progress={it.job.progress || 0}
                 actions={open("nwb")} />
             );
             break;
           case "nwb-failed":
             row = (
-              <SimpleRow state="error" title="NWB export failed"
+              <SimpleRow state="error"
+                title={it.job.kind === "inspect" ? "DANDI check failed" : "NWB export failed"}
                 meta={formatUtc(it.job.created_at)} error={it.job.error} actions={open("nwb")} />
             );
             break;

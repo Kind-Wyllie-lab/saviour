@@ -33,6 +33,18 @@ const EXPORT_BYTES_PER_TICK = 12_000_000;
 const APA_TICK_MS = 200;         // the module's arduino_state period
 const APA_LEASE_MS = 1000;       // shock.py SHOCK_LEASE_S
 
+// A DANDI check report (src/controller/nwb_inspect.py) with one must-fix.
+const MOCK_DANDI = {
+  ran: true, checked_at: Date.now() / 1000, inspector_version: "0.7.2", config: "dandi",
+  dandi_ready: false,
+  counts: { CRITICAL: 1, BEST_PRACTICE_VIOLATION: 0, BEST_PRACTICE_SUGGESTION: 2 },
+  messages: [
+    { importance: "CRITICAL", check: "check_subject_age", message: "Subject is missing age and date_of_birth.", location: "/general/subject" },
+    { importance: "BEST_PRACTICE_SUGGESTION", check: "check_keywords", message: "Metadata /general/keywords is missing.", location: "/" },
+    { importance: "BEST_PRACTICE_SUGGESTION", check: "check_institution", message: "Metadata /general/institution is missing.", location: "/" },
+  ],
+};
+
 function mockNwbJob(sock, kind, session_name) {
   state.nwb ??= { installed: false, jobs: {} };
   const id = Math.random().toString(16).slice(2, 14);
@@ -49,7 +61,8 @@ function mockNwbJob(sock, kind, session_name) {
       job.state = "done";
       if (kind === "install") { state.nwb.installed = true; job.stage = "Installed pynwb 4.2.0"; }
       else { job.stage = "Done"; job.output = `${session_name}/${session_name}.nwb`; job.size_bytes = 210e6;
-        job.validation = { ran: true, errors: [] }; (state.nwb.files ??= {})[session_name] = 210e6; }
+        job.validation = { ran: true, errors: [] }; (state.nwb.files ??= {})[session_name] = 210e6;
+        job.inspection = MOCK_DANDI; }
     }
     push();
   }, 600);
@@ -458,12 +471,14 @@ const ROUTER = {
     this._fire("quick_setup", { last_run: clone(state.quickSetup) });
   },
   get_rig_defaults() { this._fire("rig_defaults", rigDefaults()); },
+  inspect_nwb_file({ session_name } = {}) { mockNwbJob(this, "inspect", session_name); },
   // NWB export (src/controller/nwb_export.py): a fake install + export job.
   get_nwb_status({ session_name } = {}) {
     state.nwb ??= { installed: false, jobs: {} };
     const out = (state.nwb.files ??= {})[session_name];
     this._fire("nwb_status", {
       installed: state.nwb.installed, version: state.nwb.installed ? "4.2.0" : null,
+      inspector: state.nwb.installed ? "0.7.2" : null,
       env: "env-nwb", error: null, default_species: "Rattus norvegicus",
       jobs: clone(Object.values(state.nwb.jobs)), session_name,
       session: {
@@ -473,7 +488,8 @@ const ROUTER = {
         audio_pcm_bytes: 230e6,
         events: [{ module: "ttl1", kind: "ttl", file: "x.csv", rows: 120 }],
         markers: 2,
-        existing: out ? { path: `${session_name}/${session_name}.nwb`, size_bytes: out, mtime: Date.now() / 1000 } : null,
+        existing: out ? { path: `${session_name}/${session_name}.nwb`, size_bytes: out, mtime: Date.now() / 1000,
+          inspection: MOCK_DANDI } : null,
       },
       metadata: { rat_id: "R12", strain: "Lister Hooded", experimenter: "Mock User", experiment: "Mock experiment" },
       record: {},

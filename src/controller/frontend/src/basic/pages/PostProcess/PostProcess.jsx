@@ -149,7 +149,9 @@ export default function PostProcess() {
           )}
 
           {jobs.items.length > 0 ? (
-            <JobsList sessionName={selected} items={jobs.items} onOpen={openTool} />
+            <JobsList sessionName={selected} items={jobs.items} onOpen={openTool}
+              nwb={jobs.nwb} checking={jobs.nwbRunning?.kind === "inspect"}
+              checkError={jobs.checkError} onCheck={jobs.clearCheckError} />
           ) : (
             <div className="pp-empty">
               <p>Nothing has been made from this session yet.</p>

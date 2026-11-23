@@ -20,6 +20,7 @@ export default function useSessionJobs(sessionName) {
   const [ephys, setEphys] = useState(null);       // ephys_info payload
   const [alignJob, setAlignJob] = useState(null);
   const [accelJob, setAccelJob] = useState(null);
+  const [checkError, setCheckError] = useState("");
 
   const refreshNwb = useCallback(
     () => sessionName && socket.emit("get_nwb_status", { session_name: sessionName }),
@@ -33,7 +34,11 @@ export default function useSessionJobs(sessionName) {
     setEphys(null);
     setAlignJob(null);
     setAccelJob(null);
+    setCheckError("");
     if (!sessionName) return undefined;
+    const onNwbError = (d) => {
+      if (d.event === "inspect_nwb_file") setCheckError(d.error || "The check couldn't start");
+    };
     const onNwbStatus = (d) => {
       if (d.session_name && d.session_name !== sessionName) return;
       setNwb(d);
@@ -55,6 +60,7 @@ export default function useSessionJobs(sessionName) {
       setAccelJob(d);
       if (d.state === "done") refreshEphys();
     };
+    socket.on("nwb_error", onNwbError);
     socket.on("nwb_status", onNwbStatus);
     socket.on("nwb_job", onNwbJob);
     socket.on("nwb_jobs", onNwbJobs);
@@ -64,6 +70,7 @@ export default function useSessionJobs(sessionName) {
     refreshNwb();
     refreshEphys();
     return () => {
+      socket.off("nwb_error", onNwbError);
       socket.off("nwb_status", onNwbStatus);
       socket.off("nwb_job", onNwbJob);
       socket.off("nwb_jobs", onNwbJobs);
@@ -82,7 +89,8 @@ export default function useSessionJobs(sessionName) {
   const nwbList = Object.values(nwbJobs);
   const nwbRunning = nwbList.find((j) => j.state === "running") || null;
   const nwbFailed = nwbList
-    .filter((j) => j.kind === "export" && j.session_name === sessionName && j.state === "error")
+    .filter((j) => ["export", "inspect"].includes(j.kind) && j.session_name === sessionName
+      && j.state === "error")
     .sort((a, b) => b.created_at - a.created_at)[0] || null;
   const existing = nwb?.session?.existing || null;
 
@@ -115,6 +123,7 @@ export default function useSessionJobs(sessionName) {
 
   return {
     items, compose, otherCompose, nwb, nwbRunning, existing, ephys,
+    checkError, clearCheckError: () => setCheckError(""),
     ephysUploaded: (ephys?.recordings || []).length > 0,
   };
 }

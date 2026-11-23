@@ -58,6 +58,7 @@ dev = [
 # controller installs this into its own env-nwb from the Post-processing page.
 nwb = [
     "pynwb>=3.0",
+    "nwbinspector>=0.7",
 ]
 
 [tool.setuptools_scm]

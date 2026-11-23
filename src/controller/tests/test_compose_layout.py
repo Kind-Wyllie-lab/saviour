@@ -3,6 +3,8 @@ Tests for src/controller/compose_layout.py and the layout half of
 compose.py (legacy translation, templates). Pure: no OpenCV, no ffmpeg.
 """
 
+import json
+
 import pytest
 
 from src.controller import compose_layout as cl
@@ -307,6 +309,61 @@ def test_template_fitted_to_a_canvas(tmp_path, monkeypatch):
 def test_template_without_a_mic_drops_the_audio(tmp_path, monkeypatch):
     share = _session(tmp_path, monkeypatch)
     doc = layout_template(str(share), "sess", None, "auto", audio_mode="panel")
+    assert [t["kind"] for t in doc["tiles"]] == ["camera", "camera"]
+
+
+def _headstage(share, port="A1", aligned=True):
+    d = share / "sess" / "_ephys" / "accel" / port
+    d.mkdir(parents=True)
+    (d / "accel.csv").write_text("t_ns,x,y,z\n")
+    (d / "summary.json").write_text(json.dumps({"aligned": aligned}))
+    return f"ephys/accel/{port}"
+
+
+def test_template_headstage_trace_is_a_strip_under_the_cameras(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch)
+    src = _headstage(share)
+    plain = layout_template(str(share), "sess", None, "side")
+    doc = layout_template(str(share), "sess", None, "side",
+                          headstage={"source": src, "show": "trace"})
+    W, H = plain["canvas"]["width"], plain["canvas"]["height"]
+    trace = doc["tiles"][-1]
+    assert trace["kind"] == "accel_trace" and trace["source"] == src
+    x, y, w, h = trace["rect"]
+    assert (x, y, w) == (0, H, W) and doc["canvas"]["height"] == H + h
+    assert trace["options"]["signal"] == "xyz"           # defaults filled in
+    assert [t["rect"] for t in doc["tiles"][:-1]] == [t["rect"] for t in plain["tiles"]]
+
+
+def test_template_headstage_both_adds_an_orientation_inset(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch)
+    src = _headstage(share)
+    doc = layout_template(str(share), "sess", None, "side",
+                          headstage={"source": src, "show": "both"})
+    kinds = [t["kind"] for t in doc["tiles"]]
+    assert kinds == ["camera", "camera", "accel_trace", "orientation"]
+    orient = doc["tiles"][-1]
+    x, y, w, h = orient["rect"]
+    assert y == 0 and x + w == doc["canvas"]["width"] and w == h
+    assert orient["z"] > max(t["z"] for t in doc["tiles"] if t["kind"] == "camera")
+    assert len({t["id"] for t in doc["tiles"]}) == 4
+
+
+def test_template_headstage_must_be_aligned(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch)
+    src = _headstage(share, aligned=False)
+    with pytest.raises(ComposeError, match="isn't aligned"):
+        layout_template(str(share), "sess", None, "side",
+                        headstage={"source": src, "show": "trace"})
+    with pytest.raises(ComposeError, match="no accelerometer output"):
+        layout_template(str(share), "sess", None, "side",
+                        headstage={"source": "ephys/accel/B9", "show": "trace"})
+
+
+def test_template_headstage_none_is_ignored(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch)
+    doc = layout_template(str(share), "sess", None, "side",
+                          headstage={"source": "ephys/accel/A1", "show": "none"})
     assert [t["kind"] for t in doc["tiles"]] == ["camera", "camera"]
 
 

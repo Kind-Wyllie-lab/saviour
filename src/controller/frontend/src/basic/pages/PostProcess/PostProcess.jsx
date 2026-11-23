@@ -52,8 +52,14 @@ export default function PostProcess() {
   const summaryFor = useMemo(() => {
     const cache = {};
     return (id) => (cache[id] ||= (s) => setSummaries((cur) => (
-      cur[id]?.text === s?.text && cur[id]?.tone === s?.tone ? cur : { ...cur, [id]: s })));
+      cur[id]?.text === s?.text && cur[id]?.tone === s?.tone && cur[id]?.state === s?.state
+        ? cur : { ...cur, [id]: s })));
   }, []);
+  const openCard = (id) => {
+    setOpenCards((o) => ({ ...o, [id]: true }));
+    setTimeout(() => document.getElementById(`pp-card-${id}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
   const seededRef = useRef(false);
 
   // Default to the session in the URL (or the one last picked here), else
@@ -81,6 +87,14 @@ export default function PostProcess() {
     socket.emit("get_session_file_info", { session_name: selected });
     return () => socket.off("session_file_info_response", onInfo);
   }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sessions recorded with ephys sync: alignment comes first, since the
+  // headstage tiles in Compose need it (plans/post-process-page-layout.md).
+  const session = sessions?.[selected];
+  const ephysSession = session?.external_sync === "ephys"
+    || (!!session?.ephys && !session?.external_sync);
+  const ephysState = summaries.ephys?.state;
+  const ephysHasData = ["uploaded", "aligned", "busy"].includes(ephysState);
 
   return (
     <div className="post-process">
@@ -120,27 +134,53 @@ export default function PostProcess() {
       )}
 
       {selected && fileInfo && fileInfo.files && fileInfo.files.length > 0 && (
-        <>
-          <ToolCard title="Compose video" summary={summaries.compose}
-            open={isOpen("compose")} onToggle={() => toggle("compose")}>
-            <ComposeEditor
-              sessionName={selected}
-              session={sessions?.[selected]}
-              files={fileInfo.files}
-              active={isOpen("compose")}
-              onSummary={summaryFor("compose")}
-              onSelectSession={(name) => names.includes(name) && setSelected(name)}
-            />
-          </ToolCard>
-          <ToolCard title="Ephys" summary={summaries.ephys}
-            open={isOpen("ephys")} onToggle={() => toggle("ephys")}>
-            <EphysAlignPanel sessionName={selected} onSummary={summaryFor("ephys")} />
-          </ToolCard>
-          <ToolCard title="NWB export" summary={summaries.nwb}
-            open={isOpen("nwb")} onToggle={() => toggle("nwb")}>
-            <NwbExportPanel sessionName={selected} onSummary={summaryFor("nwb")} />
-          </ToolCard>
-        </>
+        <>{orderedCards({
+          ephysSession,
+          compose: (
+            <ToolCard key="compose" id="pp-card-compose" title="Compose video"
+              summary={summaries.compose}
+              open={isOpen("compose")} onToggle={() => toggle("compose")}>
+              <ComposeEditor
+                sessionName={selected}
+                session={session}
+                files={fileInfo.files}
+                active={isOpen("compose")}
+                onSummary={summaryFor("compose")}
+                ephysSession={ephysSession}
+                ephysState={ephysState}
+                onOpenEphys={() => openCard("ephys")}
+                onSelectSession={(name) => names.includes(name) && setSelected(name)}
+              />
+            </ToolCard>
+          ),
+          ephys: (
+            <ToolCard key="ephys" id="pp-card-ephys" title="Ephys"
+              summary={ephysSession || ephysHasData ? summaries.ephys
+                : { text: "not recorded with ephys sync", tone: "muted" }}
+              muted={!ephysSession && !ephysHasData}
+              open={isOpen("ephys")} onToggle={() => toggle("ephys")}>
+              {!ephysSession && !ephysHasData && (
+                <div className="post-process__note">
+                  This session wasn&apos;t recorded with External sync set to Ephys.
+                  You can still upload an Open Ephys recording if one ran alongside it.
+                </div>
+              )}
+              <EphysAlignPanel sessionName={selected} onSummary={summaryFor("ephys")} />
+            </ToolCard>
+          ),
+          nwb: (
+            <ToolCard key="nwb" id="pp-card-nwb" title="NWB export" summary={summaries.nwb}
+              open={isOpen("nwb")} onToggle={() => toggle("nwb")}>
+              {(ephysSession || ephysHasData) && (
+                <div className="post-process__note">
+                  NWB export doesn&apos;t include the ephys recording or the headstage
+                  accelerometer yet: the file holds SAVIOUR&apos;s own streams only.
+                </div>
+              )}
+              <NwbExportPanel sessionName={selected} onSummary={summaryFor("nwb")} />
+            </ToolCard>
+          ),
+        })}</>
       )}
 
       {selected && fileInfo && fileInfo.files && fileInfo.files.length === 0 && (
@@ -176,4 +216,10 @@ function rendersSummary(jobs) {
     text: `${jobs.length} render${jobs.length === 1 ? "" : "s"}${active ? ` · ${active} running` : ""}`,
     tone: active ? "active" : "muted",
   };
+}
+
+// Workflow order: for an ephys session, Ephys (prepare) before the outputs;
+// otherwise the outputs first and Ephys last.
+function orderedCards({ ephysSession, compose, ephys, nwb }) {
+  return ephysSession ? [ephys, compose, nwb] : [compose, nwb, ephys];
 }

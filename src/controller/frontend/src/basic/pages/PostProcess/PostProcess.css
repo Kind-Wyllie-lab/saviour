@@ -641,3 +641,28 @@ body.dark-mode .accel-chart {
   border-radius: 6px;
   background: #000;
 }
+.tool-card--muted .tool-card__title {
+  color: var(--secondary-text-color);
+  font-weight: 500;
+}
+
+/* Inline notes: what a tool still needs, or what it leaves out. */
+.post-process__note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--secondary-text-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--text-color);
+}
+.post-process__note--warn {
+  border-left-color: var(--warning-color, #b26a00);
+}
+.post-process__note .btn {
+  margin-left: auto;
+}

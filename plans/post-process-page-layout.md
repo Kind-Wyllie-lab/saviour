@@ -1,6 +1,6 @@
 # Post-Process page layout: tool cards, simple/advanced compose
 
-- **Status:** in progress (phase 1 built 2026-11-23)
+- **Status:** in progress (phases 1 and 1b built 2026-11-23)
 - **Created:** 2026-11-23
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (Post-Process).
@@ -49,6 +49,26 @@ render is the same either way and Advanced can pick up where Simple left off.
   Advanced brings the custom one back).
 - The time range survives a template rebuild in both modes.
 
+**Ephys sessions: prepare before the outputs.** Ephys alignment fits the
+clock model between ephys time and session time; cameras, audio and TTL are
+already on session time (PTP), so it doesn't change their alignment, but
+everything derived from the ephys data (the headstage accelerometer tiles
+today, ephys traces later) needs it first.
+
+- Cards follow the workflow: for a session recorded with External sync =
+  Ephys (`external_sync == "ephys"`, or legacy `ephys` with no
+  `external_sync`), Ephys comes first, then Compose and NWB. Otherwise
+  Compose and NWB come first and Ephys last, dimmed ("not recorded with
+  ephys sync"; uploading still allowed). An upload on a non-ephys session
+  undims it.
+- Compose says what's missing for an ephys session with no aligned
+  headstage (no upload / not aligned / accelerometer not processed), in
+  the card summary ("headstage not ready") and a note with Open Ephys.
+- Simple compose gains **Headstage** (trace under the video / orientation
+  inset / both / don't show) once an aligned accelerometer exists, through
+  `layout_template(headstage=...)`.
+- NWB says it leaves the ephys recording and accelerometer out (phase 6).
+
 ## Phases
 
 1. **Cards + simple compose** (built 2026-11-23): `ToolCard`, summaries for
@@ -56,6 +76,13 @@ render is the same either way and Advanced can pick up where Simple left off.
    Accept: page opens with all cards closed and summaries filled in; a
    Simple render of two cameras + strip matches an Advanced "Apply
    template" render of the same choices; switching modes keeps the layout.
+1b. **Ephys-first order + headstage in Simple** (built 2026-11-23): card
+   order, Compose / NWB notes, `layout_template(headstage={source, show})`
+   (trace strip grows the canvas, orientation inset top right; must be
+   aligned), Simple's Headstage row. Accept: on a real headstage + camera
+   session, the Ephys card leads, Compose's note walks through upload →
+   align → process, and a Simple render with "Trace and orientation"
+   matches the same tiles placed in Advanced.
 2. **One jobs indicator** for every background job type (compose, NWB,
    ephys align/accel, later USV/tracking) in the page header, replacing
    the All renders card. Needs a shared job shape or a small adapter per
@@ -72,6 +99,14 @@ render is the same either way and Advanced can pick up where Simple left off.
    (`session_gaps.json`, which nothing reads yet). The provenance the
    aligned-ethogram work (`plans/multicam-frame-alignment-and-sync-provenance.md`)
    needs stated up front.
+
+6. **Ephys data in NWB**: the headstage accelerometer (`_ephys/accel/<port>/
+   accel.csv`, already on session time) as a `TimeSeries` with the clock
+   model recorded; then the ephys recording itself, either linked (the
+   Open Ephys folder by relative path, as video is) or converted through
+   neuroconv's Open Ephys interface, with the clock model as the
+   timestamp mapping. Decide link vs embed by size (a session's ephys can
+   be tens of GB).
 
 ## Not in scope
 

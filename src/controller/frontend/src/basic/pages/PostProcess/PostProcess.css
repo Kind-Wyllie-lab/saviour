@@ -823,3 +823,108 @@ body.dark-mode .accel-chart {
   font-size: 0.78rem;
   color: var(--secondary-text-color);
 }
+
+/* ---- Buttons: the jobs list and the New job modal ------------------------ */
+/* .btn / .btn-small / .btn-secondary / .btn-link have no global style; the
+   compose and ephys panels scope their own. The Jobs card and the modal
+   (rendered into document.body, so outside .post-process) need the same
+   set. Order matters: .btn-small after .btn, so "btn btn-small" is the
+   small outline button. */
+.post-process :is(.btn, .btn-small, .btn-secondary, .btn-link),
+.pp-modal :is(.btn, .btn-small, .btn-secondary, .btn-link) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0.4rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.post-process .btn,
+.pp-modal .btn {
+  background-color: var(--accent-color, #3f7cac);
+  color: #fff;
+}
+.post-process .btn:hover:not(:disabled),
+.pp-modal .btn:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--accent-color, #3f7cac) 82%, #000);
+}
+.post-process .btn-secondary,
+.pp-modal .btn-secondary {
+  background: none;
+  color: var(--text-color);
+  border-color: var(--border-color);
+}
+.post-process .btn-small,
+.pp-modal .btn-small {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+  background: none;
+  color: var(--secondary-text-color);
+  border-color: var(--border-color);
+}
+.post-process :is(.btn-secondary, .btn-small):hover:not(:disabled),
+.pp-modal :is(.btn-secondary, .btn-small):hover:not(:disabled) {
+  color: var(--accent-color, #4a90d9);
+  border-color: var(--accent-color, #4a90d9);
+}
+.post-process .btn-link,
+.pp-modal .btn-link {
+  padding: 0.4rem 0.2rem;
+  background: none;
+  border: none;
+  color: var(--accent-color, #4a90d9);
+}
+.post-process .btn-link:hover:not(:disabled),
+.pp-modal .btn-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.post-process .btn.btn-danger,
+.pp-modal .btn.btn-danger {
+  background: var(--error-color, #c62828);
+  border-color: var(--error-color, #c62828);
+  color: #fff;
+}
+.post-process .btn.btn-danger:hover:not(:disabled),
+.pp-modal .btn.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error-color, #c62828) 82%, #000);
+  color: #fff;
+}
+.post-process :is(.btn, .btn-small, .btn-secondary, .btn-link):focus-visible,
+.pp-modal :is(.btn, .btn-small, .btn-secondary, .btn-link):focus-visible {
+  outline: 2px solid var(--accent-color, #4a90d9);
+  outline-offset: 2px;
+}
+.post-process :is(.btn, .btn-small, .btn-secondary, .btn-link):disabled,
+.pp-modal :is(.btn, .btn-small, .btn-secondary, .btn-link):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* "+ New job": the page's main action. */
+.pp-jobs-card__head > .btn,
+.pp-empty > .btn {
+  padding: 0.5rem 1.2rem;
+  font-size: 0.9rem;
+}
+/* Row actions sit together and wrap on narrow screens. */
+.pp-jobs .compose-job__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+.pp-jobs .compose-job__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}

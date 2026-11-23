@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from src.controller import compose
 from src.controller.dashboard_views import DashboardViewStore
 from src.controller.fonts import FontStore
 from src.controller.recording import RecordingSession
@@ -2616,6 +2617,12 @@ class TestHabitatSessionHandlers:
 # ---------------------------------------------------------------------------
 
 class TestComposeHandlers:
+    @pytest.fixture(autouse=True)
+    def _own_jobs_file(self, tmp_path, monkeypatch):
+        # The worker loads its saved history from compose.JOBS_FILE; on a
+        # controller that's the real render history, so keep tests off it.
+        monkeypatch.setattr(compose, "JOBS_FILE", str(tmp_path / "compose_jobs.json"))
+
     def test_get_compose_jobs_empty_before_first_use(self):
         web, _ = _make_web_with_facade()
         client = _connected_client(web)

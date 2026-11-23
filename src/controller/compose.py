@@ -650,9 +650,10 @@ def mic_segments(date_dir: str, device: dict) -> list[list[int]]:
             date_dir, device["folder"], device["device"]):
         try:
             fit = _mic_fit(audio_file, sidecar)
+            end_ns = fit.sample0_wall_ns + int(fit.duration_s * 1e9)
         except Exception:  # noqa: BLE001 -- a bad sidecar only loses its lane bar
             continue
-        out.append([fit.sample0_wall_ns, fit.sample0_wall_ns + int(fit.duration_s * 1e9)])
+        out.append([fit.sample0_wall_ns, end_ns])
     out.sort()
     return out
 

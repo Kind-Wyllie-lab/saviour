@@ -748,3 +748,14 @@ def test_latency_anchor_needs_a_few_lines_and_a_sane_answer(tmp_path):
         fit = _parse(path)
         assert fit.anchor == "started" and fit.latency_offset_ms is None
         assert abs(fit.sample0_wall_ns / 1e9 - true0) < 1e-6
+
+
+def test_probe_audio_refuses_a_zero_sample_rate():
+    """ffprobe 7.x exits 0 on an unreadable file with sample_rate "0"; that
+    must read as unreadable, not as a 0 Hz stream (duration_s would divide
+    by zero and take Compose's streams info down with it)."""
+    fake = subprocess.CompletedProcess(
+        [], 0, stdout=json.dumps({"streams": [{"sample_rate": "0"}]}), stderr="")
+    with patch("src.controller.audio_align.subprocess.run", return_value=fake):
+        with pytest.raises(ValueError, match="no audio stream"):
+            audio_align._probe_audio("x.flac")

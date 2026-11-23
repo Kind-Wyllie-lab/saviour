@@ -651,10 +651,19 @@ export default function ComposeEditor({
             <label className="compose-simple__row">
               <span className="compose-simple__label">Layout</span>
               <select value={template} onChange={(e) => setTemplate(e.target.value)}
-                disabled={simpleCams.length < 2}
-                title={simpleCams.length < 2 ? "One camera fills the frame" : ""}>
+                disabled={simpleCams.length + simpleSpecs.length < 2}
+                title={simpleCams.length + simpleSpecs.length < 2
+                  ? "One camera fills the frame: add a spectrogram or another camera to arrange"
+                  : "Arranges the cameras and spectrograms"}>
                 {TEMPLATES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
+              {simpleSpecs.length > 0 && (
+                <span className="compose-panel__hint">
+                  {template === "side" ? "Spectrograms in a column beside the video"
+                    : template === "grid" ? "Spectrograms as cells of the grid"
+                      : "Spectrograms under the video"}
+                </span>
+              )}
             </label>
             {micDevices.length > 0 && (
               <div className="compose-simple__row">

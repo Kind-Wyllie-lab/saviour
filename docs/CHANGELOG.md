@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-23
 
+- [x] **Compose: the layout arranges the spectrograms too** (`compose.py` `_arrange_panels`, `ComposeEditor.jsx`; `test_compose_layout.py`). Spectrogram panels always went under the video, so with one camera the Simple Layout menu was disabled. Templates now place them by the layout: Auto / Stacked keep them under the video, full width; Side by side puts them in a column beside the cameras (as tall as the video, one camera wide, split between the panels); Grid makes them equal cells with the cameras. Scaled down if past the 3840×4320 canvas limit. The menu is enabled whenever there are two or more things to arrange, with a hint saying where the spectrograms go. Old saved jobs without a layout document (`layout_from_legacy`) are unchanged.
+
 - [x] **Post-Process: button styles for the jobs list and New job modal** (`PostProcess.css`). `.btn` / `.btn-small` / `.btn-secondary` / `.btn-link` / `.btn-danger` have no global style, so the Jobs card's buttons (New job, row actions, Align ephys, Show) and the modal's (← Job types, everything inside the tools) rendered as browser defaults. Scoped to `.post-process` and `.pp-modal` (the modal is portalled to `body`): accent-filled primary, outline small, focus ring, disabled state; row actions wrap on narrow screens.
 
 - [x] **Post-Process: a session's jobs list and a New job modal** (`PostProcess.jsx`, `useSessionJobs.js`, `JobsList.jsx`, `NewJobModal.jsx`, `NwbExportPanel.jsx`; `web.py` `get_ephys_info`; `test_web.py` ephys info tests). Replaces the tool cards from earlier the same day (`ToolCard.jsx` removed).

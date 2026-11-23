@@ -61,6 +61,9 @@ render is the same either way and Advanced can pick up where Simple left off.
   layout through the existing `compose_layout_template` (it already takes a
   camera and mic subset); frame rate matches the cameras, format follows
   the content.
+  The Layout applies to the spectrogram panels too (2026-11-23): Auto /
+  Stacked under the video, Side by side a column beside it, Grid equal
+  cells, so one camera + a spectrogram can still be arranged.
 - *Advanced*: today's canvas editor, unchanged.
 - Simple → Advanced keeps the layout. Advanced → Simple after hand edits
   asks first, since Simple rebuilds the layout from its choices (Undo in

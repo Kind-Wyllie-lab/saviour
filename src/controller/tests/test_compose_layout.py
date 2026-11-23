@@ -312,6 +312,48 @@ def test_template_without_a_mic_drops_the_audio(tmp_path, monkeypatch):
     assert [t["kind"] for t in doc["tiles"]] == ["camera", "camera"]
 
 
+def _with_mics(monkeypatch, n=1):
+    ids = [f"mic/am{i + 1}" for i in range(n)]
+    monkeypatch.setattr("src.controller.compose.resolve_mic_devices",
+                        lambda _d, audio: [{"id": m} for m in (audio.sources or ids)])
+    return ids
+
+
+def _rects(doc, kind):
+    return [t["rect"] for t in doc["tiles"] if t["kind"] == kind]
+
+
+def test_template_one_camera_spectrogram_stacked_under(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch, cams=("cam_a",))
+    mics = _with_mics(monkeypatch)
+    for tpl in ("auto", "stack"):
+        doc = layout_template(str(share), "sess", None, tpl, audio_mode="panel", mics=mics)
+        (cam,), (spec,) = _rects(doc, "camera"), _rects(doc, "spectrogram")
+        assert spec[1] == cam[1] + cam[3] and spec[2] == cam[2]   # under, full width
+
+
+def test_template_one_camera_spectrogram_side_by_side(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch, cams=("cam_a",))
+    mics = _with_mics(monkeypatch, 2)
+    doc = layout_template(str(share), "sess", None, "side", audio_mode="panel", mics=mics)
+    (cam,) = _rects(doc, "camera")
+    specs = _rects(doc, "spectrogram")
+    assert all(s[0] == cam[0] + cam[2] and s[2] == cam[2] for s in specs)  # right, one camera wide
+    assert specs[0][1] == 0 and specs[1][1] == specs[0][3]               # split down the column
+    assert sum(s[3] for s in specs) <= cam[3]
+    assert doc["canvas"]["width"] == cam[2] * 2 and doc["canvas"]["height"] == cam[3]
+    assert all(t["options"]["label"] for t in doc["tiles"] if t["kind"] == "spectrogram")
+
+
+def test_template_grid_puts_spectrograms_in_cells(tmp_path, monkeypatch):
+    share = _session(tmp_path, monkeypatch)
+    mics = _with_mics(monkeypatch, 2)
+    doc = layout_template(str(share), "sess", None, "grid", audio_mode="panel", mics=mics)
+    rects = _rects(doc, "camera") + _rects(doc, "spectrogram")
+    assert len({(r[2], r[3]) for r in rects}) == 1                 # equal cells
+    assert len({(r[0], r[1]) for r in rects}) == 4                 # 2 x 2, no overlap
+
+
 def _headstage(share, port="A1", aligned=True):
     d = share / "sess" / "_ephys" / "accel" / port
     d.mkdir(parents=True)

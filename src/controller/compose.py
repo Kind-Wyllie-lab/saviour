@@ -23,6 +23,7 @@ module imports neither OpenCV nor Flask at load time.
 
 from __future__ import annotations
 
+import copy
 import csv
 import glob
 import hashlib
@@ -879,6 +880,8 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
     resolved = resolve_layout(resolve_date_dir(session_dir, spec.date_dir), spec,
                               strict_audio=False)
     doc = resolved.doc
+    if audio_mode == "panel":
+        doc = _arrange_panels(doc, template)
     if headstage and headstage.get("source") and headstage.get("show", "none") != "none":
         doc = _add_headstage(doc, session_dir, str(headstage["source"]),
                              str(headstage.get("show", "trace")))
@@ -891,6 +894,58 @@ def layout_template(share_path: str, session_name: str, date_dir: str | None,
         doc = compose_layout.fit_to_canvas(doc, target["width"], target["height"])
         doc["canvas"]["background"] = target["background"]
     return doc
+
+
+def _arrange_panels(doc: dict, template: str) -> dict:
+    """Apply the layout keyword to the spectrogram panels as well as the
+    cameras (layout_from_legacy always stacks them under the video, which
+    old saved jobs still rely on; templates go through here):
+
+    - `auto` / `stack`: panels under the cameras, full width (unchanged).
+    - `side`: panels in a column right of the cameras, as tall as them and
+      one camera wide, split evenly between the panels.
+    - `grid`: cameras and panels as equal cells of one grid.
+
+    So a single camera with a spectrogram can still be laid out side by
+    side or stacked."""
+    cams = [t for t in doc["tiles"] if t["kind"] == "camera"]
+    panels = [t for t in doc["tiles"] if t["kind"] == "spectrogram"]
+    if template not in ("side", "grid") or not cams or not panels:
+        return doc
+    out = copy.deepcopy(doc)
+    cams = [t for t in out["tiles"] if t["kind"] == "camera"]
+    panels = [t for t in out["tiles"] if t["kind"] == "spectrogram"]
+    cam_w = max(t["rect"][0] + t["rect"][2] for t in cams)
+    cam_h = max(t["rect"][1] + t["rect"][3] for t in cams)
+    if template == "side":
+        across = max(1, sum(1 for t in cams if t["rect"][1] == 0))
+        col_w = _even(cam_w / across)
+        heights = panel_heights(cam_h, len(panels))
+        y = 0
+        for t, h in zip(panels, heights, strict=True):
+            t["rect"] = [cam_w, y, col_w, h]
+            t["z"] = 0
+            y += h
+        out["canvas"]["width"], out["canvas"]["height"] = cam_w + col_w, cam_h
+    else:
+        first = cams[0]["rect"]
+        dims = [(t["rect"][2], t["rect"][3]) for t in cams]
+        dims += [(first[2], first[3])] * len(panels)
+        regions, cw, ch = plan_regions(dims, "grid", cam_w)
+        for t, r in zip(cams + panels, regions, strict=True):
+            t["rect"] = list(r)
+            t["z"] = 0
+        out["canvas"]["width"], out["canvas"]["height"] = cw, ch
+    for t in panels:
+        t["options"] = {**t.get("options", {}), "label": len(panels) > 1}
+    cw, ch = out["canvas"]["width"], out["canvas"]["height"]
+    if cw > compose_layout.MAX_CANVAS_W or ch > compose_layout.MAX_CANVAS_H:
+        scale = min(compose_layout.MAX_CANVAS_W / cw, compose_layout.MAX_CANVAS_H / ch)
+        out = compose_layout.fit_to_canvas(out, cw * scale, ch * scale)
+    try:
+        return compose_layout.validate_layout(out)
+    except compose_layout.LayoutError as exc:
+        raise ComposeError(str(exc)) from exc
 
 
 HEADSTAGE_SHOW = ("trace", "orientation", "both")

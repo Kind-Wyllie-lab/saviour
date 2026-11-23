@@ -13,6 +13,7 @@ import {
   newAccelTraceTile, newCameraTile, newOrientationTile, newSpectrogramTile,
   newTileId, nsToMs, streamsByDate,
 } from "./composeLayout";
+import { formatUtcTime } from "/src/basic/utils/time";
 import "./ComposeEditor.css";
 
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -26,8 +27,16 @@ const UNDO_DEPTH = 50;
  * spectrograms on it, set each tile's options, and render. The layout
  * document this edits is exactly what the controller previews and renders
  * (src/controller/compose_layout.py), so the canvas is what you get.
+ *
+ * Two modes over the same layout document (plans/post-process-page-layout.md):
+ * Simple picks cameras / layout / audio / range and rebuilds the layout from
+ * a built-in template on every change; Advanced is the canvas editor.
+ * `active` is false while the Post-Process card is closed: no previews, no
+ * keyboard shortcuts. `onSummary` gets the card header's one-liner.
  */
-export default function ComposeEditor({ sessionName, session, files, onSelectSession }) {
+export default function ComposeEditor({
+  sessionName, session, files, onSelectSession, active = true, onSummary,
+}) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
   const [dateDir, setDateDir] = useState("");
@@ -48,6 +57,17 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   const [fps, setFps] = useState("");
   const fpsTouched = useRef(false);
   const [fmt, setFmt] = usePersistedState("compose_fmt", "mp4");
+  const [mode, setMode] = usePersistedState("compose_mode", "simple");
+  const simple = mode !== "advanced";
+  // Simple mode's choices: cameras / mics left out (so a new session
+  // defaults to all of them), and whether to render only part of the day.
+  const [excludedCams, setExcludedCams] = useState([]);
+  const [excludedMics, setExcludedMics] = useState([]);
+  const [partOnly, setPartOnly] = useState(false);
+  // True once the layout was changed by hand (not by a template), so going
+  // back to Simple, which rebuilds it, asks first.
+  const editedRef = useRef(false);
+  const templateRangeRef = useRef(undefined);
   const jobs = useComposeJobs();
   const previewReqId = useRef(0);
   const templateReqId = useRef(0);
@@ -96,12 +116,14 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       redoStack.current = [];
     }
     docRef.current = value;
+    editedRef.current = true;
     setDocRaw(value);
   }, [setDocRaw]);
   const undo = () => {
     const prev = undoStack.current.pop();
     if (!prev) return;
     redoStack.current.push(docRef.current);
+    editedRef.current = true;
     docRef.current = prev;
     setDocRaw(prev);
   };
@@ -109,6 +131,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     const next = redoStack.current.pop();
     if (!next) return;
     undoStack.current.push(docRef.current);
+    editedRef.current = true;
     docRef.current = next;
     setDocRaw(next);
   };
@@ -132,6 +155,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   // Ctrl+Y redoes. A ref keeps the listener on the latest state.
   const keyRef = useRef(null);
   keyRef.current = (e) => {
+    if (!active || simple) return;
     const el = e.target;
     if (el?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el?.tagName)) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -195,7 +219,9 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       if (d.request_id !== templateReqId.current) return;
       if (d.error) { setNotice(d.error); return; }
       setNotice("");
-      setDoc(d.layout_doc);
+      const range = templateRangeRef.current;
+      setDoc(range === undefined ? d.layout_doc : { ...d.layout_doc, range });
+      editedRef.current = false;
       setSelectedId(null);
     };
     const onAccepted = () => setNotice("");
@@ -223,18 +249,29 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   }, [sessionName, dateDir, camKey]);
 
   useEffect(() => {
+    setExcludedCams([]);
+    setExcludedMics([]);
+    setPartOnly(false);
+  }, [sessionName, dateDir]);
+
+  useEffect(() => {
     if (!fpsTouched.current && info?.suggested_fps) setFps(String(info.suggested_fps));
   }, [info?.suggested_fps]);
 
-  const applyTemplate = (tpl = template, audio = templateAudio) => {
+  // Builds a layout from a built-in template. `range` is what the new
+  // layout's time range becomes (default: keep the current one).
+  const applyTemplate = (tpl = template, audio = templateAudio, {
+    streams = cameras.map((c) => c.name), mics = micDevices.map((d) => d.id),
+    range = doc?.range, canvas = keepCanvas && doc ? doc.canvas : undefined,
+  } = {}) => {
     templateReqId.current += 1;
+    templateRangeRef.current = range;
     const spec = doc?.tiles.find((t) => t.kind === "spectrogram")?.options;
     socket.emit("compose_layout_template", {
       request_id: templateReqId.current,
       session_name: sessionName, date_dir: dateDir,
-      template: tpl, audio_mode: audio,
-      streams: cameras.map((c) => c.name),
-      mics: micDevices.map((d) => d.id),
+      template: tpl, audio_mode: mics.length ? audio : "none",
+      streams, mics,
       spectrogram: spec ? {
         color: spec.color, fmin_hz: spec.fmin_hz, fmax_hz: spec.fmax_hz,
         fscale: spec.fscale, ascale: spec.ascale, gain: spec.gain,
@@ -242,14 +279,39 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
         color: DEFAULT_SPECTROGRAM.color, fmax_hz: DEFAULT_SPECTROGRAM.fmax_hz,
         gain: DEFAULT_SPECTROGRAM.gain,
       },
-      canvas: keepCanvas && doc ? doc.canvas : undefined,
+      canvas,
     });
   };
 
-  // No layout yet: start from Auto over every camera.
+  // No layout yet (Advanced): start from Auto over every camera.
   useEffect(() => {
-    if (infoReady && !doc) applyTemplate("auto", "none");
-  }, [infoReady, !doc]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!simple && infoReady && !doc) applyTemplate("auto", "none");
+  }, [simple, infoReady, !doc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Simple: every choice rebuilds the layout from its template.
+  const simpleCams = cameras.map((c) => c.name).filter((n) => !excludedCams.includes(n));
+  const simpleMics = micDevices.map((d) => d.id).filter((m) => !excludedMics.includes(m));
+  const simpleKey = [sessionName, dateDir, template, templateAudio,
+    simpleCams.join(","), simpleMics.join(",")].join("|");
+  useEffect(() => {
+    if (!simple || !infoReady || !simpleCams.length) return;
+    applyTemplate(template, templateAudio, {
+      streams: simpleCams, mics: simpleMics, canvas: undefined,
+      range: partOnly && doc?.range ? doc.range : { start_ns: null, end_ns: null, speed: 1 },
+    });
+  }, [simple, infoReady, simpleKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const switchMode = (next) => {
+    if (next === mode) return;
+    if (next === "simple" && doc && editedRef.current && !window.confirm(
+      "Simple rebuilds the layout from its choices, replacing your custom layout. "
+      + "Undo in Advanced brings it back. Switch to Simple?")) return;
+    setMode(next);
+  };
+  const choosePart = (on) => {
+    setPartOnly(on);
+    if (!on && doc) setRangeDoc((d) => ({ ...d, range: { start_ns: null, end_ns: null, speed: 1 } }));
+  };
 
   // Preview the middle of the day until the user scrubs; keep a scrubbed
   // time when it's still inside the (possibly new) window.
@@ -263,7 +325,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   // The preview follows every edit and every scrub (debounced; the
   // controller only renders each browser's latest request).
   useEffect(() => {
-    if (!doc || !infoReady || missing.length) return undefined;
+    if (!active || !doc || !infoReady || missing.length) return undefined;
     const timer = setTimeout(() => {
       previewReqId.current += 1;
       setPreviewing(true);
@@ -274,14 +336,50 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
       });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [docKey, infoReady, missing.length, dateDir, sessionName, previewMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active, docKey, infoReady, missing.length, dateDir, sessionName, previewMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const setRange = ([a, b]) => setDoc((d) => ({
+  // The time range isn't part of the layout: changing it doesn't count as
+  // a hand edit (Simple keeps it across rebuilds when "Part of it" is on).
+  const setRangeDoc = (fn) => {
+    const edited = editedRef.current;
+    setDoc(fn);
+    editedRef.current = edited;
+  };
+  const setRange = ([a, b]) => setRangeDoc((d) => ({
     ...d, range: { ...(d.range || {}), speed, start_ns: msToNs(a), end_ns: msToNs(b) },
   }));
-  const setSpeed = (v) => setDoc((d) => ({
+  const setSpeed = (v) => setRangeDoc((d) => ({
     ...d, range: { start_ns: null, end_ns: null, ...(d.range || {}), speed: v },
   }));
+
+  // Card header summary.
+  const sessionJobs = Object.values(jobs)
+    .filter((j) => (j.spec?.session_name || sessionName) === sessionName)
+    .sort((a, b) => b.created_at - a.created_at);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  let summaryText;
+  let summaryTone = "muted";
+  if (!dates.length) {
+    summaryText = "no camera video in this session";
+  } else {
+    const parts = [];
+    if (cameras.length) parts.push(plural(cameras.length, "camera"));
+    if (micDevices.length) parts.push(plural(micDevices.length, "mic"));
+    const busyJob = sessionJobs.find((j) => j.state === "running" || j.state === "queued");
+    const last = sessionJobs[0];
+    if (busyJob) {
+      parts.push(busyJob.state === "queued" ? "render queued"
+        : `rendering ${Math.round((busyJob.progress || 0) * 100)}%`);
+      summaryTone = "active";
+    } else if (last) {
+      parts.push(`last render ${formatUtcTime(last.created_at)} ${last.state}`);
+      summaryTone = last.state === "done" ? "ok" : last.state === "failed" ? "bad" : "muted";
+    }
+    summaryText = parts.join(" · ") || "loading…";
+  }
+  useEffect(() => {
+    onSummary?.({ text: summaryText, tone: summaryTone });
+  }, [summaryText, summaryTone, onSummary]);
 
   if (!dates.length) return null; // nothing composable in this session
 
@@ -347,9 +445,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
   };
 
   // ── render ───────────────────────────────────────────────────────────
-  const jobList = Object.values(jobs)
-    .filter((j) => (j.spec?.session_name || sessionName) === sessionName)
-    .sort((a, b) => b.created_at - a.created_at);
+  const jobList = sessionJobs;
   const anyActive = jobList.some((j) => j.state === "queued" || j.state === "running");
   const elsewhere = Object.values(jobs).filter(
     (j) => (j.state === "queued" || j.state === "running")
@@ -370,9 +466,14 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
     || (dates.length === 1 ? session?.framesync_verdict : null);
 
   return (
-    <section className="card compose-panel compose-editor">
+    <div className="compose-panel compose-editor">
       <div className="compose-editor__title">
-        <h3>Compose video</h3>
+        <div className="compose-mode" role="group" aria-label="Editor mode">
+          <button type="button" className={`compose-mode__btn${simple ? " is-active" : ""}`}
+            aria-pressed={simple} onClick={() => switchMode("simple")}>Simple</button>
+          <button type="button" className={`compose-mode__btn${simple ? "" : " is-active"}`}
+            aria-pressed={!simple} onClick={() => switchMode("advanced")}>Advanced</button>
+        </div>
         {dates.length > 1 && (
           <label className="compose-editor__inline">
             Recording day
@@ -383,14 +484,131 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
         )}
       </div>
       <p className="modal-subtext">
-        Place this session's cameras and spectrograms on the output canvas. What
-        you see here is what gets rendered, aligned by each camera's real
-        per-frame timestamp. Renders run in the background; you can leave
-        this page.
+        {simple
+          ? "Choose the cameras and how to show the audio; the layout is arranged for you. "
+            + "Use Advanced to place and size tiles yourself."
+          : "Place this session's cameras and spectrograms on the output canvas. What "
+            + "you see here is what gets rendered."}
+        {" "}Video is aligned by each camera&apos;s real per-frame timestamp. Renders
+        run in the background; you can leave this page.
       </p>
 
       {info?.error && <div className="compose-job__error">{info.error}</div>}
 
+      {simple ? (
+        <div className="compose-simple">
+          <div className="compose-simple__form">
+            <div className="compose-simple__row">
+              <span className="compose-simple__label">Cameras</span>
+              <div className="compose-simple__choices">
+                {cameras.map((c) => {
+                  const on = !excludedCams.includes(c.name);
+                  return (
+                    <label key={c.name} className="compose-simple__check">
+                      <input type="checkbox" checked={on}
+                        disabled={on && simpleCams.length === 1}
+                        onChange={() => setExcludedCams((x) => (on
+                          ? [...x, c.name] : x.filter((n) => n !== c.name)))} />
+                      {c.name}
+                      <span className="compose-panel__hint">
+                        {c.width}×{c.height}{c.fps ? ` · ${c.fps} fps` : ""}
+                      </span>
+                    </label>
+                  );
+                })}
+                {!cameras.length && <span className="compose-panel__hint">Loading…</span>}
+              </div>
+            </div>
+            <label className="compose-simple__row">
+              <span className="compose-simple__label">Layout</span>
+              <select value={template} onChange={(e) => setTemplate(e.target.value)}
+                disabled={simpleCams.length < 2}
+                title={simpleCams.length < 2 ? "One camera fills the frame" : ""}>
+                {TEMPLATES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </label>
+            {micDevices.length > 0 && (
+              <label className="compose-simple__row">
+                <span className="compose-simple__label">Audio</span>
+                <select value={templateAudio} onChange={(e) => setTemplateAudio(e.target.value)}>
+                  {TEMPLATE_AUDIO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </label>
+            )}
+            {micDevices.length > 1 && templateAudio !== "none" && (
+              <div className="compose-simple__row">
+                <span className="compose-simple__label">Microphones</span>
+                <div className="compose-simple__choices">
+                  {micDevices.map((d) => {
+                    const on = !excludedMics.includes(d.id);
+                    return (
+                      <label key={d.id} className="compose-simple__check">
+                        <input type="checkbox" checked={on}
+                          onChange={() => setExcludedMics((x) => (on
+                            ? [...x, d.id] : x.filter((m) => m !== d.id)))} />
+                        {d.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="compose-simple__row">
+              <span className="compose-simple__label">Length</span>
+              <div className="compose-simple__choices">
+                <label className="compose-simple__check">
+                  <input type="radio" name="compose-part" checked={!partOnly}
+                    onChange={() => choosePart(false)} />
+                  Whole recording
+                  {windowMs ? <span className="compose-panel__hint">{formatSpan(windowMs[1] - windowMs[0])}</span> : null}
+                </label>
+                <label className="compose-simple__check">
+                  <input type="radio" name="compose-part" checked={partOnly}
+                    onChange={() => choosePart(true)} />
+                  Part of it
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="compose-simple__preview">
+            {partOnly && windowMs && previewMs != null && (
+              <Timeline
+                windowMs={windowMs}
+                cameras={cameras.filter((c) => simpleCams.includes(c.name))}
+                mics={templateAudio === "none" ? []
+                  : micDevices.filter((d) => simpleMics.includes(d.id))}
+                rangeMs={rangeMs} speed={speed}
+                previewMs={previewMs} previewedMs={previewedMs}
+                onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}
+              />
+            )}
+            {preview?.error && <div className="compose-job__error">{preview.error}</div>}
+            {preview?.image ? (
+              <div className="compose-editor__full" ref={fullRef}
+                onClick={() => document.fullscreenElement && document.exitFullscreen?.()}>
+                <img src={preview.image} alt="Preview of the composed video" />
+              </div>
+            ) : !preview?.error && (
+              <div className="compose-panel__preview-empty">
+                {previewing || !doc ? "Building the preview…" : "No preview yet"}
+              </div>
+            )}
+            <div className="compose-editor__stage-foot">
+              <span>
+                {doc ? `${doc.canvas.width}×${doc.canvas.height}` : ""}
+                {previewing ? " · updating preview…" : ""}
+              </span>
+              {preview?.image && (
+                <button className="btn btn-small"
+                  onClick={() => fullRef.current?.requestFullscreen?.().catch(() => {})}>
+                  <span aria-hidden="true">⛶</span> View fullscreen
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (<>
       <div className="compose-editor__toolbar">
         <label className="compose-editor__inline">
           Template
@@ -587,8 +805,10 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
           onToggleTrack={(on) => selected && toggleTrack(selected.source, on)}
         />
       </div>
+      </>)}
 
       <div className="compose-editor__toolbar compose-editor__render-row">
+        {!simple && (<>
         <label className="compose-editor__inline"
           title="Frames per second of the video. Matching the cameras keeps every frame they recorded; a lower rate makes a smaller file and renders faster. 1-60 fps; cameras faster than 60 fps are down-sampled.">
           Output frame rate
@@ -612,6 +832,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
             <option value="mkv">MKV</option>
           </select>
         </label>
+        </>)}
         {rangeLenMs ? (
           <span className="compose-panel__hint">
             {formatSpan(rangeLenMs / speed)} of video
@@ -662,7 +883,7 @@ export default function ComposeEditor({ sessionName, session, files, onSelectSes
           {jobList.map((job) => <ComposeJobRow key={job.id} job={job} />)}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

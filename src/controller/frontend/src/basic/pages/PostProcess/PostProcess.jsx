@@ -11,6 +11,7 @@ import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import useComposeJobs from "/src/hooks/useComposeJobs";
 import EphysAlignPanel from "./EphysAlignPanel";
 import NwbExportPanel from "./NwbExportPanel";
+import ToolCard from "./ToolCard";
 import "./PostProcess.css";
 
 // Everything that turns a *recorded* session into a derived artefact —
@@ -42,7 +43,17 @@ export default function PostProcess() {
   const [fileInfo, setFileInfo] = useState(null);
   const jobs = useComposeJobs();
   const allJobs = Object.values(jobs).sort((a, b) => b.created_at - a.created_at);
-  const [showAll, setShowAll] = usePersistedState("postprocess_show_all_renders", true);
+  // Which tool cards are open (all closed by default); each panel reports
+  // a one-line summary for its card header.
+  const [openCards, setOpenCards] = usePersistedState("postprocess_open_cards", {});
+  const toggle = (id) => setOpenCards((o) => ({ ...o, [id]: !o?.[id] }));
+  const isOpen = (id) => !!openCards?.[id];
+  const [summaries, setSummaries] = useState({});
+  const summaryFor = useMemo(() => {
+    const cache = {};
+    return (id) => (cache[id] ||= (s) => setSummaries((cur) => (
+      cur[id]?.text === s?.text && cur[id]?.tone === s?.tone ? cur : { ...cur, [id]: s })));
+  }, []);
   const seededRef = useRef(false);
 
   // Default to the session in the URL (or the one last picked here), else
@@ -110,14 +121,25 @@ export default function PostProcess() {
 
       {selected && fileInfo && fileInfo.files && fileInfo.files.length > 0 && (
         <>
-          <ComposeEditor
-            sessionName={selected}
-            session={sessions?.[selected]}
-            files={fileInfo.files}
-            onSelectSession={(name) => names.includes(name) && setSelected(name)}
-          />
-          <EphysAlignPanel sessionName={selected} />
-          <NwbExportPanel sessionName={selected} />
+          <ToolCard title="Compose video" summary={summaries.compose}
+            open={isOpen("compose")} onToggle={() => toggle("compose")}>
+            <ComposeEditor
+              sessionName={selected}
+              session={sessions?.[selected]}
+              files={fileInfo.files}
+              active={isOpen("compose")}
+              onSummary={summaryFor("compose")}
+              onSelectSession={(name) => names.includes(name) && setSelected(name)}
+            />
+          </ToolCard>
+          <ToolCard title="Ephys" summary={summaries.ephys}
+            open={isOpen("ephys")} onToggle={() => toggle("ephys")}>
+            <EphysAlignPanel sessionName={selected} onSummary={summaryFor("ephys")} />
+          </ToolCard>
+          <ToolCard title="NWB export" summary={summaries.nwb}
+            open={isOpen("nwb")} onToggle={() => toggle("nwb")}>
+            <NwbExportPanel sessionName={selected} onSummary={summaryFor("nwb")} />
+          </ToolCard>
         </>
       )}
 
@@ -127,28 +149,31 @@ export default function PostProcess() {
         </div>
       )}
       {allJobs.length > 0 && (
-        <section className="card post-process__renders">
-          <button
-            className="post-process__renders-toggle"
-            onClick={() => setShowAll(!showAll)}
-            aria-expanded={showAll}
-          >
-            {showAll ? "▾" : "▸"} All renders ({allJobs.length})
-          </button>
-          {showAll && (
-            <div className="compose-panel__jobs">
-              {allJobs.map((job) => (
-                <ComposeJobRow
-                  key={job.id}
-                  job={job}
-                  showSession
-                  onShowSession={(name) => names.includes(name) && setSelected(name)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        <ToolCard
+          title="All renders"
+          summary={rendersSummary(allJobs)}
+          open={isOpen("renders")} onToggle={() => toggle("renders")}
+        >
+          <div className="compose-panel__jobs">
+            {allJobs.map((job) => (
+              <ComposeJobRow
+                key={job.id}
+                job={job}
+                showSession
+                onShowSession={(name) => names.includes(name) && setSelected(name)}
+              />
+            ))}
+          </div>
+        </ToolCard>
       )}
     </div>
   );
+}
+
+function rendersSummary(jobs) {
+  const active = jobs.filter((j) => j.state === "running" || j.state === "queued").length;
+  return {
+    text: `${jobs.length} render${jobs.length === 1 ? "" : "s"}${active ? ` · ${active} running` : ""}`,
+    tone: active ? "active" : "muted",
+  };
 }

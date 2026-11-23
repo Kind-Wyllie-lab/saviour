@@ -71,7 +71,7 @@ function JobView({ job, onCancel, onDownload }) {
   );
 }
 
-export default function NwbExportPanel({ sessionName }) {
+export default function NwbExportPanel({ sessionName, onSummary }) {
   const loggedIn = useIsLoggedIn();
   const [status, setStatus] = useState(null);
   const [jobs, setJobs] = useState({});
@@ -140,6 +140,23 @@ export default function NwbExportPanel({ sessionName }) {
     markers: (info?.markers || 0) > 0,
   }), [info]);
 
+  // Card header summary.
+  let summary;
+  if (!status) summary = { text: "checking…", tone: "muted" };
+  else if (running?.kind === "install") summary = { text: "installing the NWB package…", tone: "active" };
+  else if (!status.installed) summary = { text: "NWB package not installed", tone: "muted" };
+  else if (running?.kind === "export" && running.session_name === sessionName) {
+    summary = { text: `exporting · ${running.stage || "starting"}`, tone: "active" };
+  } else if (exportJob?.state === "failed" || exportJob?.state === "error") {
+    summary = { text: "last export failed", tone: "bad" };
+  } else if (existing) {
+    summary = { text: `written ${formatUtc(existing.mtime)} · ${formatBytes(existing.size_bytes)}`, tone: "ok" };
+  } else if (status.session_error) summary = { text: status.session_error, tone: "warn" };
+  else summary = { text: "not exported", tone: "muted" };
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [summary.text, summary.tone, onSummary]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const speciesValue = species === "other" ? otherSpecies.trim() : species;
   const ageOk = !form.age || /^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/i.test(form.age.trim());
@@ -163,8 +180,7 @@ export default function NwbExportPanel({ sessionName }) {
   };
 
   return (
-    <section className="card ephys-panel nwb-panel">
-      <h3>NWB export</h3>
+    <div className="ephys-panel nwb-panel">
       <p className="modal-subtext">
         Write this session as one Neurodata Without Borders (<code>.nwb</code>) file,
         next to its data on the share, for analysis tools and DANDI. Every stream
@@ -324,6 +340,6 @@ export default function NwbExportPanel({ sessionName }) {
           onDownload={download}
         />
       )}
-    </section>
+    </div>
   );
 }

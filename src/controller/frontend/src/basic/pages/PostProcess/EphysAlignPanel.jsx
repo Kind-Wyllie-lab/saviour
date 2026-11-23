@@ -297,7 +297,7 @@ function AccelSection({ sessionName, info, recording, onDone }) {
   );
 }
 
-export default function EphysAlignPanel({ sessionName }) {
+export default function EphysAlignPanel({ sessionName, onSummary }) {
   const [info, setInfo] = useState(null);
   const [recording, setRecording] = useState("");
   const [alignJob, setAlignJob] = useState(null);
@@ -347,14 +347,25 @@ export default function EphysAlignPanel({ sessionName }) {
   const model = info?.model;
   const modelOnOther = model?.oe_recording && model.oe_recording !== recording;
 
+  // Card header summary.
+  let summary;
+  if (!info) summary = { text: "checking…", tone: "muted" };
+  else if (info.error) summary = { text: info.error, tone: "bad" };
+  else if (busy(alignJob)) summary = { text: "aligning…", tone: "active" };
+  else if (!uploaded) summary = { text: "no recording uploaded", tone: "muted" };
+  else if (!model) summary = { text: `${recs.length} recording${recs.length === 1 ? "" : "s"} uploaded, not aligned`, tone: "warn" };
+  else summary = { text: `aligned · worst residual ${model.residual_max_ms} ms`, tone: "ok" };
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [summary.text, summary.tone, onSummary]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const runAlign = () => socket.emit("run_ephys_align", {
     session_name: sessionName,
     ...(recording && recording !== info?.matched?.rel ? { recording } : {}),
   });
 
   return (
-    <section className="card ephys-panel">
-      <h3>Ephys</h3>
+    <div className="ephys-panel">
       <p className="modal-subtext">
         Upload the Open Ephys recording for this session. The shared
         pseudorandom pulse train is matched against this session's TTL log to
@@ -442,6 +453,6 @@ export default function EphysAlignPanel({ sessionName }) {
         <code>ephys_accel.py</code>) haven't been validated running on a
         controller yet; sanity-check the clock model before relying on it.
       </p>
-    </section>
+    </div>
   );
 }

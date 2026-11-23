@@ -28,7 +28,7 @@ function blankForm() {
   };
 }
 
-function JobView({ job, onCancel, onDownload }) {
+function JobView({ job, onCancel, onDownload, onUseSettings }) {
   const [showLog, setShowLog] = useState(false);
   const running = job.state === "running";
   return (
@@ -52,6 +52,12 @@ function JobView({ job, onCancel, onDownload }) {
             ? <span className="nwb-job__warn"> Schema check: {job.validation.errors.length} problem(s), see the log.</span>
             : <span className="nwb-job__ok"> Schema check passed.</span>)}
           <button className="btn" onClick={onDownload}>Download .nwb</button>
+          {onUseSettings && job.settings && (
+            <button className="btn-secondary" onClick={() => onUseSettings(job.settings)}
+              title="Fill the form with the settings this export used">
+              Use these settings
+            </button>
+          )}
         </div>
       )}
       {job.warnings?.length > 0 && (
@@ -158,6 +164,23 @@ export default function NwbExportPanel({ sessionName, onSummary }) {
   }, [summary.text, summary.tone, onSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  // Fill the form from the settings an earlier export used (saved beside
+  // the .nwb as <session>.nwb-settings.json, or on this run's job).
+  const applySettings = (st) => {
+    if (!st) return;
+    const base = blankForm();
+    const pick = Object.fromEntries(Object.keys(base)
+      .filter((k) => k !== "include" && typeof st[k] === "string")
+      .map((k) => [k, st[k]]));
+    setForm({ ...base, ...pick, include: { ...base.include, ...(st.include || {}) } });
+    if (st.species) {
+      if (SPECIES.includes(st.species)) setSpecies(st.species);
+      else { setSpecies("other"); setOtherSpecies(st.species); }
+    }
+    if (typeof st.institution === "string") setInstitution(st.institution);
+    if (typeof st.lab === "string") setLab(st.lab);
+  };
   const speciesValue = species === "other" ? otherSpecies.trim() : species;
   const ageOk = !form.age || /^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/i.test(form.age.trim());
   const canExport = status?.installed && info && !running && speciesValue && ageOk;
@@ -231,6 +254,12 @@ export default function NwbExportPanel({ sessionName, onSummary }) {
               <code>{sessionName}.nwb</code> · {formatBytes(existing.size_bytes)} · written{" "}
               {formatUtc(existing.mtime)}
               <button className="btn-secondary" onClick={download}>Download</button>
+              {existing.settings && (
+                <button className="btn-secondary" onClick={() => applySettings(existing.settings)}
+                  title="Fill the form with the settings this file was written with">
+                  Load its settings
+                </button>
+              )}
             </div>
           )}
 
@@ -338,6 +367,7 @@ export default function NwbExportPanel({ sessionName, onSummary }) {
           job={exportJob}
           onCancel={() => socket.emit("cancel_nwb_job", { id: exportJob.id })}
           onDownload={download}
+          onUseSettings={applySettings}
         />
       )}
     </div>

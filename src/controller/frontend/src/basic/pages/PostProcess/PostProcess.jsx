@@ -61,6 +61,9 @@ export default function PostProcess() {
       ?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
   const seededRef = useRef(false);
+  // "Edit a copy" of a render: handed to the compose editor.
+  const [loadJob, setLoadJob] = useState(null);
+  const [allSessions, setAllSessions] = usePersistedState("postprocess_renders_all_sessions", false);
 
   // Default to the session in the URL (or the one last picked here), else
   // the most recent one -- the controller lists sessions oldest first; the
@@ -95,6 +98,13 @@ export default function PostProcess() {
     || (!!session?.ephys && !session?.external_sync);
   const ephysState = summaries.ephys?.state;
   const ephysHasData = ["uploaded", "aligned", "busy"].includes(ephysState);
+
+  const sessionRenders = allJobs.filter((j) => j.spec?.session_name === selected);
+  const otherRenders = allJobs.filter((j) => j.spec?.session_name !== selected);
+  const editCopy = (job) => {
+    setLoadJob({ job, nonce: Date.now() });
+    openCard("compose");
+  };
 
   return (
     <div className="post-process">
@@ -149,6 +159,8 @@ export default function PostProcess() {
                 ephysSession={ephysSession}
                 ephysState={ephysState}
                 onOpenEphys={() => openCard("ephys")}
+                loadJob={loadJob}
+                onEditCopy={editCopy}
                 onSelectSession={(name) => names.includes(name) && setSelected(name)}
               />
             </ToolCard>
@@ -188,32 +200,59 @@ export default function PostProcess() {
           This session has no exported files yet.
         </div>
       )}
-      {allJobs.length > 0 && (
+      {selected && (
         <ToolCard
-          title="All renders"
-          summary={rendersSummary(allJobs)}
+          id="pp-card-renders"
+          title="Renders"
+          summary={rendersSummary(sessionRenders, allJobs.length - sessionRenders.length)}
           open={isOpen("renders")} onToggle={() => toggle("renders")}
         >
-          <div className="compose-panel__jobs">
-            {allJobs.map((job) => (
-              <ComposeJobRow
-                key={job.id}
-                job={job}
-                showSession
-                onShowSession={(name) => names.includes(name) && setSelected(name)}
-              />
-            ))}
-          </div>
+          {sessionRenders.length > 0 ? (
+            <div className="compose-panel__jobs">
+              {sessionRenders.map((job) => (
+                <ComposeJobRow key={job.id} job={job} onEditCopy={editCopy} />
+              ))}
+            </div>
+          ) : (
+            <div className="post-process__empty">No renders for this session yet.</div>
+          )}
+          {otherRenders.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="post-process__renders-toggle"
+                onClick={() => setAllSessions(!allSessions)}
+                aria-expanded={allSessions}
+              >
+                {allSessions ? "▾" : "▸"} Other sessions ({otherRenders.length})
+              </button>
+              {allSessions && (
+                <div className="compose-panel__jobs">
+                  {otherRenders.map((job) => (
+                    <ComposeJobRow
+                      key={job.id}
+                      job={job}
+                      showSession
+                      onShowSession={(name) => names.includes(name) && setSelected(name)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </ToolCard>
       )}
     </div>
   );
 }
 
-function rendersSummary(jobs) {
+function rendersSummary(jobs, others) {
   const active = jobs.filter((j) => j.state === "running" || j.state === "queued").length;
+  const text = jobs.length
+    ? `${jobs.length} for this session${active ? ` · ${active} running` : ""}`
+    : "none for this session yet";
   return {
-    text: `${jobs.length} render${jobs.length === 1 ? "" : "s"}${active ? ` · ${active} running` : ""}`,
+    text: others ? `${text} · ${others} in other sessions` : text,
     tone: active ? "active" : "muted",
   };
 }

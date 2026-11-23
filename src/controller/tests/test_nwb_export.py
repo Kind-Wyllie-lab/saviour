@@ -154,6 +154,28 @@ def test_session_info_reports_an_existing_file(tmp_path):
     assert jobs.session_info("sess")["existing"]["size_bytes"] == 10
 
 
+def test_existing_file_carries_the_settings_it_was_written_with(tmp_path):
+    sess = _write_session(tmp_path, with_video=False)
+    jobs = nwb_export.NwbJobs(str(tmp_path), env=tmp_path / "no-env")
+    out = sess / "sess.nwb"
+    out.write_bytes(b"x")
+    assert jobs.session_info("sess")["existing"]["settings"] is None
+    opts = nwb_convert.clean_options(
+        {"subject_id": "R7", "age": "p90d", "include": {"audio": False}}, "sess")
+    settings = nwb_export.form_settings(opts)
+    assert settings["subject_id"] == "R7" and settings["age"] == "P90D"
+    assert settings["include"]["audio"] is False and settings["include"]["video"] is True
+    assert "overwrite" not in settings and "session_name" not in settings
+    Path(nwb_export.settings_path(str(out))).write_text(json.dumps({"settings": settings}))
+    assert jobs.session_info("sess")["existing"]["settings"] == settings
+
+
+def test_unreadable_settings_file_reads_as_none(tmp_path):
+    out = tmp_path / "s.nwb"
+    Path(nwb_export.settings_path(str(out))).write_text("{not json")
+    assert nwb_export.read_settings(str(out)) is None
+
+
 def test_only_one_job_at_a_time(tmp_path):
     jobs = nwb_export.NwbJobs(str(tmp_path), env=tmp_path / "no-env")
     jobs._new_job("install")

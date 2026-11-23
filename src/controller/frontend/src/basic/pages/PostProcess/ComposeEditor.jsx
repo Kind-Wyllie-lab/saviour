@@ -4,6 +4,7 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import useComposeJobs from "/src/hooks/useComposeJobs";
 import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
 import { SYNC_CLASS, SYNC_LABEL, worstSummary } from "../Recording/syncFormat";
+import { composeJobSummary } from "../Recording/sessionFormat";
 import LayoutCanvas, { SOURCE_MIME } from "./LayoutCanvas";
 import TileInspector from "./TileInspector";
 import Timeline from "./Timeline";
@@ -36,7 +37,7 @@ const UNDO_DEPTH = 50;
  */
 export default function ComposeEditor({
   sessionName, session, files, onSelectSession, active = true, onSummary,
-  ephysSession = false, ephysState, onOpenEphys,
+  ephysSession = false, ephysState, onOpenEphys, loadJob, onEditCopy,
 }) {
   const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
@@ -76,6 +77,10 @@ export default function ComposeEditor({
   const editedRef = useRef(false);
   const templateRangeRef = useRef(undefined);
   const templateTracksRef = useRef(undefined);
+  // "Edit a copy" of an earlier render (loadJob = {job, nonce}): the job
+  // whose settings are loaded, for the banner.
+  const [copyOf, setCopyOf] = useState(null);
+  const loadedNonce = useRef(null);
   const jobs = useComposeJobs();
   const previewReqId = useRef(0);
   const templateReqId = useRef(0);
@@ -272,6 +277,28 @@ export default function ComposeEditor({
     setPartOnly(false);
     setHeadSource("");
   }, [sessionName, dateDir]);
+
+  useEffect(() => { setCopyOf(null); }, [sessionName]);
+
+  // Load an earlier render's layout, day, frame rate and format into the
+  // (Advanced) editor. The layout change is undoable like any other.
+  useEffect(() => {
+    if (!loadJob || loadJob.nonce === loadedNonce.current) return;
+    loadedNonce.current = loadJob.nonce;
+    const { job } = loadJob;
+    const spec = job?.spec || {};
+    if (!spec.layout_doc) return;
+    if (doc && editedRef.current && !window.confirm(
+      "Replace the layout you're editing with this render's settings? Undo brings yours back.")) return;
+    if (spec.date_dir && dates.includes(spec.date_dir)) setDateDir(spec.date_dir);
+    setMode("advanced");
+    setDoc(spec.layout_doc);
+    setSelectedId(null);
+    if (spec.fps) { fpsTouched.current = true; setFps(String(spec.fps)); }
+    if (spec.fmt) setFmt(spec.fmt);
+    setNotice("");
+    setCopyOf(job);
+  }, [loadJob?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!fpsTouched.current && info?.suggested_fps) setFps(String(info.suggested_fps));
@@ -522,6 +549,10 @@ export default function ComposeEditor({
   // ── render ───────────────────────────────────────────────────────────
   const jobList = sessionJobs;
   const anyActive = jobList.some((j) => j.state === "queued" || j.state === "running");
+  // In the card: what's rendering now, else the latest result (the full
+  // history for the session is the Renders card).
+  const activeJobs = jobList.filter((j) => j.state === "queued" || j.state === "running");
+  const cardJobs = activeJobs.length ? activeJobs : jobList.slice(0, 1);
   const elsewhere = Object.values(jobs).filter(
     (j) => (j.state === "queued" || j.state === "running")
       && j.spec?.session_name && j.spec.session_name !== sessionName,
@@ -578,6 +609,18 @@ export default function ComposeEditor({
               Open Ephys
             </button>
           )}
+        </div>
+      )}
+
+      {copyOf && !simple && (
+        <div className="post-process__note">
+          <span>
+            Editing a copy of the render from {formatUtcTime(copyOf.created_at)} UTC
+            ({composeJobSummary(copyOf)}). Render makes a new video; the original stays.
+          </span>
+          <button type="button" className="btn btn-small" onClick={() => setCopyOf(null)}>
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -993,9 +1036,14 @@ export default function ComposeEditor({
           page, but stops if the controller restarts (e.g. a software update).
         </div>
       )}
-      {jobList.length > 0 && (
+      {cardJobs.length > 0 && (
         <div className="compose-panel__jobs">
-          {jobList.map((job) => <ComposeJobRow key={job.id} job={job} />)}
+          {cardJobs.map((job) => <ComposeJobRow key={job.id} job={job} onEditCopy={onEditCopy} />)}
+        </div>
+      )}
+      {jobList.length > cardJobs.length && (
+        <div className="compose-panel__hint">
+          This session has {jobList.length} renders: all of them are under Renders, below.
         </div>
       )}
     </div>

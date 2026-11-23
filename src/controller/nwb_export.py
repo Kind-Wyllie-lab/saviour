@@ -100,6 +100,31 @@ def default_output(session_dir: str, session_name: str) -> str:
     return os.path.join(session_dir, f"{session_name}.nwb")
 
 
+def settings_path(output: str) -> str:
+    """The form settings a .nwb was written with, saved beside it
+    (`<session>.nwb-settings.json`) so they can be loaded back into the
+    form after a restart (job records only live in memory)."""
+    return output + "-settings.json"
+
+
+def form_settings(opts: dict) -> dict:
+    """The user-editable part of cleaned export options: the text fields and
+    the stream choices (not overwrite / session times, which are per run)."""
+    out = {k: opts.get(k, "") for k in nwb_convert.TEXT_FIELDS}
+    out["include"] = dict(opts.get("include") or {})
+    return out
+
+
+def read_settings(output: str) -> dict | None:
+    try:
+        with open(settings_path(output), encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return None
+    settings = raw.get("settings") if isinstance(raw, dict) else None
+    return settings if isinstance(settings, dict) else None
+
+
 class NwbJobs:
     """The single install / export slot and its recent jobs."""
 
@@ -146,7 +171,8 @@ class NwbJobs:
         if os.path.isfile(out):
             st = os.stat(out)
             info["existing"] = {"path": os.path.relpath(out, os.path.realpath(self.share_path)),
-                                "size_bytes": st.st_size, "mtime": st.st_mtime}
+                                "size_bytes": st.st_size, "mtime": st.st_mtime,
+                                "settings": read_settings(out)}
         return info
 
     # ── jobs ─────────────────────────────────────────────────────────────
@@ -285,7 +311,7 @@ class NwbJobs:
         if os.path.exists(output) and not opts.get("overwrite"):
             raise NwbError(f"{os.path.basename(output)} already exists")
         job = self._new_job("export", session_name=session_name,
-                            stage="Reading the session")
+                            stage="Reading the session", settings=form_settings(opts))
         threading.Thread(target=self._export, daemon=True, name="nwb-export",
                          args=(job["id"], session_dir, output, opts)).start()
         return job
@@ -336,6 +362,13 @@ class NwbJobs:
             return
         share = os.path.realpath(self.share_path)
         size = os.path.getsize(output) if os.path.isfile(output) else None
+        try:
+            with open(settings_path(output), "w", encoding="utf-8") as f:
+                json.dump({"written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                           "settings": form_settings(opts)}, f, indent=2)
+        except OSError as e:
+            # The .nwb is what matters; losing its settings record isn't fatal.
+            self.logger.warning(f"Couldn't save NWB export settings: {e}")
         self._finish(job_id, "done", progress=1.0, stage="Done",
                      output=os.path.relpath(output, share), size_bytes=size,
                      validation=result.get("validation"))

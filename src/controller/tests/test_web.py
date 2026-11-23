@@ -2721,6 +2721,19 @@ class TestEphysHandlers:
         # no TTL log in this session, but a single recording is accepted
         assert info["matched"]["rel"] == "exp1/recording1"
         assert info["accel"]["A1"]["port"] == "A1"
+        assert info["accel"]["A1"]["processed_at"] > 0      # for the job list
+
+    def test_get_ephys_info_reports_when_the_model_was_fitted(self):
+        with tempfile.TemporaryDirectory() as share:
+            ephys = self._upload(share)
+            with open(os.path.join(ephys, "model.json"), "w") as f:
+                json.dump({"r2": 1.0, "residual_max_ms": 0.2, "edges_used": 40}, f)
+            web, _ = _make_web_with_facade(**{"export.mount_path": share})
+            client = _connected_client(web)
+            client.emit("get_ephys_info", {"session_name": "sess"})
+            info = _last(client.get_received(), "ephys_info")
+        assert info["model"]["residual_max_ms"] == 0.2
+        assert info["model"]["fitted_at"] > 0
 
     def test_get_ephys_info_without_upload(self):
         with tempfile.TemporaryDirectory() as share:

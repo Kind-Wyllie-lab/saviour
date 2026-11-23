@@ -503,65 +503,6 @@ body.dark-mode .accel-chart {
   white-space: pre-wrap;
 }
 
-/* ---- Tool cards (plans/post-process-page-layout.md) ---------------------- */
-.tool-card {
-  padding: 0;
-  min-width: 0;
-}
-.tool-card__head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 14px;
-  border: none;
-  background: none;
-  color: var(--text-color);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  border-radius: inherit;
-}
-.tool-card__head:hover {
-  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
-}
-.tool-card__head:focus-visible {
-  outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
-}
-.tool-card__chevron {
-  flex: 0 0 auto;
-  width: 1em;
-  color: var(--secondary-text-color);
-}
-.tool-card__title {
-  flex: 0 0 auto;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-.tool-card__summary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
-  color: var(--secondary-text-color);
-}
-.tool-card__summary--ok { color: var(--success-color, #2e7d32); }
-.tool-card__summary--active { color: var(--accent-color); }
-.tool-card__summary--warn { color: var(--warning-color, #b26a00); }
-.tool-card__summary--bad { color: var(--error-color, #c62828); }
-.tool-card__body {
-  padding: 0 14px 14px;
-}
-.tool-card__body > .modal-subtext:first-child,
-.tool-card__body > div > .modal-subtext:first-child {
-  margin-top: 0;
-}
-.tool-card .compose-panel__jobs {
-  margin: 0;
-}
-
 /* ---- Compose: Simple / Advanced ------------------------------------------ */
 .compose-mode {
   display: inline-flex;
@@ -641,11 +582,6 @@ body.dark-mode .accel-chart {
   border-radius: 6px;
   background: #000;
 }
-.tool-card--muted .tool-card__title {
-  color: var(--secondary-text-color);
-  font-weight: 500;
-}
-
 /* Inline notes: what a tool still needs, or what it leaves out. */
 .post-process__note {
   display: flex;
@@ -715,4 +651,175 @@ body.dark-mode .accel-chart {
 .compose-chip:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 1px;
+}
+
+/* ---- Jobs list + New job modal (plans/post-process-page-layout.md) ------- */
+.pp-jobs-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pp-jobs-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.pp-jobs-card__head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.pp-jobs-card__hint {
+  flex: 1 1 260px;
+  font-size: 0.82rem;
+  color: var(--secondary-text-color);
+}
+.pp-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pp-job {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.pp-job__kind {
+  margin-top: 8px;
+  padding: 2px 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--secondary-text-color);
+}
+.pp-job__kind--video { border-color: color-mix(in srgb, var(--accent-color) 60%, transparent); }
+.pp-job__kind--nwb { border-color: color-mix(in srgb, var(--success-color, #2e7d32) 60%, transparent); }
+.pp-job__kind--ephys { border-color: color-mix(in srgb, var(--warning-color, #b26a00) 60%, transparent); }
+.pp-job__row {
+  min-width: 0;
+}
+.pp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  color: var(--secondary-text-color);
+}
+.pp-empty p {
+  margin: 0;
+}
+
+.pp-modal-overlay {
+  padding: 16px;
+}
+.pp-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.pp-modal--wide {
+  width: min(1400px, 100%);
+}
+.pp-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.pp-modal__head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.pp-modal__session {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--secondary-text-color);
+}
+.pp-modal__close {
+  border: none;
+  background: none;
+  color: var(--secondary-text-color);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.pp-modal__close:hover { color: var(--text-color); }
+.pp-modal__body {
+  padding: 16px;
+  overflow: auto;
+}
+.pp-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.pp-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  min-height: 150px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pp-tile:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color) inset;
+}
+.pp-tile:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+.pp-tile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pp-tile--muted .pp-tile__title {
+  color: var(--secondary-text-color);
+}
+.pp-tile__title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+.pp-tile__blurb {
+  font-size: 0.85rem;
+  color: var(--secondary-text-color);
+}
+.pp-tile__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning-color, #b26a00) 18%, transparent);
+  font-size: 0.75rem;
+}
+.pp-tile__meta {
+  margin-top: auto;
+  font-size: 0.78rem;
+  color: var(--secondary-text-color);
 }

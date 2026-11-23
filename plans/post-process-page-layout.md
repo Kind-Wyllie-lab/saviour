@@ -1,6 +1,6 @@
-# Post-Process page layout: tool cards, simple/advanced compose
+# Post-Process page layout: jobs list, New job modal, simple/advanced compose
 
-- **Status:** in progress (phases 1 and 1b built 2026-11-23)
+- **Status:** in progress (phases 1, 1b and the jobs-list layout built 2026-11-23)
 - **Created:** 2026-11-23
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (Post-Process).
@@ -14,24 +14,39 @@ size) is a lot for "give me both cameras side by side with the spectrogram".
 
 ## Design
 
-**Tool cards.** Session picker on top; each tool is a collapsible card whose
-header carries a one-line summary even when closed, so the page reads as a
-status overview:
+**Jobs list + New job modal** (2026-11-23; replaced the first try, tool
+cards, the same day). For the selected session the page is one **Jobs**
+list, running first then newest first, each row tagged Video / NWB /
+Ephys:
 
 ```
-▸ Compose video   2 cameras · 1 mic · last render 09:12 done
-▸ Ephys           no recording uploaded
-▸ NWB export      written 08:58 · 262 MB
-▸ All renders     3 · 1 running
+Session [test-085000Z ▾]                       12 files · 1.2 GB
+Jobs   Videos, NWB files and ephys alignment…        [+ New job]
+ VIDEO  done · 2 cameras · 1 spectrogram · 09:12   [Download] [Edit a copy] [Delete]
+ NWB    test-085000Z.nwb · 262 MB · 08:58          [Download] [Export again]
+ EPHYS  Ephys alignment · worst residual 0.2 ms    [Open]
+▸ Videos from other sessions (3)
 ```
 
-- All closed by default; which are open is remembered (`usePersistedState`,
-  i.e. per tab, like the page's other choices).
-- Panels stay mounted while closed (their socket listeners keep the summary
-  live); compose doesn't request previews or take keyboard shortcuts while
-  closed.
-- A tool that can't apply says why in its summary (no cameras, NWB package
-  not installed) rather than showing an empty form.
+- Sources (`useSessionJobs`): compose renders (saved history), the NWB
+  file on the share (+ this run's running / failed export), the ephys
+  clock model and accelerometer results on the share (+ live align /
+  accel jobs). `get_ephys_info` reports `model.fitted_at` and each
+  accelerometer's `processed_at` (file times) so they sort with the rest.
+- **New job** opens a modal: three tiles (Compose video, NWB export, Ephys
+  alignment), each with a one-line description and whether it applies
+  (no camera video; installs the NWB package first / replaces the file
+  written …; recorded with ephys sync, aligned, or not recorded with ephys
+  sync). Picking one shows that tool's form in the modal (wide for
+  Compose), with "← Job types" to go back. Starting a render or an export
+  closes the modal so the job shows in the list; Ephys (upload, align,
+  accelerometer) stays open until closed.
+- Row actions open the modal on the right tool: Edit a copy (Compose with
+  the render loaded), Export again (NWB with the file's saved settings),
+  Open (Ephys / a running NWB job), Add to a video (Compose, from an
+  aligned accelerometer).
+- Ephys sessions: the Ephys tile comes first with "Do this first", and the
+  Jobs card shows "align the ephys recording first" until a model exists.
 
 **Compose: Simple and Advanced.** Both edit the same layout document, so a
 render is the same either way and Advanced can pick up where Simple left off.
@@ -58,15 +73,14 @@ already on session time (PTP), so it doesn't change their alignment, but
 everything derived from the ephys data (the headstage accelerometer tiles
 today, ephys traces later) needs it first.
 
-- Cards follow the workflow: for a session recorded with External sync =
-  Ephys (`external_sync == "ephys"`, or legacy `ephys` with no
-  `external_sync`), Ephys comes first, then Compose and NWB. Otherwise
-  Compose and NWB come first and Ephys last, dimmed ("not recorded with
-  ephys sync"; uploading still allowed). An upload on a non-ephys session
-  undims it.
+- Workflow order: for a session recorded with External sync = Ephys
+  (`external_sync == "ephys"`, or legacy `ephys` with no `external_sync`),
+  Ephys comes first (now: the first New job tile, marked "Do this first").
+  Otherwise it comes last, muted ("not recorded with ephys sync";
+  uploading still allowed).
 - Compose says what's missing for an ephys session with no aligned
-  headstage (no upload / not aligned / accelerometer not processed), in
-  the card summary ("headstage not ready") and a note with Open Ephys.
+  headstage (no upload / not aligned / accelerometer not processed) in a
+  note with Open Ephys.
 - Simple compose gains **Headstage** (trace under the video / orientation
   inset / both / don't show) once an aligned accelerometer exists, through
   `layout_template(headstage=...)`.
@@ -86,27 +100,31 @@ settings**.
 
 ## Phases
 
-1. **Cards + simple compose** (built 2026-11-23): `ToolCard`, summaries for
-   Compose / Ephys / NWB / All renders, simple/advanced compose.
-   Accept: page opens with all cards closed and summaries filled in; a
-   Simple render of two cameras + strip matches an Advanced "Apply
-   template" render of the same choices; switching modes keeps the layout.
-1b. **Ephys-first order + headstage in Simple** (built 2026-11-23): card
-   order, Compose / NWB notes, `layout_template(headstage={source, show})`
-   (trace strip grows the canvas, orientation inset top right; must be
-   aligned), Simple's Headstage row. Accept: on a real headstage + camera
-   session, the Ephys card leads, Compose's note walks through upload →
+1. **Simple / Advanced compose** (built 2026-11-23; first shipped inside
+   tool cards). Accept: a Simple render of two cameras + a spectrogram
+   panel matches an Advanced "Apply template" render of the same choices;
+   switching modes keeps the layout.
+1b. **Ephys-first order + headstage in Simple** (built 2026-11-23):
+   `layout_template(headstage={source, show})` (trace strip grows the
+   canvas, orientation inset top right; must be aligned), Simple's
+   Headstage row, Compose / NWB notes. Accept: on a real headstage +
+   camera session, Ephys leads, Compose's note walks through upload →
    align → process, and a Simple render with "Trace and orientation"
    matches the same tiles placed in Advanced.
-2. **One jobs indicator** for every background job type (compose, NWB,
-   ephys align/accel, later USV/tracking) in the page header, replacing
-   the All renders card. Needs a shared job shape or a small adapter per
-   kind.
-3. **USV detection as a page tool** (`tools/usv_detect.py`): run on a
+1c. **Jobs list + New job modal** (built 2026-11-23). Accept: a session's
+   list shows its videos, NWB file and ephys results in time order; New
+   job → Compose → Render closes the modal and the render appears at the
+   top; Edit a copy and Export again open the right tool with the saved
+   settings.
+2. **One job shape** across compose / NWB / ephys (state, progress,
+   stage, cancel, result, session), with running jobs sent on connect so
+   a reload doesn't lose ephys progress, and a header indicator for jobs
+   running in other sessions. Lets USV / tracking plug in as job types.
+3. **USV detection as a job type** (`tools/usv_detect.py`): run on a
    session's AudioMoth FLACs in the background, show the summary, timeline
    and gallery PNGs, download the calls CSV. Later: calls as a compose
    event track (compose phase 3).
-4. **APA tracking as a page tool** (`tools/apa_track.py` / `apa_track_report.py`):
+4. **APA tracking as a job type** (`tools/apa_track.py` / `apa_track_report.py`):
    APA sessions only; time in zone, entries, latency, pulses in/out of zone,
    trajectory and timeline plots, `track.csv`.
 5. **Sync / QC report card**: framesync verdict (now on the session page),

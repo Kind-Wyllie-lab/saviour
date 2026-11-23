@@ -4,6 +4,7 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { formatBytes, triggerDownload } from "../Recording/sessionFormat";
 import { formatUtc } from "/src/basic/utils/time";
+import DandiReport from "./DandiReport";
 
 // NWB export (plans/nwb-export.md): one .nwb per session, written next to
 // the session's data on the share by src/controller/nwb_convert.py. The NWB
@@ -34,7 +35,7 @@ function JobView({ job, onCancel, onDownload, onUseSettings }) {
   return (
     <div className={`nwb-job nwb-job--${job.state}`}>
       <div className="nwb-job__head">
-        <strong>{job.kind === "install" ? "Install" : "Export"}</strong>
+        <strong>{{ install: "Install", inspect: "DANDI check" }[job.kind] || "Export"}</strong>
         <span className="nwb-job__stage">{job.stage}</span>
         {running && <button className="btn-secondary" onClick={onCancel}>Cancel</button>}
       </div>
@@ -59,6 +60,9 @@ function JobView({ job, onCancel, onDownload, onUseSettings }) {
             </button>
           )}
         </div>
+      )}
+      {job.state === "done" && job.kind === "export" && job.inspection && (
+        <DandiReport report={job.inspection} />
       )}
       {job.warnings?.length > 0 && (
         <ul className="ephys-panel__warnings">
@@ -192,6 +196,18 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
   const speciesValue = species === "other" ? otherSpecies.trim() : species;
   const ageOk = !form.age || /^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/i.test(form.age.trim());
   const canExport = status?.installed && info && !running && speciesValue && ageOk;
+  // What DANDI will refuse (nwb_inspect): no age (or date of birth) and a
+  // missing subject ID. The file is still written; the check flags it.
+  const dandiMissing = [
+    !form.subject_id.trim() && "a subject ID",
+    !form.age.trim() && "an age",
+  ].filter(Boolean);
+  const checkJob = all.find((j) => j.kind === "inspect" && j.session_name === sessionName);
+  const checking = running?.kind === "inspect" && running.session_name === sessionName;
+  const runCheck = () => {
+    setError("");
+    socket.emit("inspect_nwb_file", { session_name: sessionName });
+  };
 
   const download = () => triggerDownload(
     `/api/sessions/${encodeURIComponent(sessionName)}/download/${encodeURIComponent(`${sessionName}.nwb`)}`,
@@ -245,6 +261,18 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
         <JobView job={installJob} onCancel={() => socket.emit("cancel_nwb_job", { id: installJob.id })} />
       )}
 
+      {status?.installed && !status.inspector && (
+        <div className="post-process__note">
+          The DANDI checker (nwbinspector) isn&apos;t installed, so exports aren&apos;t
+          checked. Installing again adds it.
+          <button className="btn btn-small" disabled={!loggedIn || !!running}
+            title={loggedIn ? "" : "Sign in as admin to install"}
+            onClick={() => { setError(""); socket.emit("install_nwb_package"); }}>
+            Install the DANDI checker
+          </button>
+        </div>
+      )}
+
       {status?.installed && status.session_error && (
         <div className="ephys-panel__note">{status.session_error}</div>
       )}
@@ -252,7 +280,8 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
       {status?.installed && info && (
         <>
           <div className="ephys-panel__note">
-            pynwb {status.version} · {info.cameras.length} camera(s), {info.audio.length} audio
+            pynwb {status.version}{status.inspector ? ` · nwbinspector ${status.inspector}` : ""}
+            {" "}· {info.cameras.length} camera(s), {info.audio.length} audio
             recording(s), {info.events.length} event log(s)
             {info.markers ? `, ${info.markers} marker(s)` : ""}
           </div>
@@ -268,6 +297,11 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
                   Load its settings
                 </button>
               )}
+              <DandiReport
+                report={checkJob?.state === "done" ? checkJob.inspection : existing.inspection}
+                onCheck={status.inspector ? runCheck : undefined}
+                checking={checking}
+                error={checkJob?.state === "error" ? checkJob.error : ""} />
             </div>
           )}
 
@@ -288,7 +322,7 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
               </label>
             )}
             <label>
-              Subject ID
+              <span>Subject ID <span className="nwb-form__req">needed for DANDI</span></span>
               <input value={form.subject_id} placeholder="rat ID"
                 onChange={(e) => set({ subject_id: e.target.value })} />
             </label>
@@ -304,7 +338,7 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
               </select>
             </label>
             <label className={ageOk ? "" : "nwb-form--bad"}>
-              Age
+              <span>Age <span className="nwb-form__req">needed for DANDI</span></span>
               <input value={form.age} placeholder="P90D = 90 days, P12W = 12 weeks"
                 onChange={(e) => set({ age: e.target.value })} />
             </label>
@@ -359,6 +393,12 @@ export default function NwbExportPanel({ sessionName, onSummary, loadSettings })
             )}
           </fieldset>
 
+          {dandiMissing.length > 0 && (
+            <div className="post-process__note post-process__note--warn">
+              DANDI needs {dandiMissing.join(" and ")}. You can still export; the check
+              afterwards will list it as must-fix.
+            </div>
+          )}
           <div className="ephys-panel__run">
             <button className="btn" disabled={!canExport} onClick={startExport}>
               {existing ? "Export again (replaces it)" : "Export NWB"}

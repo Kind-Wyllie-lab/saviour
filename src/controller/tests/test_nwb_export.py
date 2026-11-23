@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import soundfile
 
-from src.controller import nwb_convert, nwb_export
+from src.controller import nwb_convert, nwb_export, nwb_inspect
 
 T0 = 1_790_850_290  # 2026-10-01T10:24:50Z
 FRAME_NUM = 4096
@@ -176,6 +176,48 @@ def test_unreadable_settings_file_reads_as_none(tmp_path):
     assert nwb_export.read_settings(str(out)) is None
 
 
+def test_dandi_report_blocks_on_critical_not_suggestions():
+    sugg = {"importance": "BEST_PRACTICE_SUGGESTION", "check": "check_keywords",
+            "message": "m", "location": "/", "object_type": "NWBFile", "object_name": "root"}
+    ok = nwb_inspect.summarise([sugg], inspector_version="0.7")
+    assert ok["dandi_ready"] is True and ok["counts"]["BEST_PRACTICE_SUGGESTION"] == 1
+    crit = {**sugg, "importance": "CRITICAL", "check": "check_subject_age"}
+    bad = nwb_inspect.summarise([sugg, crit], inspector_version="0.7")
+    assert bad["dandi_ready"] is False
+    assert [m["importance"] for m in bad["messages"]] == ["CRITICAL", "BEST_PRACTICE_SUGGESTION"]
+
+
+def test_dandi_report_flags_a_placeholder_subject_id():
+    assert nwb_inspect.subject_messages({"subject_id": "R7"}) == []
+    for sid in ("unknown", "", None):
+        (m,) = nwb_inspect.subject_messages({"subject_id": sid})
+        assert m["importance"] == "CRITICAL"
+    assert nwb_inspect.subject_messages(None)[0]["check"] == "saviour_subject_id"
+
+
+def test_saved_inspection_is_ignored_once_the_file_changes(tmp_path):
+    out = tmp_path / "s.nwb"
+    out.write_bytes(b"x")
+    report = {"ran": True, "dandi_ready": True, "file_mtime": os.path.getmtime(out)}
+    Path(nwb_export.inspection_path(str(out))).write_text(json.dumps(report))
+    assert nwb_export.read_inspection(str(out))["dandi_ready"] is True
+    os.utime(out, (0, os.path.getmtime(out) + 60))          # rewritten
+    assert nwb_export.read_inspection(str(out)) is None
+
+
+def test_check_needs_the_package_and_a_file(tmp_path, monkeypatch):
+    _write_session(tmp_path, with_video=False)
+    jobs = nwb_export.NwbJobs(str(tmp_path), env=tmp_path / "no-env")
+    with pytest.raises(nwb_export.NwbError, match="Install"):
+        jobs.start_inspect("sess")
+    monkeypatch.setattr(nwb_export, "status", lambda env: {"installed": True, "inspector": None})
+    with pytest.raises(nwb_export.NwbError, match="nwbinspector"):
+        jobs.start_inspect("sess")
+    monkeypatch.setattr(nwb_export, "status", lambda env: {"installed": True, "inspector": "0.7"})
+    with pytest.raises(nwb_export.NwbError, match=r"No sess\.nwb"):
+        jobs.start_inspect("sess")
+
+
 def test_only_one_job_at_a_time(tmp_path):
     jobs = nwb_export.NwbJobs(str(tmp_path), env=tmp_path / "no-env")
     jobs._new_job("install")
@@ -239,6 +281,17 @@ def test_conversion_round_trip(tmp_path):
     assert got["audio_n"] == 3 * FRAME_NUM
     assert got["ttl17"] == [1, -1]
     assert got["marker"] == ["rat placed [ui]"]
+
+    # The DANDI check on the same file: subject R7 with an age passes.
+    r = subprocess.run(
+        [str(nwb_export.env_python(_ENV)), "-m", "src.controller.nwb_inspect", str(out),
+         "--json"], cwd=nwb_export.REPO, capture_output=True, text=True, timeout=300,
+        env={**os.environ, "PYTHONPATH": str(nwb_export.REPO)})
+    report = json.loads(r.stdout.strip().splitlines()[-1])
+    if report.get("ran"):                                   # nwbinspector installed
+        blocking = [m for m in report["messages"]
+                    if m["importance"] in nwb_inspect.BLOCKING]
+        assert report["dandi_ready"], blocking
 
 
 # --------------------------------------------------------------------------- #

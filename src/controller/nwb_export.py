@@ -34,7 +34,8 @@ from src.controller import nwb_convert
 
 REPO = Path(__file__).resolve().parents[2]
 NWB_ENV = Path(os.environ.get("SAVIOUR_NWB_ENV", REPO / "env-nwb"))
-PACKAGES = ["pynwb"]
+# nwbinspector: the DANDI check run after each export (nwb_inspect).
+PACKAGES = ["pynwb", "nwbinspector"]
 MAX_JOBS = 20
 MAX_LOG_LINES = 400
 DEFAULT_SPECIES = "Rattus norvegicus"
@@ -48,23 +49,36 @@ def env_python(env: Path = NWB_ENV) -> Path:
     return env / "bin" / "python"
 
 
+_STATUS_PROBE = (
+    "import pynwb, h5py\n"
+    "print(pynwb.__version__)\n"
+    "try:\n"
+    "    import nwbinspector; print(nwbinspector.__version__)\n"
+    "except ImportError:\n"
+    "    print('')\n")
+
+
 def status(env: Path = NWB_ENV) -> dict:
-    """``{installed, version, env, error}``: whether the NWB venv can
-    import pynwb."""
+    """``{installed, version, inspector, env, error}``: whether the NWB venv
+    can import pynwb, and nwbinspector's version (None when it isn't
+    installed: envs made before the DANDI check need Install again)."""
     py = env_python(env)
-    out = {"installed": False, "version": None, "env": str(env), "error": None}
+    out = {"installed": False, "version": None, "inspector": None, "env": str(env),
+           "error": None}
     if not py.exists():
         return out
     try:
         r = subprocess.run(
-            [str(py), "-c", "import pynwb, h5py; print(pynwb.__version__)"],
+            [str(py), "-c", _STATUS_PROBE],
             capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         out["error"] = str(e)
         return out
     if r.returncode == 0:
+        lines = r.stdout.splitlines()
         out["installed"] = True
-        out["version"] = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else None
+        out["version"] = lines[0].strip() if lines and lines[0].strip() else None
+        out["inspector"] = lines[1].strip() if len(lines) > 1 and lines[1].strip() else None
     else:
         out["error"] = (r.stderr.strip().splitlines() or ["pynwb not importable"])[-1]
     return out
@@ -113,6 +127,26 @@ def form_settings(opts: dict) -> dict:
     out = {k: opts.get(k, "") for k in nwb_convert.TEXT_FIELDS}
     out["include"] = dict(opts.get("include") or {})
     return out
+
+
+def inspection_path(output: str) -> str:
+    """The DANDI check report for a .nwb, saved beside it
+    (`<session>.nwb-inspection.json`, written by nwb_inspect)."""
+    return output + "-inspection.json"
+
+
+def read_inspection(output: str) -> dict | None:
+    """The saved check report, or None when there isn't one or it was made
+    for an earlier write of the file (its ``file_mtime`` doesn't match)."""
+    try:
+        with open(inspection_path(output), encoding="utf-8") as f:
+            report = json.load(f)
+        mtime = os.path.getmtime(output)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or abs(float(report.get("file_mtime") or 0) - mtime) > 1:
+        return None
+    return report
 
 
 def read_settings(output: str) -> dict | None:
@@ -172,7 +206,8 @@ class NwbJobs:
             st = os.stat(out)
             info["existing"] = {"path": os.path.relpath(out, os.path.realpath(self.share_path)),
                                 "size_bytes": st.st_size, "mtime": st.st_mtime,
-                                "settings": read_settings(out)}
+                                "settings": read_settings(out),
+                                "inspection": read_inspection(out)}
         return info
 
     # ── jobs ─────────────────────────────────────────────────────────────
@@ -282,13 +317,15 @@ class NwbJobs:
                 if rc != 0:
                     hint = (" The controller needs internet access to download it; on an"
                             " offline rig run tools/export_nwb.py on a workstation instead"
-                            " (pip install pynwb).") if "pip" in step[2:4] else ""
+                            " (pip install pynwb nwbinspector).") if "pip" in step[2:4] else ""
                     raise NwbError(f"{label} failed (exit {rc}).{hint}")
             st = status(self.env)
             if not st["installed"]:
                 raise NwbError(f"Installed, but pynwb won't import: {st['error']}")
-            self._finish(job_id, "done", progress=1.0, stage=f"Installed pynwb {st['version']}",
-                         output=st["version"])
+            stage = f"Installed pynwb {st['version']}"
+            if st["inspector"]:
+                stage += f" and nwbinspector {st['inspector']}"
+            self._finish(job_id, "done", progress=1.0, stage=stage, output=st["version"])
             self.logger.info(f"NWB export package installed (pynwb {st['version']}) in {self.env}")
         except Exception as e:                              # noqa: BLE001 -- reported on the job
             self.logger.warning(f"NWB install failed: {e}")
@@ -369,10 +406,90 @@ class NwbJobs:
         except OSError as e:
             # The .nwb is what matters; losing its settings record isn't fatal.
             self.logger.warning(f"Couldn't save NWB export settings: {e}")
+        self._update(job_id, progress=0.97, stage="Checking it for DANDI (nwbinspector)")
+        inspection = self._inspect(job_id, output)
+        if inspection == "cancelled":
+            self._finish(job_id, "cancelled", stage="Cancelled (the file was written; not checked)")
+            return
         self._finish(job_id, "done", progress=1.0, stage="Done",
                      output=os.path.relpath(output, share), size_bytes=size,
-                     validation=result.get("validation"))
+                     validation=result.get("validation"), inspection=inspection)
         self.logger.info(f"NWB export written: {output} ({size} bytes)")
+
+    # DANDI check -------------------------------------------------------------
+    def _inspect(self, job_id: str, output: str) -> dict | str:
+        """Run nwb_inspect on `output` and save its report beside it (a
+        stale one is removed first). Returns the report, or "cancelled"."""
+        try:
+            os.remove(inspection_path(output))
+        except OSError:
+            pass
+        cmd = [str(env_python(self.env)), "-m", "src.controller.nwb_inspect", output, "--json"]
+        if shutil.which("nice"):
+            cmd = ["nice", "-n", "10", *cmd]
+        env = {**os.environ, "PYTHONPATH": str(REPO), "PYTHONUNBUFFERED": "1"}
+        found: dict = {}
+
+        def on_line(line: str) -> None:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                self._update(job_id, log=line)
+                return
+            if isinstance(msg, dict) and "ran" in msg:
+                found.update(msg)
+
+        try:
+            rc = self._run(job_id, cmd, cwd=str(REPO), env=env, on_line=on_line)
+        except OSError as e:
+            return {"ran": False, "error": str(e)}
+        if rc == -1:
+            return "cancelled"
+        report = found or {"ran": False, "error": f"the check exited with code {rc}"}
+        if report.get("ran"):
+            report["file_mtime"] = os.path.getmtime(output)
+            try:
+                with open(inspection_path(output), "w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=1)
+            except OSError as e:
+                self.logger.warning(f"Couldn't save the NWB check report: {e}")
+            verdict = "ready for DANDI" if report.get("dandi_ready") else "not ready for DANDI"
+            self._update(job_id, log=f"DANDI check: {verdict} ({report.get('counts')})")
+        else:
+            self._update(job_id, log=f"DANDI check didn't run: {report.get('error')}")
+        return report
+
+    def start_inspect(self, session_name: str) -> dict:
+        """Check a session's existing .nwb (one exported before the check
+        existed, or after installing nwbinspector)."""
+        st = status(self.env)
+        if not st["installed"]:
+            raise NwbError("Install the NWB export package first")
+        if not st["inspector"]:
+            raise NwbError("The DANDI checker (nwbinspector) isn't installed: "
+                           "run Install NWB export package again")
+        output = default_output(self.session_dir(session_name), session_name)
+        if not os.path.isfile(output):
+            raise NwbError(f"No {os.path.basename(output)} to check")
+        job = self._new_job("inspect", session_name=session_name,
+                            stage="Checking it for DANDI (nwbinspector)")
+
+        def run() -> None:
+            try:
+                report = self._inspect(job["id"], output)
+            except Exception as e:                          # noqa: BLE001 -- reported on the job
+                self._finish(job["id"], "error", error=str(e), stage="Check failed")
+                return
+            if report == "cancelled":
+                self._finish(job["id"], "cancelled", stage="Cancelled")
+            elif not report.get("ran"):
+                self._finish(job["id"], "error", error=report.get("error"), stage="Check failed")
+            else:
+                self._finish(job["id"], "done", progress=1.0, stage="Checked",
+                             inspection=report)
+
+        threading.Thread(target=run, daemon=True, name="nwb-inspect").start()
+        return job
 
 
 def register_socket_handlers(sio, jobs: NwbJobs, *, is_admin: Callable[[], bool],
@@ -420,6 +537,8 @@ def register_socket_handlers(sio, jobs: NwbJobs, *, is_admin: Callable[[], bool]
     guarded("start_nwb_export", lambda d: reply("nwb_job", jobs.start_export(
         str(d.get("session_name") or ""), d.get("options") or {},
         get_session(str(d.get("session_name") or "")))))
+    guarded("inspect_nwb_file", lambda d: reply("nwb_job", jobs.start_inspect(
+        str(d.get("session_name") or ""))))
     guarded("cancel_nwb_job", lambda d: jobs.cancel(str(d.get("id") or "")))
 
     def delete(d: dict) -> None:

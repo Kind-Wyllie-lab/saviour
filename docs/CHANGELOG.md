@@ -17,6 +17,7 @@ future condensing pass, the same way this batch was moved.
   - A timed session stopped on time on the controller, but the browser's socket was down (08:55:23 → 09:00:21) when `sessions_update` went out; the server doesn't push sessions on connect and `useSessions` only asked on mount, so the status bar stayed on "ending…" with the timer running. `useSessions` now re-emits `get_sessions` on every `connect`.
   - Live elapsed timers counted from `start_time` (Start pressed), 3 s (`LEAD_SECS`) before modules record; they now count from `recording_start_at`, and the status bar shows "Starting…" during the lead.
 - [x] **Post-process form controls styled** (`PostProcess.css`): page-scoped base styles (`:where()`, so panel sizing rules win) for inputs, selects, textareas and checkboxes, which were bare browser controls outside the session picker; NWB form uses theme label colours, full-width inputs, a red label on an invalid Age, aligned include checkboxes. Not yet viewed in a browser.
+- [x] **Dependabot alerts cleared** (`package-lock.json`): vite 7.3.6 → 7.3.8 fixes 5 advisories (2 in Vite's dev server, 3 in its bundled `launch-editor`); the 6th (`source-map-js` 1.2.1, event-loop DoS) was already fixed on `staging` (1.2.2) and clears on `main` with the next promotion. All dev-tooling only, never in the served build. `npm audit`: 0.
 
 ## 2026-11-20
 

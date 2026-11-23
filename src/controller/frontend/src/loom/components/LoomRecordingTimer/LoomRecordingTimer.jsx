@@ -55,7 +55,7 @@ export default function LoomRecordingTimer() {
 
   const isFault = session.state === "error";
 
-  const startDate = parseTimestamp(session.start_time);
+  const startDate = parseTimestamp(session.recording_start_at ?? session.start_time);
   const elapsedSeconds = startDate ? Math.max(0, (nowMs - startDate.getTime()) / 1000) : 0;
 
   const isTimed = !!session.timed_stop_at && !!startDate;

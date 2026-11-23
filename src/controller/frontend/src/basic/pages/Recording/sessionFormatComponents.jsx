@@ -17,7 +17,8 @@ function formatElapsed(totalSeconds) {
   return h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`;
 }
 
-// Live-ticking "how long has this been recording" -- e.g. for a compact
+// Live-ticking "how long has this been recording" (startTime: a stamp or
+// epoch seconds, e.g. recording_start_at) -- e.g. for a compact
 // session row's summary line when there's no timed_stop_at to count down
 // to instead.
 export function Elapsed({ startTime }) {

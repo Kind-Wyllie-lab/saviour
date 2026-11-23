@@ -40,8 +40,10 @@ function useRenderEta(job) {
  * failed, was cancelled or was cut off by a controller restart; Delete
  * (asks whether to remove the video from the share too) once it's finished.
  * `showSession` adds the session name, for lists spanning sessions.
+ * `onEditCopy` (Post-Process) adds "Edit a copy": load this render's layout
+ * and settings into the editor; rendering then makes a new video.
  */
-export default function ComposeJobRow({ job, showSession = false, onShowSession }) {
+export default function ComposeJobRow({ job, showSession = false, onShowSession, onEditCopy }) {
   const loggedIn = useIsLoggedIn();
   const [confirming, setConfirming] = useState(false);
   const [deleteFile, setDeleteFile] = useState(false);
@@ -88,6 +90,18 @@ export default function ComposeJobRow({ job, showSession = false, onShowSession 
               }}
             >
               Download
+            </button>
+          )}
+          {onEditCopy && !active && (
+            <button
+              className="btn btn-small"
+              onClick={() => onEditCopy(job)}
+              disabled={!job.spec?.layout_doc}
+              title={job.spec?.layout_doc
+                ? "Load this render's layout and settings into the editor. Rendering makes a new video; this one stays."
+                : "Made before the layout editor: its settings can be re-run but not edited"}
+            >
+              Edit a copy
             </button>
           )}
           {["error", "cancelled", "interrupted"].includes(job.state) && (

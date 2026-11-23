@@ -72,6 +72,18 @@ today, ephys traces later) needs it first.
   `layout_template(headstage=...)`.
 - NWB says it leaves the ephys recording and accelerometer out (phase 6).
 
+**Per-session history.** The bottom card is this session's **Renders**
+(every compose job for it, newest first; other sessions folded under
+"Other sessions"). Each finished render has **Edit a copy**: its layout,
+recording day, frame rate and format load into the Advanced editor with a
+note saying it's a copy; rendering makes a new video and the original
+stays. Renders from before the layout editor (no `layout_doc`) can be
+re-run but not edited. The Compose card keeps only what's rendering, else
+the latest result. NWB: each export's form settings are saved beside the
+file (`<session>.nwb-settings.json`), so **Load its settings** fills the
+form even after a restart; a finished export in this run has **Use these
+settings**.
+
 ## Phases
 
 1. **Cards + simple compose** (built 2026-11-23): `ToolCard`, summaries for

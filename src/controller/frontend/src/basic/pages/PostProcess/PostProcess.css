@@ -502,3 +502,142 @@ body.dark-mode .accel-chart {
   margin: 0;
   white-space: pre-wrap;
 }
+
+/* ---- Tool cards (plans/post-process-page-layout.md) ---------------------- */
+.tool-card {
+  padding: 0;
+  min-width: 0;
+}
+.tool-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: inherit;
+}
+.tool-card__head:hover {
+  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+}
+.tool-card__head:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.tool-card__chevron {
+  flex: 0 0 auto;
+  width: 1em;
+  color: var(--secondary-text-color);
+}
+.tool-card__title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.tool-card__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--secondary-text-color);
+}
+.tool-card__summary--ok { color: var(--success-color, #2e7d32); }
+.tool-card__summary--active { color: var(--accent-color); }
+.tool-card__summary--warn { color: var(--warning-color, #b26a00); }
+.tool-card__summary--bad { color: var(--error-color, #c62828); }
+.tool-card__body {
+  padding: 0 14px 14px;
+}
+.tool-card__body > .modal-subtext:first-child,
+.tool-card__body > div > .modal-subtext:first-child {
+  margin-top: 0;
+}
+.tool-card .compose-panel__jobs {
+  margin: 0;
+}
+
+/* ---- Compose: Simple / Advanced ------------------------------------------ */
+.compose-mode {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.compose-mode__btn {
+  padding: 5px 14px;
+  border: none;
+  background: var(--bg-color);
+  color: var(--secondary-text-color);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.compose-mode__btn + .compose-mode__btn {
+  border-left: 1px solid var(--border-color);
+}
+.compose-mode__btn.is-active {
+  background: var(--accent-color);
+  color: #fff;
+  font-weight: 600;
+}
+.compose-simple {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 800px) {
+  .compose-simple { grid-template-columns: minmax(0, 1fr); }
+}
+.compose-simple__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.compose-simple__row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.compose-simple__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+}
+.compose-simple__row > select {
+  width: 100%;
+}
+.compose-simple__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.compose-simple__check {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.compose-simple__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.compose-simple__preview .compose-editor__full:not(:fullscreen) {
+  display: block;
+}
+.compose-simple__preview .compose-editor__full:not(:fullscreen) img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #000;
+}

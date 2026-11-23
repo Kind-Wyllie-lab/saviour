@@ -37,9 +37,12 @@ status overview:
 render is the same either way and Advanced can pick up where Simple left off.
 
 - *Simple* (default): tick cameras, pick a layout (Auto / Side by side /
-  Stacked / Grid), pick audio (none / spectrogram strip / panels / audio
-  track) and which microphones, whole recording or a part (the timeline,
-  shown only for "a part"), preview, Render. Every change rebuilds the
+  Stacked / Grid), then per microphone click **Audio** (its sound muxed
+  into the file) and/or **Spectrogram** (a panel under the video), whole
+  recording or a part (the timeline, shown only for "a part"), preview,
+  Render. No "spectrogram strip over the video" (dropped from the
+  templates 2026-11-23; the backend still renders old saved jobs that
+  use it). Every change rebuilds the
   layout through the existing `compose_layout_template` (it already takes a
   camera and mic subset); frame rate matches the cameras, format follows
   the content.

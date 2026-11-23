@@ -666,3 +666,53 @@ body.dark-mode .accel-chart {
 .post-process__note .btn {
   margin-left: auto;
 }
+
+/* Simple compose: per-microphone Audio / Spectrogram toggles */
+.compose-mics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.compose-mic {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.compose-mic__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.88rem;
+}
+.compose-mic__toggles {
+  display: inline-flex;
+  gap: 6px;
+}
+.compose-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-color);
+  color: var(--secondary-text-color);
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.compose-chip:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--text-color);
+}
+.compose-chip.is-on {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  color: var(--text-color);
+  font-weight: 600;
+}
+.compose-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.compose-chip:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}

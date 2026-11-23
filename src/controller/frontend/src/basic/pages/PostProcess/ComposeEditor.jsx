@@ -63,7 +63,10 @@ export default function ComposeEditor({
   // Simple mode's choices: cameras / mics left out (so a new session
   // defaults to all of them), and whether to render only part of the day.
   const [excludedCams, setExcludedCams] = useState([]);
-  const [excludedMics, setExcludedMics] = useState([]);
+  // Simple: which mics are muxed in as audio tracks, and which get a
+  // spectrogram panel under the video (each toggled per mic).
+  const [trackMics, setTrackMics] = useState([]);
+  const [specMics, setSpecMics] = useState([]);
   const [partOnly, setPartOnly] = useState(false);
   // Simple: how to show an aligned headstage accelerometer, and which one.
   const [headShow, setHeadShow] = usePersistedState("compose_headstage_show", "trace");
@@ -72,6 +75,7 @@ export default function ComposeEditor({
   // back to Simple, which rebuilds it, asks first.
   const editedRef = useRef(false);
   const templateRangeRef = useRef(undefined);
+  const templateTracksRef = useRef(undefined);
   const jobs = useComposeJobs();
   const previewReqId = useRef(0);
   const templateReqId = useRef(0);
@@ -224,7 +228,15 @@ export default function ComposeEditor({
       if (d.error) { setNotice(d.error); return; }
       setNotice("");
       const range = templateRangeRef.current;
-      setDoc(range === undefined ? d.layout_doc : { ...d.layout_doc, range });
+      // Simple's tracks as they are now, not when the rebuild was asked
+      // for (a toggle may have landed in between).
+      const tracks = templateTracksRef.current === undefined
+        ? undefined : latestTracksRef.current;
+      setDoc({
+        ...d.layout_doc,
+        ...(range === undefined ? {} : { range }),
+        ...(tracks === undefined ? {} : { audio_tracks: tracks }),
+      });
       editedRef.current = false;
       setSelectedId(null);
     };
@@ -255,7 +267,8 @@ export default function ComposeEditor({
 
   useEffect(() => {
     setExcludedCams([]);
-    setExcludedMics([]);
+    setTrackMics([]);
+    setSpecMics([]);
     setPartOnly(false);
     setHeadSource("");
   }, [sessionName, dateDir]);
@@ -269,10 +282,12 @@ export default function ComposeEditor({
   const applyTemplate = (tpl = template, audio = templateAudio, {
     streams = cameras.map((c) => c.name), mics = micDevices.map((d) => d.id),
     range = doc?.range, canvas = keepCanvas && doc ? doc.canvas : undefined,
-    headstage,
+    headstage, audioTracks,
   } = {}) => {
     templateReqId.current += 1;
     templateRangeRef.current = range;
+    // undefined: keep the template's own audio tracks (Advanced).
+    templateTracksRef.current = audioTracks;
     const spec = doc?.tiles.find((t) => t.kind === "spectrogram")?.options;
     socket.emit("compose_layout_template", {
       request_id: templateReqId.current,
@@ -298,19 +313,45 @@ export default function ComposeEditor({
 
   // Simple: every choice rebuilds the layout from its template.
   const simpleCams = cameras.map((c) => c.name).filter((n) => !excludedCams.includes(n));
-  const simpleMics = micDevices.map((d) => d.id).filter((m) => !excludedMics.includes(m));
+  // Spectrogram panels follow the session's mic order.
+  const simpleSpecs = micDevices.map((d) => d.id).filter((m) => specMics.includes(m));
+  const simpleTracks = micDevices.map((d) => d.id).filter((m) => trackMics.includes(m));
+  const latestTracksRef = useRef(simpleTracks);
+  latestTracksRef.current = simpleTracks;
   const headId = accelSources.some((a) => a.id === headSource)
     ? headSource : accelSources[0]?.id || "";
   const simpleHead = headId && headShow !== "none" ? { source: headId, show: headShow } : undefined;
-  const simpleKey = [sessionName, dateDir, template, templateAudio,
-    simpleCams.join(","), simpleMics.join(","), simpleHead ? `${headId}:${headShow}` : ""].join("|");
+  const simpleKey = [sessionName, dateDir, template,
+    simpleCams.join(","), simpleSpecs.join(","), simpleHead ? `${headId}:${headShow}` : ""].join("|");
   useEffect(() => {
     if (!simple || !infoReady || !simpleCams.length) return;
-    applyTemplate(template, templateAudio, {
-      streams: simpleCams, mics: simpleMics, canvas: undefined, headstage: simpleHead,
+    applyTemplate(template, simpleSpecs.length ? "panel" : "none", {
+      streams: simpleCams, mics: simpleSpecs, canvas: undefined, headstage: simpleHead,
+      audioTracks: simpleTracks,
       range: partOnly && doc?.range ? doc.range : { start_ns: null, end_ns: null, speed: 1 },
     });
   }, [simple, infoReady, simpleKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Audio tracks don't change the picture: update the layout in place
+  // rather than rebuilding it (and don't count it as a hand edit).
+  const toggleSimpleTrack = (id) => {
+    const next = trackMics.includes(id) ? trackMics.filter((m) => m !== id) : [...trackMics, id];
+    setTrackMics(next);
+    if (doc) {
+      const edited = editedRef.current;
+      const ids = micDevices.map((d) => d.id).filter((m) => next.includes(m));
+      setDoc((d) => ({ ...d, audio_tracks: ids }));
+      editedRef.current = edited;
+    }
+  };
+  const toggleSimpleSpec = (id) => setSpecMics((x) => (
+    x.includes(id) ? x.filter((m) => m !== id) : [...x, id]));
+
+  // "Spectrogram strip over the video" was dropped from the templates;
+  // a remembered choice of it becomes panels.
+  useEffect(() => {
+    if (templateAudio === "strip") setTemplateAudio("panel");
+  }, [templateAudio, setTemplateAudio]);
 
   const switchMode = (next) => {
     if (next === mode) return;
@@ -573,29 +614,40 @@ export default function ComposeEditor({
               </select>
             </label>
             {micDevices.length > 0 && (
-              <label className="compose-simple__row">
-                <span className="compose-simple__label">Audio</span>
-                <select value={templateAudio} onChange={(e) => setTemplateAudio(e.target.value)}>
-                  {TEMPLATE_AUDIO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </label>
-            )}
-            {micDevices.length > 1 && templateAudio !== "none" && (
               <div className="compose-simple__row">
                 <span className="compose-simple__label">Microphones</span>
-                <div className="compose-simple__choices">
+                <div className="compose-mics">
                   {micDevices.map((d) => {
-                    const on = !excludedMics.includes(d.id);
+                    const track = trackMics.includes(d.id);
+                    const spec = specMics.includes(d.id);
+                    const full = !track && simpleTracks.length >= LIMITS.maxAudioTracks;
                     return (
-                      <label key={d.id} className="compose-simple__check">
-                        <input type="checkbox" checked={on}
-                          onChange={() => setExcludedMics((x) => (on
-                            ? [...x, d.id] : x.filter((m) => m !== d.id)))} />
-                        {d.label}
-                      </label>
+                      <div key={d.id} className="compose-mic">
+                        <span className="compose-mic__name">{d.label}</span>
+                        <span className="compose-mic__toggles">
+                          <button type="button" aria-pressed={track} disabled={full}
+                            className={`compose-chip${track ? " is-on" : ""}`}
+                            title={full ? `At most ${LIMITS.maxAudioTracks} audio tracks`
+                              : track ? "Remove this microphone's sound from the video"
+                                : "Add this microphone's sound to the video"}
+                            onClick={() => toggleSimpleTrack(d.id)}>
+                            <span aria-hidden="true">{track ? "✓" : "+"}</span> Audio
+                          </button>
+                          <button type="button" aria-pressed={spec}
+                            className={`compose-chip${spec ? " is-on" : ""}`}
+                            title={spec ? "Remove this microphone's spectrogram"
+                              : "Add a spectrogram of this microphone under the video"}
+                            onClick={() => toggleSimpleSpec(d.id)}>
+                            <span aria-hidden="true">{spec ? "✓" : "+"}</span> Spectrogram
+                          </button>
+                        </span>
+                      </div>
                     );
                   })}
                 </div>
+                <span className="compose-panel__hint">
+                  Audio adds the sound to the video file; spectrograms go under the video.
+                </span>
               </div>
             )}
             {accelSources.length > 0 && (
@@ -639,8 +691,8 @@ export default function ComposeEditor({
               <Timeline
                 windowMs={windowMs}
                 cameras={cameras.filter((c) => simpleCams.includes(c.name))}
-                mics={templateAudio === "none" ? []
-                  : micDevices.filter((d) => simpleMics.includes(d.id))}
+                mics={micDevices.filter((d) => simpleSpecs.includes(d.id)
+                  || simpleTracks.includes(d.id))}
                 rangeMs={rangeMs} speed={speed}
                 previewMs={previewMs} previewedMs={previewedMs}
                 onRange={setRange} onSpeed={setSpeed} onPreview={setPreviewMs}

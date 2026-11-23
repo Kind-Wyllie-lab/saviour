@@ -23,7 +23,6 @@ export const TEMPLATES = [
 
 export const TEMPLATE_AUDIO = [
   { value: "none", label: "Cameras only" },
-  { value: "strip", label: "Spectrogram strip over the video" },
   { value: "panel", label: "Spectrogram panels below the video" },
   { value: "track", label: "Audio tracks, no spectrogram" },
 ];

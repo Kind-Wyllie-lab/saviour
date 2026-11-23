@@ -11,6 +11,13 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-23
+
+- [x] **Stale "ending…" session after a socket drop; elapsed timers include the 3 s lead** (`hooks/useSessions.js`, `RecordingStatusWidget.jsx`, `SessionList.jsx`, `LoomRecordingTimer.jsx`)
+  - A timed session stopped on time on the controller, but the browser's socket was down (08:55:23 → 09:00:21) when `sessions_update` went out; the server doesn't push sessions on connect and `useSessions` only asked on mount, so the status bar stayed on "ending…" with the timer running. `useSessions` now re-emits `get_sessions` on every `connect`.
+  - Live elapsed timers counted from `start_time` (Start pressed), 3 s (`LEAD_SECS`) before modules record; they now count from `recording_start_at`, and the status bar shows "Starting…" during the lead.
+- [x] **Post-process form controls styled** (`PostProcess.css`): page-scoped base styles (`:where()`, so panel sizing rules win) for inputs, selects, textareas and checkboxes, which were bare browser controls outside the session picker; NWB form uses theme label colours, full-width inputs, a red label on an invalid Age, aligned include checkboxes. Not yet viewed in a browser.
+
 ## 2026-11-20
 
 - [x] **NWB export from the Post-processing page** (`src/controller/nwb_convert.py`, `nwb_export.py`, `NwbExportPanel.jsx`, `tools/export_nwb.py`; `test_nwb_export.py`; mapping from `docs/NWB_EXPORT_DESIGN.md`)

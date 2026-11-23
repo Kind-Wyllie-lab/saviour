@@ -488,7 +488,7 @@ function SessionRow({
             {isActive && !isStarting && (
               session.timed_stop_at
                 ? <span><Countdown timedStopAt={session.timed_stop_at} /> left</span>
-                : <Elapsed startTime={session.start_time} />
+                : <Elapsed startTime={session.recording_start_at ?? session.start_time} />
             )}
             {isError && session.error_message && (
               <span className="session-row__error-text" title={session.error_message}>{session.error_message}</span>

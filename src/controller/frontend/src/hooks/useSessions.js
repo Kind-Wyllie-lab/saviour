@@ -24,8 +24,13 @@ export default function useSessions({ autoRequest = true } = {}) {
   const [sessions, setSessions] = useState({});
 
   useEffect(() => {
+    // Ask again on every (re)connect: the server doesn't push sessions on
+    // connect, so a sessions_update missed while the socket was down (e.g.
+    // a timed session stopping) would otherwise leave a stale ACTIVE copy.
+    const request = () => socket.emit("get_sessions");
     if (autoRequest) {
-      socket.emit("get_sessions");
+      request();
+      socket.on("connect", request);
     }
 
     const handleUpdate = (data) => {
@@ -36,6 +41,7 @@ export default function useSessions({ autoRequest = true } = {}) {
 
     return () => {
       socket.off("sessions_update", handleUpdate);
+      if (autoRequest) socket.off("connect", request);
     };
   }, [autoRequest]);
 

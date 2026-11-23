@@ -56,12 +56,19 @@ function Countdown({ timedStopAt }) {
 
 function SessionEntry({ session, modules, moduleHealth }) {
   const [elapsed, setElapsed] = useState(0);
+  const [leadIn, setLeadIn] = useState(false);
   const isError = session.state === "error";
   const hasPastFault = !isError && !!session.error_time;
 
   useEffect(() => {
-    const startDate = parseTimestamp(session.start_time);
-    const tick = () => setElapsed(!startDate ? 0 : Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 1000)));
+    // recording_start_at is when modules actually begin recording;
+    // start_time is when Start was pressed (LEAD_SECS earlier).
+    const startDate = parseTimestamp(session.recording_start_at ?? session.start_time);
+    const tick = () => {
+      const secs = !startDate ? 0 : (Date.now() - startDate.getTime()) / 1000;
+      setLeadIn(secs < 0);
+      setElapsed(Math.max(0, Math.floor(secs)));
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -90,7 +97,7 @@ function SessionEntry({ session, modules, moduleHealth }) {
         <span className="rsw-fault-label">Fault at {formatTime(faultDate)}</span>
       ) : (
         <span className="rsw-elapsed" title={hasPastFault ? `Fault at ${formatTime(faultDate)}` : undefined}>
-          {hasPastFault ? "Recording" : "Without issue"}: {formatElapsed(elapsed)}
+          {leadIn ? "Starting…" : <>{hasPastFault ? "Recording" : "Without issue"}: {formatElapsed(elapsed)}</>}
           {hasPastFault && <span className="rsw-past-fault"> · fault at {formatTime(faultDate)}</span>}
           {session.timed_stop_at && <Countdown timedStopAt={session.timed_stop_at} />}
         </span>

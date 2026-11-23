@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
@@ -6,18 +6,18 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import {
   formatBytes, groupSessionsByDate, dateGroupLabel,
 } from "../Recording/sessionFormat";
-import ComposeEditor from "./ComposeEditor";
 import ComposeJobRow from "../Recording/SessionDetailPage/ComposeJobRow";
-import useComposeJobs from "/src/hooks/useComposeJobs";
-import EphysAlignPanel from "./EphysAlignPanel";
-import NwbExportPanel from "./NwbExportPanel";
-import ToolCard from "./ToolCard";
+import { streamsByDate } from "./composeLayout";
+import JobsList from "./JobsList";
+import NewJobModal from "./NewJobModal";
+import useSessionJobs from "./useSessionJobs";
 import "./PostProcess.css";
 
-// Everything that turns a *recorded* session into a derived artefact —
-// layout/compose video, aligned audio + spectrogram, and (once a dataset
-// is uploaded) ephys alignment. Kept off the Recording page, which is for
-// running sessions and browsing raw files.
+// Everything that turns a *recorded* session into a derived artefact:
+// composed video, NWB files, ephys alignment. The page is the session's
+// list of jobs; "New job" opens a modal to pick what to make
+// (plans/post-process-page-layout.md). Kept off the Recording page, which
+// is for running sessions and browsing raw files.
 export default function PostProcess() {
   const { sessions } = useSessions();
   const [params, setParams] = useSearchParams();
@@ -33,7 +33,7 @@ export default function PostProcess() {
   );
 
   // Remembered so leaving the page (sidebar) and coming back reopens the
-  // same session, and its render, rather than a different one.
+  // same session rather than a different one.
   const [remembered, setRemembered] = usePersistedState("postprocess_session", "");
   const [selected, setSelectedRaw] = useState(params.get("session") || remembered || "");
   const setSelected = (name) => {
@@ -41,33 +41,14 @@ export default function PostProcess() {
     setRemembered(name);
   };
   const [fileInfo, setFileInfo] = useState(null);
-  const jobs = useComposeJobs();
-  const allJobs = Object.values(jobs).sort((a, b) => b.created_at - a.created_at);
-  // Which tool cards are open (all closed by default); each panel reports
-  // a one-line summary for its card header.
-  const [openCards, setOpenCards] = usePersistedState("postprocess_open_cards", {});
-  const toggle = (id) => setOpenCards((o) => ({ ...o, [id]: !o?.[id] }));
-  const isOpen = (id) => !!openCards?.[id];
-  const [summaries, setSummaries] = useState({});
-  const summaryFor = useMemo(() => {
-    const cache = {};
-    return (id) => (cache[id] ||= (s) => setSummaries((cur) => (
-      cur[id]?.text === s?.text && cur[id]?.tone === s?.tone && cur[id]?.state === s?.state
-        ? cur : { ...cur, [id]: s })));
-  }, []);
-  const openCard = (id) => {
-    setOpenCards((o) => ({ ...o, [id]: true }));
-    setTimeout(() => document.getElementById(`pp-card-${id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-  };
+  const [modal, setModal] = useState(null);   // { tool, loadJob?, nwbSettings? }
+  const [showOthers, setShowOthers] = usePersistedState("postprocess_renders_all_sessions", false);
   const seededRef = useRef(false);
-  // "Edit a copy" of a render: handed to the compose editor.
-  const [loadJob, setLoadJob] = useState(null);
-  const [allSessions, setAllSessions] = usePersistedState("postprocess_renders_all_sessions", false);
+  const jobs = useSessionJobs(selected);
 
   // Default to the session in the URL (or the one last picked here), else
   // the most recent one -- the controller lists sessions oldest first; the
-  // alphabetically last name (what this used) is usually not the newest.
+  // alphabetically last name is usually not the newest.
   useEffect(() => {
     if (seededRef.current || !names.length) return;
     const newest = Object.keys(sessions || {}).pop();
@@ -77,7 +58,8 @@ export default function PostProcess() {
   }, [names]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!selected) return;
+    setModal(null);
+    if (!selected) return undefined;
     setParams((p) => {
       p.set("session", selected);
       return p;
@@ -91,20 +73,22 @@ export default function PostProcess() {
     return () => socket.off("session_file_info_response", onInfo);
   }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sessions recorded with ephys sync: alignment comes first, since the
-  // headstage tiles in Compose need it (plans/post-process-page-layout.md).
   const session = sessions?.[selected];
   const ephysSession = session?.external_sync === "ephys"
     || (!!session?.ephys && !session?.external_sync);
-  const ephysState = summaries.ephys?.state;
-  const ephysHasData = ["uploaded", "aligned", "busy"].includes(ephysState);
+  const files = useMemo(() => fileInfo?.files || [], [fileInfo]);
+  const hasFiles = files.length > 0;
+  const hasVideo = useMemo(() => Object.keys(streamsByDate(files)).length > 0, [files]);
 
-  const sessionRenders = allJobs.filter((j) => j.spec?.session_name === selected);
-  const otherRenders = allJobs.filter((j) => j.spec?.session_name !== selected);
-  const editCopy = (job) => {
-    setLoadJob({ job, nonce: Date.now() });
-    openCard("compose");
-  };
+  const openTool = (tool, extra = {}) => setModal({ tool, ...extra });
+  const closeModal = useCallback(() => setModal(null), []);
+  const renderingElsewhere = jobs.otherCompose.filter(
+    (j) => j.state === "queued" || j.state === "running");
+  const newJobButton = (
+    <button className="btn" onClick={() => setModal({ tool: null })} disabled={!hasFiles}>
+      + New job
+    </button>
+  );
 
   return (
     <div className="post-process">
@@ -128,107 +112,74 @@ export default function PostProcess() {
         </select>
         {fileInfo && fileInfo !== "loading" && (
           <span className="post-process__size">
-            {fileInfo.files?.length || 0} files ·{" "}
-            {formatBytes(fileInfo.total_bytes || 0)}
+            {files.length} files · {formatBytes(fileInfo.total_bytes || 0)}
           </span>
         )}
       </label>
-      <p className="post-process__intro">
-        Build aligned videos, spectrograms, (with an uploaded recording)
-        ephys alignment and NWB files from a finished session. Jobs run in the background —
-        you can leave this page.
-      </p>
 
       {!selected && (
         <div className="post-process__empty">Pick a session to start.</div>
       )}
 
-      {selected && fileInfo && fileInfo.files && fileInfo.files.length > 0 && (
-        <>{orderedCards({
-          ephysSession,
-          compose: (
-            <ToolCard key="compose" id="pp-card-compose" title="Compose video"
-              summary={summaries.compose}
-              open={isOpen("compose")} onToggle={() => toggle("compose")}>
-              <ComposeEditor
-                sessionName={selected}
-                session={session}
-                files={fileInfo.files}
-                active={isOpen("compose")}
-                onSummary={summaryFor("compose")}
-                ephysSession={ephysSession}
-                ephysState={ephysState}
-                onOpenEphys={() => openCard("ephys")}
-                loadJob={loadJob}
-                onEditCopy={editCopy}
-                onSelectSession={(name) => names.includes(name) && setSelected(name)}
-              />
-            </ToolCard>
-          ),
-          ephys: (
-            <ToolCard key="ephys" id="pp-card-ephys" title="Ephys"
-              summary={ephysSession || ephysHasData ? summaries.ephys
-                : { text: "not recorded with ephys sync", tone: "muted" }}
-              muted={!ephysSession && !ephysHasData}
-              open={isOpen("ephys")} onToggle={() => toggle("ephys")}>
-              {!ephysSession && !ephysHasData && (
-                <div className="post-process__note">
-                  This session wasn&apos;t recorded with External sync set to Ephys.
-                  You can still upload an Open Ephys recording if one ran alongside it.
-                </div>
-              )}
-              <EphysAlignPanel sessionName={selected} onSummary={summaryFor("ephys")} />
-            </ToolCard>
-          ),
-          nwb: (
-            <ToolCard key="nwb" id="pp-card-nwb" title="NWB export" summary={summaries.nwb}
-              open={isOpen("nwb")} onToggle={() => toggle("nwb")}>
-              {(ephysSession || ephysHasData) && (
-                <div className="post-process__note">
-                  NWB export doesn&apos;t include the ephys recording or the headstage
-                  accelerometer yet: the file holds SAVIOUR&apos;s own streams only.
-                </div>
-              )}
-              <NwbExportPanel sessionName={selected} onSummary={summaryFor("nwb")} />
-            </ToolCard>
-          ),
-        })}</>
-      )}
-
-      {selected && fileInfo && fileInfo.files && fileInfo.files.length === 0 && (
+      {selected && fileInfo && !hasFiles && (
         <div className="post-process__empty">
           This session has no exported files yet.
         </div>
       )}
-      {selected && (
-        <ToolCard
-          id="pp-card-renders"
-          title="Renders"
-          summary={rendersSummary(sessionRenders, allJobs.length - sessionRenders.length)}
-          open={isOpen("renders")} onToggle={() => toggle("renders")}
-        >
-          {sessionRenders.length > 0 ? (
-            <div className="compose-panel__jobs">
-              {sessionRenders.map((job) => (
-                <ComposeJobRow key={job.id} job={job} onEditCopy={editCopy} />
-              ))}
+
+      {selected && hasFiles && (
+        <section className="card pp-jobs-card">
+          <div className="pp-jobs-card__head">
+            <h3>Jobs</h3>
+            <span className="pp-jobs-card__hint">
+              Videos, NWB files and ephys alignment made from this session.
+              Jobs run on the controller; you can leave this page.
+            </span>
+            {jobs.items.length > 0 && newJobButton}
+          </div>
+
+          {ephysSession && jobs.ephys && !jobs.ephys.model && (
+            <div className="post-process__note post-process__note--warn">
+              Recorded with ephys sync: align the ephys recording first, so videos can
+              show the headstage.
+              <button type="button" className="btn btn-small" onClick={() => openTool("ephys")}>
+                Align ephys
+              </button>
             </div>
-          ) : (
-            <div className="post-process__empty">No renders for this session yet.</div>
           )}
-          {otherRenders.length > 0 && (
+
+          {jobs.items.length > 0 ? (
+            <JobsList sessionName={selected} items={jobs.items} onOpen={openTool} />
+          ) : (
+            <div className="pp-empty">
+              <p>Nothing has been made from this session yet.</p>
+              {newJobButton}
+            </div>
+          )}
+
+          {renderingElsewhere.map((j) => (
+            <div key={j.id} className="compose-panel__elsewhere">
+              Rendering <strong>{j.spec.session_name}</strong>:{" "}
+              {j.state === "queued" ? "queued" : `${Math.round((j.progress || 0) * 100)}%`}
+              <button className="btn btn-small" onClick={() => setSelected(j.spec.session_name)}>
+                Show
+              </button>
+            </div>
+          ))}
+
+          {jobs.otherCompose.length > 0 && (
             <>
               <button
                 type="button"
                 className="post-process__renders-toggle"
-                onClick={() => setAllSessions(!allSessions)}
-                aria-expanded={allSessions}
+                onClick={() => setShowOthers(!showOthers)}
+                aria-expanded={showOthers}
               >
-                {allSessions ? "▾" : "▸"} Other sessions ({otherRenders.length})
+                {showOthers ? "▾" : "▸"} Videos from other sessions ({jobs.otherCompose.length})
               </button>
-              {allSessions && (
+              {showOthers && (
                 <div className="compose-panel__jobs">
-                  {otherRenders.map((job) => (
+                  {jobs.otherCompose.map((job) => (
                     <ComposeJobRow
                       key={job.id}
                       job={job}
@@ -240,25 +191,21 @@ export default function PostProcess() {
               )}
             </>
           )}
-        </ToolCard>
+        </section>
       )}
+
+      <NewJobModal
+        modal={selected && hasFiles ? modal : null}
+        onTool={(tool) => setModal((m) => ({ ...(m || {}), tool, loadJob: undefined, nwbSettings: undefined }))}
+        onClose={closeModal}
+        sessionName={selected}
+        session={session}
+        files={files}
+        hasVideo={hasVideo}
+        jobs={jobs}
+        ephysSession={ephysSession}
+        onSelectSession={(name) => names.includes(name) && setSelected(name)}
+      />
     </div>
   );
-}
-
-function rendersSummary(jobs, others) {
-  const active = jobs.filter((j) => j.state === "running" || j.state === "queued").length;
-  const text = jobs.length
-    ? `${jobs.length} for this session${active ? ` · ${active} running` : ""}`
-    : "none for this session yet";
-  return {
-    text: others ? `${text} · ${others} in other sessions` : text,
-    tone: active ? "active" : "muted",
-  };
-}
-
-// Workflow order: for an ephys session, Ephys (prepare) before the outputs;
-// otherwise the outputs first and Ephys last.
-function orderedCards({ ephysSession, compose, ephys, nwb }) {
-  return ephysSession ? [ephys, compose, nwb] : [compose, nwb, ephys];
 }

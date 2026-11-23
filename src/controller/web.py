@@ -1330,6 +1330,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                     info["model"] = {k: m.get(k) for k in (
                         "r2", "residual_max_ms", "drift_ms", "edges_used",
                         "oe_recording", "pc_clock_offset_s", "pin_number")}
+                    # When it was fitted, for the Post-Process job list.
+                    info["model"]["fitted_at"] = os.path.getmtime(model_path)
                 accel_root = os.path.join(ephys_dir, "accel")
                 if os.path.isdir(accel_root):
                     for port in sorted(os.listdir(accel_root)):
@@ -1337,6 +1339,8 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                         if os.path.exists(sp):
                             with open(sp, encoding="utf-8") as f:
                                 info["accel"][port] = json.load(f)
+                            if isinstance(info["accel"][port], dict):
+                                info["accel"][port]["processed_at"] = os.path.getmtime(sp)
             except Exception as exc:  # noqa: BLE001 -- shown in the panel
                 self.logger.warning("get_ephys_info %s: %s", session_name, exc)
                 info["error"] = f"{type(exc).__name__}: {exc}"

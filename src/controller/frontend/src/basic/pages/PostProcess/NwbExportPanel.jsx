@@ -77,7 +77,7 @@ function JobView({ job, onCancel, onDownload, onUseSettings }) {
   );
 }
 
-export default function NwbExportPanel({ sessionName, onSummary }) {
+export default function NwbExportPanel({ sessionName, onSummary, loadSettings }) {
   const loggedIn = useIsLoggedIn();
   const [status, setStatus] = useState(null);
   const [jobs, setJobs] = useState({});
@@ -88,6 +88,9 @@ export default function NwbExportPanel({ sessionName, onSummary }) {
   const [institution, setInstitution] = usePersistedState("nwb_institution", "");
   const [lab, setLab] = usePersistedState("nwb_lab", "");
   const prefilled = useRef(null);
+  // Settings to start from ("Export again" from the job list): used in
+  // place of the session-metadata prefill.
+  const pendingSettings = useRef(loadSettings?.settings || null);
 
   const refresh = () => socket.emit("get_nwb_status", { session_name: sessionName });
 
@@ -102,6 +105,11 @@ export default function NwbExportPanel({ sessionName, onSummary }) {
       // after a job doesn't wipe what was typed.
       if (!d.session || prefilled.current === sessionName) return;
       prefilled.current = sessionName;
+      if (pendingSettings.current) {
+        applySettings(pendingSettings.current);
+        pendingSettings.current = null;
+        return;
+      }
       const md = d.metadata || {};
       setForm({
         ...blankForm(),

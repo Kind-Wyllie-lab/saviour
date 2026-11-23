@@ -322,6 +322,11 @@ def _probe_audio(audio_path: str) -> tuple[int, int]:
     )
     stream = json.loads(out.stdout)["streams"][0]
     sample_rate = int(stream["sample_rate"])
+    if sample_rate <= 0:
+        # Newer ffprobe (7.x) exits 0 on an unreadable / truncated file and
+        # reports sample_rate "0" instead of failing. A zero rate would make
+        # every later duration divide by zero, so treat it as unreadable.
+        raise ValueError(f"no audio stream in {audio_path}")
     probe_samples = int(stream.get("nb_samples") or stream.get("duration_ts") or 0)
     return probe_samples, sample_rate
 

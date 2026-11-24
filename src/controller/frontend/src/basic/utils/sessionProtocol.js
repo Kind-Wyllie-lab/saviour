@@ -87,6 +87,38 @@ function pinOf(value, where, errors, allowedPins) {
   return pin;
 }
 
+// A step's pins: `pin` (one) or `pins` (a list, driven together).
+function pinsOf(params, where, errors, allowedPins) {
+  if ("pins" in params) {
+    if ("pin" in params) {
+      errors.push(`step ${where}: give pin or pins, not both`);
+      return null;
+    }
+    const value = params.pins;
+    if (!Array.isArray(value) || value.length === 0) {
+      errors.push(`step ${where}: pins must be a non-empty list of GPIO numbers (got ${show(value)})`);
+      return null;
+    }
+    const pins = value.map((v) => pinOf(v, where, errors, allowedPins));
+    if (pins.some((p) => p === null)) return null;
+    const dupes = [...new Set(pins.filter((p, i) => pins.indexOf(p) !== i))].sort((a, b) => a - b);
+    if (dupes.length) {
+      errors.push(`step ${where}: pin ${dupes[0]} is listed twice`);
+      return null;
+    }
+    return pins;
+  }
+  const pin = pinOf(params.pin, where, errors, allowedPins);
+  return pin === null ? null : [pin];
+}
+
+/** The pins a (non-repeat) step names, for the editor: [] when none. */
+export function stepPins(step) {
+  const p = step?.params ?? {};
+  const raw = Array.isArray(p.pins) ? p.pins : (p.pin === undefined ? [] : [p.pin]);
+  return raw.map(Number).filter(Number.isInteger);
+}
+
 /**
  * Expand a protocol into time-ordered edges and validate it.
  * Returns { edges: [{t_s, pin, level, step, action}], errors, warnings,
@@ -133,7 +165,9 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
   const edges = [];
   let capped = false;
 
-  const walk = (block, offset, prefix) => {
+  // owner: the module a containing repeat names (null = any). Same rule as
+  // Python: another module's repeat is still walked, so draws stay in order.
+  const walk = (block, offset, prefix, owner = null) => {
     for (let i = 0; i < block.length; i++) {
       const where = `${prefix}${i}`;
       if (edges.length > MAX_EDGES) return;
@@ -142,32 +176,34 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
         errors.push(`step ${where}: must be an object`);
         continue;
       }
-      const mod = step.module;
-      if (moduleId !== null && mod !== undefined && mod !== null && mod !== moduleId) continue;
-      const at = num(step.at_s ?? 0, "at_s", where, errors, { minimum: 0 });
+      const mod = step.module || owner;
+      const skip = moduleId !== null && mod !== null && mod !== moduleId;
+      const errs = skip ? [] : errors;
+      if (skip && step.action !== "repeat") continue;
+      const at = num(step.at_s ?? 0, "at_s", where, errs, { minimum: 0 });
       if (at === null) continue;
       const t0 = offset + at;
       const action = step.action;
 
       if (action === "repeat") {
-        const times = int(step.times, "times", where, errors, 1);
+        const times = int(step.times, "times", where, errs, 1);
         if ("spread_s" in step) {
           // Spread over a window: see src/shared/session_protocol.py.
           if ("every_s" in step) {
-            errors.push(`step ${where}: give every_s or spread_s, not both`);
+            errs.push(`step ${where}: give every_s or spread_s, not both`);
             continue;
           }
-          const spread = num(step.spread_s, "spread_s", where, errors, { minimum: 0 });
-          const gap = num(step.min_gap_s ?? 0, "min_gap_s", where, errors, { minimum: 0 });
+          const spread = num(step.spread_s, "spread_s", where, errs, { minimum: 0 });
+          const gap = num(step.min_gap_s ?? 0, "min_gap_s", where, errs, { minimum: 0 });
           const inner = step.steps;
           if (!Array.isArray(inner) || inner.length === 0) {
-            errors.push(`step ${where}: repeat needs a non-empty 'steps' list`);
+            errs.push(`step ${where}: repeat needs a non-empty 'steps' list`);
             continue;
           }
           if (times === null || spread === null || gap === null) continue;
           let free = spread - (times - 1) * gap;
           if (free < -1e-9) {
-            errors.push(`step ${where}: ${times} repetitions at least ${fmtG(gap)} s apart need a spread of at least ${fmtG((times - 1) * gap)} s (got ${fmtG(spread)} s)`);
+            errs.push(`step ${where}: ${times} repetitions at least ${fmtG(gap)} s apart need a spread of at least ${fmtG((times - 1) * gap)} s (got ${fmtG(spread)} s)`);
             continue;
           }
           free = Math.max(free, 0);
@@ -175,31 +211,31 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
           for (let k = 0; k < times; k++) draws.push(free > 0 ? rng.uniform(0, free) : 0);
           draws.sort((a, b) => a - b);
           for (let k = 0; k < times; k++) {
-            walk(inner, t0 + draws[k] + k * gap, `${where}.${k}.`);
+            walk(inner, t0 + draws[k] + k * gap, `${where}.${k}.`, mod);
             if (edges.length > MAX_EDGES) return;
           }
           continue;
         }
-        const every = num(step.every_s, "every_s", where, errors, { minimum: 0, exclusiveMin: true });
+        const every = num(step.every_s, "every_s", where, errs, { minimum: 0, exclusiveMin: true });
         let jitter = step.jitter_s ?? [0, 0];
         let lo = 0, hi = 0;
         if (!Array.isArray(jitter) || jitter.length !== 2 || !jitter.every(isNum)
             || !(0 <= jitter[0] && jitter[0] <= jitter[1])) {
-          errors.push(`step ${where}: jitter_s must be [lo, hi] with 0 ≤ lo ≤ hi (got ${show(jitter)})`);
+          errs.push(`step ${where}: jitter_s must be [lo, hi] with 0 ≤ lo ≤ hi (got ${show(jitter)})`);
           jitter = null;
         } else {
           [lo, hi] = jitter;
         }
         const inner = step.steps;
         if (!Array.isArray(inner) || inner.length === 0) {
-          errors.push(`step ${where}: repeat needs a non-empty 'steps' list`);
+          errs.push(`step ${where}: repeat needs a non-empty 'steps' list`);
           continue;
         }
         if (times === null || every === null || jitter === null) continue;
         let start = t0;
         for (let k = 0; k < times; k++) {
           if (k > 0) start += every + (hi > 0 ? rng.uniform(lo, hi) : 0);
-          walk(inner, start, `${where}.${k}.`);
+          walk(inner, start, `${where}.${k}.`, mod);
           if (edges.length > MAX_EDGES) return;
         }
         continue;
@@ -214,7 +250,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
         errors.push(`step ${where}: '${action}' needs a 'params' object`);
         continue;
       }
-      const pin = pinOf(params.pin, where, errors, allowed);
+      const pins = pinsOf(params, where, errors, allowed);
 
       if (action === "set") {
         const level = params.level;
@@ -222,20 +258,22 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
           errors.push(`step ${where}: level must be 'high' or 'low' (got ${show(level)})`);
           continue;
         }
-        if (pin !== null) edges.push({ t_s: t0, pin, level, step: where, action });
+        for (const pin of pins ?? []) edges.push({ t_s: t0, pin, level, step: where, action });
       } else if (action === "pulse") {
         const width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
-        if (pin === null || width === null) continue;
+        if (pins === null || width === null) continue;
         if (width < MIN_WIDTH_S) {
           warnings.push(`step ${where}: width_s ${width} is below ${MIN_WIDTH_S} s; timing may not hold`);
         }
-        edges.push({ t_s: t0, pin, level: "high", step: where, action });
-        edges.push({ t_s: t0 + width, pin, level: "low", step: where, action });
+        for (const pin of pins) {
+          edges.push({ t_s: t0, pin, level: "high", step: where, action });
+          edges.push({ t_s: t0 + width, pin, level: "low", step: where, action });
+        }
       } else if (action === "train") {
         const rate = num(params.rate_hz, "rate_hz", where, errors, { minimum: 0, exclusiveMin: true });
         const width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
         const count = int(params.count, "count", where, errors, 1);
-        if (pin === null || rate === null || width === null || count === null) continue;
+        if (pins === null || rate === null || width === null || count === null) continue;
         const period = 1 / rate;
         if (width >= period) {
           errors.push(`step ${where}: width_s ${width} must be shorter than the period 1/rate_hz = ${Number(period.toPrecision(6))} s`);
@@ -247,15 +285,17 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
         if (width < MIN_WIDTH_S) {
           warnings.push(`step ${where}: width_s ${width} is below ${MIN_WIDTH_S} s; timing may not hold`);
         }
-        if (2 * count + edges.length > MAX_EDGES) {
+        if (2 * count * pins.length + edges.length > MAX_EDGES) {
           errors.push(`step ${where}: too many edges (limit ${MAX_EDGES})`);
           capped = true;
           return;
         }
-        for (let n = 0; n < count; n++) {
-          const on = t0 + n * period;
-          edges.push({ t_s: on, pin, level: "high", step: where, action });
-          edges.push({ t_s: on + width, pin, level: "low", step: where, action });
+        for (const pin of pins) {
+          for (let n = 0; n < count; n++) {
+            const on = t0 + n * period;
+            edges.push({ t_s: on, pin, level: "high", step: where, action });
+            edges.push({ t_s: on + width, pin, level: "low", step: where, action });
+          }
         }
       }
     }

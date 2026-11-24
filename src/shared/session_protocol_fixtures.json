@@ -68,6 +68,30 @@
       {"at_s": 0, "action": "repeat", "times": 2, "spread_s": 30, "every_s": 5,
        "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 4, "width_s": 1}}]},
       {"at_s": 0, "action": "repeat", "times": 2, "spread_s": -1,
-       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 5, "width_s": 1}}]}]}}
+       "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 5, "width_s": 1}}]}]}},
+    {"name": "pins: lights + shock together, 5 trials 5-25 s apart", "allowed_pins": [17, 22],
+     "protocol": {"version": 1, "seed": 4711, "steps": [
+      {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5, "jitter_s": [0, 20], "steps": [
+        {"at_s": 0, "action": "pulse", "params": {"pins": [17, 22], "width_s": 2}}]}]}},
+    {"name": "pins: set and train on several pins", "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "set", "params": {"pins": [2, 3], "level": "high"}},
+      {"at_s": 5, "action": "set", "params": {"pins": ["2", 3], "level": "low"}},
+      {"at_s": 10, "action": "train", "params": {"pins": [2, 3], "rate_hz": 5, "width_s": 0.05, "count": 3}}]}},
+    {"name": "pins: errors", "allowed_pins": [1, 2], "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "pulse", "params": {"pin": 1, "pins": [2], "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pins": [], "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pins": [1, 1], "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pins": [1, 9], "width_s": 1}},
+      {"at_s": 0, "action": "pulse", "params": {"pins": 1, "width_s": 1}}]}},
+    {"name": "module: another module's repeat still draws (whole protocol)", "protocol": {"version": 1, "seed": 3, "steps": [
+      {"at_s": 0, "module": "sound_x", "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
+       "steps": [{"at_s": 0, "action": "play", "params": {"file": "tone.wav"}}]},
+      {"at_s": 0, "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
+       "steps": [{"at_s": 0, "module": "ttl_a", "action": "pulse", "params": {"pin": 4, "width_s": 1}}]}]}},
+    {"name": "module: another module's repeat still draws (one module)", "module_id": "ttl_a", "protocol": {"version": 1, "seed": 3, "steps": [
+      {"at_s": 0, "module": "sound_x", "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
+       "steps": [{"at_s": 0, "action": "play", "params": {"file": "tone.wav"}}]},
+      {"at_s": 0, "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
+       "steps": [{"at_s": 0, "module": "ttl_a", "action": "pulse", "params": {"pin": 4, "width_s": 1}}]}]}}
   ]
 }

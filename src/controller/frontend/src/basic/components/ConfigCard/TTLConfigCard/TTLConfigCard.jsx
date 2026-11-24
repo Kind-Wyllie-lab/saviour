@@ -127,6 +127,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           ...prev.ttl.pins,
           [pin]: {
             mode,
+            // The label names the wire, not the mode: keep it across modes.
+            ...(prev.ttl.pins[pin]?.label ? { label: prev.ttl.pins[pin].label } : {}),
             ...Object.fromEntries(
               Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
             ),
@@ -367,6 +369,13 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                                 <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>
                               ))}
                             </select>
+                          </div>
+
+                          <div className="field">
+                            <label>Label</label>
+                            <input type="text" value={settings.label ?? ""}
+                              placeholder={mode === "scheduled" ? "e.g. Lights (shown in protocols)" : "optional"}
+                              onChange={(e) => changeField(pin, "label", e.target.value)} />
                           </div>
 
                           {Object.entries(modeFields).map(([k, meta]) => {

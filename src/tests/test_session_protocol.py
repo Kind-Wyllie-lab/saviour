@@ -93,6 +93,52 @@ class TestExpansion:
         ), module_id="ttl_a")
         assert [e.t_s for e in exp.edges if e.level == "high"] == [0, 2]
 
+    def test_modules_draw_the_same_random_gaps(self):
+        # Block 0 is only for ttl_b; ttl_a must still consume its draws, or
+        # block 1's shared trials land at different times on the two modules.
+        def block(**extra):
+            return {"at_s": 0, "action": "repeat", "times": 5, "every_s": 5,
+                    "jitter_s": [0, 20], **extra}
+        proto = _p(
+            block(module="ttl_b", steps=[
+                {"at_s": 0, "action": "pulse", "params": {"pin": 9, "width_s": 1}}]),
+            block(at_s=200, steps=[
+                {"at_s": 0, "module": "ttl_a", "action": "pulse",
+                 "params": {"pins": [17, 22], "width_s": 2}},
+                {"at_s": 0, "module": "ttl_b", "action": "pulse",
+                 "params": {"pin": 5, "width_s": 2}}]),
+            seed=4711)
+        a = expand(proto, module_id="ttl_a")
+        b = expand(proto, module_id="ttl_b")
+        assert a.ok and b.ok, (a.errors, b.errors)
+        on_a = [e.t_s for e in a.edges if e.level == "high" and e.pin == 17]
+        on_b = [e.t_s for e in b.edges if e.level == "high" and e.pin == 5]
+        assert len(on_a) == 5 and on_a == on_b
+        assert a.pins == [17, 22] and b.pins == [5, 9]
+
+    def test_repeat_module_applies_inside(self):
+        proto = _p({"at_s": 0, "module": "ttl_b", "action": "repeat", "times": 2,
+                    "every_s": 5, "steps": [{"at_s": 0, "action": "blink"}]})
+        # ttl_a neither runs nor reports ttl_b's steps.
+        exp = expand(proto, module_id="ttl_a")
+        assert exp.ok and exp.edges == []
+        assert not expand(proto, module_id="ttl_b").ok
+
+    def test_pins_drive_several_pins_together(self):
+        exp = expand(_p({"at_s": 1, "action": "pulse",
+                         "params": {"pins": [22, 17], "width_s": 2}}))
+        assert exp.ok, exp.errors
+        assert _edges(exp) == [(1, 22, "high"), (1, 17, "high"),
+                               (3, 22, "low"), (3, 17, "low")]
+
+    def test_pins_errors(self):
+        for params in ({"pin": 1, "pins": [2]}, {"pins": []}, {"pins": [1, 1]},
+                       {"pins": [1, 9]}, {"pins": 1}):
+            exp = expand(_p({"at_s": 0, "action": "pulse",
+                             "params": {**params, "width_s": 1}}),
+                         allowed_pins={1, 2})
+            assert not exp.ok and len(exp.errors) == 1, (params, exp.errors)
+
     def test_back_to_back_pulses_are_not_an_overlap(self):
         exp = expand(_p(
             {"at_s": 0, "action": "pulse", "params": {"pin": 1, "width_s": 1}},

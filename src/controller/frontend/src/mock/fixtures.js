@@ -170,9 +170,9 @@ function makeModules() {
             _input: { _debounce_ms: { type: "int", min: 0, default: 50 } },
           },
           pins: {
-            2: { mode: "scheduled", description: "house light" },
-            17: { mode: "scheduled", description: "tone gate" },
-            3: { mode: "input", debounce_ms: 0, description: "lever" },
+            2: { mode: "scheduled", label: "Lights" },
+            17: { mode: "scheduled", label: "Footshock" },
+            3: { mode: "input", debounce_ms: 0, label: "Lever" },
             19: { mode: "experiment_clock", duty_cycle: 0.75, period: 1 },
           },
           protocol: {

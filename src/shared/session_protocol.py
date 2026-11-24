@@ -34,8 +34,13 @@ Format (v1)::
   sorted, the k-th plus k*min_gap_s, so every valid placement is equally
   likely. E.g. 10 trials pseudo-randomly over 20 min, ≥ 60 s apart. Same
   seed, same placement.
+- ``pins`` (a list) in place of ``pin`` drives several pins with one step:
+  the same edges on each, at the same instants.
 - A ``module`` key on a step is optional; ``expand(..., module_id=...)``
-  keeps steps with no module or that module.
+  keeps steps with no module or that module. A repeat's ``module`` applies
+  to the steps inside it. Blocks for another module are still walked, only
+  emitting nothing, so every module draws the same random gaps in the same
+  order and modules running one protocol stay in step.
 
 ``expand`` returns every edge in time order with errors and warnings. A
 protocol with errors must not run.
@@ -153,6 +158,30 @@ def _pin(value, where: str, errors: list[str],
     return pin
 
 
+def _pins(params: dict, where: str, errors: list[str],
+          allowed_pins: set[int] | None) -> list[int] | None:
+    """A step's pins: ``pin`` (one) or ``pins`` (a list, driven together)."""
+    if "pins" in params:
+        if "pin" in params:
+            errors.append(f"step {where}: give pin or pins, not both")
+            return None
+        value = params["pins"]
+        if not isinstance(value, list) or not value:
+            errors.append(f"step {where}: pins must be a non-empty list of GPIO "
+                          f"numbers (got {value!r})")
+            return None
+        pins = [_pin(v, where, errors, allowed_pins) for v in value]
+        if any(p is None for p in pins):
+            return None
+        dupes = sorted({p for p in pins if pins.count(p) > 1})
+        if dupes:
+            errors.append(f"step {where}: pin {dupes[0]} is listed twice")
+            return None
+        return pins
+    pin = _pin(params.get("pin"), where, errors, allowed_pins)
+    return None if pin is None else [pin]
+
+
 def expand(protocol: dict, *, module_id: str | None = None,
            allowed_pins: set[int] | None = None) -> Expansion:
     """Expand *protocol* into time-ordered edges and validate it.
@@ -189,7 +218,11 @@ def expand(protocol: dict, *, module_id: str | None = None,
     rng = Mulberry32(seed)
     edges: list[Edge] = []
 
-    def walk(block: list, offset: float, prefix: str) -> None:
+    def walk(block: list, offset: float, prefix: str, owner=None) -> None:
+        # owner: the module a containing repeat names (None = any). A step
+        # for another module emits nothing and reports nothing here (that
+        # module checks it), but a repeat for one is still walked so the
+        # random draws stay in the same order on every module.
         for i, step in enumerate(block):
             where = f"{prefix}{i}"
             if len(edges) > MAX_EDGES:
@@ -197,34 +230,36 @@ def expand(protocol: dict, *, module_id: str | None = None,
             if not isinstance(step, dict):
                 errors.append(f"step {where}: must be an object")
                 continue
-            mod = step.get("module")
-            if module_id is not None and mod not in (None, module_id):
+            mod = step.get("module") or owner
+            skip = module_id is not None and mod not in (None, module_id)
+            errs = [] if skip else errors
+            if skip and step.get("action") != "repeat":
                 continue
-            at = _num(step.get("at_s", 0), "at_s", where, errors, minimum=0)
+            at = _num(step.get("at_s", 0), "at_s", where, errs, minimum=0)
             if at is None:
                 continue
             t0 = offset + at
             action = step.get("action")
 
             if action == "repeat":
-                times = _int(step.get("times"), "times", where, errors, 1)
+                times = _int(step.get("times"), "times", where, errs, 1)
                 if "spread_s" in step:
                     if "every_s" in step:
-                        errors.append(f"step {where}: give every_s or spread_s, not both")
+                        errs.append(f"step {where}: give every_s or spread_s, not both")
                         continue
-                    spread = _num(step.get("spread_s"), "spread_s", where, errors,
+                    spread = _num(step.get("spread_s"), "spread_s", where, errs,
                                   minimum=0)
-                    gap = _num(step.get("min_gap_s", 0), "min_gap_s", where, errors,
+                    gap = _num(step.get("min_gap_s", 0), "min_gap_s", where, errs,
                                minimum=0)
                     inner = step.get("steps")
                     if not isinstance(inner, list) or not inner:
-                        errors.append(f"step {where}: repeat needs a non-empty 'steps' list")
+                        errs.append(f"step {where}: repeat needs a non-empty 'steps' list")
                         continue
                     if times is None or spread is None or gap is None:
                         continue
                     free = spread - (times - 1) * gap
                     if free < -1e-9:
-                        errors.append(
+                        errs.append(
                             f"step {where}: {times} repetitions at least {gap:g} s apart "
                             f"need a spread of at least {(times - 1) * gap:g} s "
                             f"(got {spread:g} s)")
@@ -233,11 +268,11 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     draws = sorted(rng.uniform(0.0, free) if free > 0 else 0.0
                                    for _ in range(times))
                     for k, u in enumerate(draws):
-                        walk(inner, t0 + u + k * gap, f"{where}.{k}.")
+                        walk(inner, t0 + u + k * gap, f"{where}.{k}.", mod)
                         if len(edges) > MAX_EDGES:
                             return
                     continue
-                every = _num(step.get("every_s"), "every_s", where, errors,
+                every = _num(step.get("every_s"), "every_s", where, errs,
                              minimum=0, exclusive_min=True)
                 jitter = step.get("jitter_s", [0, 0])
                 lo = hi = 0.0
@@ -245,14 +280,14 @@ def expand(protocol: dict, *, module_id: str | None = None,
                         or any(isinstance(j, bool) or not isinstance(j, (int, float))
                                for j in jitter)
                         or not 0 <= jitter[0] <= jitter[1]):
-                    errors.append(f"step {where}: jitter_s must be [lo, hi] "
+                    errs.append(f"step {where}: jitter_s must be [lo, hi] "
                                   f"with 0 ≤ lo ≤ hi (got {jitter!r})")
                     jitter = None
                 else:
                     lo, hi = float(jitter[0]), float(jitter[1])
                 inner = step.get("steps")
                 if not isinstance(inner, list) or not inner:
-                    errors.append(f"step {where}: repeat needs a non-empty 'steps' list")
+                    errs.append(f"step {where}: repeat needs a non-empty 'steps' list")
                     continue
                 if times is None or every is None or jitter is None:
                     continue
@@ -260,7 +295,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
                 for k in range(times):
                     if k > 0:
                         start += every + (rng.uniform(lo, hi) if hi > 0 else 0.0)
-                    walk(inner, start, f"{where}.{k}.")
+                    walk(inner, start, f"{where}.{k}.", mod)
                     if len(edges) > MAX_EDGES:
                         return
                 continue
@@ -273,7 +308,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
             if not isinstance(params, dict):
                 errors.append(f"step {where}: '{action}' needs a 'params' object")
                 continue
-            pin = _pin(params.get("pin"), where, errors, allowed_pins)
+            pins = _pins(params, where, errors, allowed_pins)
 
             if action == "set":
                 level = params.get("level")
@@ -281,19 +316,20 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     errors.append(f"step {where}: level must be 'high' or 'low' "
                                   f"(got {level!r})")
                     continue
-                if pin is not None:
+                for pin in pins or ():
                     edges.append(Edge(t0, pin, level, where, action))
 
             elif action == "pulse":
                 width = _num(params.get("width_s"), "width_s", where, errors,
                              minimum=0, exclusive_min=True)
-                if pin is None or width is None:
+                if pins is None or width is None:
                     continue
                 if width < MIN_WIDTH_S:
                     warnings.append(f"step {where}: width_s {width} is below "
                                     f"{MIN_WIDTH_S} s; timing may not hold")
-                edges.append(Edge(t0, pin, "high", where, action))
-                edges.append(Edge(t0 + width, pin, "low", where, action))
+                for pin in pins:
+                    edges.append(Edge(t0, pin, "high", where, action))
+                    edges.append(Edge(t0 + width, pin, "low", where, action))
 
             elif action == "train":
                 rate = _num(params.get("rate_hz"), "rate_hz", where, errors,
@@ -301,7 +337,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
                 width = _num(params.get("width_s"), "width_s", where, errors,
                              minimum=0, exclusive_min=True)
                 count = _int(params.get("count"), "count", where, errors, 1)
-                if pin is None or rate is None or width is None or count is None:
+                if pins is None or rate is None or width is None or count is None:
                     continue
                 period = 1.0 / rate
                 if width >= period:
@@ -314,14 +350,15 @@ def expand(protocol: dict, *, module_id: str | None = None,
                 if width < MIN_WIDTH_S:
                     warnings.append(f"step {where}: width_s {width} is below "
                                     f"{MIN_WIDTH_S} s; timing may not hold")
-                if 2 * count + len(edges) > MAX_EDGES:
+                if 2 * count * len(pins) + len(edges) > MAX_EDGES:
                     errors.append(f"step {where}: too many edges "
                                   f"(limit {MAX_EDGES})")
                     return
-                for n in range(count):
-                    on = t0 + n * period
-                    edges.append(Edge(on, pin, "high", where, action))
-                    edges.append(Edge(on + width, pin, "low", where, action))
+                for pin in pins:
+                    for n in range(count):
+                        on = t0 + n * period
+                        edges.append(Edge(on, pin, "high", where, action))
+                        edges.append(Edge(on + width, pin, "low", where, action))
 
     walk(steps, 0.0, "")
     if len(edges) > MAX_EDGES:

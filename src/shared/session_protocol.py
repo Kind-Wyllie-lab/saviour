@@ -1,9 +1,11 @@
 """
 Session protocols: expand and validate a timed step list (plans/session-protocol.md).
 
-Phase 1 slice: TTL output actions only (``set``, ``pulse``, ``train``) plus
-``repeat`` blocks (seeded jitter, or spread over a window). The TTL module runs the result
-(``ttl_module.py``, pin mode ``scheduled``).
+Actions: TTL outputs (``set``, ``pulse``, ``train``; the TTL module runs
+them on its ``scheduled`` pins, ``ttl_module.py``) and sound (``play``; the
+sound module runs them, ``sound_module.py``), plus ``repeat`` blocks (seeded
+jitter, or spread over a window). One protocol can drive both: each module
+expands the whole protocol with ``module_type`` set and keeps its own steps.
 
 Format (v1)::
 
@@ -42,8 +44,17 @@ Format (v1)::
   emitting nothing, so every module draws the same random gaps in the same
   order and modules running one protocol stay in step.
 
-``expand`` returns every edge in time order with errors and warnings. A
-protocol with errors must not run.
+- ``play`` (sound): ``{"file": "tone_5k.wav", "output": 1, "volume": 1,
+  "duration_s": 2}``. ``file`` is a name in the module's sounds folder;
+  ``output`` the stereo output (1 = channels 1-2, 2 = 3-4, ...; a DAC8x has
+  4, a DAC Pro 1; default 1); ``volume`` a gain factor (default: the
+  module's ``sound.volume``); ``duration_s`` cuts the sound short (default:
+  the whole file). Two plays on one output must not overlap, checked where
+  the length is known (``duration_s``, or the file's length when the caller
+  passes ``sound_files``).
+
+``expand`` returns every edge (TTL) and cue (sound) in time order with errors
+and warnings. A protocol with errors must not run.
 """
 
 from __future__ import annotations
@@ -53,7 +64,14 @@ from dataclasses import dataclass, field
 
 SUPPORTED_VERSION = 1
 END_STATES = ("all_inactive", "hold")
-ACTIONS = ("set", "pulse", "train")
+TTL_ACTIONS = ("set", "pulse", "train")
+SOUND_ACTIONS = ("play",)
+ACTIONS = TTL_ACTIONS + SOUND_ACTIONS
+MODULE_TYPES = ("ttl", "sound")
+# The type of module that runs each action.
+ACTION_TYPE = {**{a: "ttl" for a in TTL_ACTIONS}, **{a: "sound" for a in SOUND_ACTIONS}}
+# A play's gain factor above this is refused (1 = the file as recorded).
+MAX_VOLUME = 4.0
 
 # A step later than this still fires but is counted as late. Measured on the
 # desk rig 2026-11-16: worst 0.39 ms over 3,600 edges in 30 min (the t = 0
@@ -79,9 +97,33 @@ class Edge:
                 "step": self.step, "action": self.action}
 
 
+@dataclass(frozen=True)
+class Cue:
+    """A sound to start: *file* on *output* at session time *t_s*."""
+    t_s: float
+    output: int
+    file: str
+    volume: float | None      # None = the module's sound.volume
+    duration_s: float | None  # requested cut; None = the whole file
+    length_s: float | None    # how long it plays, where known
+    step: str
+    action: str = "play"
+
+    @property
+    def end_s(self) -> float:
+        return self.t_s + (self.length_s or 0.0)
+
+    def to_dict(self) -> dict:
+        return {"t_s": round(self.t_s, 6), "output": self.output, "file": self.file,
+                "volume": self.volume, "duration_s": self.duration_s,
+                "length_s": None if self.length_s is None else round(self.length_s, 6),
+                "step": self.step, "action": self.action}
+
+
 @dataclass
 class Expansion:
     edges: list[Edge] = field(default_factory=list)
+    cues: list[Cue] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     end_state: str = "all_inactive"
@@ -92,7 +134,13 @@ class Expansion:
 
     @property
     def duration_s(self) -> float:
-        return self.edges[-1].t_s if self.edges else 0.0
+        last_edge = self.edges[-1].t_s if self.edges else 0.0
+        last_cue = max((c.end_s for c in self.cues), default=0.0)
+        return max(last_edge, last_cue)
+
+    @property
+    def outputs(self) -> list[int]:
+        return sorted({c.output for c in self.cues})
 
     @property
     def pins(self) -> list[int]:
@@ -182,12 +230,36 @@ def _pins(params: dict, where: str, errors: list[str],
     return None if pin is None else [pin]
 
 
-def expand(protocol: dict, *, module_id: str | None = None,
-           allowed_pins: set[int] | None = None) -> Expansion:
-    """Expand *protocol* into time-ordered edges and validate it.
+def _sound_file(value, where: str, errors: list[str],
+                sound_files: dict | None) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"step {where}: file must be a sound file name (got {value!r})")
+        return None
+    if "/" in value or "\\" in value or value.startswith("."):
+        errors.append(f"step {where}: file must be a plain file name, not a path "
+                      f"(got {value!r})")
+        return None
+    if sound_files is not None and value not in sound_files:
+        have = ", ".join(sorted(sound_files)) or "none"
+        errors.append(f"step {where}: no sound file {value!r} on this module "
+                      f"(files: {have})")
+        return None
+    return value
 
+
+def expand(protocol: dict, *, module_id: str | None = None,
+           allowed_pins: set[int] | None = None,
+           module_type: str | None = None,
+           sound_files: dict | None = None,
+           outputs: int | None = None) -> Expansion:
+    """Expand *protocol* into time-ordered edges and cues and validate it.
+
+    *module_type*: "ttl" or "sound" keeps only that module type's actions
+    (the others are neither run nor checked); None keeps every action.
     *allowed_pins*: the pins the protocol may drive (the TTL module passes its
-    ``scheduled`` pins); None skips that check.
+    ``scheduled`` pins); None skips that check. *sound_files*: file name ->
+    length in seconds (None if unknown) on the sound module; None skips the
+    file check. *outputs*: the sound module's output count; None skips it.
     """
     out = Expansion()
     errors, warnings = out.errors, out.warnings
@@ -215,8 +287,13 @@ def expand(protocol: dict, *, module_id: str | None = None,
         errors.append("protocol needs a 'steps' list")
         return out
 
+    if module_type is not None and module_type not in MODULE_TYPES:
+        errors.append(f"unknown module type {module_type!r}")
+        return out
+
     rng = Mulberry32(seed)
     edges: list[Edge] = []
+    cues: list[Cue] = []
 
     def walk(block: list, offset: float, prefix: str, owner=None) -> None:
         # owner: the module a containing repeat names (None = any). A step
@@ -225,7 +302,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
         # random draws stay in the same order on every module.
         for i, step in enumerate(block):
             where = f"{prefix}{i}"
-            if len(edges) > MAX_EDGES:
+            if len(edges) + len(cues) > MAX_EDGES:
                 return
             if not isinstance(step, dict):
                 errors.append(f"step {where}: must be an object")
@@ -234,6 +311,9 @@ def expand(protocol: dict, *, module_id: str | None = None,
             skip = module_id is not None and mod not in (None, module_id)
             errs = [] if skip else errors
             if skip and step.get("action") != "repeat":
+                continue
+            if module_type is not None \
+                    and ACTION_TYPE.get(step.get("action"), module_type) != module_type:
                 continue
             at = _num(step.get("at_s", 0), "at_s", where, errs, minimum=0)
             if at is None:
@@ -269,7 +349,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
                                    for _ in range(times))
                     for k, u in enumerate(draws):
                         walk(inner, t0 + u + k * gap, f"{where}.{k}.", mod)
-                        if len(edges) > MAX_EDGES:
+                        if len(edges) + len(cues) > MAX_EDGES:
                             return
                     continue
                 every = _num(step.get("every_s"), "every_s", where, errs,
@@ -296,18 +376,56 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     if k > 0:
                         start += every + (rng.uniform(lo, hi) if hi > 0 else 0.0)
                     walk(inner, start, f"{where}.{k}.", mod)
-                    if len(edges) > MAX_EDGES:
+                    if len(edges) + len(cues) > MAX_EDGES:
                         return
                 continue
 
             if action not in ACTIONS:
                 errors.append(f"step {where}: unknown action {action!r} "
-                              f"(TTL actions: {', '.join(ACTIONS)}, repeat)")
+                              f"(TTL: {', '.join(TTL_ACTIONS)}; sound: "
+                              f"{', '.join(SOUND_ACTIONS)}; repeat)")
                 continue
             params = step.get("params")
             if not isinstance(params, dict):
                 errors.append(f"step {where}: '{action}' needs a 'params' object")
                 continue
+
+            if action == "play":
+                name = _sound_file(params.get("file"), where, errors, sound_files)
+                output = _int(params.get("output", 1), "output", where, errors, 1)
+                if output is not None and outputs is not None and output > outputs:
+                    errors.append(f"step {where}: output {output} doesn't exist "
+                                  f"(this module has {outputs} output"
+                                  f"{'' if outputs == 1 else 's'})")
+                    output = None
+                volume = params.get("volume")
+                if volume is not None:
+                    volume = _num(volume, "volume", where, errors, minimum=0)
+                    if volume is not None and volume > MAX_VOLUME:
+                        errors.append(f"step {where}: volume {volume} is above "
+                                      f"{MAX_VOLUME:g}")
+                        volume = None
+                    elif volume is not None and volume > 1:
+                        warnings.append(f"step {where}: volume {volume} is above 1; "
+                                        f"loud parts of the sound may clip")
+                    if volume is None:
+                        continue
+                cut = params.get("duration_s")
+                if cut is not None:
+                    cut = _num(cut, "duration_s", where, errors,
+                               minimum=0, exclusive_min=True)
+                    if cut is None:
+                        continue
+                if name is None or output is None:
+                    continue
+                file_len = (sound_files or {}).get(name)
+                if isinstance(file_len, bool) or not isinstance(file_len, (int, float)):
+                    file_len = None
+                lengths = [x for x in (cut, file_len) if x is not None]
+                cues.append(Cue(t0, output, name, volume, cut,
+                                min(lengths) if lengths else None, where))
+                continue
+
             pins = _pins(params, where, errors, allowed_pins)
 
             if action == "set":
@@ -350,7 +468,7 @@ def expand(protocol: dict, *, module_id: str | None = None,
                 if width < MIN_WIDTH_S:
                     warnings.append(f"step {where}: width_s {width} is below "
                                     f"{MIN_WIDTH_S} s; timing may not hold")
-                if 2 * count * len(pins) + len(edges) > MAX_EDGES:
+                if 2 * count * len(pins) + len(edges) + len(cues) > MAX_EDGES:
                     errors.append(f"step {where}: too many edges "
                                   f"(limit {MAX_EDGES})")
                     return
@@ -361,9 +479,23 @@ def expand(protocol: dict, *, module_id: str | None = None,
                         edges.append(Edge(on + width, pin, "low", where, action))
 
     walk(steps, 0.0, "")
-    if len(edges) > MAX_EDGES:
+    if len(edges) + len(cues) > MAX_EDGES:
         errors.append(f"protocol expands to more than {MAX_EDGES} edges")
         return out
+
+    # Sound: one play at a time per output, where the lengths are known.
+    cues.sort(key=lambda c: c.t_s)
+    last_on: dict[int, Cue] = {}
+    for c in cues:
+        prev = last_on.get(c.output)
+        if prev is not None and prev.length_s is not None \
+                and prev.end_s > c.t_s + 1e-9:
+            errors.append(
+                f"step {c.step}: output {c.output} is still playing {prev.file} "
+                f"(step {prev.step}, until {prev.end_s:.3f} s) at {c.t_s:.3f} s; "
+                f"plays overlap")
+        last_on[c.output] = c
+    out.cues = cues
 
     # Ties: a falling edge before a rising one at the same instant, so a
     # pulse that ends exactly where the next begins is back-to-back, not an
@@ -390,6 +522,22 @@ def expand(protocol: dict, *, module_id: str | None = None,
 
     out.edges = edges
     return out
+
+
+def module_tags(protocol) -> set[str]:
+    """Every module ID a step (or repeat block) names in *protocol*."""
+    found: set[str] = set()
+
+    def walk(block) -> None:
+        for step in block if isinstance(block, list) else ():
+            if not isinstance(step, dict):
+                continue
+            if isinstance(step.get("module"), str) and step["module"]:
+                found.add(step["module"])
+            walk(step.get("steps"))
+
+    walk((protocol or {}).get("steps") if isinstance(protocol, dict) else None)
+    return found
 
 
 def state_at(edges: list[Edge], t_s: float) -> dict[int, str]:

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import ProtocolTimeline from "/src/basic/components/ProtocolTimeline/ProtocolTimeline";
-import { expand, fmtTime, highSpans } from "/src/basic/utils/sessionProtocol";
+import { expand, fmtTime } from "/src/basic/utils/sessionProtocol";
+import { timelineOf } from "/src/basic/components/Protocol/useProtocolExpansion";
 
 // "Protocol" in the session's details: the copy taken when the session was
 // created (later library edits don't change it), with its planned timeline.
@@ -9,12 +10,7 @@ import { expand, fmtTime, highSpans } from "/src/basic/utils/sessionProtocol";
 export default function SessionProtocolRow({ protocol }) {
   const [open, setOpen] = useState(false);
   const result = useMemo(() => expand(protocol), [protocol]);
-  const rows = result.pins.map((p) => ({ key: p, label: `GPIO ${p}` }));
-  const spans = useMemo(() => highSpans(result.edges).map((s) => ({
-    row: s.pin, start: s.start,
-    end: s.end === null && result.endState === "all_inactive" ? result.durationS : s.end,
-    label: `${s.action} (step ${s.step})`,
-  })), [result]);
+  const { rows, spans } = useMemo(() => timelineOf(result), [result]);
   const steps = protocol?.steps?.length ?? 0;
   return (
     <>

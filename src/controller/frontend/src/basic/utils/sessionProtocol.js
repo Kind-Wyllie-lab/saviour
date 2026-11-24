@@ -8,7 +8,13 @@
 
 export const SUPPORTED_VERSION = 1;
 export const END_STATES = ["all_inactive", "hold"];
-export const ACTIONS = ["set", "pulse", "train"];
+export const TTL_ACTIONS = ["set", "pulse", "train"];
+export const SOUND_ACTIONS = ["play"];
+export const ACTIONS = [...TTL_ACTIONS, ...SOUND_ACTIONS];
+export const MODULE_TYPES = ["ttl", "sound"];
+export const ACTION_TYPE = Object.fromEntries([
+  ...TTL_ACTIONS.map((a) => [a, "ttl"]), ...SOUND_ACTIONS.map((a) => [a, "sound"])]);
+export const MAX_VOLUME = 4.0;
 export const LATE_THRESHOLD_S = 0.005;
 export const MIN_WIDTH_S = 0.005;
 export const MAX_RATE_HZ = 50.0;
@@ -119,18 +125,43 @@ export function stepPins(step) {
   return raw.map(Number).filter(Number.isInteger);
 }
 
+function soundFile(value, where, errors, soundFiles) {
+  if (typeof value !== "string" || !value.trim()) {
+    errors.push(`step ${where}: file must be a sound file name (got ${show(value)})`);
+    return null;
+  }
+  if (value.includes("/") || value.includes("\\") || value.startsWith(".")) {
+    errors.push(`step ${where}: file must be a plain file name, not a path (got ${show(value)})`);
+    return null;
+  }
+  if (soundFiles && !Object.prototype.hasOwnProperty.call(soundFiles, value)) {
+    const have = Object.keys(soundFiles).sort().join(", ") || "none";
+    errors.push(`step ${where}: no sound file ${show(value)} on this module (files: ${have})`);
+    return null;
+  }
+  return value;
+}
+
+export const cueEnd = (c) => c.t_s + (c.length_s ?? 0);
+
 /**
- * Expand a protocol into time-ordered edges and validate it.
- * Returns { edges: [{t_s, pin, level, step, action}], errors, warnings,
- *           endState, ok, durationS, pins }.
+ * Expand a protocol into time-ordered edges (TTL) and cues (sound) and
+ * validate it. Options as in Python: moduleType ("ttl" | "sound" | null),
+ * allowedPins, soundFiles ({name: length_s | null}), outputs.
+ * Returns { edges: [{t_s, pin, level, step, action}],
+ *           cues: [{t_s, output, file, volume, duration_s, length_s, step, action}],
+ *           errors, warnings, endState, ok, durationS, pins, outputs }.
  */
-export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
-  const out = { edges: [], errors: [], warnings: [], endState: "all_inactive" };
+export function expand(protocol, { moduleId = null, allowedPins = null, moduleType = null,
+  soundFiles = null, outputs = null } = {}) {
+  const out = { edges: [], cues: [], errors: [], warnings: [], endState: "all_inactive" };
   const { errors, warnings } = out;
   const finish = () => {
     out.ok = errors.length === 0;
-    out.durationS = out.edges.length ? out.edges[out.edges.length - 1].t_s : 0;
+    const lastEdge = out.edges.length ? out.edges[out.edges.length - 1].t_s : 0;
+    out.durationS = Math.max(lastEdge, ...out.cues.map(cueEnd), 0);
     out.pins = [...new Set(out.edges.map((e) => e.pin))].sort((a, b) => a - b);
+    out.outputs = [...new Set(out.cues.map((c) => c.output))].sort((a, b) => a - b);
     return out;
   };
   const allowed = allowedPins ? new Set(allowedPins) : null;
@@ -161,8 +192,14 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
     return finish();
   }
 
+  if (moduleType !== null && !MODULE_TYPES.includes(moduleType)) {
+    errors.push(`unknown module type ${show(moduleType)}`);
+    return finish();
+  }
+
   const rng = mulberry32(seed);
   const edges = [];
+  const cues = [];
   let capped = false;
 
   // owner: the module a containing repeat names (null = any). Same rule as
@@ -170,7 +207,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
   const walk = (block, offset, prefix, owner = null) => {
     for (let i = 0; i < block.length; i++) {
       const where = `${prefix}${i}`;
-      if (edges.length > MAX_EDGES) return;
+      if (edges.length + cues.length > MAX_EDGES) return;
       const step = block[i];
       if (!step || typeof step !== "object" || Array.isArray(step)) {
         errors.push(`step ${where}: must be an object`);
@@ -180,6 +217,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
       const skip = moduleId !== null && mod !== null && mod !== moduleId;
       const errs = skip ? [] : errors;
       if (skip && step.action !== "repeat") continue;
+      if (moduleType !== null && (ACTION_TYPE[step.action] ?? moduleType) !== moduleType) continue;
       const at = num(step.at_s ?? 0, "at_s", where, errs, { minimum: 0 });
       if (at === null) continue;
       const t0 = offset + at;
@@ -212,7 +250,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
           draws.sort((a, b) => a - b);
           for (let k = 0; k < times; k++) {
             walk(inner, t0 + draws[k] + k * gap, `${where}.${k}.`, mod);
-            if (edges.length > MAX_EDGES) return;
+            if (edges.length + cues.length > MAX_EDGES) return;
           }
           continue;
         }
@@ -236,18 +274,50 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
         for (let k = 0; k < times; k++) {
           if (k > 0) start += every + (hi > 0 ? rng.uniform(lo, hi) : 0);
           walk(inner, start, `${where}.${k}.`, mod);
-          if (edges.length > MAX_EDGES) return;
+          if (edges.length + cues.length > MAX_EDGES) return;
         }
         continue;
       }
 
       if (!ACTIONS.includes(action)) {
-        errors.push(`step ${where}: unknown action ${show(action)} (TTL actions: ${ACTIONS.join(", ")}, repeat)`);
+        errors.push(`step ${where}: unknown action ${show(action)} (TTL: ${TTL_ACTIONS.join(", ")}; sound: ${SOUND_ACTIONS.join(", ")}; repeat)`);
         continue;
       }
       const params = step.params;
       if (!params || typeof params !== "object" || Array.isArray(params)) {
         errors.push(`step ${where}: '${action}' needs a 'params' object`);
+        continue;
+      }
+
+      if (action === "play") {
+        const name = soundFile(params.file, where, errors, soundFiles);
+        let output = int(params.output ?? 1, "output", where, errors, 1);
+        if (output !== null && outputs !== null && output > outputs) {
+          errors.push(`step ${where}: output ${output} doesn't exist (this module has ${outputs} output${outputs === 1 ? "" : "s"})`);
+          output = null;
+        }
+        let volume = params.volume ?? null;
+        if (volume !== null) {
+          volume = num(volume, "volume", where, errors, { minimum: 0 });
+          if (volume !== null && volume > MAX_VOLUME) {
+            errors.push(`step ${where}: volume ${volume} is above ${MAX_VOLUME}`);
+            volume = null;
+          } else if (volume !== null && volume > 1) {
+            warnings.push(`step ${where}: volume ${volume} is above 1; loud parts of the sound may clip`);
+          }
+          if (volume === null) continue;
+        }
+        let cut = params.duration_s ?? null;
+        if (cut !== null) {
+          cut = num(cut, "duration_s", where, errors, { minimum: 0, exclusiveMin: true });
+          if (cut === null) continue;
+        }
+        if (name === null || output === null) continue;
+        let fileLen = soundFiles ? soundFiles[name] : null;
+        if (!isNum(fileLen)) fileLen = null;
+        const lengths = [cut, fileLen].filter((x) => x !== null);
+        cues.push({ t_s: t0, output, file: name, volume, duration_s: cut,
+          length_s: lengths.length ? Math.min(...lengths) : null, step: where, action });
         continue;
       }
       const pins = pinsOf(params, where, errors, allowed);
@@ -285,7 +355,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
         if (width < MIN_WIDTH_S) {
           warnings.push(`step ${where}: width_s ${width} is below ${MIN_WIDTH_S} s; timing may not hold`);
         }
-        if (2 * count * pins.length + edges.length > MAX_EDGES) {
+        if (2 * count * pins.length + edges.length + cues.length > MAX_EDGES) {
           errors.push(`step ${where}: too many edges (limit ${MAX_EDGES})`);
           capped = true;
           return;
@@ -303,10 +373,22 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
 
   walk(steps, 0, "");
   if (capped) return finish();
-  if (edges.length > MAX_EDGES) {
+  if (edges.length + cues.length > MAX_EDGES) {
     errors.push(`protocol expands to more than ${MAX_EDGES} edges`);
     return finish();
   }
+
+  // Sound: one play at a time per output, where the lengths are known.
+  cues.sort((a, b) => a.t_s - b.t_s);
+  const lastOn = new Map();
+  for (const c of cues) {
+    const prev = lastOn.get(c.output);
+    if (prev && prev.length_s !== null && cueEnd(prev) > c.t_s + 1e-9) {
+      errors.push(`step ${c.step}: output ${c.output} is still playing ${prev.file} (step ${prev.step}, until ${cueEnd(prev).toFixed(3)} s) at ${c.t_s.toFixed(3)} s; plays overlap`);
+    }
+    lastOn.set(c.output, c);
+  }
+  out.cues = cues;
 
   // Same tie rule as Python: falling before rising at the same instant. A
   // stable sort keeps listing order otherwise, as Python's sort does.
@@ -329,6 +411,20 @@ export function expand(protocol, { moduleId = null, allowedPins = null } = {}) {
 
   out.edges = edges;
   return finish();
+}
+
+/** Every module ID a step (or repeat block) names in a protocol. */
+export function moduleTags(protocol) {
+  const found = new Set();
+  const walk = (block) => {
+    for (const step of Array.isArray(block) ? block : []) {
+      if (!step || typeof step !== "object") continue;
+      if (typeof step.module === "string" && step.module) found.add(step.module);
+      walk(step.steps);
+    }
+  };
+  walk(protocol && typeof protocol === "object" ? protocol.steps : null);
+  return found;
 }
 
 /** Pair each pin's edges into high intervals for the timeline:

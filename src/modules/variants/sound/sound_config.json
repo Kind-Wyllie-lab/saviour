@@ -4,9 +4,11 @@
     },
     "sound": {
         "volume": 1,
-        "duration": 1
+        "duration": 1,
+        "output_latency_offset_ms": 0
     },
     "recording": {
         "segment_length_mins": 120
-    }
+    },
+    "sound_hardware": {}
 }

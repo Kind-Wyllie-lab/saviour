@@ -120,3 +120,64 @@ class TestLibrary:
         lib.get("A")["steps"].clear()
         lib.list()[0]["protocol"]["steps"].clear()
         assert len(lib.get("A")["steps"]) == 1
+
+
+class TestCheckForSession:
+    """check_for_session with sound steps (plans/session-protocol.md)."""
+
+    TRIAL = {"version": 1, "seed": 4711, "steps": [
+        {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5, "jitter_s": [0, 20],
+         "steps": [
+             {"at_s": 0, "action": "pulse", "params": {"pins": [4, 6], "width_s": 2}},
+             {"at_s": 0, "action": "play",
+              "params": {"file": "tone_5k.wav", "duration_s": 2}}]}]}
+    MODULES = {"ttl_1": {"type": "ttl"}, "sound_1": {"type": "sound"},
+               "cam": {"type": "camera"}}
+
+    @staticmethod
+    def _configs(files=None, outputs=1):
+        snd = {} if files is None else {
+            "sound_hardware": {"files": files, "outputs": outputs, "channels": 2 * outputs}}
+        return {"ttl_1": {"ttl": {"pins": {"4": {"mode": "scheduled"},
+                                           "6": {"mode": "scheduled"}}}},
+                "sound_1": snd}
+
+    def _check(self, protocol=None, modules=None, configs=None):
+        from src.controller.protocol_library import check_for_session
+        return check_for_session(protocol or self.TRIAL, modules or self.MODULES,
+                                 configs if configs is not None
+                                 else self._configs({"tone_5k.wav": 3.0}))
+
+    def test_ttl_and_sound_together(self):
+        assert self._check() == ([], [])
+
+    def test_needs_a_sound_module(self):
+        errors, _ = self._check(modules={"ttl_1": {"type": "ttl"}})
+        assert errors == ["The protocol plays sounds, but no sound module is in this "
+                          "session's target"]
+
+    def test_missing_file_names_the_module(self):
+        errors, _ = self._check(configs=self._configs({"other.wav": 1.0}))
+        assert errors and errors[0].startswith("sound_1: ") and "tone_5k.wav" in errors[0]
+
+    def test_output_beyond_the_card(self):
+        proto = {"version": 1, "steps": [
+            {"at_s": 1, "action": "play", "params": {"file": "tone_5k.wav", "output": 3}}]}
+        errors, _ = self._check(proto, configs=self._configs({"tone_5k.wav": 1.0}, 1))
+        assert errors and "output 3" in errors[0]
+        assert self._check(proto, configs=self._configs({"tone_5k.wav": 1.0}, 4)) == ([], [])
+
+    def test_unreported_hardware_is_a_warning(self):
+        errors, warnings = self._check(configs=self._configs(None))
+        assert errors == [] and "hasn't reported" in warnings[0]
+
+    def test_step_for_a_module_not_in_the_target(self):
+        proto = {"version": 1, "steps": [
+            {"at_s": 1, "module": "sound_9", "action": "play", "params": {"file": "a.wav"}}]}
+        errors, _ = self._check(proto)
+        assert errors == ["A step is for module sound_9, which isn't in this session's target"]
+
+    def test_sound_only_protocol_needs_no_ttl(self):
+        proto = {"version": 1, "steps": [
+            {"at_s": 1, "action": "play", "params": {"file": "tone_5k.wav"}}]}
+        assert self._check(proto, modules={"sound_1": {"type": "sound"}}) == ([], [])

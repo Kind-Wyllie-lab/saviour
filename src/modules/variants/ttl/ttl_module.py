@@ -698,9 +698,12 @@ class TTLModule(Module):
                     f"Scheduled pin(s) {self.scheduled_pins} but this session has "
                     f"no protocol — they stay inactive")
             return None
+        # module_type: a protocol's sound steps are the sound module's to
+        # run and check, not this module's.
         return session_protocol.expand(
             protocol,
             module_id=getattr(self, "module_id", None),
+            module_type="ttl",
             allowed_pins=set(self.scheduled_pins),
         )
 

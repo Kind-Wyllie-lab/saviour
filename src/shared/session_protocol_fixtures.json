@@ -92,6 +92,38 @@
       {"at_s": 0, "module": "sound_x", "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
        "steps": [{"at_s": 0, "action": "play", "params": {"file": "tone.wav"}}]},
       {"at_s": 0, "action": "repeat", "times": 4, "every_s": 5, "jitter_s": [0, 10],
-       "steps": [{"at_s": 0, "module": "ttl_a", "action": "pulse", "params": {"pin": 4, "width_s": 1}}]}]}}
+       "steps": [{"at_s": 0, "module": "ttl_a", "action": "pulse", "params": {"pin": 4, "width_s": 1}}]}]}},
+    {"name": "sound: tone with lights + shock on the same trials (whole protocol)", "allowed_pins": [4, 6],
+     "protocol": {"version": 1, "seed": 4711, "steps": [
+      {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5, "jitter_s": [0, 20], "steps": [
+        {"at_s": 0, "action": "pulse", "params": {"pins": [4, 6], "width_s": 2}},
+        {"at_s": 0, "action": "play", "params": {"file": "tone_5k.wav", "duration_s": 2}}]}]}},
+    {"name": "sound: the sound module's part", "module_type": "sound", "module_id": "sound_9f00",
+     "sound_files": {"tone_5k.wav": 3.0, "noise.wav": null}, "outputs": 4,
+     "protocol": {"version": 1, "seed": 4711, "steps": [
+      {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5, "jitter_s": [0, 20], "steps": [
+        {"at_s": 0, "action": "pulse", "params": {"pins": [4, 6], "width_s": 2}},
+        {"at_s": 0, "action": "play", "params": {"file": "tone_5k.wav", "duration_s": 2}}]},
+      {"at_s": 200, "module": "sound_9f00", "action": "play", "params": {"file": "tone_5k.wav", "output": 3, "volume": 0.5}},
+      {"at_s": 201, "module": "sound_other", "action": "play", "params": {"file": "missing.wav"}},
+      {"at_s": 210, "action": "play", "params": {"file": "noise.wav", "output": 2}}]}},
+    {"name": "sound: the TTL module's part ignores plays", "module_type": "ttl", "allowed_pins": [4, 6],
+     "protocol": {"version": 1, "seed": 4711, "steps": [
+      {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5, "jitter_s": [0, 20], "steps": [
+        {"at_s": 0, "action": "pulse", "params": {"pins": [4, 6], "width_s": 2}},
+        {"at_s": 0, "action": "play", "params": {"file": "../etc/passwd", "output": 0}}]}]}},
+    {"name": "sound: errors and warnings", "module_type": "sound", "outputs": 1,
+     "sound_files": {"a.wav": 1.5, "b.wav": 0.5},
+     "protocol": {"version": 1, "steps": [
+      {"at_s": 0, "action": "play", "params": {"file": "a.wav"}},
+      {"at_s": 1, "action": "play", "params": {"file": "b.wav"}},
+      {"at_s": 5, "action": "play", "params": {"file": "a.wav", "output": 2}},
+      {"at_s": 6, "action": "play", "params": {"file": "../a.wav"}},
+      {"at_s": 7, "action": "play", "params": {"file": "c.wav"}},
+      {"at_s": 8, "action": "play", "params": {"file": "a.wav", "volume": 9}},
+      {"at_s": 9, "action": "play", "params": {"file": "a.wav", "volume": 2}},
+      {"at_s": 12, "action": "play", "params": {"file": "a.wav", "duration_s": 0}},
+      {"at_s": 13, "action": "play", "params": {}},
+      {"at_s": 14, "action": "play", "params": {"file": "b.wav", "duration_s": 3}}]}}
   ]
 }

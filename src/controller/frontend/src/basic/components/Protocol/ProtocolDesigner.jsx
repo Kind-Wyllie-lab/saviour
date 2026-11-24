@@ -4,6 +4,8 @@ import ProtocolEditor from "./ProtocolEditor";
 import { EMPTY_PROTOCOL, freeName, sameProtocol } from "./protocolLibrary";
 import "./ProtocolDesigner.css";
 import { formatUtc } from "/src/basic/utils/time";
+import useModules from "/src/hooks/useModules";
+import { soundModulesOf } from "./protocolModules";
 
 // The Protocol designer: the controller's library of named protocols on the
 // left (new / copy / delete), the selected one's editor on the right (name,
@@ -19,6 +21,8 @@ import { formatUtc } from "/src/basic/utils/time";
 // for the session being created). onSaved(name, protocol, previousName):
 // after a save lands. moduleLabel: the TTL module validation and Test
 // routine run against (null = none in reach: checked for format only).
+// soundModules: the sound modules play steps are offered for and checked
+// against (default: every sound module the controller knows).
 
 function fmtWhen(ts) {
   if (!ts) return "";
@@ -28,7 +32,10 @@ function fmtWhen(ts) {
 export default function ProtocolDesigner({
   start, library, moduleLabel, usedName, usedBadge = "picked", scheduledPins, pinConfigs, moduleId,
   renderTest, cursorT, canEdit, onUse, useLabel = "Use this protocol", onSaved, onClose,
+  soundModules,
 }) {
+  const { modules } = useModules();
+  const sounds = useMemo(() => soundModules ?? soundModulesOf(modules), [soundModules, modules]);
   const { items, error, clearError, change } = library;
   const [draft, setDraft] = useState(null); // { original, name, protocol }
   const [pending, setPending] = useState(null); // name we expect a `protocols` change for
@@ -212,6 +219,7 @@ export default function ProtocolDesigner({
                   scheduledPins={scheduledPins}
                   pinConfigs={pinConfigs}
                   moduleId={moduleId}
+                  soundModules={sounds}
                   allowClear={false}
                   intro={null}
                   renderTest={renderTest}

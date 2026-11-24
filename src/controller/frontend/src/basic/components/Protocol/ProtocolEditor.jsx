@@ -14,7 +14,20 @@ import "./ProtocolEditor.css";
 // shown as a nested-repeat row and edited in the JSON view. A step can drive
 // several pins at once (params.pins); one pin is written as params.pin.
 
-const ACTION_LABELS = { set: "Set level", pulse: "Pulse", train: "Pulse train", repeat: "Repeat" };
+const ACTION_LABELS = { set: "Set level", pulse: "Pulse", train: "Pulse train", play: "Play sound", repeat: "Repeat" };
+
+// sound: { modules: [{ id, name, files, outputs }] } -- the sound modules in
+// reach; files and outputs offered to a play step come from the one it names
+// (or, untagged, from all of them).
+function soundChoices(sound, moduleId) {
+  const mods = sound?.modules ?? [];
+  const chosen = moduleId ? mods.filter((m) => m.id === moduleId) : mods;
+  const files = [...new Set(chosen.flatMap((m) => Object.keys(m.files ?? {})))].sort();
+  const known = chosen.map((m) => m.outputs).filter(Boolean);
+  // Untagged plays run on every sound module: offer what they all have.
+  const outputs = known.length ? (moduleId ? Math.max(...known) : Math.min(...known)) : 4;
+  return { files, outputs, lengths: Object.assign({}, ...chosen.map((m) => m.files ?? {})) };
+}
 
 // { pin } for one pin, { pins } for several: older protocols and the JSON
 // view stay readable, and one-pin steps keep their old shape.
@@ -29,8 +42,9 @@ function withPins(params, pins) {
   return { ...pinParams(pins), ...rest };
 }
 
-function defaultParams(action, pins) {
+function defaultParams(action, pins, sound) {
   switch (action) {
+    case "play": return { file: soundChoices(sound).files[0] ?? "", output: 1 };
     case "set": return { ...pinParams(pins), level: "high" };
     case "pulse": return { ...pinParams(pins), width_s: 0.05 };
     case "train": return { ...pinParams(pins), rate_hz: 10, width_s: 0.02, count: 10 };
@@ -38,14 +52,16 @@ function defaultParams(action, pins) {
   }
 }
 
-function newStep(action, pins, atS = 0) {
+function newStep(action, pins, atS = 0, sound = null) {
   if (action === "repeat") {
+    // A repeat starts with one step: a pulse, or a sound when there's no pin.
+    const inner = (pins ?? []).some((p) => p !== undefined) || !(sound?.modules ?? []).length ? "pulse" : "play";
     return {
       at_s: atS, action: "repeat", times: 5, every_s: 10, jitter_s: [0, 0],
-      steps: [{ at_s: 0, action: "pulse", params: defaultParams("pulse", pins) }],
+      steps: [{ at_s: 0, action: inner, params: defaultParams(inner, pins, sound) }],
     };
   }
-  return { at_s: atS, action, params: defaultParams(action, pins) };
+  return { at_s: atS, action, params: defaultParams(action, pins, sound) };
 }
 
 // Switch a repeat block between regular gaps (every_s + jitter_s) and a
@@ -73,7 +89,7 @@ const numOrRaw = (raw, int = false) => {
   return Number.isNaN(v) ? raw : v;
 };
 
-function NumField({ label, value, onChange, int = false, unit, min = 0, width = "5.5em", title }) {
+function NumField({ label, value, onChange, int = false, unit, min = 0, width = "5.5em", title, placeholder }) {
   return (
     <label className="pe-field" title={title}>
       <span className="pe-field-label">{label}</span>
@@ -81,6 +97,7 @@ function NumField({ label, value, onChange, int = false, unit, min = 0, width = 
         type="number"
         min={min}
         step={int ? 1 : "any"}
+        placeholder={placeholder}
         value={value ?? ""}
         style={{ width }}
         onChange={(e) => onChange(numOrRaw(e.target.value, int))}
@@ -134,6 +151,69 @@ function PinChips({ value, pins, pinConfigs, onChange }) {
   );
 }
 
+// A play step's fields: which sound module (when there are several), file,
+// output, and optional volume and length (blank = the module's setting /
+// the whole file).
+function PlayFields({ step, sound, onChange }) {
+  const params = step.params ?? {};
+  const mods = sound?.modules ?? [];
+  const { files, outputs, lengths } = soundChoices(sound, step.module);
+  const setParam = (k, v) => {
+    const next = { ...params };
+    if (v === "" || v === undefined || v === null) delete next[k];
+    else next[k] = v;
+    onChange({ ...step, params: next });
+  };
+  const setModule = (id) => {
+    // eslint-disable-next-line no-unused-vars -- dropping the key
+    const { module, ...rest } = step;
+    onChange(id ? { ...rest, module: id } : rest);
+  };
+  const outputList = Array.from({ length: Math.max(outputs, Number(params.output) || 1) }, (_, i) => i + 1);
+  const len = lengths[params.file];
+  return (
+    <>
+      {mods.length > 1 && (
+        <label className="pe-field">
+          <span className="pe-field-label">On</span>
+          <select value={step.module ?? ""} onChange={(e) => setModule(e.target.value)}>
+            <option value="">Every sound module</option>
+            {mods.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            {step.module && !mods.some((m) => m.id === step.module) && (
+              <option value={step.module}>{step.module} (not in reach)</option>
+            )}
+          </select>
+        </label>
+      )}
+      <label className="pe-field" title={typeof len === "number" ? `${len.toFixed(3)} s long` : undefined}>
+        <span className="pe-field-label">Sound</span>
+        <select value={params.file ?? ""} onChange={(e) => setParam("file", e.target.value)}>
+          {!files.includes(params.file) && (
+            <option value={params.file ?? ""}>{params.file ? `${params.file} (not on the module)` : "—"}</option>
+          )}
+          {files.map((f) => (
+            <option key={f} value={f}>
+              {f}{typeof lengths[f] === "number" ? ` (${lengths[f].toFixed(lengths[f] < 10 ? 2 : 0)} s)` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="pe-field" title="Stereo output: 1 = channels 1-2, 2 = 3-4, …">
+        <span className="pe-field-label">Output</span>
+        <select value={params.output ?? 1} onChange={(e) => setParam("output", Number(e.target.value))}>
+          {outputList.map((o) => <option key={o} value={o}>{o}{o > outputs ? " (not on the card)" : ""}</option>)}
+        </select>
+      </label>
+      <NumField label="Volume" value={params.volume} width="4.5em" placeholder="module"
+        title="Gain factor (1 = the file as recorded); blank uses the module's volume setting"
+        onChange={(v) => setParam("volume", v)} />
+      <NumField label="Length" unit="s" value={params.duration_s} width="5em" placeholder="whole"
+        title="Cut the sound to this many seconds; blank plays the whole file"
+        onChange={(v) => setParam("duration_s", v)} />
+    </>
+  );
+}
+
 // Whether a step drives *pin* (a repeat block: any step inside it does).
 function touchesPin(step, pin) {
   if (!step) return false;
@@ -144,13 +224,13 @@ function touchesPin(step, pin) {
 // focusPin: the pin picked at the top (null = all pins). With one picked,
 // rows for other pins are hidden, the pin column is implied, and new steps
 // go to that pin.
-function StepRow({ step, path, pins, pinConfigs, depth, focusPin, onChange, onRemove }) {
+function StepRow({ step, path, pins, pinConfigs, sound, depth, focusPin, onChange, onRemove }) {
   const action = step?.action;
   const set = (patch) => onChange({ ...step, ...patch });
   const setParam = (k, v) => onChange({ ...step, params: { ...(step.params ?? {}), [k]: v } });
   const changeAction = (a) => {
     const current = stepPins(step);
-    onChange(newStep(a, current.length ? current : [focusPin ?? pins[0]], step?.at_s ?? 0));
+    onChange(newStep(a, current.length ? current : [focusPin ?? pins[0]], step?.at_s ?? 0, sound));
   };
   // Shown even with one pin picked at the top, so a step on that pin can
   // take more pins with it.
@@ -182,7 +262,8 @@ function StepRow({ step, path, pins, pinConfigs, depth, focusPin, onChange, onRe
           <select value={action ?? ""} onChange={(e) => changeAction(e.target.value)}>
             {!ACTION_LABELS[action] && <option value={action ?? ""}>{String(action)}</option>}
             {Object.entries(ACTION_LABELS)
-              .filter(([a]) => a !== "repeat" || depth === 0)
+              .filter(([a]) => (a !== "repeat" || depth === 0)
+                && (a !== "play" || action === "play" || (sound?.modules ?? []).length > 0))
               .map(([a, l]) => <option key={a} value={a}>{l}</option>)}
           </select>
         </label>
@@ -213,6 +294,7 @@ function StepRow({ step, path, pins, pinConfigs, depth, focusPin, onChange, onRe
             <NumField label="Count" int min={1} value={step.params?.count} onChange={(v) => setParam("count", v)} width="4.5em" />
           </>
         )}
+        {action === "play" && <PlayFields step={step} sound={sound} onChange={onChange} />}
         {action === "repeat" && (
           <>
             <NumField label="Times" int min={1} value={step.times} onChange={(v) => set({ times: v })} width="4.5em" />
@@ -249,13 +331,14 @@ function StepRow({ step, path, pins, pinConfigs, depth, focusPin, onChange, onRe
 
       {action === "repeat" && (
         <div className="pe-repeat-body">
-          {(step.steps ?? []).map((inner, i) => (focusPin !== null && !touchesPin(inner, focusPin) ? null : (
+          {(step.steps ?? []).map((inner, i) => (focusPin !== null && !touchesPin(inner, focusPin) && inner?.action !== "play" ? null : (
             <StepRow
               key={i}
               step={inner}
               path={`${path}.*.${i}`}
               pins={pins}
               pinConfigs={pinConfigs}
+              sound={sound}
               depth={depth + 1}
               focusPin={focusPin}
               onChange={(s) => set({ steps: step.steps.map((x, j) => (j === i ? s : x)) })}
@@ -263,7 +346,8 @@ function StepRow({ step, path, pins, pinConfigs, depth, focusPin, onChange, onRe
             />
           )))}
           <button type="button" className="pe-add pe-add--inner"
-            onClick={() => set({ steps: [...(step.steps ?? []), newStep("pulse", [focusPin ?? pins[0]])] })}>
+            onClick={() => set({ steps: [...(step.steps ?? []), newStep(
+              !pins.length && (sound?.modules ?? []).length ? "play" : "pulse", [focusPin ?? pins[0]], 0, sound)] })}>
             + Step in each repetition
           </button>
         </div>
@@ -284,12 +368,14 @@ function usesJitter(steps) {
 // renderTest(result, protocol): the Test routine controls; cursorT: seconds
 // into a running test, drawn on the timeline. allowClear: show "Clear".
 export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId,
-  renderTest, cursorT = null, allowClear = true, intro }) {
+  soundModules = [], renderTest, cursorT = null, allowClear = true, intro }) {
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const [pickedPin, setPickedPin] = useState("all");
-  const { pins, result, rows, spans } = useProtocolExpansion(protocol, scheduledPins, pinConfigs, moduleId);
+  const { pins, result, rows, spans } = useProtocolExpansion(protocol, scheduledPins, pinConfigs, moduleId, soundModules);
+  const sound = { modules: soundModules };
+  const canPlay = soundModules.length > 0;
   // A pin picked before it stopped being scheduled falls back to all pins.
   const focusPin = pickedPin !== "all" && pins.includes(Number(pickedPin)) ? Number(pickedPin) : null;
 
@@ -326,7 +412,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </p>
       )}
 
-      {pins.length === 0 && (
+      {pins.length === 0 && !canPlay && (
         <div className="pe-notice">No scheduled pins yet: set a pin's mode to “Scheduled (session protocol)” on the Pins tab.</div>
       )}
 
@@ -380,13 +466,14 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
               that drive {pinName(pinConfigs, focusPin)}; new steps go to it.
             </div>
           )}
-          {steps.map((s, i) => (focusPin !== null && !touchesPin(s, focusPin) ? null : (
+          {steps.map((s, i) => (focusPin !== null && !touchesPin(s, focusPin) && s?.action !== "play" ? null : (
             <StepRow
               key={i}
               step={s}
               path={String(i)}
               pins={pins}
               pinConfigs={pinConfigs}
+              sound={sound}
               depth={0}
               focusPin={focusPin}
               onChange={(ns) => update({ steps: steps.map((x, j) => (j === i ? ns : x)) })}
@@ -394,11 +481,12 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
             />
           )))}
           <div className="pe-add-row">
-            {["set", "pulse", "train", "repeat"].map((a) => (
-              <button key={a} type="button" className="pe-add" disabled={!pins.length}
+            {["set", "pulse", "train", ...(canPlay ? ["play"] : []), "repeat"].map((a) => (
+              <button key={a} type="button" className="pe-add"
+                disabled={a === "play" ? !canPlay : a === "repeat" ? !pins.length && !canPlay : !pins.length}
                 onClick={() => {
                   const last = steps.length ? Number(steps[steps.length - 1].at_s) || 0 : 0;
-                  update({ steps: [...steps, newStep(a, [focusPin ?? pins[0]], steps.length ? last + 1 : 0.1)] });
+                  update({ steps: [...steps, newStep(a, [focusPin ?? pins[0]], steps.length ? last + 1 : 0.1, sound)] });
                 }}>
                 + {ACTION_LABELS[a]}
               </button>
@@ -437,8 +525,13 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           <div className={`pe-summary${result.ok ? "" : " pe-summary--bad"}`}>
             <span className="pe-summary-icon" aria-hidden="true">{result.ok ? "✓" : "✕"}</span>
             {result.ok
-              ? `Valid: ${result.edges.length} edges on ${result.pins.length ? result.pins.map((p) => pinName(pinConfigs, p)).join(", ") : "no pins"}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
-              : `${errors.length} problem${errors.length === 1 ? "" : "s"}: the module will refuse to record with this protocol`}
+              ? `Valid: ${[
+                result.edges.length || !result.cues.length
+                  ? `${result.edges.length} edges on ${result.pins.length ? result.pins.map((p) => pinName(pinConfigs, p)).join(", ") : "no pins"}` : null,
+                result.cues.length
+                  ? `${result.cues.length} sound${result.cues.length === 1 ? "" : "s"} on output ${result.outputs.join(", ")}` : null,
+              ].filter(Boolean).join(", ")}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
+              : `${errors.length} problem${errors.length === 1 ? "" : "s"}: the modules will refuse to record with this protocol`}
           </div>
           {errors.slice(0, 8).map((m, i) => <div key={`e${i}`} className="pe-msg pe-msg--error">{m}</div>)}
           {errors.length > 8 && <div className="pe-msg pe-msg--error">…and {errors.length - 8} more</div>}
@@ -464,7 +557,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           duration={result?.durationS ?? 0}
           highlightRow={focusPin}
           cursorT={cursorT}
-          emptyText="Add a scheduled pin and some steps to see the timeline."
+          emptyText="Add a scheduled pin or a sound module, and some steps, to see the timeline."
         />
       </div>
     </div>

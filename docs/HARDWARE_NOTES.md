@@ -37,6 +37,30 @@ Every device is a Pi 5 powered over PoE — controllers via the 52Pi EP-0240 M.2
 - **`mend.sh` reboot marker: `/run/reboot-required`** — written (with a one-line `saviour mend: ...` reason) whenever step 7 (NVMe APST) or step 8 (`PSU_MAX_CURRENT`) *actually changed* something, and `mend.sh` exits `10` instead of `0`. Deliberately the same path Debian's `update-notifier` uses; `/run` is tmpfs so it self-clears on the reboot. `mend.sh --reboot` (opt-in, default off) reboots at the end iff the marker was written; `run_mend(reboot=True)` passes that through and its reply is `{"result": "reboot_required"}` (still a success). Find mended-but-not-rebooted devices: `[ -f /run/reboot-required ]` across the fleet, or exit-10 in `/var/log/saviour-mend.log`.
 - **Diagnostic checklist for "Pi went unreachable, needed a power cycle"** on any Pi 5 in this fleet: `journalctl --list-boots` (find the gap and the preceding boot) → `journalctl -b -1 -k -g nvme` (timeout bursts; NVMe only) → `vcgencmd get_throttled` (flagged undervoltage — a live/sticky-since-boot read, not historical) → `sudo rpi-eeprom-config | grep PSU_MAX_CURRENT` (missing/wrong = firmware may have been power-budget-limiting; `[ -f /run/reboot-required ]` = fix queued but not activated) → NVMe devices also: `cat /sys/class/nvme/nvme0/power/control` (`auto` = APST active) and `/sys/module/nvme_core/parameters/default_ps_max_latency_us` (100000 = default/unmitigated).
 
+## Sound HATs (`sound` module): DAC8x vs DAC Pro
+
+Checked 2026-11-24 from the overlays shipped with Raspberry Pi OS (Bookworm,
+6.12) and HiFiBerry's docs; **not yet on a fitted HAT**.
+
+- **HiFiBerry DAC8x** (Pi 5 only): 8 channels = 4 stereo outputs. Overlay
+  `hifiberry-dac8x` binds a **dummy codec** (`snd-soc-dummy`): nothing is
+  probed, so with the overlay loaded the ALSA card appears whether or not the
+  board is fitted. Software can't confirm the board; a missing DAC8x looks
+  present. HiFiBerry has Pi 5 users set `force_eeprom_read=0` and
+  `dtoverlay=hifiberry-dac8x` by hand, so its HAT ID EEPROM isn't read and
+  `/proc/device-tree/hat` stays empty.
+- **Raspberry Pi DAC Pro**: 2 channels = 1 stereo output (RCA and headphone
+  carry the same signal). Overlay `rpi-dacpro` probes a PCM5122 over I2C, so
+  the card only registers when the board answers; ALSA card name
+  "RPi DAC Pro". Has a HAT EEPROM (firmware auto-loads the overlay).
+- The fleet's PoE HATs carry **no** ID EEPROM (no `/proc/device-tree/hat` on
+  the controller), so an audio HAT's EEPROM is the only one on the ID bus.
+- Output count comes from ALSA (`aplay -D hw:CARD=<id>,DEV=0
+  --dump-hw-params` → `CHANNELS: [2 8]` / `CHANNELS: 2`), board table as a
+  fallback (`sound_hardware.py`). Output *n* = channels 2n-1, 2n.
+- Nothing in `setup.sh` / `saviour-config` writes an audio overlay yet: it
+  is set by hand in `/boot/firmware/config.txt`.
+
 ## Module offline detection
 
 - Modules do **not** send a graceful mDNS goodbye on ungraceful disconnection (power loss, switch unplug). The heartbeat timeout (90 s, `HEARTBEAT_TIMEOUT_SECS` in `modules.py`) is the only mechanism for these. `last_heartbeat_time` must be non-zero before the timeout fires, so newly registered modules with no heartbeat yet are not immediately evicted.

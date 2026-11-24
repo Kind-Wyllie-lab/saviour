@@ -189,6 +189,33 @@ function makeModules() {
         recording: { segment_length_mins: 60 },
       },
     },
+    // A sound module with what it reports for protocol checks
+    // (sound_hardware: card, outputs, file lengths).
+    "sound_9f00": {
+      id: "sound_9f00",
+      name: "Speaker box",
+      type: "sound",
+      ip: "10.0.0.42",
+      status: "READY",
+      online: true,
+      ready: true,
+      checks: {},
+      group: "other",
+      version: "v0.6.1-mock",
+      config_sync_status: "SYNCED",
+      config: {
+        module: { name: "Speaker box", group: "other" },
+        sound: { volume: 1, duration: 1, output_latency_offset_ms: 0 },
+        sound_hardware: {
+          present: true, board: "HiFiBerry DAC8x", card_id: "sndrpihifiberry", card_index: 2,
+          device: "hw:CARD=sndrpihifiberry,DEV=0", channels: 8, outputs: 4,
+          presence_verified: false, channels_from: "alsa",
+          detail: "HiFiBerry DAC8x (card 2 'sndrpihifiberry'): 8 channels, 4 stereo outputs",
+          files: { "tone_5k.wav": 3.0, "8k.wav": 1.0, "dog_bark.wav": 1.42 },
+        },
+        recording: { segment_length_mins: 120 },
+      },
+    },
     // Only in the apa build, which is the only one with a panel for it.
     ...(import.meta.env.VITE_VARIANT === "apa" ? {
       "apa_camera_7c1e": {

@@ -241,6 +241,40 @@ that may add a 5 kHz tone from a sound module on the same trials:
   its steps not validated here). Protocols with no `module` on a repeat
   block place their trials exactly as before.
 
+**Sound in the same protocol, built 2026-11-24 (not yet on hardware: no
+sound module on the desk rig).** Steps 1, 3 and 4 below are built; step 2
+(role targets) is not:
+
+- `play` action (`file`, `output`, `volume`, `duration_s`) in the shared
+  expander and the JS twin: `Cue`s next to `Edge`s, `module_type`
+  ("ttl" / "sound") so each module keeps and checks only its own actions,
+  file names (no paths), outputs against the card, per-output overlap where
+  lengths are known (from `duration_s` or the file). The TTL module now
+  expands with `module_type="ttl"`.
+- Controller check: TTL and sound modules each expand their part; a step
+  naming a module outside the target is refused; a sound module that hasn't
+  reported its files/outputs is a warning (checked at recording start).
+- Sound module: `sound_hardware.py` detects the card (DAC8x / DAC Pro /
+  other), channels from ALSA, file lengths, reported in the `sound_hardware`
+  runtime (sidecar) config section the controller reads.
+  `sound_stream.py`: one `aplay` on raw PCM for the whole recording, fed 5 ms
+  blocks through a small pipe; each block's play time is taken from its own
+  write return + the queue length, so sounds start at the right sample with
+  no drift against the PTP clock. `sound.output_latency_offset_ms` is the
+  per-rig calibration (measure with a mic). The runner skips sounds already
+  past on a re-arm, logs each sound in the sound CSV (new `output`, `source`
+  columns, `late_ms` against the plan), writes `<csv>_protocol.json`, and a
+  stream failure fails liveness. Manual `play_sound` takes file / output /
+  volume / duration, and goes through the session stream when one is open.
+- Designer: "Play sound" steps (module when several, file with length,
+  output, volume, length), sound rows on the timeline, New Session check and
+  session details include sounds. `dev:mock` has a DAC8x sound module.
+- Rig check to do: fit a HAT, set the overlay, confirm the detected
+  channels, then measure onset vs a TTL edge on a scope or mic
+  (`tools/analyse_audio_sync.py`-style) and set the latency offset; check the
+  ~5 ms block / ALSA period jitter estimate; confirm `plughw` S16 at 48 kHz
+  on the DAC8x.
+
 ### Adding sound to the same protocol (designed 2026-11-24)
 
 A tone on the same trials as the TTL lines belongs **in the same protocol**

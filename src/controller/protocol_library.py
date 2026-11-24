@@ -183,6 +183,23 @@ def scheduled_pins_of(config: dict | None) -> list[int]:
     return sorted(out)
 
 
+def sound_hardware_of(config: dict | None) -> tuple[dict | None, int | None]:
+    """(files, outputs) a sound module reported in its ``sound_hardware``
+    runtime section: file name -> length in seconds, and its stereo output
+    count. None for what it hasn't reported (an older module, or no card)."""
+    hw = (config or {}).get("sound_hardware") or {}
+    files = hw.get("files")
+    outputs = hw.get("outputs")
+    files = dict(files) if isinstance(files, dict) else None
+    if isinstance(outputs, bool) or not isinstance(outputs, int) or outputs < 1:
+        outputs = None
+    return files, outputs
+
+
+def _is_type(info: dict | None, kind: str) -> bool:
+    return kind in str((info or {}).get("type", ""))
+
+
 def check_for_session(protocol: dict, modules: dict[str, dict],
                       configs: dict[str, dict],
                       duration_minutes: float | None = None) -> tuple[list[str], list[str]]:
@@ -190,8 +207,9 @@ def check_for_session(protocol: dict, modules: dict[str, dict],
 
     modules: the session's target, module_id -> {"type": ...}; configs:
     module_id -> that module's current config. Each TTL module expands the
-    protocol against its own Scheduled pins, as it will at recording start,
-    so a protocol a module would refuse is refused here, before the session
+    protocol against its own Scheduled pins, and each sound module against
+    the files and outputs it reported, as they will at recording start, so a
+    protocol a module would refuse is refused here, before the session
     exists, with the module named.
     """
     errors: list[str] = []
@@ -199,14 +217,33 @@ def check_for_session(protocol: dict, modules: dict[str, dict],
     base = session_protocol.expand(protocol)
     if not base.ok:
         return [f"Protocol: {e}" for e in base.errors[:5]], []
-    ttl = sorted(m for m, info in modules.items() if "ttl" in str((info or {}).get("type", "")))
-    if not ttl:
-        return ["The protocol drives TTL pins, but no TTL module is in this session's target"], []
-    for mid in ttl:
+    for tag in sorted(session_protocol.module_tags(protocol) - set(modules)):
+        errors.append(f"A step is for module {tag}, which isn't in this session's target")
+    ttl = sorted(m for m, info in modules.items() if _is_type(info, "ttl"))
+    sound = sorted(m for m, info in modules.items() if _is_type(info, "sound"))
+    if base.edges and not ttl:
+        errors.append("The protocol drives TTL pins, but no TTL module is in this "
+                      "session's target")
+    if base.cues and not sound:
+        errors.append("The protocol plays sounds, but no sound module is in this "
+                      "session's target")
+    if errors:
+        return errors, []
+    for mid in ttl if base.edges else ():
         pins = scheduled_pins_of(configs.get(mid))
-        exp = session_protocol.expand(protocol, module_id=mid, allowed_pins=set(pins))
+        exp = session_protocol.expand(protocol, module_id=mid, module_type="ttl",
+                                      allowed_pins=set(pins))
         if not exp.ok:
             errors.extend(f"{mid}: {e}" for e in exp.errors[:5])
+    for mid in sound if base.cues else ():
+        files, outputs = sound_hardware_of(configs.get(mid))
+        exp = session_protocol.expand(protocol, module_id=mid, module_type="sound",
+                                      sound_files=files, outputs=outputs)
+        if not exp.ok:
+            errors.extend(f"{mid}: {e}" for e in exp.errors[:5])
+        elif files is None or outputs is None:
+            warnings.append(f"{mid} hasn't reported its sound files and outputs: "
+                            f"they're checked when the recording starts")
     if duration_minutes and base.duration_s > duration_minutes * 60:
         warnings.append(
             f"The protocol runs {base.duration_s / 60:.1f} min, longer than the "

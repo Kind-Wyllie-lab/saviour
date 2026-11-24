@@ -3,6 +3,7 @@ import ProtocolTimeline from "../../ProtocolTimeline/ProtocolTimeline";
 import { fmtTime } from "../../../utils/sessionProtocol";
 import useProtocolExpansion from "../../Protocol/useProtocolExpansion";
 import { freeName, sameProtocol } from "../../Protocol/protocolLibrary";
+import { pinName } from "../../Protocol/pinNames";
 import "../../Protocol/ProtocolEditor.css";
 
 // The TTL card's Protocol tab. Protocols are picked per session (New
@@ -86,7 +87,8 @@ export default function ProtocolTab({
           <div className={`pe-summary${result.ok ? "" : " pe-summary--bad"}`}>
             <span className="pe-summary-icon" aria-hidden="true">{result.ok ? "✓" : "✕"}</span>
             {result.ok
-              ? `Runs on this module: ${result.edges.length} edges on ${result.pins.map((p) => `GPIO ${p}`).join(", ") || "no pins"}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
+              ? `Runs on this module: ${result.edges.length} edges on ${result.pins.map((p) => pinName(pinConfigs, p)).join(", ") || "no pins"}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
+                + (result.cues.length ? ` (and ${result.cues.length} sound${result.cues.length === 1 ? "" : "s"}, played by a sound module)` : "")
               : `Won't run on this module (a session with it would be refused): ${result.errors[0]}`
                 + (result.errors.length > 1 ? ` (+${result.errors.length - 1} more)` : "")}
           </div>

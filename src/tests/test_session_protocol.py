@@ -257,11 +257,15 @@ _JS = os.path.join(_ROOT, "src", "controller", "frontend", "src", "basic",
 def _py_result(case):
     exp = expand(case["protocol"], module_id=case.get("module_id"),
                  allowed_pins=set(case["allowed_pins"]) if "allowed_pins" in case
-                 else None)
+                 else None,
+                 module_type=case.get("module_type"),
+                 sound_files=case.get("sound_files"), outputs=case.get("outputs"))
     return {"edges": [[round(e.t_s, 9), e.pin, e.level, e.step, e.action]
                       for e in exp.edges],
+            "cues": [[round(c.t_s, 9), c.output, c.file, c.volume, c.duration_s,
+                      c.length_s, c.step] for c in exp.cues],
             "ok": exp.ok, "errors": len(exp.errors), "warnings": len(exp.warnings),
-            "end_state": exp.end_state}
+            "end_state": exp.end_state, "duration": round(exp.duration_s, 9)}
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -272,11 +276,16 @@ import fs from "fs";
 const doc = JSON.parse(fs.readFileSync({json.dumps(os.path.abspath(_FIXTURES))}, "utf8"));
 const out = doc.cases.map((c) => {{
   const r = expand(c.protocol, {{ moduleId: c.module_id ?? null,
-                                 allowedPins: c.allowed_pins ?? null }});
-  return {{ edges: r.edges.map((e) => [Math.round(e.t_s * 1e9) / 1e9, e.pin, e.level,
-                                     e.step, e.action]),
+                                 allowedPins: c.allowed_pins ?? null,
+                                 moduleType: c.module_type ?? null,
+                                 soundFiles: c.sound_files ?? null,
+                                 outputs: c.outputs ?? null }});
+  const r9 = (x) => Math.round(x * 1e9) / 1e9;
+  return {{ edges: r.edges.map((e) => [r9(e.t_s), e.pin, e.level, e.step, e.action]),
+           cues: r.cues.map((q) => [r9(q.t_s), q.output, q.file, q.volume, q.duration_s,
+                                   q.length_s, q.step]),
            ok: r.ok, errors: r.errors.length, warnings: r.warnings.length,
-           end_state: r.endState }};
+           end_state: r.endState, duration: r9(r.durationS) }};
 }});
 console.log(JSON.stringify(out));
 """
@@ -344,3 +353,63 @@ class TestSpreadRepeat:
     def test_gap_shorter_than_a_trial_is_caught_as_an_overlap(self):
         exp = expand(_conditioning(times=10, spread=40, gap=2))
         assert not exp.ok
+
+
+class TestSound:
+    TRIAL = {"at_s": 30, "action": "repeat", "times": 5, "every_s": 5,
+             "jitter_s": [0, 20], "steps": [
+                 {"at_s": 0, "action": "pulse",
+                  "params": {"pins": [4, 6], "width_s": 2}},
+                 {"at_s": 0, "action": "play",
+                  "params": {"file": "tone_5k.wav", "duration_s": 2}}]}
+
+    def test_tone_lands_on_the_ttl_trials(self):
+        proto = _p(self.TRIAL, seed=4711)
+        ttl = expand(proto, module_id="ttl_a", module_type="ttl", allowed_pins={4, 6})
+        snd = expand(proto, module_id="sound_b", module_type="sound",
+                     sound_files={"tone_5k.wav": 3.0}, outputs=1)
+        assert ttl.ok and snd.ok, (ttl.errors, snd.errors)
+        assert ttl.cues == [] and snd.edges == []
+        onsets = [e.t_s for e in ttl.edges if e.level == "high" and e.pin == 4]
+        assert [c.t_s for c in snd.cues] == onsets
+        assert all(c.length_s == 2 and c.output == 1 for c in snd.cues)
+        assert snd.duration_s == pytest.approx(onsets[-1] + 2)
+
+    def test_whole_protocol_check_keeps_both(self):
+        exp = expand(_p(self.TRIAL, seed=4711))
+        assert exp.ok and len(exp.edges) == 20 and len(exp.cues) == 5
+
+    def test_length_from_file_and_overlap(self):
+        files = {"a.wav": 1.5}
+        ok = expand(_p({"at_s": 0, "action": "play", "params": {"file": "a.wav"}},
+                       {"at_s": 1.5, "action": "play", "params": {"file": "a.wav"}}),
+                    module_type="sound", sound_files=files)
+        assert ok.ok and [c.length_s for c in ok.cues] == [1.5, 1.5]
+        bad = expand(_p({"at_s": 0, "action": "play", "params": {"file": "a.wav"}},
+                        {"at_s": 1, "action": "play", "params": {"file": "a.wav"}}),
+                     module_type="sound", sound_files=files)
+        assert not bad.ok and "overlap" in bad.errors[0]
+        # Different outputs may overlap.
+        two = expand(_p({"at_s": 0, "action": "play", "params": {"file": "a.wav"}},
+                        {"at_s": 1, "action": "play",
+                         "params": {"file": "a.wav", "output": 2}}),
+                     module_type="sound", sound_files=files, outputs=2)
+        assert two.ok
+
+    def test_paths_refused(self):
+        for name in ("../x.wav", "/etc/passwd", "a/b.wav", ".hidden", "a\\b.wav"):
+            exp = expand(_p({"at_s": 0, "action": "play", "params": {"file": name}}))
+            assert not exp.ok, name
+
+    def test_output_and_volume_limits(self):
+        exp = expand(_p({"at_s": 0, "action": "play",
+                         "params": {"file": "a.wav", "output": 2}}), outputs=1)
+        assert not exp.ok and "1 output" in exp.errors[0]
+        loud = expand(_p({"at_s": 0, "action": "play",
+                          "params": {"file": "a.wav", "volume": 2}}))
+        assert loud.ok and loud.warnings
+        assert not expand(_p({"at_s": 0, "action": "play",
+                              "params": {"file": "a.wav", "volume": 5}})).ok
+
+    def test_unknown_module_type(self):
+        assert not expand(_p(), module_type="camera").ok

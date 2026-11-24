@@ -11,6 +11,15 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-24
+
+- [x] **Session protocols: one step on several pins, pin labels in the designer, random gaps the same on every module** (`session_protocol.py` + JS twin `sessionProtocol.js`, fixtures, `ProtocolEditor.jsx`/`.css`, `pinNames.js` new, `useProtocolExpansion.js`, `ProtocolTimeline.jsx`/`.css`, `TTLConfigCard.jsx`, mock; `test_session_protocol.py`). `plans/session-protocol.md`.
+  - `params.pins` (a list) in place of `pin` on `set` / `pulse` / `train` drives those pins together; errors for both keys, an empty list, a pin listed twice, a non-Scheduled pin. The edge cap counts every pin. The TTL runner needed no change (one edge per pin).
+  - Designer: a step's pins are toggle chips (at least one stays on; a non-Scheduled pin shows as a red chip that removes itself); one pin is saved as `pin`. Changing a step's action keeps its pins; the pin filter at the top matches multi-pin steps.
+  - Pin labels (`ttl.pins.<gpio>.label`) show on the chips, the pin filter, the summary and as the timeline row name (GPIO underneath). The editor read `description`, which nothing writes, so labels never showed. The General TTL Pins tab gains a Label field, and changing a pin's mode there no longer drops it.
+  - Module filter: a repeat block tagged for another module was skipped whole, so that module didn't draw its random gaps and later blocks were placed differently on each module (a TTL and a sound module running one protocol would drift apart by trial). A repeat's `module` now applies to its steps, and another module's block is walked for its draws, emitting and reporting nothing. Placements are unchanged for protocols without a `module` on a repeat block.
+  - Built, lint and build clean, Python/JS fixtures agree; not viewed in a browser (headless Chromium hangs on this machine) and not run on the rig.
+
 ## 2026-11-23
 
 - [x] **NWB export: checked for DANDI after every export** (`nwb_inspect.py` new, `nwb_export.py`, `DandiReport.jsx` new, `NwbExportPanel.jsx`, `JobsList.jsx`, `useSessionJobs.js`, mock; `test_nwb_export.py`; `pyproject.toml` `[nwb]` extra).

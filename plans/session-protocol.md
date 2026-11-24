@@ -9,6 +9,8 @@
   module's config is no longer run. Phase 1's final format still waits on
   the requesting user's protocol.
 - **Created:** 2026-11-16
+- **Updated:** 2026-11-24 (multi-pin steps, pin labels, module-safe random
+  draws built; sound design in "Adding sound to the same protocol")
 - **Owner:** ascottg
 - **CLAUDE.md ref:** Reliability / UX → "Session protocols"
 
@@ -212,9 +214,71 @@ the researcher, so they're parameters: added `spread_s` / `min_gap_s`
 repeats (see CHANGELOG). Polarity is module-wide (`ttl.active_logic`):
 light and shocker must agree, and the shock line must be inactive at boot.
 
+**Multi-pin steps, pin labels, module-safe random draws (2026-11-24).**
+Prompted by a lights + footshock rig (TTL sync line plus two stimulus
+lines; e.g. 30 s delay, then 5 trials 5-25 s apart, both lines on for 2 s)
+that may add a 5 kHz tone from a sound module on the same trials:
+
+- **`pins: [17, 22]`** in place of `pin` on `set` / `pulse` / `train`
+  drives several pins with one step, the same edges at the same instants
+  (non-empty, no repeats, every pin Scheduled). The designer shows a step's
+  pins as toggle chips; one pin is still written as `pin`, so older
+  protocols and the JSON view are unchanged. The example rig is now one
+  repeat block with one step:
+  `{"at_s": 30, "action": "repeat", "times": 5, "every_s": 5,
+  "jitter_s": [0, 20], "steps": [{"at_s": 0, "action": "pulse",
+  "params": {"pins": [17, 22], "width_s": 2}}]}` (start to start; use
+  `every_s: 7` if "5-25 s" means the quiet time between trials).
+- **Pin labels** (`ttl.pins.<gpio>.label`, Lines tab, and now a Label field
+  on the General TTL Pins tab, kept across mode changes) show on the chips,
+  the pin filter, the summary and the timeline rows. The designer used to
+  read a `description` key nothing wrote, so labels never appeared.
+- **Random draws no longer depend on the module filter.** A repeat tagged
+  for another module used to be skipped whole, so that module didn't use
+  its draws and every later block landed at different times on different
+  modules. Now a repeat's `module` applies to the steps inside it, and a
+  block for another module is still walked (draws taken, nothing emitted,
+  its steps not validated here). Protocols with no `module` on a repeat
+  block place their trials exactly as before.
+
+### Adding sound to the same protocol (designed 2026-11-24)
+
+A tone on the same trials as the TTL lines belongs **in the same protocol**
+(a `play` step in the same repeat block, `module` = the sound module), not
+a second protocol: both modules expand the whole protocol with the same
+seed and keep their own steps, so they get the same trial times with no
+messaging mid-session. Needed:
+
+1. **Actions per module type.** `ACTIONS` is TTL-only, and
+   `protocol_library.check_for_session` expands the whole protocol (would
+   reject `play`) and requires a TTL module. Steps get a target type; each
+   type has its own action validator (the capability manifest below); the
+   session check expands per module and only requires the module types the
+   protocol uses. The JS twin and fixtures follow.
+2. **Targets by role, not module ID / GPIO.** Library protocols name
+   `pin: 17` / `module: "sound_9f00"`, tying them to one rig. Steps should
+   name roles (`"target": "lights"`, `"shock"`, `"tone"`) that each rig binds
+   to a module + pin (the TTL pin roles in `ttl_applications.json` are the
+   same idea), so one protocol runs on every rig, adding the sound module is
+   binding `tone`, and the session check can say "needs a `tone` target".
+   Open: where the binding lives (rig profile, `rig.expected`, vs. per
+   session).
+3. **Sound runner** like the TTL one: absolute deadlines on the PTP clock,
+   `_sound_events.csv` with step path and lateness, `_protocol.json`,
+   stop / `end_state`, re-arm on the session clock.
+4. **Low-latency playback.** `_play_sound` starts `ffmpeg | aplay` per play:
+   process start plus device open is tens of ms, variable (TTL edges are
+   ~0.04 ms late). The runner keeps one output stream open all session
+   (writing silence), loads the session's sounds into memory before start,
+   and writes a sound into the stream at its deadline minus a measured
+   output latency (as the AudioMoth `sync_selftest` offsets do); log the
+   onset achieved and check with a microphone on the rig. Hardware
+   alternative for a fixed tone: a TTL-gated tone generator on a third TTL
+   line gets TTL timing for free.
+
 Next: the after-session view
 (planned from `_protocol.json` vs actual from the CSV, late/missing
-marked), then live; then sound.
+marked), then live; then sound (above).
 
 ## Two execution tiers
 

@@ -148,6 +148,45 @@
   gap: 8px;
 }
 
+/* Pin toggles: a step drives every pressed pin at the same instants. */
+.pe-pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 28px;
+  align-items: center;
+}
+.pe-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  background: var(--bg-color);
+  color: var(--secondary-text-color);
+  font-size: 0.95em;
+  cursor: pointer;
+}
+.pe-pin:hover { border-color: var(--accent-color); color: var(--text-color); }
+.pe-pin--on {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 18%, var(--bg-color));
+  color: var(--text-color);
+  font-weight: 600;
+}
+.pe-pin-gpio {
+  font-size: 0.82em;
+  font-weight: 400;
+  color: var(--secondary-text-color);
+  font-variant-numeric: tabular-nums;
+}
+.pe-pin--bad {
+  border-color: var(--recording-color);
+  color: var(--recording-color);
+}
+
 .pe-path {
   min-width: 2.2em;
   align-self: center;

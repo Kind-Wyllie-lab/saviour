@@ -70,6 +70,12 @@
   font-size: 12px;
 }
 
+.ptl-sublabel {
+  fill: var(--secondary-text-color);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
 .ptl-bar { fill: var(--accent-color); }
 
 /* A level held past the last step: same hue, lighter, so it reads as

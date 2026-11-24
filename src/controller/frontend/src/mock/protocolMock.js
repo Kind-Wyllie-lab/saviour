@@ -16,6 +16,12 @@ function seedLibrary(modules) {
       steps: [{ at_s: 0.1, action: "train", params: { pin: 2, rate_hz: 1, width_s: 0.1, count: 600 } }] },
     created_at: now() - 7200, updated_at: now() - 7200,
   };
+  lib["Lights + footshock, 5 trials"] = {
+    protocol: { version: 1, name: "Lights + footshock, 5 trials", seed: 4711, end_state: "all_inactive",
+      steps: [{ at_s: 30, action: "repeat", times: 5, every_s: 5, jitter_s: [0, 20],
+        steps: [{ at_s: 0, action: "pulse", params: { pins: [2, 17], width_s: 2 } }] }] },
+    created_at: now() - 3600, updated_at: now() - 3600,
+  };
   return lib;
 }
 

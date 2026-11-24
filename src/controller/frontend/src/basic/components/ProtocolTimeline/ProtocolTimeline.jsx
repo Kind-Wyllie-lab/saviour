@@ -7,7 +7,7 @@ import "./ProtocolTimeline.css";
 // protocol preview now; the live and after-session views (planned vs
 // actual, plans/session-protocol.md) reuse it with a second span set.
 //
-// rows:  [{ key, label, sublabel? }]
+// rows:  [{ key, label, sublabel? }] (sublabel: a smaller second line)
 // spans: [{ row, start, end (null = held to the end), label }]
 // duration: seconds the axis must cover
 //
@@ -15,7 +15,9 @@ import "./ProtocolTimeline.css";
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
 // says how many), so a long fast train stays drawable and readable.
 
-const LABEL_W = 92;
+const LABEL_W = 112;
+const LABEL_CHARS = 15;
+const clip = (t) => (t.length > LABEL_CHARS ? `${t.slice(0, LABEL_CHARS - 1)}…` : t);
 const ROW_H = 30;
 const BAR_H = 12;
 const AXIS_H = 26;
@@ -190,9 +192,14 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
                   : r.key === highlightRow ? "ptl-row--focus" : "ptl-row--faded"}>
                 <line className="ptl-baseline" x1={LABEL_W} x2={LABEL_W + plotW}
                   y1={y + ROW_H / 2 + BAR_H / 2} y2={y + ROW_H / 2 + BAR_H / 2} />
-                <text className="ptl-label" x={8} y={y + ROW_H / 2 + 4}>{r.label}</text>
-                {r.sublabel && (
-                  <title>{r.sublabel}</title>
+                <title>{r.sublabel ? `${r.label} · ${r.sublabel}` : r.label}</title>
+                {r.sublabel ? (
+                  <>
+                    <text className="ptl-label" x={8} y={y + ROW_H / 2 - 1}>{clip(r.label)}</text>
+                    <text className="ptl-sublabel" x={8} y={y + ROW_H / 2 + 10}>{r.sublabel}</text>
+                  </>
+                ) : (
+                  <text className="ptl-label" x={8} y={y + ROW_H / 2 + 4}>{clip(r.label)}</text>
                 )}
               </g>
             );

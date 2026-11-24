@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { expand, highSpans } from "../../utils/sessionProtocol";
+import { pinLabel } from "./pinNames";
 
 // Expand a protocol against this module's scheduled pins and shape it for
 // ProtocolTimeline: { pins, result, rows, spans }. Shared by the designer
@@ -15,11 +16,10 @@ export default function useProtocolExpansion(protocol, scheduledPins, pinConfigs
 
   const rows = useMemo(() => {
     const keys = new Set([...pins, ...(result?.pins ?? [])]);
-    return [...keys].sort((a, b) => a - b).map((p) => ({
-      key: p,
-      label: `GPIO ${p}`,
-      sublabel: pinConfigs?.[p]?.description || undefined,
-    }));
+    return [...keys].sort((a, b) => a - b).map((p) => {
+      const label = pinLabel(pinConfigs, p);
+      return { key: p, label: label ?? `GPIO ${p}`, sublabel: label ? `GPIO ${p}` : undefined };
+    });
   }, [pins, result, pinConfigs]);
 
   const spans = useMemo(() => {

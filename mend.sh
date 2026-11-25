@@ -289,6 +289,13 @@ else
     fi
 fi
 
+# Interactive logins start in the checkout (marked block in the owner's ~/.bashrc).
+if saviour-config --apply-shell >> "$LOG" 2>&1; then
+    ok "Login shells start in $TARGET_DIR"
+else
+    warn "Could not update ~/.bashrc — run 'sudo saviour-config --apply-shell'"
+fi
+
 # saviour-status: read-only overview command, installed the same way.
 SAVIOUR_STATUS_SRC="$TARGET_DIR/saviour-status"
 SAVIOUR_STATUS_LINK="/usr/local/bin/saviour-status"

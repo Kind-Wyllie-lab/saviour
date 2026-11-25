@@ -5,6 +5,7 @@
 #        sudo saviour-config --apply                 (non-interactive, boot-time provisioning)
 #        sudo saviour-config --regenerate-service     (rewrite the systemd unit only, e.g. after a code-layout change)
 #        sudo saviour-config --apply-firewall         (re-apply just the wlan0/WAN firewall + smb.conf interface binding)
+#        sudo saviour-config --apply-shell            (start pi's interactive shells in the checkout via ~/.bashrc)
 #        sudo saviour-config --apply-ssh              (sync sshd's SSH CA trust: controller from /etc/saviour/ssh, module from its controller)
 #        sudo saviour-config --set-ssh-ca FILE|none   (controller: set/clear the deployment's SSH CA public key, apply + push)
 #        sudo saviour-config --set-ssh-krl FILE|none  (controller: set/clear the SSH revocation list, apply + push)
@@ -2012,6 +2013,42 @@ quiet_background_jobs() {
     systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >> "$LOG" 2>&1 || true
 }
 
+# Interactive logins for the checkout's owner (normally pi) start in the
+# SAVIOUR checkout. A marked block in ~/.bashrc, replaced on every run so it
+# stays current; only when the shell starts in $HOME, so a terminal opened
+# in another directory (an editor's, `ssh -t host 'cd x; bash'`) keeps it.
+# Non-interactive shells (scp, `ssh host cmd`) are untouched.
+configure_shell_login() {
+    local owner home rc tmp
+    # Only from a real checkout: a copy run from elsewhere would point it there.
+    [ -d "$DIR/src/controller" ] && [ -d "$DIR/src/modules" ] || return 0
+    owner=$(stat -c %U "$DIR" 2>/dev/null) || return 0
+    [ "$owner" = root ] && owner=pi
+    home=$(getent passwd "$owner" | cut -d: -f6)
+    [ -n "$home" ] && [ -d "$home" ] || return 0
+    rc="$home/.bashrc"
+    tmp=$(mktemp) || return 0
+    # Also drops a hand-added bare `cd <checkout>` (the old way of doing
+    # this), which would move every interactive shell, wherever it started.
+    [ -f "$rc" ] && sed -e '/^# >>> saviour >>>/,/^# <<< saviour <<</d' \
+        -e "\\#^cd \"\\?$DIR/\\?\"\\?[[:space:]]*\$#d" \
+        -e '/^# Change to saviour dir$/d' "$rc" > "$tmp"
+    cat >> "$tmp" <<BASHRC
+# >>> saviour >>> (managed by saviour-config / mend.sh; rewritten on each run)
+if [[ \$- == *i* ]] && [ "\$PWD" = "\$HOME" ] && [ -d "$DIR" ]; then
+    cd "$DIR"
+fi
+# <<< saviour <<<
+BASHRC
+    if [ -f "$rc" ]; then
+        cmp -s "$tmp" "$rc" || cat "$tmp" > "$rc"
+    else
+        install -m 644 -o "$owner" -g "$(id -gn "$owner")" "$tmp" "$rc"
+    fi
+    rm -f "$tmp"
+    log "Shell login: $rc starts interactive shells in $DIR"
+}
+
 generate_ssl_cert() {
     local ssl_dir="/etc/saviour/ssl"
     local cert="$ssl_dir/saviour.crt"
@@ -2195,6 +2232,7 @@ run_configuration() {
 
     [ "$DEVICE_ROLE" = "module" ] && create_recording_folder
     [ "$DEVICE_ROLE" = "module" ] && quiet_background_jobs
+    configure_shell_login || true
 
     configure_service
 
@@ -2989,6 +3027,12 @@ fi
 # Install Node.js for the frontend build if it's missing (mend.sh's hook).
 if [ "${1:-}" = "--ensure-node" ]; then
     ensure_node
+    exit $?
+fi
+
+# Start the checkout owner's interactive shells in the checkout (mend.sh's hook).
+if [ "${1:-}" = "--apply-shell" ]; then
+    configure_shell_login
     exit $?
 fi
 

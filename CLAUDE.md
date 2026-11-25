@@ -101,6 +101,8 @@ SAVIOUR_TOKEN=<admin-pw-or-token> python tools/framesync_sweep.py \
 ```bash
 ./setup.sh              # full system setup (run once per device)
 sudo saviour-config     # assign role (controller | module) and type — interactive TUI
+saviour-status          # read-only overview (services, PTP, share, sessions; on the
+                        # controller one row per module + other DHCP clients); --json
 ```
 
 ## Architecture

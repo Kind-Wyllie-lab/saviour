@@ -11,6 +11,14 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-25
+
+- [x] **`saviour-status`: a `tailscale status`-style overview command** (`saviour-status` new, `setup.sh` + `mend.sh` install the `/usr/local/bin` symlink beside `saviour-config`; `src/tests/test_saviour_status.py`).
+  - Stdlib-only Python, so it runs with the system `python3`, no venv. `--json` dumps the raw data, `--no-color` / `NO_COLOR` turn off colour.
+  - Controller: hostname, role/type, version, uptime and interfaces (WAN and tailscale labelled); systemd state of saviour/ptp4l/phc2sys/dnsmasq/smbd; PTP role from the ptp4l journal plus the worst module offset against the start gate; share free space; sessions, recording, web UI clients; the rig check summary. Then one row per module (id, name, type, IP, status, PTP offset, CPU, temp, disk, version; versions that differ from the controller's are highlighted) from `/api/v1/state`, `/modules` and `/health`, and any DHCP lease that isn't a module (pinged). The bearer token is read from `/etc/saviour/admin_credentials` directly as root, else via `sudo -n`; without either it shows the leases and says to use sudo.
+  - Module: services, whether the controller answers (TCP 5555, else ping), the last ptp4l/phc2sys offsets from the journal, free space and the `to_export`/`pending` queues.
+  - Checked on the desk rig (controller, and the microphone module from a copy). Existing devices get the command on their next `mend.sh` run.
+
 ## 2026-11-24
 
 - [x] **Session protocols: sound steps on the sound module, on the same trials as TTL** (`session_protocol.py` + JS twin, fixtures, `protocol_library.py`, `ttl_module.py`, `sound_module.py` rewritten, `sound_hardware.py` + `sound_stream.py` new, `config.py` sidecar section, `sound_config.json`; designer `ProtocolEditor.jsx`, `useProtocolExpansion.js`, `protocolModules.js` new, `ProtocolDesigner.jsx`, `SessionProtocolField.jsx`, `SessionProtocolRow.jsx`, `ProtocolTab.jsx`, `configUtils.js`, mock; tests `test_session_protocol.py`, `test_protocol_library.py`, `test_sound_module.py`, `test_sound_hardware.py` + `test_sound_stream.py` new). `plans/session-protocol.md`, `docs/HARDWARE_NOTES.md` (sound HATs).

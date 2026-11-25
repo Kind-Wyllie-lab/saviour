@@ -23,6 +23,18 @@ Deliberately generic and demo-oriented:
     matching `hailo.custom_labels` entry ({"hef": name, "labels": [...]}).
     A list rather than a dict keyed by filename, since config keys are
     dot-separated paths and every filename has a dot in it.
+  - Or upload a single-view Lightning Pose model (tools/convert_lp_pose_to_hailo.py
+    builds the .hef and its <name>.json sidecar; upload both from the AI
+    tab). Then EVERY frame's lores image goes to the model (every
+    `hailo.lp_infer_every_n`th, default 1), not just previewed frames, and
+    the keypoints land in the timestamp CSV as kp_<name>_x/_y/_conf, in
+    recorded-video pixels, on the row of the frame that was actually
+    inferred (rows are held back until their result arrives; a frame not
+    inferred, dropped because the worker fell behind, or whose result is
+    later than _LP_RESULT_TIMEOUT_S gets empty values, never a carried-forward
+    result). Decode: modules/lp_decode.py. An LP model that fails to load, or
+    whose preview stream doesn't share the recorded stream's aspect (or the
+    training frames' aspect), blocks readiness: the keypoints are the point.
   - No Hailo device / missing HEF → runs as a plain camera (overlay shows why).
   - Recording is untouched *pixel-wise*: the overlay is on the lores/preview
     stream, the recorded "main" stream never sees it. A synchronized detection
@@ -51,6 +63,8 @@ Author: Andrew SG
 """
 
 import collections
+import contextlib
+import json
 import os
 import queue
 import sys
@@ -58,6 +72,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -71,10 +86,19 @@ from modules.hailo_infer import (
     USER_HEF_DIR,
     HailoDepthEstimator,
     HailoDetector,
+    HailoLPPoseDetector,
     HailoPoseDetector,
     HailoSegDetector,
     download_hef,
     labels_for,
+)
+from modules.lp_decode import (
+    DECODE_METHODS,
+    LP_MODEL_TYPE,
+    LPModelError,
+    LPModelMeta,
+    load_meta,
+    validate_meta,
 )
 from modules.module import check, command
 
@@ -86,6 +110,20 @@ _PALETTE = [
 HAILO_DEVICE = "/dev/hailo0"
 _KP_COLOUR = (0, 255, 255)      # keypoints
 _BONE_COLOUR = (0, 255, 0)      # skeleton edges
+# A held-back CSV row is released with empty keypoints if its frame's result
+# hasn't arrived by then (the worker fell over or is far behind).
+_LP_RESULT_TIMEOUT_S = 1.0
+# How long closing a CSV (segment rotation, stop) waits for in-flight results.
+_LP_CLOSE_WAIT_S = 0.3
+# Allowed relative aspect difference between the preview (inference) stream,
+# the recorded stream and the model's training frames: covers rounding the
+# preview size to even pixels, nothing more.
+_LP_ASPECT_TOL = 0.01
+
+
+def sidecar_path(hef_path: str) -> str:
+    """<name>.json next to <name>.hef: an uploaded model's metadata."""
+    return os.path.splitext(hef_path)[0] + ".json"
 
 
 class HailoCameraModule(CameraBase):
@@ -128,6 +166,25 @@ class HailoCameraModule(CameraBase):
         self._infer_ms: collections.deque = collections.deque(maxlen=600)
         self._infer_ms_logged_at = 0.0
 
+        # Lightning Pose (task "lp_pose"): per-frame keypoints into the CSV.
+        self._lp_selected = False            # the chosen model is an LP model
+        self._lp_every_n = 1
+        self._lp_seq = 0                     # frame counter, capture thread
+        self._lp_last = None                 # (seq, timestamp_ns, (K,3) main px)
+        self._lp_main_rot_k = 0
+        self._lp_shapes = None               # (main hw, lores hw, rot) last validated
+        self._lp_fov_error: str | None = None
+        self._lp_columns_next: list = []     # CSV_EXTRA_COLUMNS for the next CSV
+        self._csv_kp_names: tuple = ()       # keypoints of the open CSV's columns
+        # seq -> {"row", "state", "t", "kp", "names"}; insertion (= frame) order
+        self._pending: collections.OrderedDict = collections.OrderedDict()
+        self._pending_lock = threading.Lock()
+        self._decode_ms: collections.deque = collections.deque(maxlen=600)
+        self._lp_counts = dict.fromkeys(
+            ("inferred", "skipped", "dropped", "late", "failed"), 0)
+        self._lp_counts_logged = dict(self._lp_counts)
+        self.CSV_EXTRA_COLUMNS = []
+
         # CameraBase.__init__ runs _configure_camera(), not
         # configure_module_special(), so build the detector explicitly here —
         # same pattern as habitat_camera's _configure_habitat_motion() call.
@@ -162,7 +219,18 @@ class HailoCameraModule(CameraBase):
             # need a HEF reload — apply them in place.
             self._apply_light_config()
 
+    def _lp_decode_method(self) -> str:
+        m = self.config.get("hailo.lp_decode", "exact")
+        if m not in DECODE_METHODS:
+            self.logger.warning(f"hailo.lp_decode {m!r} unknown — using exact")
+            m = "exact"
+        return m
+
     def _apply_light_config(self) -> None:
+        self._lp_every_n = max(1, int(self.config.get("hailo.lp_infer_every_n", 1)))
+        det = self.detector
+        if isinstance(det, HailoLPPoseDetector):
+            det.decode_method = self._lp_decode_method()
         self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
         self._max_labels = int(self.config.get("hailo.max_labels", 40))
         threshold = float(self.config.get("hailo.threshold", 0.4))
@@ -223,6 +291,10 @@ class HailoCameraModule(CameraBase):
                 frame = self._infer_q.get(timeout=0.5)
             except queue.Empty:
                 continue
+            if isinstance(frame, tuple):
+                self._infer_lp(*frame)
+                self._maybe_log_infer_timing()
+                continue
             with self._det_lock:
                 detector = self.detector
                 labels = self._labels
@@ -243,6 +315,56 @@ class HailoCameraModule(CameraBase):
             self._maybe_log_infer_timing()
         self.logger.info("Hailo inference worker stopped")
 
+    def _infer_lp(self, seq: int, timestamp_ns: int, frame, out_size) -> None:
+        """One LP frame: Hailo run under _det_lock (a model swap closes the
+        device under the same lock), CPU decode outside it. The result is
+        stamped with the frame it came from (seq, timestamp_ns), never the
+        frame that's current when it arrives."""
+        with self._det_lock:
+            det = self.detector
+            if not isinstance(det, HailoLPPoseDetector):
+                self._lp_resolve(seq, "failed")
+                return
+            if getattr(self, "_cb_monochrome", False):
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            t0 = time.monotonic()
+            try:
+                raw = det.infer(frame)
+            except Exception as e:  # noqa: BLE001
+                if not self._infer_error_logged:
+                    self.logger.error(f"Hailo LP inference failed: {e}")
+                    self._infer_error_logged = True
+                self._lp_counts["failed"] += 1
+                self._lp_resolve(seq, "failed")
+                return
+            self._infer_ms.append((time.monotonic() - t0) * 1000.0)
+        t1 = time.monotonic()
+        try:
+            kp = det.decode(raw, out_size)
+        except Exception as e:  # noqa: BLE001
+            if not self._infer_error_logged:
+                self.logger.error(f"LP heatmap decode failed: {e}")
+                self._infer_error_logged = True
+            self._lp_counts["failed"] += 1
+            self._lp_resolve(seq, "failed")
+            return
+        self._decode_ms.append((time.monotonic() - t1) * 1000.0)
+        self._lp_counts["inferred"] += 1
+        self._lp_last = (seq, timestamp_ns, kp, det.meta)
+        self._lp_resolve(seq, "done", kp, det.meta.keypoint_names)
+
+    @staticmethod
+    def _pcts(samples) -> dict | None:
+        s = sorted(samples)
+        if len(s) < 30:
+            return None
+
+        def pct(p):
+            return s[min(len(s) - 1, int(p / 100.0 * len(s)))]
+        return {"n": len(s), "p50": pct(50), "p95": pct(95),
+                "p99": pct(99), "max": s[-1]}
+
     def _infer_timing_stats(self) -> dict | None:
         """p50/p95/p99/max of the last detect() calls (ms), or None if too
         few samples yet."""
@@ -262,11 +384,30 @@ class HailoCameraModule(CameraBase):
         if st is None:
             return
         self._infer_ms_logged_at = now
-        self.logger.info(
-            "hailo detect(): p50=%.1f p95=%.1f p99=%.1f max=%.1f ms  "
-            "(n=%d, model=%s, infer_every_n=%d)",
-            st["p50"], st["p95"], st["p99"], st["max"], st["n"],
-            self._model_key, self._infer_every_n)
+        if self._task != "lp_pose":
+            self.logger.info(
+                "hailo detect(): p50=%.1f p95=%.1f p99=%.1f max=%.1f ms  "
+                "(n=%d, model=%s, infer_every_n=%d)",
+                st["p50"], st["p95"], st["p99"], st["max"], st["n"],
+                self._model_key, self._infer_every_n)
+            return
+        # Lightning Pose: timing plus what happened to every frame since the
+        # last line; frames that weren't inferred as configured get WARNING.
+        dec = self._pcts(self._decode_ms)
+        counts = dict(self._lp_counts)
+        delta = {k: counts[k] - self._lp_counts_logged.get(k, 0) for k in counts}
+        self._lp_counts_logged = counts
+        dm = getattr(self.detector, "decode_method", "?")
+        d50, d95 = (dec["p50"], dec["p95"]) if dec else (float("nan"), float("nan"))
+        msg = (f"LP: hailo run p50={st['p50']:.1f} p95={st['p95']:.1f} ms, decode ({dm}) "
+               f"p50={d50:.1f} p95={d95:.1f} ms; last {interval_s:.0f}s: "
+               f"{delta['inferred']} inferred, {delta['skipped']} skipped (every "
+               f"{self._lp_every_n}), {delta['dropped']} dropped (worker behind), "
+               f"{delta['late']} late, {delta['failed']} failed")
+        if delta["dropped"] or delta["late"] or delta["failed"]:
+            self.logger.warning(msg)
+        else:
+            self.logger.info(msg)
 
     def _hef_path(self, spec: dict) -> str:
         # An uploaded model's spec carries an absolute path, which join keeps.
@@ -282,13 +423,23 @@ class HailoCameraModule(CameraBase):
 
     def _model_spec(self, model_key: str) -> tuple[str, dict]:
         """(key, spec) for `hailo.model`: a CURATED_MODELS key, or the
-        filename of an uploaded HEF in USER_HEF_DIR (always a detector with
-        NMS compiled in). Anything else falls back to DEFAULT_MODEL."""
+        filename of an uploaded HEF in USER_HEF_DIR: a Lightning Pose model
+        if a <name>.json sidecar sits next to it (spec["meta"], or
+        spec["meta_error"] when the sidecar is invalid), else a detector with
+        NMS compiled in. Anything else falls back to DEFAULT_MODEL."""
         if model_key in CURATED_MODELS:
             return model_key, CURATED_MODELS[model_key]
         if HEF_NAME_RE.match(str(model_key or "")):
+            hef = os.path.join(USER_HEF_DIR, model_key)
+            if os.path.exists(sidecar_path(hef)):
+                spec = {"hef": hef, "task": "lp_pose", "labels": [], "uploaded": True}
+                try:
+                    spec["meta"] = load_meta(sidecar_path(hef))
+                except LPModelError as e:
+                    spec["meta_error"] = str(e)
+                return model_key, spec
             return model_key, {
-                "hef": os.path.join(USER_HEF_DIR, model_key),
+                "hef": hef,
                 "task": "detection",
                 "labels": self._uploaded_labels(model_key),
                 "uploaded": True,
@@ -312,6 +463,7 @@ class HailoCameraModule(CameraBase):
                         old.close()
                     except Exception:
                         pass
+                self._set_lp_columns(None)
                 self.logger.info(
                     "Hailo inference disabled by config "
                     "(hailo.infer_enabled=false) — recording as a plain camera"
@@ -322,9 +474,11 @@ class HailoCameraModule(CameraBase):
             threshold = float(self.config.get("hailo.threshold", 0.4))
             self._max_labels = int(self.config.get("hailo.max_labels", 40))
             self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
+            self._lp_every_n = max(1, int(self.config.get("hailo.lp_infer_every_n", 1)))
             max_det = max(1, int(self.config.get("hailo.max_detections", 12)))
 
             model_key, spec = self._model_spec(model_key)
+            self._lp_selected = spec.get("task") == "lp_pose"
 
             # Release the current device handle BEFORE opening a new one — the
             # Hailo-8L can't hold two VDevices. The close() MUST happen under
@@ -353,9 +507,16 @@ class HailoCameraModule(CameraBase):
                 error = f"HEF not found: {hef_path} — upload it again from the AI tab"
             elif not os.path.exists(hef_path):
                 error = f"HEF not found: {hef_path} — run download_hefs.sh (wrong Hailo-8/8L arch is the usual cause)"
+            elif spec.get("meta_error"):
+                error = f"LP model metadata: {spec['meta_error']}"
+            elif task == "lp_pose" and (fov := self._lp_static_fov_error(spec["meta"])):
+                error = fov
             else:
                 try:
-                    if task == "pose":
+                    if task == "lp_pose":
+                        new_detector = HailoLPPoseDetector(
+                            hef_path, spec["meta"], self._lp_decode_method())
+                    elif task == "pose":
                         new_detector = HailoPoseDetector(hef_path, threshold=threshold)
                     elif task == "segmentation":
                         new_detector = HailoSegDetector(hef_path, threshold=threshold,
@@ -367,12 +528,17 @@ class HailoCameraModule(CameraBase):
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …
                     error = f"{type(e).__name__}: {e}"
 
+            meta = new_detector.meta if isinstance(new_detector, HailoLPPoseDetector) else None
             with self._det_lock:
                 old = self.detector if not swap else None
                 self.detector = new_detector
                 self._detector_error = error
                 self._model_key = model_key
                 self._task = task
+                self._lp_fov_error = None
+                self._lp_shapes = None
+                self._lp_last = None
+                self._set_lp_columns(meta)
                 self._labels = (spec["labels"] if spec.get("uploaded")
                                 else labels_for(model_key))
                 self._infer_error_logged = False
@@ -383,10 +549,209 @@ class HailoCameraModule(CameraBase):
                 except Exception:
                     pass
 
-        if new_detector is not None:
+        if isinstance(new_detector, HailoLPPoseDetector):
+            m = new_detector.meta
+            self.logger.info(
+                f"Lightning Pose model ready: {model_key} — {len(m.keypoint_names)} "
+                f"keypoints, input {m.input_size[1]}x{m.input_size[0]}, stride "
+                f"{m.heatmap_stride}, output {new_detector.output_desc}, decode "
+                f"{new_detector.decode_method}, every {self._lp_every_n} frame(s)")
+        elif new_detector is not None:
             self.logger.info(f"Hailo {task} model ready: {model_key} ({spec['hef']}), threshold {threshold}")
+        elif task == "lp_pose":
+            self.logger.error(f"Lightning Pose model unavailable ({error}) — "
+                              "no keypoints will be recorded")
         else:
             self.logger.warning(f"Hailo model unavailable ({error}) — running as a plain camera")
+
+    # ── Lightning Pose: field of view, CSV columns, per-frame keypoints ───────
+
+    @staticmethod
+    def _aspect_mismatch(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        """a, b = (width, height); True if their aspects differ by more than
+        _LP_ASPECT_TOL."""
+        return abs((a[0] / a[1]) / (b[0] / b[1]) - 1.0) > _LP_ASPECT_TOL
+
+    def _lp_fov_problem(self, meta: LPModelMeta, main_wh, lores_wh) -> str | None:
+        """Keypoints are mapped from the preview (lores) stream the model
+        sees to recorded-video pixels by scaling alone, which is only right
+        if both streams show the same field of view. picamera2 scales both
+        from the same sensor crop (ScalerCrop), so that reduces to the same
+        aspect. The model also has to see frames shaped like its training
+        frames, since LP stretch-resizes to its input."""
+        if self._aspect_mismatch(main_wh, lores_wh):
+            return (f"LP model off: preview stream {lores_wh[0]}x{lores_wh[1]} and "
+                    f"recorded stream {main_wh[0]}x{main_wh[1]} differ in aspect, "
+                    "so keypoints can't be mapped onto the recording")
+        src = meta.source_frame_size
+        if src and self._aspect_mismatch(main_wh, src):
+            return (f"LP model off: trained on {src[0]}x{src[1]} frames but the camera "
+                    f"records {main_wh[0]}x{main_wh[1]}; set a camera size/crop "
+                    "with the training aspect")
+        return None
+
+    def _lp_static_fov_error(self, meta: LPModelMeta) -> str | None:
+        """Config-time check from the configured stream sizes (the per-frame
+        hook re-checks the real buffers)."""
+        w, h = getattr(self, "width", None), getattr(self, "height", None)
+        lw, lh = getattr(self, "lores_width", None), getattr(self, "lores_height", None)
+        if not (w and h and lw and lh):
+            return None
+        # Rotation doesn't matter: both streams are rotated together or not
+        # at all (see _frame_request_hook), so they keep the same aspect.
+        return self._lp_fov_problem(meta, (int(w), int(h)), (int(lw), int(lh)))
+
+    def _set_lp_columns(self, meta: LPModelMeta | None) -> None:
+        """The CSV header is fixed when a segment's CSV opens, so a model
+        change takes effect on the next CSV; until then the open CSV keeps
+        its columns (results from a model with other keypoints stay empty)."""
+        self._lp_columns_next = meta.csv_columns() if meta else []
+        if getattr(self, "_timestamp_csv_writer", None) is None:
+            self.CSV_EXTRA_COLUMNS = list(self._lp_columns_next)
+
+    def _open_timestamp_csv(self, video_filename: str) -> None:
+        self.CSV_EXTRA_COLUMNS = list(self._lp_columns_next)
+        det = self.detector
+        self._csv_kp_names = (tuple(det.meta.keypoint_names)
+                              if isinstance(det, HailoLPPoseDetector)
+                              and self.CSV_EXTRA_COLUMNS == det.meta.csv_columns() else ())
+        with self._pending_lock:
+            self._pending.clear()
+        super()._open_timestamp_csv(video_filename)
+
+    def _close_timestamp_csv(self, stage: bool = True) -> str | None:
+        self._flush_pending(_LP_CLOSE_WAIT_S)
+        return super()._close_timestamp_csv(stage)
+
+    def _frame_request_hook(self, req, timing, main_shape, main_rot_k):
+        """Capture thread, every frame. With an LP model loaded: copy this
+        frame's lores image (oriented like the recorded frame) into the
+        worker queue with its frame number and timestamp, and register the
+        frame's CSV row as pending. Returns (seq, queued) for _emit_csv_row,
+        or None to write the row straight away (no LP model / FOV error)."""
+        det = self.detector
+        if not isinstance(det, HailoLPPoseDetector) or self._lp_fov_error:
+            return None
+        self._lp_seq += 1
+        seq = self._lp_seq
+        csv_open = self._timestamp_csv_writer is not None and self._encoder_active
+        if seq % self._lp_every_n:
+            self._lp_counts["skipped"] += 1
+            if csv_open:
+                self._add_pending(seq, "skip")
+            return (seq, False)
+        with MappedArray(req, "lores") as lm:
+            lores = lm.array
+            key = (tuple(main_shape[:2]), tuple(lores.shape[:2]), main_rot_k)
+            if key != self._lp_shapes:
+                self._lp_shapes = key
+                mh, mw = main_shape[:2]
+                lh, lw = lores.shape[:2]
+                if main_rot_k % 2:
+                    lh, lw = lw, lh
+                self._lp_fov_error = self._lp_fov_problem(det.meta, (mw, mh), (lw, lh))
+                if self._lp_fov_error:
+                    self.logger.error(self._lp_fov_error)
+                    return None
+            frame = lores[:, :, :3].copy()
+        if main_rot_k:
+            frame = np.ascontiguousarray(np.rot90(frame, main_rot_k))
+        self._lp_main_rot_k = main_rot_k
+        if csv_open:
+            self._add_pending(seq, "wait")
+        item = (seq, timing.timestamp_ns, frame, (int(main_shape[1]), int(main_shape[0])))
+        try:
+            stale = self._infer_q.get_nowait()
+        except queue.Empty:
+            stale = None
+        if isinstance(stale, tuple):
+            self._lp_counts["dropped"] += 1        # the worker fell behind
+            self._lp_resolve(stale[0], "dropped")
+        try:
+            self._infer_q.put_nowait(item)
+        except queue.Full:
+            self._lp_counts["dropped"] += 1
+            self._lp_resolve(seq, "dropped")
+        return (seq, True)
+
+    def _add_pending(self, seq: int, state: str) -> None:
+        with self._pending_lock:
+            self._pending[seq] = {"row": None, "state": state,
+                                  "t": time.monotonic(), "kp": None, "names": ()}
+
+    def _emit_csv_row(self, row: list, token) -> None:
+        if token is None:
+            return super()._emit_csv_row(row, token)
+        seq = token[0]
+        with self._pending_lock:
+            entry = self._pending.get(seq)
+            if entry is None:            # registered before the CSV opened, or cleared
+                self._csv_row_buffer.append(row)
+                return
+            entry["row"] = row
+            self._release_pending_locked(time.monotonic())
+
+    def _lp_resolve(self, seq: int, state: str, kp=None, names=()) -> None:
+        """Worker (or capture thread, for drops): this frame's result."""
+        with self._pending_lock:
+            entry = self._pending.get(seq)
+            # Not pending any more = released as late already: drop the result.
+            if entry is not None and entry["state"] == "wait":
+                entry.update(state=state, kp=kp, names=tuple(names))
+            self._release_pending_locked(time.monotonic())
+
+    def _release_pending_locked(self, now: float, force: bool = False) -> None:
+        """Move resolved rows from the head of the queue to the CSV buffer,
+        in frame order. A row still waiting after _LP_RESULT_TIMEOUT_S (or
+        on `force`) goes out with empty keypoints. Caller holds _pending_lock."""
+        while self._pending:
+            seq, e = next(iter(self._pending.items()))
+            age = now - e["t"]
+            if e["row"] is None:           # its row never came (CSV closed)
+                if force or age > _LP_RESULT_TIMEOUT_S:
+                    self._pending.popitem(last=False)
+                    continue
+                return
+            if e["state"] == "wait":
+                if not (force or age > _LP_RESULT_TIMEOUT_S):
+                    return
+                e["state"] = "late"
+                self._lp_counts["late"] += 1
+            if e["state"] == "done":
+                self._fill_row(e["row"], e["kp"], e["names"])
+            self._pending.popitem(last=False)
+            self._csv_row_buffer.append(e["row"])
+
+    def _fill_row(self, row: list, kp, names: tuple) -> None:
+        if not self._csv_kp_names or names != self._csv_kp_names:
+            return
+        base = len(self.BASE_CSV_COLUMNS)
+        for i in range(len(names)):
+            x, y, c = (float(v) for v in kp[i])
+            if np.isfinite(x) and np.isfinite(y):
+                row[base + 3 * i] = f"{x:.3f}"
+                row[base + 3 * i + 1] = f"{y:.3f}"
+            if np.isfinite(c):
+                row[base + 3 * i + 2] = f"{c:.4f}"
+
+    def _flush_pending(self, wait_s: float) -> None:
+        """Before a CSV closes: wait up to `wait_s` for the results of rows
+        already pending (not for frames still arriving), then release
+        everything, unfinished rows with empty keypoints."""
+        with self._pending_lock:
+            if not self._pending:
+                return
+            last = next(reversed(self._pending))
+        worker = self._infer_worker
+        deadline = time.monotonic() + (wait_s if worker and worker.is_alive() else 0.0)
+        while time.monotonic() < deadline:
+            with self._pending_lock:
+                waiting = any(e["state"] == "wait" for k, e in self._pending.items() if k <= last)
+            if not waiting:
+                break
+            time.sleep(0.01)
+        with self._pending_lock:
+            self._release_pending_locked(time.monotonic(), force=True)
 
     # ── per-frame overlay (MJPEG/preview stream only) ─────────────────────────
 
@@ -408,6 +773,16 @@ class HailoCameraModule(CameraBase):
             else:
                 self._status_line(
                     m, f"AI off: {self._detector_error or 'no model'}", (0, 0, 255))
+            return
+
+        if self._task == "lp_pose":
+            # Frames reach the LP model from _frame_request_hook (every frame,
+            # not just previewed ones); here we only draw the latest result.
+            if self._lp_fov_error:
+                self._status_line(m, self._lp_fov_error, (0, 0, 255))
+                return
+            summary = self._draw_lp(m.array, self._lp_last)
+            self._status_line(m, f"[{self._model_key}] {summary}", (255, 255, 255))
             return
 
         self._infer_counter += 1
@@ -460,6 +835,48 @@ class HailoCameraModule(CameraBase):
                     cv2.circle(frame, (x, y), 3, _KP_COLOUR, -1, cv2.LINE_AA)
         n = len(poses)
         return f"{n} {'person' if n == 1 else 'people'}"
+
+    def _draw_lp(self, frame, last) -> str:
+        """Keypoints + skeleton of the latest LP result on the preview.
+        Results are in recorded-frame pixels; the preview is the lores frame,
+        rotated afterwards by whatever software rotation the recorded frame
+        did NOT get in place (90/270 on a non-square output)."""
+        if last is None:
+            return "LP: waiting for first result"
+        _, _, kp, meta = last
+        mw, mh = int(self.width or 1), int(self.height or 1)
+        k = ((int(getattr(self, "_rotation", 0) or 0) // 90) - self._lp_main_rot_k) % 4
+        if self._lp_main_rot_k % 2:
+            mw, mh = mh, mw
+        rw, rh = (mh, mw) if k % 2 else (mw, mh)
+        fh, fw = frame.shape[:2]
+        sx, sy = fw / rw, fh / rh
+        thr = float(self.config.get("hailo.threshold", 0.4))
+
+        def pt(i):
+            x, y, c = (float(v) for v in kp[i])
+            if not (np.isfinite(x) and np.isfinite(y)) or not c >= thr:
+                return None
+            if k == 1:
+                x, y = y, mw - x
+            elif k == 2:
+                x, y = mw - x, mh - y
+            elif k == 3:
+                x, y = mh - y, x
+            return int(round(x * sx)), int(round(y * sy))
+
+        names = meta.keypoint_names
+        idx = {n: i for i, n in enumerate(names)}
+        pts = [pt(i) for i in range(len(names))]
+        for a, b in meta.skeleton:
+            pa, pb = pts[idx[a]], pts[idx[b]]
+            if pa and pb:
+                cv2.line(frame, pa, pb, _BONE_COLOUR, 2, cv2.LINE_AA)
+        for p in pts:
+            if p:
+                cv2.circle(frame, p, 3, _KP_COLOUR, -1, cv2.LINE_AA)
+        shown = sum(p is not None for p in pts)
+        return f"LP {shown}/{len(names)} keypoints >= {thr:.2f}"
 
     def _draw_masks(self, frame, segs, labels) -> str:
         counts: dict[str, int] = {}
@@ -514,12 +931,62 @@ class HailoCameraModule(CameraBase):
             path = os.path.join(USER_HEF_DIR, name)
             if name.endswith(".hef") and os.path.isfile(path):
                 hefs.append({"name": name, "path": path, "source": "uploaded",
-                             "size_bytes": os.path.getsize(path)})
+                             "size_bytes": os.path.getsize(path),
+                             "model": self._hef_model_info(path)})
         return {
             "hailo_present": os.path.exists(HAILO_DEVICE),
             "hefs": hefs,
             "current": self.config.get("hailo.model", DEFAULT_MODEL),
         }
+
+    @staticmethod
+    def _hef_model_info(hef_path: str) -> dict:
+        """What the AI tab shows for an uploaded HEF: an LP model's metadata
+        summary (or why its sidecar is invalid), or plain detection."""
+        side = sidecar_path(hef_path)
+        if not os.path.exists(side):
+            return {"type": "detection"}
+        try:
+            m = load_meta(side)
+        except LPModelError as e:
+            return {"type": LP_MODEL_TYPE, "error": str(e)}
+        return {"type": LP_MODEL_TYPE, "keypoint_names": list(m.keypoint_names),
+                "skeleton": [list(e) for e in m.skeleton],
+                "input_size": list(m.input_size), "heatmap_stride": m.heatmap_stride,
+                "source_frame_size": list(m.source_frame_size) if m.source_frame_size else None}
+
+    @command()
+    def set_hef_metadata(self, filename: str = "", metadata=None) -> dict:
+        """Save (or with metadata=None remove) an uploaded HEF's model
+        metadata sidecar: the <name>.json tools/convert_lp_pose_to_hailo.py
+        writes. Validated here, so a bad file is refused at upload rather than
+        at model load."""
+        if not HEF_NAME_RE.match(filename or ""):
+            return {**self.list_hefs(), "error": f"Invalid HEF filename: {filename!r}"}
+        hef = os.path.join(USER_HEF_DIR, filename)
+        if not os.path.isfile(hef):
+            return {**self.list_hefs(), "error": f"{filename} is not uploaded"}
+        side = sidecar_path(hef)
+        if self._recording_active() and filename == self._model_key:
+            return {**self.list_hefs(), "error": "Recording: can't change the model in use"}
+        try:
+            if metadata is None:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(side)
+            else:
+                meta = validate_meta(metadata)
+                tmp = side + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(meta.to_dict(), f, indent=2)
+                os.replace(tmp, side)
+        except LPModelError as e:
+            return {**self.list_hefs(), "error": f"Model metadata refused: {e}"}
+        except OSError as e:
+            return {**self.list_hefs(), "error": f"Couldn't save model metadata: {e}"}
+        self.logger.info(f"{'Removed' if metadata is None else 'Saved'} model metadata for {filename}")
+        if filename == self._model_key:
+            self._rebuild_detector_async()
+        return {**self.list_hefs(), "metadata_saved": filename}
 
     @command()
     def fetch_hef(self, controller_url: str = "", filename: str = "") -> dict:
@@ -551,6 +1018,8 @@ class HailoCameraModule(CameraBase):
             return {**self.list_hefs(), "error": "That model is selected; choose another and save first"}
         try:
             os.remove(os.path.join(USER_HEF_DIR, filename))
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(sidecar_path(os.path.join(USER_HEF_DIR, filename)))
         except OSError as e:
             return {**self.list_hefs(), "error": f"Delete failed: {e}"}
         self.logger.info(f"Deleted uploaded HEF {filename}")
@@ -558,11 +1027,22 @@ class HailoCameraModule(CameraBase):
 
     @check()
     def _check_hailo(self) -> tuple[bool, str]:
-        # Never blocks readiness — the module records fine without inference.
+        # Never blocks readiness for the demo models — the module records fine
+        # without inference. A Lightning Pose model does block it: its
+        # keypoints are the point of the recording.
         with self._det_lock:
             active = self.detector is not None
             model = self._model_key
             err = self._detector_error
+        if self._lp_selected and self._infer_enabled():
+            if not active:
+                return False, f"Lightning Pose model {model} not running: {err or 'no model'}"
+            if self._lp_fov_error:
+                return False, self._lp_fov_error
+            st, dec = self._infer_timing_stats(), self._pcts(self._decode_ms)
+            timing = (f" — run p50 {st['p50']:.0f}ms, decode p50 {dec['p50']:.0f}ms"
+                      if st and dec else "")
+            return True, f"Lightning Pose keypoints active ({model}){timing}"
         if active:
             st = self._infer_timing_stats()
             timing = (f" — detect p50 {st['p50']:.0f}ms p99 {st['p99']:.0f}ms"

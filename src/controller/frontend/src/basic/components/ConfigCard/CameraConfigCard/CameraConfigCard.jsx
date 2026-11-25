@@ -220,6 +220,52 @@ function HefClassNames({ labels, onChange }) {
   );
 }
 
+// What an uploaded hailo_camera HEF is: a Lightning Pose model when the
+// module found a valid <name>.json sidecar (tools/convert_lp_pose_to_hailo.py
+// writes it), otherwise a detector. `info` is list_hefs' per-HEF `model`.
+function HefModelInfo({ info, onLoad, onRemove, status }) {
+  const lp = info?.type === "lp_heatmap";
+  return (
+    <>
+      <div className="form-field">
+        <label title="Lightning Pose models need the .json written next to the .hef by tools/convert_lp_pose_to_hailo.py: keypoint names, input size, heatmap stride.">
+          Model type:
+        </label>
+        <div>
+          {!info ? "…"
+            : info.error ? <span className="fov-label fov-cropped">Lightning Pose, model info invalid: {info.error}</span>
+              : lp ? `Lightning Pose: ${info.keypoint_names.length} keypoints, input ${info.input_size[1]}×${info.input_size[0]}, stride ${info.heatmap_stride}`
+                : "Detection (no model info loaded)"}
+        </div>
+      </div>
+      {lp && !info.error && (
+        <div className="sensor-mode-info sensor-mode-info--muted">
+          Keypoints: {info.keypoint_names.join(", ")}
+          {info.source_frame_size && <> · trained on {info.source_frame_size[0]}×{info.source_frame_size[1]} frames (the recorded size must have the same shape)</>}
+        </div>
+      )}
+      <div className="form-field">
+        <label></label>
+        <div>
+          <button type="button" className="copy-btn" onClick={onLoad}>
+            Load model info (.json)…
+          </button>
+          {info?.type === "lp_heatmap" && (
+            <button type="button" className="copy-btn" style={{ marginLeft: 8 }} onClick={onRemove}>
+              Remove model info
+            </button>
+          )}
+        </div>
+      </div>
+      {status && (
+        <div className={status.error ? "fov-label fov-cropped" : "sensor-mode-info"}>
+          {status.error ?? status.text}
+        </div>
+      )}
+    </>
+  );
+}
+
 function irFilterLabel(removed, model) {
   if (!model || removed === undefined) return null;
   if (removed === true) {
@@ -264,6 +310,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [hefInfo, setHefInfo] = useState(null); // { hailo_present, hefs, current, error }
   const [hefUpload, setHefUpload] = useState(null); // null | { received, total } | { error } | { done }
   const hefInputRef = useRef(null);
+  const hefMetaInputRef = useRef(null);
+  const [hefMetaStatus, setHefMetaStatus] = useState(null); // null | { text } | { error }
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -311,7 +359,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     const mine = (h) => (data) => { if (data.module_id === module.id) h(data); };
     const onList = mine((data) => {
       setHefInfo(data);
-      if (data.error) setHefUpload({ error: data.error });
+      if (data.metadata_saved) {
+        setHefMetaStatus({ text: "Model info saved on the module." });
+      } else if (data.error && /metadata|model info|Recording/i.test(data.error)) {
+        setHefMetaStatus({ error: data.error });
+      } else if (data.error) setHefUpload({ error: data.error });
       else if (data.fetched) {
         setHefUpload({ done: true });
         // Select the new model; it takes effect when the card is saved.
@@ -504,6 +556,30 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
       hailo.custom_labels = [...others, { hef, labels }];
       return cloned;
     });
+  };
+
+  const handleHefMetaFile = (file, hef) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let metadata;
+      try {
+        metadata = JSON.parse(reader.result);
+      } catch (e) {
+        setHefMetaStatus({ error: `Not valid JSON: ${e.message}` });
+        return;
+      }
+      setHefMetaStatus({ text: "Checking on the module…" });
+      socket.emit("send_command", { module_id: module.id, type: "set_hef_metadata",
+                                    params: { filename: hef, metadata } });
+    };
+    reader.readAsText(file);
+  };
+
+  const removeHefMeta = (hef) => {
+    if (!window.confirm(`Remove the model info from ${hef}? It will be treated as a detection model.`)) return;
+    socket.emit("send_command", { module_id: module.id, type: "set_hef_metadata",
+                                  params: { filename: hef, metadata: null } });
   };
 
   const deleteHef = (filename) => {
@@ -1371,10 +1447,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         {activeTab === "hailo" && (() => {
           const model = formData?.hailo?.model ?? "yolov8s";
           const curated = HAILO_MODELS.find(m => m.key === model);
-          // Anything not in the curated list is an uploaded HEF's filename,
-          // always a detector (NMS compiled in).
-          const hailoTask = curated?.task ?? "detection";
+          // Anything not in the curated list is an uploaded HEF's filename:
+          // a Lightning Pose model if the module found its .json sidecar,
+          // otherwise a detector (NMS compiled in).
           const uploaded = (hefInfo?.hefs ?? []).filter(h => h.source === "uploaded");
+          const selInfo = uploaded.find(h => h.name === model)?.model;
+          const hailoTask = curated?.task ?? (selInfo?.type === "lp_heatmap" ? "lp_pose" : "detection");
           const missing = !curated && hefInfo != null && !uploaded.some(h => h.name === model);
           const labels = (formData?.hailo?.custom_labels ?? []).find(e => e.hef === model)?.labels ?? [];
           return (
@@ -1403,8 +1481,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </select>
             </div>
             <HefUploadControls upload={hefUpload} inputRef={hefInputRef} onFile={handleHefFile}
-              doneText="Uploaded and selected. Name its classes below, then Save to start using it." />
-            {!curated && (
+              doneText="Uploaded and selected. Name its classes below (or load its model info for a Lightning Pose model), then Save to start using it." />
+            {!curated && !missing && (
+              <>
+                <HefModelInfo info={selInfo} status={hefMetaStatus}
+                  onLoad={() => hefMetaInputRef.current?.click()}
+                  onRemove={() => removeHefMeta(model)} />
+                <input ref={hefMetaInputRef} type="file" accept=".json,application/json"
+                  style={{ display: "none" }}
+                  onChange={e => { handleHefMetaFile(e.target.files[0], model); e.target.value = ""; }} />
+              </>
+            )}
+            {!curated && hailoTask !== "lp_pose" && (
               <HefClassNames labels={labels} onChange={l => setHefLabels(model, l)} />
             )}
             {uploaded.length > 0 && (
@@ -1436,7 +1524,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             )}
             {hailoTask !== "depth" && (
               <div className="form-field">
-                <label>Confidence threshold:</label>
+                <label title={hailoTask === "lp_pose" ? "Keypoints below this confidence aren't drawn on the preview. The CSV always gets every value." : undefined}>
+                  {hailoTask === "lp_pose" ? "Overlay confidence threshold:" : "Confidence threshold:"}
+                </label>
                 <input type="number" min="0.05" max="0.95" step="0.05"
                   value={formData?.hailo?.threshold ?? 0.4}
                   onChange={e => handleChange(["hailo", "threshold"], e)} />
@@ -1458,20 +1548,55 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                   onChange={e => handleChange(["hailo", "max_detections"], e)} />
               </div>
             )}
-            <div className="form-field">
-              <label>Run inference every N frames:</label>
-              <input type="number" min="1" max="10" step="1"
-                value={formData?.hailo?.infer_every_n ?? 2}
-                onChange={e => handleChange(["hailo", "infer_every_n"], e)} />
-            </div>
+            {hailoTask === "lp_pose" ? (
+              <>
+                <div className="form-field">
+                  <label title="1 = every recorded frame. Frames in between get empty keypoint columns in the CSV, never the previous result.">
+                    Run the pose model every N frames:
+                  </label>
+                  <input type="number" min="1" max="10" step="1"
+                    value={formData?.hailo?.lp_infer_every_n ?? 1}
+                    onChange={e => handleChange(["hailo", "lp_infer_every_n"], e)} />
+                </div>
+                <div className="form-field">
+                  <label title="Exact reproduces Lightning Pose's soft-argmax over the whole heatmap (about 10 ms a frame for a 256×256 input on a Pi 5, 65 ms at 512×896). Windowed only looks around each peak: about 2-6 ms, within 0.01 px of exact wherever confidence is 0.3 or more.">
+                    Keypoint decode:
+                  </label>
+                  <select value={formData?.hailo?.lp_decode ?? "exact"}
+                    onChange={e => handleChange(["hailo", "lp_decode"], e)}>
+                    <option value="exact">Exact (as Lightning Pose)</option>
+                    <option value="windowed">Windowed (faster)</option>
+                  </select>
+                </div>
+              </>
+            ) : (
+              <div className="form-field">
+                <label>Run inference every N frames:</label>
+                <input type="number" min="1" max="10" step="1"
+                  value={formData?.hailo?.infer_every_n ?? 2}
+                  onChange={e => handleChange(["hailo", "infer_every_n"], e)} />
+              </div>
+            )}
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Live inference overlay on the preview stream only - the recorded
-              video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched
-              at module setup; switching model reloads on the device and takes a
-              few seconds. No Hailo device / missing HEF → still records, overlay
-              shows why. An uploaded .hef must be a detection model with NMS
-              compiled in (as tools/convert_to_hailo.py builds them), for this
-              module's chip (Hailo-8 or 8L).
+              {hailoTask === "lp_pose" ? (
+                <>Lightning Pose: every frame (or every Nth) goes to the model and its
+                keypoints are written to the recording's timestamp CSV
+                (kp_&lt;name&gt;_x/_y/_conf, in recorded-video pixels) on the row of
+                the frame they came from. The overlay is on the preview only. If
+                the model can't load, or the preview and recorded streams differ
+                in shape, the module reports not ready. Built with
+                tools/convert_lp_pose_to_hailo.py: upload the .hef, then load its
+                .json here.</>
+              ) : (
+                <>Live inference overlay on the preview stream only - the recorded
+                video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched
+                at module setup; switching model reloads on the device and takes a
+                few seconds. No Hailo device / missing HEF → still records, overlay
+                shows why. An uploaded .hef is a detection model with NMS compiled
+                in (as tools/convert_to_hailo.py builds them) unless you load
+                Lightning Pose model info for it, for this module's chip (Hailo-8
+                or 8L).</>
+              )}
               {hailoTask === "depth" && (
                 <> Depth nets output one relative-depth map - there are no
                 boxes, instances or confidence, so only the frame-skip applies.</>

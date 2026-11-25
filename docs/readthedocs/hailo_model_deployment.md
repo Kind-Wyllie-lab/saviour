@@ -9,8 +9,8 @@ commands, config keys — see the model-specific page:
 
 - **[APA Rat Detector Training](apa_rat_detector_training.md)** — object
   detection (YOLO), `apa_camera`
-- **[Hailo Pose Conversion](hailo_pose_conversion.md)** — keypoint/pose
-  (heatmap regression), `lightning_camera`
+- **[Hailo Pose Conversion](hailo_pose_conversion.md)** — single-view
+  Lightning Pose keypoints (heatmap regression), `hailo_camera`
 
 ## Hardware: what actually runs where
 
@@ -38,14 +38,14 @@ this path, proven and working — see
 
 **Keypoint/pose (heatmap regression)** predicts one heatmap channel per
 keypoint — a per-pixel "how likely is this joint here" map — not a box.
-There's no on-chip NMS equivalent; postprocessing instead means finding
-each channel's peak (argmax, optionally sub-pixel refinement)
-**host-side, after inference**, not baked into the `.hef`. This is a much
-less standardized Hailo compile path with far fewer known-working
-examples than YOLO's. It's exactly why
-[Hailo Pose Conversion](hailo_pose_conversion.md) is currently flagged as
-an unverified draft: the DFC compile shape is copied from the proven YOLO
-tool, but a real heatmap-output model hasn't been pushed through it yet.
+There's no on-chip NMS equivalent; postprocessing instead means Lightning
+Pose's soft-argmax over each channel **host-side, after inference** (on the
+Pi's CPU, `src/modules/lp_decode.py`), not baked into the `.hef`. This is a
+much less standardized Hailo compile path with far fewer known-working
+examples than YOLO's, and heatmaps are sensitive to quantisation, which is
+why [Hailo Pose Conversion](hailo_pose_conversion.md) has an `eval-quant`
+step (float vs quantised, against held-out labels) before deployment. A
+real heatmap-output model hasn't been pushed through the DFC yet.
 
 Practical consequence: expect a keypoint/pose conversion to need more
 debugging at the DFC compile step, more careful calibration images (a

@@ -25,7 +25,7 @@ flags, not hardcoded as gospel; a small dataset like this may need real
 tuning (epoch count, backbone choice) that no script can decide for you.
 
 Usage:
-    python3 src/modules/variants/lightning_camera/training/prepare_lp_project.py \
+    python3 src/modules/variants/hailo_camera/training/prepare_lp_project.py \
         --source-dir "/path/to/LP3D_hailo_extras" \
         --camera cam1 \
         --out ~/lp_projects/cam1
@@ -46,27 +46,20 @@ try:
 except ImportError:
     sys.exit("PyYAML required: pip install pyyaml (see this folder's requirements.txt)")
 
-# .../saviour/src/modules/variants/lightning_camera/training/prepare_lp_project.py
-# -> .../saviour
-REPO_ROOT = Path(__file__).resolve().parents[5]
-DEFAULT_MODULE_CONFIG = (
-    REPO_ROOT / "src/modules/variants/lightning_camera/lightning_camera_config.json"
-)
+DEFAULT_KEYPOINTS = Path(__file__).resolve().parent / "rat_keypoints.json"
 
 
-def load_keypoint_names(module_config_path: Path) -> list[str]:
-    """Single source of truth for keypoint names/order -- read from the
-    module's own shipped config rather than re-typing the list here, so
-    the two can never drift apart. Order matters: HailoPoseDetector reads
-    a compiled model's heatmap channels in this exact order (see
-    lightning_camera_module.py's own docstring), and it's also the column
-    order Lightning Pose expects to find in the labels CSV -- which the
-    real CollectedData_camN.csv files already match, confirmed by hand."""
-    with open(module_config_path) as f:
-        cfg = json.load(f)
-    names = cfg["pose_estimation"]["keypoint_names"]
+def load_keypoint_names(keypoints_path: Path) -> list[str]:
+    """Single source of truth for keypoint names/order: rat_keypoints.json
+    next to this script (the converter reads its skeleton from the same
+    file). Order matters: it is the heatmap-channel order the compiled model
+    emits, which the .hef's sidecar records for hailo_camera, and the column
+    order Lightning Pose expects in the labels CSV (the real
+    CollectedData_camN.csv files match it, checked by hand)."""
+    with open(keypoints_path) as f:
+        names = json.load(f).get("keypoint_names") or []
     if not names:
-        sys.exit(f"No pose_estimation.keypoint_names found in {module_config_path}")
+        sys.exit(f"No keypoint_names found in {keypoints_path}")
     return names
 
 
@@ -139,8 +132,8 @@ def build_config(out_dir: Path, keypoint_names: list[str], video_dir: Path,
     lightning-pose repo, not reconstructed from memory) -- only the fields
     that actually need a per-project value are filled in here; everything
     else is upstream's own documented default. model_type is pinned to
-    "heatmap" deliberately: HailoPoseDetector._decode_heatmaps() (module
-    side) only knows how to decode a heatmap output, not a regression one."""
+    "heatmap" deliberately: hailo_camera (modules/lp_decode.py) only decodes
+    a heatmap output, not a regression one."""
     resize_height, resize_width = opts.resize_dims
     return {
         "data": {
@@ -186,7 +179,7 @@ def build_config(out_dir: Path, keypoint_names: list[str], video_dir: Path,
             "backbone": opts.backbone,
             "model_type": "heatmap",
             "heatmap_loss_type": "mse",
-            "model_name": "lightning_camera_single_view",
+            "model_name": "hailo_camera_single_view",
             "checkpoint": None,
         },
         "dali": {
@@ -239,14 +232,17 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path,
                      help="Output Lightning Pose project directory "
                           "(created if missing)")
-    ap.add_argument("--module-config", type=Path, default=DEFAULT_MODULE_CONFIG,
-                     help="lightning_camera_config.json to read keypoint_names from "
-                          f"(default: {DEFAULT_MODULE_CONFIG})")
+    ap.add_argument("--keypoints", type=Path, default=DEFAULT_KEYPOINTS,
+                     help="JSON with keypoint_names (and skeleton) "
+                          f"(default: {DEFAULT_KEYPOINTS.name})")
     ap.add_argument("--resize-height", type=int, default=512,
                      help="Must be a multiple of 128 (Lightning Pose requirement). "
                           "Default 512x896 approximates the real frames' 1296x2304 "
                           "aspect ratio (16:9-ish) -- not validated against actual "
-                          "training results, a starting point to tune from.")
+                          "training results, a starting point to tune from. "
+                          "Decode cost on the Pi 5 grows with input area: exact "
+                          "decode ~10 ms at 256x256 but ~65 ms at 512x896 (too "
+                          "slow for 30 fps; hailo.lp_decode=windowed takes ~6 ms).")
     ap.add_argument("--resize-width", type=int, default=896)
     ap.add_argument("--train-prob", type=float, default=0.7,
                      help="Fraction of labelled frames used for training. "
@@ -284,8 +280,8 @@ def main() -> None:
             f"= {args.train_prob + args.val_prob})"
         )
 
-    keypoint_names = load_keypoint_names(args.module_config)
-    print(f"Keypoints ({len(keypoint_names)}, from {args.module_config.name}): "
+    keypoint_names = load_keypoint_names(args.keypoints)
+    print(f"Keypoints ({len(keypoint_names)}, from {args.keypoints.name}): "
           f"{', '.join(keypoint_names)}")
 
     args.out.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-# Dependencies for the lightning_camera single-view pose training pipeline
+# Dependencies for the hailo_camera single-view pose training pipeline
 # (prepare_lp_project.py needs only pyyaml; actual training needs the full
 # lightning-pose package below). Install on a GPU workstation, not the Pi --
 # a separate environment from the main SAVIOUR install, same as

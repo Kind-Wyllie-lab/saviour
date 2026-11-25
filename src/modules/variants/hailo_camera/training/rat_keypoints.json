@@ -1,0 +1,22 @@
+{
+    "_comment": "Keypoint names (in heatmap-channel and labels-CSV order) and skeleton for the single-view rat Lightning Pose model. prepare_lp_project.py writes the names into the LP config; tools/convert_lp_pose_to_hailo.py copies the skeleton into the model's .json sidecar for hailo_camera's overlay.",
+    "keypoint_names": [
+        "nose",
+        "left_ear",
+        "right_ear",
+        "neck",
+        "shoulder_mid",
+        "hip_mid",
+        "tail_base",
+        "left_forepaw",
+        "right_forepaw",
+        "left_hindpaw",
+        "right_hindpaw"
+    ],
+    "skeleton": [
+        ["nose", "neck"],
+        ["neck", "shoulder_mid"],
+        ["shoulder_mid", "hip_mid"],
+        ["hip_mid", "tail_base"]
+    ]
+}

@@ -86,6 +86,17 @@ env-nwb/bin/python -m src.controller.nwb_inspect /path/to/share/<session>/<sessi
 ```
 
 ```bash
+# Lightning Pose → Hailo for hailo_camera (docs/readthedocs/hailo_pose_conversion.md):
+# export-onnx where lightning-pose is installed; compile-hef + eval-quant on x86 with the DFC
+python tools/convert_lp_pose_to_hailo.py export-onnx --checkpoint M.ckpt --config config.yaml --out-dir out/
+python tools/convert_lp_pose_to_hailo.py compile-hef --onnx out/M.onnx --calib-dir DIR [DIR...]
+python tools/convert_lp_pose_to_hailo.py eval-quant --onnx out/M.onnx --har out/M_quantized.har \
+    --labels CollectedData.csv --frames-root PROJECT --split-from predictions.csv
+# LP's own outputs as test fixtures (src/modules/tests/fixtures/lp_reference_*.npz)
+python tools/lp_reference_outputs.py synthetic | model --checkpoint M.ckpt --config config.yaml
+```
+
+```bash
 # Automated camera-config × framesync sweep — needs only `requests` + key-based
 # SSH to the controller (no env2). Drives PATCH /api/v1/modules/<id>/config +
 # the session lifecycle, SSH-pulls each session's framesync_report.json /
@@ -161,7 +172,7 @@ The frontend variant (basic / loom / apa / habitat / acoustic_startle) is select
 
 ### Module types
 
-`camera`, `microphone`, `ttl`, `rfid`, `apa_camera`, `apa_arduino`, `sound`, `lightning_camera`, `habitat_camera`, `hailo_camera`, `basler_camera`, `dmx_lighting` — each under `src/modules/variants/<type>/`.
+`camera`, `microphone`, `ttl`, `rfid`, `apa_camera`, `apa_arduino`, `sound`, `habitat_camera`, `hailo_camera`, `basler_camera`, `dmx_lighting` — each under `src/modules/variants/<type>/`.
 
 ## Driving the live fleet (agents)
 
@@ -233,6 +244,7 @@ Currently **v0.10** (latest tag), targeting **v1.0 = "safe to run unattended on 
 - APA automated shocking: the grid's armed/disarmed state (arms at recording start) and the shock mode (manual/auto/dry_run) live on the controller (`variants/apa/shock_automation.py`), the `apa_arduino` module only pulses while told to. Validated on the rig (2026-11-16); detector accuracy work and protocol placeholders → `plans/apa-rat-detector.md`.
 - Habitat DMX lighting module (`dmx_lighting`): Enttec DMX USB Pro driving 32 dimmed LED strips (visible + IR per compartment), day/night cycle with sunrise/sunset ramps, schedule + patch edited in the frontend, runs independently of sessions and the controller (joins sessions only to log a lighting CSV; config editable while recording), waits for a trusted clock, overrides always expire. Built and tested against a mock widget; not yet on hardware, and the patch waits on decoder details from the installer → `plans/dmx-lighting-module.md`.
 - Habitat simulator: the habitat `dev:mock` runs on 10 simulated tagged rats (16 cameras with rendered frames, 4×4 AudioMoth levels and spectrograms, gate reads, lights, from one deterministic model, `src/mock/habitatSim/` + `mock-server/`, parameters `src/shared/habitat_sim.json`). Step 2 (simulated sessions with ground truth for testing analyses) not started → `plans/habitat-simulator.md`.
+- Lightning Pose on `hailo_camera`: a single-view LP model (`tools/convert_lp_pose_to_hailo.py` → `.hef` + `.json` sidecar, uploaded on the AI tab) runs on every frame and writes `kp_<name>_x/_y/_conf` into the timestamp CSV on the inferred frame's row (`modules/lp_decode.py` reproduces LP's soft-argmax). Built 2026-11-25, no real checkpoint, DFC run or Hailo camera yet; `lightning_camera` is gone → `plans/backlog.md`, `docs/readthedocs/hailo_pose_conversion.md`.
 - APA shock current: a free number field; values off the 0.02 mA grid are floored and values over the 1.0 mA firmware cap keep the old setpoint, all silently → `plans/apa-shock-setpoint-validation.md`.
 - System page **Sync** and **Network** tabs (PTP + framesync; every DHCP lease/ARP host with ping, module link counters): built, not yet viewed on the rig; live client lock state (`SyncTimer`) isn't in the heartbeat yet; Network leftovers in `plans/backlog.md`.
 - Rig profiles: each rig type expects a hardware set (`rig.expected`, defaults per variant, editable on the controller config **Rig** tab); `rig_check.py` flags missing/faulty modules live (banner on every variant, System block, session-start confirm, session record, `rig` on `/api/v1/state`, daily alert). Built 2026-11-20, not yet on the rig or viewed in a browser; roster persistence (name a never-seen module) and habitat-by-layout remain → `plans/rig-expected-hardware.md`.

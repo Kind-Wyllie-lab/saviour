@@ -23,6 +23,15 @@ import urllib.request
 import cv2
 import numpy as np
 
+from modules.lp_decode import (
+    DECODE_METHODS,
+    LPModelError,
+    check_input_shape,
+    check_output_shape,
+    decode,
+    prepare_input,
+)
+
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0)))
@@ -824,6 +833,61 @@ class HailoDepthEstimator:
 
     def set_threshold(self, threshold: float) -> None:
         self._threshold = threshold
+
+    def close(self):
+        self._hailo.close()
+
+
+class HailoLPPoseDetector:
+    """
+    A single-view Lightning Pose heatmap model (tools/convert_lp_pose_to_hailo.py)
+    for hailo_camera's per-frame keypoints. The .hef contract and the decode
+    live in modules/lp_decode.py; this class only owns the device.
+
+    Outputs are read as FLOAT32 (picamera2's Hailo wrapper default), so
+    HailoRT applies each output's quantisation scale/zero-point itself, for
+    8-bit and 16-bit output layers alike; nothing here sees raw integers.
+    The input and output shapes are checked against the sidecar metadata at
+    load and a mismatch raises LPModelError instead of guessing a layout.
+    """
+
+    task = "lp_pose"
+
+    def __init__(self, hef_path: str, meta, decode_method: str = "exact"):
+        from picamera2.devices.hailo import Hailo
+        if decode_method not in DECODE_METHODS:
+            raise ValueError(f"hailo.lp_decode must be one of {DECODE_METHODS}")
+        self.meta = meta
+        self.decode_method = decode_method
+        self._hailo = Hailo(hef_path)
+        try:
+            inputs, outputs = self._hailo.describe()
+            if len(inputs) != 1:
+                raise LPModelError(f"HEF has {len(inputs)} inputs; an LP model has one")
+            check_input_shape(meta, inputs[0][1])
+            if len(outputs) != 1:
+                raise LPModelError(
+                    f"HEF has {len(outputs)} outputs ({[o[0] for o in outputs]}); an "
+                    "LP heatmap model has exactly one")
+            check_output_shape(meta, outputs[0][1])
+            self.output_desc = (f"{outputs[0][0]} {tuple(outputs[0][1])} "
+                                f"{getattr(outputs[0][2], 'name', outputs[0][2])} "
+                                "native, read as FLOAT32")
+        except Exception:
+            self._hailo.close()
+            raise
+
+    def infer(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """BGR frame -> the .hef's raw (Hm, Wm, K) float32 heatmaps."""
+        return np.asarray(self._hailo.run(prepare_input(frame_bgr, self.meta.input_size)),
+                          dtype=np.float32)
+
+    def decode(self, raw: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+        """(K, 3) x, y, conf in `out_size` (width, height) pixels."""
+        return decode(raw, self.meta, out_size=out_size, method=self.decode_method)
+
+    def set_threshold(self, threshold: float) -> None:
+        pass   # the CSV keeps every value; the overlay threshold lives in the module
 
     def close(self):
         self._hailo.close()

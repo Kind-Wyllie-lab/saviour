@@ -787,7 +787,7 @@ const ROUTER = {
             { label: "AudioMoth", value: mic ? "4 connected" : "none found", present: mic, system: false },
             { label: "eth0", value: "up, 1000 Mb/s", present: true, system: true },
           ],
-          suggested: cam ? ["hailo_camera", "apa_camera", "lightning_camera", "camera", "habitat_camera", "loom_camera"]
+          suggested: cam ? ["hailo_camera", "apa_camera", "camera", "habitat_camera", "loom_camera"]
             : mic ? ["microphone"] : [],
         }), 1500);
         break;

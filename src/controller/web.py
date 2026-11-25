@@ -5143,13 +5143,14 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "message": status.get("message", ""),
                             "status": status.get("status"),
                         })
-                    elif command in ("list_hefs", "fetch_hef", "delete_hef"):
+                    elif command in ("list_hefs", "fetch_hef", "delete_hef", "set_hef_metadata"):
                         self.socketio.emit("hef_list_response", {
                             "module_id": module_id,
                             "hailo_present": status.get("hailo_present", False),
                             "hefs": status.get("hefs", []),
                             "current": status.get("current", ""),
                             "fetched": status.get("fetched"),
+                            "metadata_saved": status.get("metadata_saved"),
                             "error": status.get("error"),
                         })
                     elif command == "sync_selftest":

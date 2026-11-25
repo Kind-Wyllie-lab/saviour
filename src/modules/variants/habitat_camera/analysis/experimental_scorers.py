@@ -3,7 +3,7 @@ experimental_scorers.py -- candidate motion-scoring algorithms being
 evaluated as replacements/additions to HabitatMotionDetector's frame_diff/
 MOG2 (see ../motion_detector.py). All CPU-only, no ML accelerator assumed --
 habitat_camera runs on a plain Pi 5 with no Hailo HAT (unlike apa_camera/
-lightning_camera). None of this is wired into the live module; it exists
+hailo_camera). None of this is wired into the live module; it exists
 purely for evaluation via score_video.py + sweep_motion_params.py against
 label_activity.py's ground truth. Each scorer exposes the same
 score(frame_bgr) -> float interface as HabitatMotionDetector, so they're

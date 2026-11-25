@@ -13,6 +13,10 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-25
 
+- [x] **Login shells start in the checkout** (`saviour-config` `configure_shell_login` + `--apply-shell`, `mend.sh`).
+  - A marked `# >>> saviour >>>` block in the checkout owner's (pi's) `~/.bashrc`, rewritten on every configuration run and every `mend.sh` run: `cd /usr/local/src/saviour` for interactive shells that start in `$HOME` only, so an editor's terminal or `ssh host cmd` is unaffected. A hand-added bare `cd /usr/local/src/saviour` (the controller had one) is removed in favour of the block. Refuses to run from a copy outside a checkout (it would point the block at that copy's folder).
+  - Applied on the desk rig's controller and modules.
+
 - [x] **`saviour-status`: a `tailscale status`-style overview command** (`saviour-status` new, `setup.sh` + `mend.sh` install the `/usr/local/bin` symlink beside `saviour-config`; `src/tests/test_saviour_status.py`).
   - Stdlib-only Python, so it runs with the system `python3`, no venv. `--json` dumps the raw data, `--no-color` / `NO_COLOR` turn off colour.
   - Controller: hostname, role/type, version, uptime and interfaces (WAN and tailscale labelled); systemd state of saviour/ptp4l/phc2sys/dnsmasq/smbd; PTP role from the ptp4l journal plus the worst module offset against the start gate; share free space; sessions, recording, web UI clients; the rig check summary. Then one row per module (id, name, type, IP, status, PTP offset, CPU, temp, disk, version; versions that differ from the controller's are highlighted) from `/api/v1/state`, `/modules` and `/health`, and any DHCP lease that isn't a module (pinged). The bearer token is read from `/etc/saviour/admin_credentials` directly as root, else via `sudo -n`; without either it shows the leases and says to use sudo.

@@ -356,6 +356,9 @@ install_audiomoth_usb_cmd
 # Install saviour-config as a system-wide command
 sudo ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
 sudo chmod +x "$TARGET_DIR/saviour-config"
+# ...and saviour-status (read-only overview of the device and its network)
+sudo ln -sf "$TARGET_DIR/saviour-status" /usr/local/bin/saviour-status
+sudo chmod +x "$TARGET_DIR/saviour-status"
 install_provision_service
 
 echo ""

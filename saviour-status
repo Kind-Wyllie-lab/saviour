@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""saviour-status: one-screen overview of this SAVIOUR device and its network.
+
+Usage: saviour-status [--json] [--no-color]
+
+On the controller: this device (services, PTP, share, sessions, rig check),
+then one row per module (status, PTP offset, CPU, temp, disk, version) from
+the controller's own REST API, then any other DHCP clients on the LAN.
+On a module: this device (services, PTP lock, recordings waiting to export)
+and whether the controller answers.
+
+Stdlib only, so it runs with the system python3 without the venv. The REST
+API needs the admin password (/etc/saviour/admin_credentials, root-only):
+read directly when run as root, else via `sudo -n`; without either, the
+module table is skipped and the DHCP leases are shown instead.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+CONFIG_FILE = Path("/etc/saviour/config")
+CRED_FILE = Path("/etc/saviour/admin_credentials")
+LEASES_FILE = Path("/var/lib/misc/dnsmasq.leases")
+RECORDINGS = Path("/var/lib/saviour/recordings")
+API_PORT = 5000
+ZMQ_PORT = 5555
+DEFAULT_CONTROLLER_IP = "10.0.0.1"
+CONTROLLER_SERVICES = ["saviour", "ptp4l", "phc2sys", "dnsmasq", "smbd"]
+MODULE_SERVICES = ["saviour", "ptp4l", "phc2sys"]
+REPO = Path(__file__).resolve().parent
+
+# ── output helpers ────────────────────────────────────────────────────────────
+
+_COLOR = False
+
+
+def c(text: str, code: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _COLOR else text
+
+
+def ok(t: str) -> str:
+    return c(t, "32")
+
+
+def warn(t: str) -> str:
+    return c(t, "33")
+
+
+def bad(t: str) -> str:
+    return c(t, "31")
+
+
+def dim(t: str) -> str:
+    return c(t, "2")
+
+
+def bold(t: str) -> str:
+    return c(t, "1")
+
+
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+
+
+def vlen(s: str) -> int:
+    return len(_ANSI.sub("", s))
+
+
+def table(rows: list[list[str]], indent: str = "") -> list[str]:
+    widths = [max(vlen(r[i]) for r in rows) for i in range(len(rows[0]))]
+    out = []
+    for r in rows:
+        cells = [cell + " " * (widths[i] - vlen(cell)) for i, cell in enumerate(r)]
+        out.append((indent + "  ".join(cells)).rstrip())
+    return out
+
+
+def fmt_duration(s: float | None) -> str:
+    if s is None:
+        return "?"
+    s = int(s)
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    m, _ = divmod(s, 60)
+    if d:
+        return f"{d}d{h}h"
+    if h:
+        return f"{h}h{m:02d}m"
+    return f"{m}m"
+
+
+def fmt_ns(ns: float | None) -> str:
+    if ns is None:
+        return "-"
+    a = abs(ns)
+    if a < 1000:
+        return f"{ns:.0f}ns"
+    if a < 1_000_000:
+        return f"{ns / 1000:.1f}µs"
+    return f"{ns / 1e6:.1f}ms"
+
+
+def fmt_gb(b: float) -> str:
+    return f"{b / 1e9:.1f} GB"
+
+
+# ── local facts ───────────────────────────────────────────────────────────────
+
+
+def read_kv(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return out
+
+
+def local_version() -> str:
+    m = re.search(r'"([^"]+)"', _read(REPO / "src" / "__version__.py") or "")
+    return m.group(1) if m else "?"
+
+
+def _read(p: Path) -> str | None:
+    try:
+        return p.read_text()
+    except OSError:
+        return None
+
+
+def uptime_s() -> float | None:
+    t = _read(Path("/proc/uptime"))
+    return float(t.split()[0]) if t else None
+
+
+def interfaces() -> list[tuple[str, str]]:
+    """[(iface, addr/prefix)] for the interfaces worth showing."""
+    try:
+        out = subprocess.run(["ip", "-br", "-4", "addr"], capture_output=True,
+                             text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    res = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] != "lo":
+            res.append((parts[0], parts[2]))
+    return res
+
+
+def service_states(names: list[str]) -> dict[str, str]:
+    try:
+        out = subprocess.run(["systemctl", "is-active", *names],
+                             capture_output=True, text=True, timeout=5).stdout
+        states = out.split()
+    except (OSError, subprocess.SubprocessError):
+        states = []
+    return {n: (states[i] if i < len(states) else "unknown")
+            for i, n in enumerate(names)}
+
+
+def fmt_services(states: dict[str, str]) -> str:
+    parts = []
+    for n, s in states.items():
+        if s == "active":
+            parts.append(f"{n} {ok('●')}")
+        elif s in ("activating", "reloading"):
+            parts.append(f"{n} {warn('◐')}")
+        else:
+            parts.append(f"{n} {bad('○ ' + s)}")
+    return "  ".join(parts)
+
+
+_PTP4L = re.compile(r"master offset\s+(-?\d+)\s+(s\d)\s+freq\s+([+-]?\d+)"
+                    r"(?:\s+path delay\s+(-?\d+))?")
+_PHC2SYS = re.compile(r"offset\s+(-?\d+)\s+(s\d)\s+freq\s+([+-]?\d+)")
+
+
+def parse_ptp4l(lines: list[str]) -> dict | None:
+    """Last 'master offset' line → {offset_ns, state, freq, path_delay_ns}."""
+    for line in reversed(lines):
+        m = _PTP4L.search(line)
+        if m:
+            return {"offset_ns": int(m.group(1)), "state": m.group(2),
+                    "freq": int(m.group(3)),
+                    "path_delay_ns": int(m.group(4)) if m.group(4) else None}
+    return None
+
+
+def parse_phc2sys(lines: list[str]) -> dict | None:
+    for line in reversed(lines):
+        m = _PHC2SYS.search(line)
+        if m and "master offset" not in line:
+            return {"offset_ns": int(m.group(1)), "state": m.group(2),
+                    "freq": int(m.group(3))}
+    return None
+
+
+def journal_tail(unit: str, n: int = 40, since: str | None = "-2min") -> list[str]:
+    cmd = ["journalctl", "-u", unit, "-n", str(n), "--no-pager", "-o", "cat"]
+    if since:
+        cmd += ["--since", since]
+    try:
+        out = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return out.splitlines()
+
+
+def gm_role(lines: list[str]) -> str | None:
+    for line in reversed(lines):
+        if "assuming the grand master role" in line or "to MASTER" in line:
+            return "grandmaster"
+        if "to SLAVE" in line or "to UNCALIBRATED" in line:
+            return "slave"
+    return None
+
+
+def tcp_ok(host: str, port: int, timeout: float = 1.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def read_leases() -> list[dict]:
+    out = []
+    for line in (_read(LEASES_FILE) or "").splitlines():
+        p = line.split()
+        if len(p) >= 4:
+            out.append({"expires": int(p[0]) if p[0].isdigit() else 0,
+                        "mac": p[1], "ip": p[2],
+                        "hostname": "" if p[3] == "*" else p[3]})
+    return sorted(out, key=lambda d: tuple(int(x) for x in d["ip"].split(".")
+                                           if x.isdigit()))
+
+
+# ── controller API ────────────────────────────────────────────────────────────
+
+
+def admin_password() -> str | None:
+    try:
+        return CRED_FILE.read_text().strip()
+    except PermissionError:
+        pass
+    except OSError:
+        return None
+    try:
+        r = subprocess.run(["sudo", "-n", "cat", str(CRED_FILE)],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def api_get(base: str, path: str, token: str, timeout: float = 4.0):
+    req = urllib.request.Request(base + path,
+                                 headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def gather_controller(cfg: dict[str, str]) -> dict:
+    ip = (cfg.get("DEVICE_IP") or DEFAULT_CONTROLLER_IP).split("/")[0]
+    base = f"http://{ip}:{API_PORT}/api/v1"
+    data: dict = {"api": base, "api_error": None}
+    token = admin_password()
+    if not token:
+        data["api_error"] = ("no access to the admin password: run with sudo "
+                             "to list modules")
+        return data
+    try:
+        data["state"] = api_get(base, "/state", token)
+        data["modules"] = api_get(base, "/modules", token).get("modules", {})
+        data["health"] = api_get(base, "/health", token).get("modules", {})
+    except urllib.error.HTTPError as e:
+        data["api_error"] = f"API {e.code} {e.reason}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        reason = getattr(e, "reason", e)
+        data["api_error"] = f"API unreachable at {base} ({reason})"
+    return data
+
+
+# ── rendering ─────────────────────────────────────────────────────────────────
+
+
+def header(cfg: dict[str, str], role: str, version: str, up: float | None,
+           wan: str | None) -> list[str]:
+    typ = cfg.get("TYPE") or "?"
+    lines = [f"{bold(socket.gethostname())}   {role} · {typ}   {version}   "
+             f"up {fmt_duration(up)}"]
+    ifs = []
+    for name, addr in interfaces():
+        label = name
+        if name == "tailscale0":
+            label, addr = "tailscale", addr.split("/")[0]
+        elif wan and name == wan:
+            label = f"{name} (WAN)"
+        ifs.append(f"{label} {addr}")
+    if ifs:
+        lines.append("  " + dim(" · ".join(ifs)))
+    return lines
+
+
+def row(label: str, value: str) -> str:
+    return f"  {label:<10} {value}"
+
+
+def module_status(m: dict, h: dict) -> str:
+    if not m.get("online"):
+        since = h.get("offline_since")
+        ago = f" {fmt_duration(time.time() - since)}" if since else ""
+        return bad("offline" + ago)
+    if h.get("recording") or str(m.get("status", "")).upper() == "RECORDING":
+        return ok("recording")
+    if h.get("hardware_fault"):
+        return bad("fault")
+    s = str(m.get("status") or "").lower()
+    return {"waiting": "idle", "ready": "ready", "": "online"}.get(s, s)
+
+
+def render_controller(cfg: dict[str, str], data: dict) -> list[str]:
+    st = data.get("state") or {}
+    up = uptime_s()
+    version = st.get("version") or local_version()
+    out = header(cfg, "controller", version, up, cfg.get("WAN_INTERFACE"))
+    out.append("")
+    out.append(row("services", fmt_services(service_states(CONTROLLER_SERVICES))))
+
+    ptp_local = gm_role(journal_tail("ptp4l", 2000, since=None)) or "?"
+    ptp = st.get("ptp") or {}
+    if ptp:
+        worst, gate = ptp.get("worst_offset_ns"), ptp.get("start_gate_ns")
+        verdict = ok("synced") if ptp.get("synced") else bad("not synced")
+        out.append(row("PTP", f"{ptp_local} · worst module {fmt_ns(worst)} "
+                              f"(gate {fmt_ns(gate)}) · {verdict}"))
+    else:
+        out.append(row("PTP", ptp_local))
+
+    disk = st.get("disk") or {}
+    if disk:
+        free_pct = disk.get("free_pct")
+        s = disk.get("status")
+        colour = ok if s == "ok" else warn if s == "warn" else bad
+        out.append(row("share", f"{disk.get('path')}  {disk.get('free_gb')} GB "
+                                f"free ({free_pct:.0f}%) "
+                                f"{colour(s or '?')}"
+                       if free_pct is not None else
+                       f"{disk.get('path')} {colour(s or '?')} "
+                       f"{disk.get('error') or ''}"))
+    if st:
+        ses = st.get("sessions") or {}
+        bits = [f"{ses.get(k)} {k}" for k in
+                ("active", "scheduled", "paused", "error") if ses.get(k)]
+        ses_txt = ", ".join(bits) if bits else "none active"
+        rec = ok("recording") if st.get("recording") else "not recording"
+        ui = st.get("ui_clients") or {}
+        out.append(row("sessions", f"{ses_txt} ({ses.get('total', 0)} total) · "
+                                   f"{rec} · web UI {ui.get('total', 0)} "
+                                   f"client(s), {ui.get('admins', 0)} admin"))
+        rig = st.get("rig")
+        if rig:
+            level = rig.get("level")
+            colour = ok if level == "ok" else warn if level == "warn" else bad
+            out.append(row("rig", colour(rig.get("summary") or level or "?")))
+
+    if data.get("api_error"):
+        out += ["", "  " + warn(data["api_error"])]
+
+    mods = data.get("modules") or {}
+    health = data.get("health") or {}
+    known_ips = {m.get("ip") for m in mods.values()}
+    if mods:
+        out.append("")
+        rows = [[dim(h) for h in ("MODULE", "NAME", "TYPE", "IP", "STATUS",
+                                  "PTP", "CPU", "TEMP", "DISK", "VERSION")]]
+        gate = (st.get("ptp") or {}).get("start_gate_ns") or 50_000
+        for mid in sorted(mods, key=lambda k: (mods[k].get("type", ""), k)):
+            m, h = mods[mid], health.get(mid) or {}
+            off = h.get("ptp4l_offset_ns")
+            ptp_txt = fmt_ns(off)
+            if off is not None and m.get("online"):
+                ptp_txt = ok(ptp_txt) if abs(off) <= gate else bad(ptp_txt)
+            temp = h.get("cpu_temp")
+            temp_txt = f"{temp:.0f}°C" if temp is not None else "-"
+            if temp is not None and temp >= 80:
+                temp_txt = bad(temp_txt)
+            elif temp is not None and temp >= 70:
+                temp_txt = warn(temp_txt)
+            cpu = h.get("cpu_usage")
+            disk_used = h.get("disk_space")
+            disk_txt = f"{disk_used:.0f}%" if disk_used is not None else "-"
+            if disk_used is not None and disk_used >= 85:
+                disk_txt = bad(disk_txt)
+            ver = m.get("version") or "?"
+            if ver != version:
+                ver = warn(ver)
+            online = m.get("online")
+            rows.append([
+                mid, m.get("name") or "", m.get("type") or "", m.get("ip") or "",
+                module_status(m, h),
+                ptp_txt if online else "-",
+                f"{cpu:.0f}%" if cpu is not None and online else "-",
+                temp_txt if online else "-",
+                disk_txt, ver,
+            ])
+        out += table(rows, "  ")
+
+    others = [ls for ls in read_leases() if ls["ip"] not in known_ips]
+    if others:
+        out.append("")
+        title = "OTHER DHCP CLIENTS" if mods else "DHCP CLIENTS"
+        rows = [[dim(t) for t in (title, "IP", "MAC", "PING")]]
+        for ls in others:
+            alive = ping(ls["ip"])
+            rows.append([ls["hostname"] or "-", ls["ip"], ls["mac"],
+                         ok("up") if alive else dim("no reply")])
+        out += table(rows, "  ")
+    return out
+
+
+def ping(ip: str) -> bool:
+    if not shutil.which("ping"):
+        return False
+    try:
+        return subprocess.run(["ping", "-c1", "-W1", ip], capture_output=True,
+                              timeout=3).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def count_files(d: Path) -> tuple[int, int]:
+    n = size = 0
+    try:
+        for p in d.rglob("*"):
+            if p.is_file():
+                n += 1
+                size += p.stat().st_size
+    except OSError:
+        pass
+    return n, size
+
+
+def gather_module(cfg: dict[str, str]) -> dict:
+    ctrl = DEFAULT_CONTROLLER_IP
+    active = REPO / "src" / "modules" / "config" / "active_config.json"
+    try:
+        ctrl = (json.loads(active.read_text()).get("export", {})
+                .get("share_ip") or ctrl)
+    except (OSError, ValueError):
+        pass
+    d: dict = {"controller_ip": ctrl,
+               "controller_zmq": tcp_ok(ctrl, ZMQ_PORT),
+               "controller_ping": ping(ctrl),
+               "ptp4l": parse_ptp4l(journal_tail("ptp4l")),
+               "phc2sys": parse_phc2sys(journal_tail("phc2sys")),
+               "queues": {}}
+    for q in ("to_export", "pending"):
+        d["queues"][q] = count_files(RECORDINGS / q)
+    try:
+        du = shutil.disk_usage(RECORDINGS if RECORDINGS.exists() else "/")
+        d["disk"] = {"free": du.free, "total": du.total}
+    except OSError:
+        d["disk"] = None
+    return d
+
+
+def render_module(cfg: dict[str, str], d: dict) -> list[str]:
+    out = header(cfg, "module", local_version(), uptime_s(), None)
+    out.append("")
+    out.append(row("services", fmt_services(service_states(MODULE_SERVICES))))
+    ip = d["controller_ip"]
+    if d["controller_zmq"]:
+        ctl = ok(f"reachable (port {ZMQ_PORT} open)")
+    elif d["controller_ping"]:
+        ctl = warn(f"pings, but port {ZMQ_PORT} closed (controller service down?)")
+    else:
+        ctl = bad("unreachable")
+    out.append(row("controller", f"{ip}  {ctl}"))
+
+    p = d.get("ptp4l")
+    if p:
+        state = {"s0": "unlocked", "s1": "stepping", "s2": "locked"}.get(
+            p["state"], p["state"])
+        txt = (f"ptp4l offset {fmt_ns(p['offset_ns'])} ({state}) · "
+               f"freq {p['freq']} ppb")
+        if p.get("path_delay_ns") is not None:
+            txt += f" · path delay {fmt_ns(p['path_delay_ns'])}"
+        good = p["state"] == "s2" and abs(p["offset_ns"]) <= 50_000
+        out.append(row("PTP", ok(txt) if good else warn(txt)))
+    else:
+        out.append(row("PTP", warn("no ptp4l offsets in the last 2 min")))
+    q = d.get("phc2sys")
+    if q:
+        out.append(row("", dim(f"phc2sys offset {fmt_ns(q['offset_ns'])} "
+                               f"({q['state']}) · freq {q['freq']} ppb")))
+
+    disk = d.get("disk")
+    if disk:
+        pct = 100 * disk["free"] / disk["total"]
+        colour = ok if pct > 15 else warn if pct > 5 else bad
+        out.append(row("storage", f"{RECORDINGS}  {fmt_gb(disk['free'])} free "
+                                  f"({colour(f'{pct:.0f}%')})"))
+    te, pe = d["queues"]["to_export"], d["queues"]["pending"]
+    out.append(row("export", f"to_export {te[0]} file(s) {fmt_gb(te[1])} · "
+                             f"pending {pe[0]} file(s) {fmt_gb(pe[1])}"))
+    return out
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+
+def main(argv: list[str] | None = None) -> int:
+    global _COLOR
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--json", action="store_true", help="print raw data as JSON")
+    ap.add_argument("--no-color", action="store_true")
+    args = ap.parse_args(argv)
+    _COLOR = (sys.stdout.isatty() and not args.no_color
+              and "NO_COLOR" not in os.environ)
+
+    cfg = read_kv(CONFIG_FILE)
+    role = cfg.get("ROLE")
+    if role == "controller":
+        data = gather_controller(cfg)
+        if args.json:
+            print(json.dumps(data, indent=2, default=str))
+            return 0
+        lines = render_controller(cfg, data)
+    elif role == "module":
+        data = gather_module(cfg)
+        if args.json:
+            print(json.dumps(data, indent=2, default=str))
+            return 0
+        lines = render_module(cfg, data)
+    else:
+        print(f"{socket.gethostname()}: no SAVIOUR role assigned "
+              f"(run: sudo saviour-config)")
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -9,7 +9,7 @@
 #   2. Rebuilds the Python virtual environment
 #   3. Rebuilds the frontend (controller only)
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
-#   5. Installs / refreshes the saviour-config symlink
+#   5. Installs / refreshes the saviour-config and saviour-status symlinks
 #   6. Applies logging and NTP configuration; turns off background OS
 #      update jobs on modules
 #   7. Disables NVMe APST (power-state transitions) on devices with an NVMe root
@@ -286,6 +286,19 @@ else
     else
         fix "Installing symlink $SAVIOUR_CONFIG_LINK → $SAVIOUR_CONFIG_SRC"
         ln -sf "$SAVIOUR_CONFIG_SRC" "$SAVIOUR_CONFIG_LINK"
+    fi
+fi
+
+# saviour-status: read-only overview command, installed the same way.
+SAVIOUR_STATUS_SRC="$TARGET_DIR/saviour-status"
+SAVIOUR_STATUS_LINK="/usr/local/bin/saviour-status"
+if [ -f "$SAVIOUR_STATUS_SRC" ]; then
+    chmod +x "$SAVIOUR_STATUS_SRC"
+    if [ "$(readlink -f "$SAVIOUR_STATUS_LINK" 2>/dev/null)" = "$SAVIOUR_STATUS_SRC" ]; then
+        ok "saviour-status symlink already correct"
+    else
+        fix "Installing symlink $SAVIOUR_STATUS_LINK → $SAVIOUR_STATUS_SRC"
+        ln -sf "$SAVIOUR_STATUS_SRC" "$SAVIOUR_STATUS_LINK"
     fi
 fi
 

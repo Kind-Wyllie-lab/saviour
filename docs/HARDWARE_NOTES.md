@@ -14,7 +14,7 @@ Full hardware findings, moved verbatim from `CLAUDE.md` on 2026-10-06
 
 - The controller runs `phc2sys` to discipline the system clock from its PTP hardware clock. This means `systemd-timesyncd` / NTP is active and `timedatectl set-time` will fail with *"Automatic time synchronization is enabled"*. Any code that sets the system time must disable NTP first (`timedatectl set-ntp false`), set the time, then re-enable it (`timedatectl set-ntp true`) — ideally in a try/finally.
 
-## Hailo AI HAT / PCIe driver (`apa_camera`, `lightning_camera`)
+## Hailo AI HAT / PCIe driver (`apa_camera`, `hailo_camera`)
 
 - **`hailort-pcie-driver` needs `dkms` installed *before* it does, or it silently falls back to an unmanaged one-off kernel module build that breaks again on the next kernel upgrade** (found 2026-08-18). If `dkms` isn't present, the postinst prints `Failed to install PCIe driver to the DKMS tree. Trying to install PCIe driver without DKMS` and builds a plain module for the *currently running* kernel only — nothing rebuilds it on the next `apt upgrade`, so `modprobe hailo_pci` then fails with `Module hailo_pci not found`. Fixed for new installs by ordering `dkms` ahead of `hailo-all` in both variants' `variant.conf` `APT_PACKAGES` (the loop installs one at a time in list order). Already-provisioned Pi in this state: `sudo apt install dkms && sudo apt install --reinstall hailort-pcie-driver && sudo reboot`.
 - **Diagnostic order for "Hailo device not found"**: `lspci | grep -i hailo` first (is the PCIe link up? if not, check `dtparam=pciex1`/`dtparam=pciex1_gen=3` in `/boot/firmware/config.txt`, reboot after adding) → `lsmod | grep hailo` → `dmesg | grep -i hailo` → `dkms status` (built against the running kernel per `uname -r`?).

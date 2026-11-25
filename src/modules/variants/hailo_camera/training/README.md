@@ -1,13 +1,12 @@
-# Training a single-view pose model for lightning_camera
+# Training a single-view pose model for hailo_camera
 
 This folder covers getting from hand-labelled data to a trained Lightning
 Pose checkpoint. `tools/convert_lp_pose_to_hailo.py` (repo root) then
-compiles that checkpoint into the `.hef` `lightning_camera_module.py`'s
-`HailoPoseDetector` runs on-device — see
+compiles that checkpoint into the `.hef` (plus its `.json` sidecar) that
+`hailo_camera` runs on-device for per-frame keypoints in the timestamp CSV — see
 [`docs/readthedocs/hailo_pose_conversion.md`](../../../../docs/readthedocs/hailo_pose_conversion.md)
-for that step. As of 2026-08-26 that conversion script is still a
-self-documented unverified template — nobody has run it against a real
-checkpoint yet, since until now no single-view checkpoint existed at all.
+for that step. As of 2026-11-25 the converter's export checks have run only
+against LP's code paths, not yet a real trained checkpoint or the Hailo DFC.
 
 ## Why a separate single-view model
 
@@ -50,8 +49,8 @@ something either this README or the prep script can promise.
 
 1. **Assemble the project.** `prepare_lp_project.py` copies the labelled
    frames + CSV into the on-disk layout Lightning Pose expects, and writes
-   a `config.yaml` (keypoint list read from `lightning_camera_config.json`
-   directly, so it can't drift out of sync with the module):
+   a `config.yaml` (keypoint list read from `rat_keypoints.json` next to the
+   script, which also gives the converter its overlay skeleton):
    ```bash
    pip install -r requirements.txt   # pyyaml only, for this step
    python prepare_lp_project.py \
@@ -100,21 +99,13 @@ something either this README or the prep script can promise.
    output too. A model that clearly isn't tracking the animal at this stage
    isn't going to get better by compiling it.
 
-4. **Convert + deploy** — see
+4. **Convert, check quantisation, deploy** — see
    [`docs/readthedocs/hailo_pose_conversion.md`](../../../../docs/readthedocs/hailo_pose_conversion.md).
-   Note the Hailo Dataflow Compiler's quantization step needs its own
-   **calibration set** — 64-128 real, *unlabeled* images representative of
-   the actual camera view (the arena, with and without the animal), passed
-   via `--calib-dir` to `tools/convert_lp_pose_to_hailo.py`. This is a
-   separate concept from the train/val/test split above: calibration only
-   needs raw frames to compute activation statistics for quantization, not
-   labelled keypoints, and doesn't have to come from the same 92 labelled
-   frames — a larger, more varied set of unlabeled frames from the deployed
-   camera is fine, and likely better. Expect this step to need real
-   debugging: the equivalent detection-model conversion
-   (`tools/convert_to_hailo.py`, apa_camera's rat detector) took several
-   rounds of trial and error against the Hailo Dataflow Compiler before
-   parsing succeeded, and is *still* not fully working through quantization
-   as of this writing — and the docs for the pose path specifically flag it
-   as less standardized than the detection path (no on-chip NMS equivalent
-   for heatmaps, fewer known-working examples).
+   The DFC's quantisation step needs its own **calibration set**
+   (`--calib-dir`, at least 64 frames, required): raw, *unlabelled* frames
+   from the deployed camera, sampled across several sessions and lighting
+   conditions, with the animal in unusual postures and near the walls; pass
+   several directories and they're sampled evenly. Then run `eval-quant` on
+   the held-out labelled frames before anything goes on a Pi: it reports
+   per-keypoint pixel error of the float and quantised models against the
+   labels and against each other.

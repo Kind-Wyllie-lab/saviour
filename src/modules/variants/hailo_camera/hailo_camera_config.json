@@ -49,7 +49,9 @@
         "max_labels": 40,
         "infer_every_n": 2,
         "max_detections": 12,
-        "custom_labels": []
+        "custom_labels": [],
+        "lp_infer_every_n": 1,
+        "lp_decode": "exact"
     },
     "recording": {
         "_recording_filetype": "ts"

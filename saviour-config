@@ -545,7 +545,7 @@ hardware_scan() {
     hailo=$(lspci 2>/dev/null | grep -i hailo | sed -E 's/.*Hailo Technologies Ltd\.? //' | head -1 || true)
     if [ -n "$cams" ]; then
         _hw_line "CSI camera" "$cams"
-        [ -n "$hailo" ] && _hw_suggest hailo_camera apa_camera lightning_camera
+        [ -n "$hailo" ] && _hw_suggest hailo_camera apa_camera
         _hw_suggest camera habitat_camera loom_camera
     else
         _hw_line "CSI camera" "none found"

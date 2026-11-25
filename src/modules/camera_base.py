@@ -1581,6 +1581,23 @@ class CameraBase(Module):
         Default: no-op."""
         pass
 
+    def _frame_request_hook(self, req, timing: FrameTiming, main_shape: tuple,
+                            main_rot_k: int) -> Any:
+        """Hook: runs on EVERY frame (recording or not) after the main-stream
+        processing, with the libcamera request (map other streams with
+        MappedArray(req, "lores")). `main_rot_k` is the number of np.rot90
+        quarter turns applied to the main frame in place (0 unless a software
+        rotation was applied: 90/270 on a square output). Whatever it returns is handed to
+        _emit_csv_row with this frame's row. Default: no-op."""
+        return None
+
+    def _emit_csv_row(self, row: list, token: Any) -> None:
+        """Queue one CSV row for the flush worker. A subclass may hold rows
+        back (keeping their order) to fill in columns computed off the
+        capture thread; it must release them before _close_timestamp_csv's
+        final drain. Default: append straight away."""
+        self._csv_row_buffer.append(row)
+
     def _after_frame_hook(self, timing: FrameTiming) -> None:
         """Hook: runs once per frame after all main/lores processing and the
         CSV write. For anything that needs to happen every frame but isn't
@@ -1726,6 +1743,16 @@ class CameraBase(Module):
                     self._apply_timestamp(
                         m.array, ts_label, "main", compensate_k=compensate_k,
                     )
+                main_shape = m.array.shape
+
+            # Per-frame hook with the whole request (e.g. hailo_camera hands
+            # the lores frame of EVERY frame to its pose model). Told how many
+            # quarter turns the main frame was rotated in place, so it can
+            # orient other streams the same way.
+            csv_token = self._frame_request_hook(
+                req, timing, main_shape,
+                rotation // 90 if rotated_in_place else 0,
+            )
 
             # Buffer CSV row for off-thread write — no file I/O on the capture
             # thread. Gated on _encoder_active so row i always corresponds to
@@ -1743,7 +1770,7 @@ class CameraBase(Module):
                     colour_gains[0], colour_gains[1],
                 ]
                 row.extend(extra.get(col, "") for col in self.CSV_EXTRA_COLUMNS)
-                self._csv_row_buffer.append(row)
+                self._emit_csv_row(row, csv_token)
                 self._frame_id += 1
 
             # Lores stream — only process frames that will actually be JPEG-encoded.

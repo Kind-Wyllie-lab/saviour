@@ -350,7 +350,10 @@ def render_controller(cfg: dict[str, str], data: dict) -> list[str]:
     ptp = st.get("ptp") or {}
     if ptp:
         worst, gate = ptp.get("worst_offset_ns"), ptp.get("start_gate_ns")
-        verdict = ok("synced") if ptp.get("synced") else bad("not synced")
+        if worst is None:
+            verdict = warn("no module offsets yet (waiting for heartbeats)")
+        else:
+            verdict = ok("synced") if ptp.get("synced") else bad("not synced")
         out.append(row("PTP", f"{ptp_local} · worst module {fmt_ns(worst)} "
                               f"(gate {fmt_ns(gate)}) · {verdict}"))
     else:

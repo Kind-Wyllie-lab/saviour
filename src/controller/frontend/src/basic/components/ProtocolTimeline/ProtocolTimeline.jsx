@@ -10,6 +10,9 @@ import "./ProtocolTimeline.css";
 // rows:  [{ key, label, sublabel? }] (sublabel: a smaller second line)
 // spans: [{ row, start, end (null = held to the end), label }]
 // duration: seconds the axis must cover
+// minDuration: the axis covers at least this much (an empty protocol still
+//   gets a grid); alwaysShow: with no rows, draw one placeholder row
+//   (emptyText) instead of only the text.
 //
 // Drag across the plot to zoom, double-click or "Reset zoom" to go back.
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
@@ -46,11 +49,14 @@ function describe(bar) {
 
 // highlightRow: a row key to emphasise (the others fade), or null.
 // cursorT: a "now" line at this many seconds (a running test), or null.
-export default function ProtocolTimeline({ rows, spans, duration, emptyText, highlightRow = null,
-  cursorT = null }) {
+export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyText, highlightRow = null,
+  cursorT = null, minDuration = 0, alwaysShow = false }) {
+  const placeholder = alwaysShow && !rowsIn.length;
+  const rows = useMemo(
+    () => (placeholder ? [{ key: "__none", label: "No outputs" }] : rowsIn), [placeholder, rowsIn]);
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(600);
-  const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1);
+  const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1, minDuration);
   const [view, setView] = useState(null); // null = whole protocol
   const [drag, setDrag] = useState(null);
   const [hover, setHover] = useState(null);
@@ -105,6 +111,14 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
   const ticks = [];
   for (let t = Math.ceil(v0 / step) * step; t <= v1 + 1e-9; t += step) ticks.push(t);
   const withMs = step < 1;
+  // Unlabelled grid lines on every minute between the labelled ticks, while
+  // they stay at least 6 px apart.
+  const minuteLines = [];
+  if (step > 60 && (60 / (v1 - v0)) * plotW >= 6) {
+    for (let t = Math.ceil(v0 / 60) * 60; t <= v1 + 1e-9; t += 60) {
+      if (Math.abs(t / step - Math.round(t / step)) > 1e-9) minuteLines.push(t);
+    }
+  }
 
   const svgPoint = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -155,7 +169,9 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
     <div className="ptl" ref={wrapRef}>
       <div className="ptl-toolbar">
         <span className="ptl-range">
-          {zoomed ? `${fmtTime(v0, withMs)} – ${fmtTime(v1, withMs)}` : `Whole protocol · ${fmtTime(duration, duration < 60)}`}
+          {zoomed ? `${fmtTime(v0, withMs)} – ${fmtTime(v1, withMs)}`
+            : duration > 0 ? `Whole protocol · ${fmtTime(duration, duration < 60)}`
+              : `No steps yet · showing ${fmtTime(fullEnd)}`}
         </span>
         <span className="ptl-hint">Drag across the chart to zoom</span>
         {zoomed && (
@@ -175,6 +191,9 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
           onDoubleClick={() => setView(null)}
         >
           {/* grid + axis */}
+          {minuteLines.map((t) => (
+            <line key={`m${t}`} className="ptl-grid ptl-grid--minor" x1={xOf(t)} x2={xOf(t)} y1={AXIS_H} y2={height - 6} />
+          ))}
           {ticks.map((t) => (
             <g key={t}>
               <line className="ptl-grid" x1={xOf(t)} x2={xOf(t)} y1={AXIS_H - 4} y2={height - 6} />
@@ -204,6 +223,9 @@ export default function ProtocolTimeline({ rows, spans, duration, emptyText, hig
               </g>
             );
           })}
+          {placeholder && (
+            <text className="ptl-sublabel" x={LABEL_W + 8} y={AXIS_H + ROW_H / 2 + 4}>{emptyText}</text>
+          )}
           {/* bars */}
           {bars.map((b, i) => (
             <rect

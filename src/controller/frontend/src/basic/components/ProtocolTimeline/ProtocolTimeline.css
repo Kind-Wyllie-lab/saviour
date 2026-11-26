@@ -54,6 +54,8 @@
   opacity: 0.6;
 }
 
+.ptl-grid--minor { opacity: 0.3; }
+
 .ptl-baseline {
   stroke: var(--border-color);
   stroke-width: 1;

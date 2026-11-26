@@ -363,6 +363,9 @@ function usesJitter(steps) {
     && ((Number(s.jitter_s?.[1]) || 0) > 0 || "spread_s" in s || usesJitter(s.steps)));
 }
 
+// The timeline always covers at least the first 10 min, steps or not.
+const TIMELINE_MIN_S = 600;
+
 // renderTest(result): the Test routine controls, given the current
 // validation; cursorT: seconds into a running test, drawn on the timeline.
 // renderTest(result, protocol): the Test routine controls; cursorT: seconds
@@ -433,13 +436,15 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
             </select>
           </label>
         )}
-        <label className="pe-field">
-          <span className="pe-field-label">When it ends</span>
-          <select value={protocol?.end_state ?? "all_inactive"} onChange={(e) => update({ end_state: e.target.value })}>
-            <option value="all_inactive">All pins inactive</option>
-            <option value="hold">Hold last levels</option>
-          </select>
-        </label>
+        {/* Length comes from the steps (the last one's end); the protocol has
+            no end setting of its own, and pins go inactive when it ends. */}
+        <div className="pe-field">
+          <span className="pe-field-label">Length</span>
+          <span className="pe-length" title="From the steps: when the last one ends">
+            {result?.ok && result.durationS > 0
+              ? fmtTime(result.durationS, result.durationS < 60) : "–"}
+          </span>
+        </div>
         <div className="pe-top-right">
           <button type="button" className="pe-small" onClick={() => (jsonMode ? setJsonMode(false) : openJson())}>
             {jsonMode ? "Table view" : "Edit as JSON"}
@@ -555,9 +560,11 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           rows={rows}
           spans={spans}
           duration={result?.durationS ?? 0}
+          minDuration={TIMELINE_MIN_S}
+          alwaysShow
           highlightRow={focusPin}
           cursorT={cursorT}
-          emptyText="Add a scheduled pin or a sound module, and some steps, to see the timeline."
+          emptyText="Set a TTL pin to Scheduled or connect a sound module to get a row here."
         />
       </div>
     </div>

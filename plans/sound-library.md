@@ -1,7 +1,7 @@
 # Sound library: upload with analysis, generated stimuli, calibrated levels
 
-- **Status:** phase 1 built 2026-11-26 (written up in CHANGELOG), not yet
-  run in a browser; phases 2-4 not started.
+- **Status:** phases 1-2 built 2026-11-26 (written up in CHANGELOG), not
+  yet run in a browser; phases 3-4 not started.
 - **Created:** 2026-11-26
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -95,7 +95,11 @@ with "convert to WAV". Output, stored in the sidecar:
    file. Modules sync the library on connect and on change (name + hash;
    fetch what's missing). Band-limited resampler. Protocol designer's file
    picker lists the library. Per-output level/duration cap (dBFS).
-2. **Generators.** A **New sound** modal: tone, noise burst (white /
+2. **Generators.** *Built 2026-11-26* (`src/shared/sound_generator.py`,
+   `NewSoundModal.jsx`); noise colours white/pink/brown/blue/violet with
+   band and notch were added to the plan; background noise is the noise
+   type at a long length; "fresh noise per trial" is still a later protocol
+   option. A **New sound** modal: tone, noise burst (white /
    band-limited; frozen with a recorded seed, or fresh per trial as a
    protocol option later), continuous background noise, gap in noise, click
    train, AM tone, FM sweep. All with duration, level (dBFS), cosine onset/

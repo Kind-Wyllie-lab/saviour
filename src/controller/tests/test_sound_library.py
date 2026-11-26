@@ -174,3 +174,37 @@ class TestSocketFlow:
         errors = [e["error"] for e in self._events(client, "sound_library_error")]
         assert any("built-in" in e for e in errors)
         assert any("Startle" in e for e in errors)
+
+
+class TestGenerate:
+    def test_generate_stage_add_records_parameters(self, lib, tmp_path):
+        staged = lib.generate({"type": "noise", "colour": "pink", "duration_s": 0.5})
+        assert staged["name"].startswith("noise_pink_") and staged["generator"]["seed"] >= 0
+        assert staged["analysis"]["rms_dbfs"] == pytest.approx(-20, abs=0.1)
+        entry = lib.add(staged["name"])
+        assert entry["source"] == "generator" and entry["generator"]["colour"] == "pink"
+        side = json.loads((tmp_path / "lib" / (staged["name"][:-4] + ".json")).read_text())
+        assert side["generator"]["generator_version"] >= 1
+
+    def test_bad_parameters_explained(self, lib):
+        with pytest.raises(SoundLibraryError, match="freq_hz"):
+            lib.generate({"type": "tone", "freq_hz": 40000})
+
+    def test_name_rules_apply(self, lib):
+        with pytest.raises(SoundLibraryError, match="File names"):
+            lib.generate({"type": "tone"}, "has space")
+        assert lib.generate({"type": "tone"}, "startle_tone")["name"] == "startle_tone.wav"
+
+
+def test_generate_sound_over_socketio(lib):
+    flow = TestSocketFlow()
+    app, sio, sent, _ = flow._setup(lib)
+    client = sio.test_client(app)
+    client.emit("generate_sound", {"params": {"type": "noise", "colour": "brown",
+                                              "low_hz": 500, "duration_s": 0.2, "seed": 9}})
+    got = flow._events(client, "sound_upload_analysis")
+    assert len(got) == 1 and got[0]["generator"]["seed"] == 9
+    client.emit("add_sound", {"name": got[0]["name"]})
+    assert sent and sent[0][1] == "sync_sound_library"
+    client.emit("generate_sound", {"params": {"type": "tone", "freq_hz": 99999}})
+    assert any("freq_hz" in e["error"] for e in flow._events(client, "sound_library_error"))

@@ -174,3 +174,9 @@ body.dark-mode .sound-view__warnings { color: #e0a030; }
 .sound-slider { display: flex; align-items: center; gap: 10px; max-width: 360px; }
 .sound-slider input[type="range"] { flex: 1; accent-color: var(--accent-color); }
 .sound-slider__value { min-width: 110px; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+
+/* Library sections: recordings and built sounds */
+.sound-library__section { display: flex; flex-direction: column; gap: 8px; }
+.sound-library__head h4 { margin: 0; font-size: 1rem; }
+.sound-library__head .sound-test-btn { margin-left: auto; }
+.sound-library__section + .sound-library__section { border-top: 1px solid var(--border-color); padding-top: 12px; }

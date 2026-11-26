@@ -211,7 +211,7 @@ function makeModules() {
           device: "hw:CARD=sndrpihifiberry,DEV=0", channels: 8, outputs: 4,
           presence_verified: false, channels_from: "alsa",
           detail: "HiFiBerry DAC8x (card 2 'sndrpihifiberry'): 8 channels, 4 stereo outputs",
-          files: { "tone_5k.wav": 3.0, "8k.wav": 1.0, "dog_bark.wav": 1.42 },
+          files: { "tone_5k.wav": 3.0, "dog_bark.wav": 1.42 },
         },
         recording: { segment_length_mins: 120 },
       },

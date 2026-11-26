@@ -1,13 +1,17 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import socket from "/src/socket";
 import SoundView from "./SoundView";
 import { TYPES } from "./soundTypes";
 
-// "New sound": pick a type, set its parameters, Preview (the controller
-// renders it and returns the same analysis as an upload), then Add to
-// library. Defaults and limits mirror src/shared/sound_generator.py, which
-// checks everything again and explains a refusal.
+// "New sound": pick a type and set its parameters; the controller renders a
+// preview after each change (waveform, spectrogram, levels, and audio to
+// play here) and Add to library renders the full sound and adds it. The
+// library holds single sounds: repeating them is the protocol's job.
+// Defaults and limits mirror src/shared/sound_generator.py, which checks
+// everything again and explains a refusal.
 
 const MAX_HZ = 21600;
+const PREVIEW_DEBOUNCE_MS = 300;
 
 const COLOURS = [
   { key: "white", label: "White", help: "flat: equal energy per Hz" },
@@ -18,16 +22,17 @@ const COLOURS = [
 ];
 
 const NOISE = { colour: "white", low_hz: 1000, high_hz: 20000, notch_low_hz: "", notch_high_hz: "", seed: "" };
+const COMMON = { duration_s: 1, level_dbfs: -20, ramp_ms: 5 };
 const DEFAULTS = {
-  tone: { duration_s: 1, level_dbfs: -20, ramp_ms: 5, freq_hz: 5000 },
-  noise: { duration_s: 0.04, level_dbfs: -20, ramp_ms: 2, ...NOISE },
-  gap: { duration_s: 1, level_dbfs: -20, ramp_ms: 5, ...NOISE, gap_start_s: 0.5, gap_ms: 50, gap_ramp_ms: 1 },
-  click_train: { duration_s: 1, level_dbfs: -20, ramp_ms: 0, rate_hz: 10, click_us: 100, polarity: "positive" },
-  am_tone: { duration_s: 1, level_dbfs: -20, ramp_ms: 5, carrier_hz: 8000, mod_hz: 40, depth: 1 },
-  fm_sweep: { duration_s: 1, level_dbfs: -20, ramp_ms: 5, start_hz: 2000, end_hz: 20000, sweep: "log" },
+  tone: { ...COMMON, freq_hz: 5000 },
+  noise: { ...COMMON, ...NOISE },
+  gap: { ...COMMON, ...NOISE, gap_start_s: 0.5, gap_ms: 50, gap_ramp_ms: 1 },
+  click: { level_dbfs: -20, click_us: 100, polarity: "positive" },
+  am_tone: { ...COMMON, carrier_hz: 8000, mod_hz: 40, depth: 1 },
+  fm_sweep: { ...COMMON, start_hz: 2000, end_hz: 20000, sweep: "log" },
 };
 
-const RMS_TYPES = new Set(["noise", "gap"]);
+const fmtDb = (v) => (v == null ? "–" : `${v.toFixed(1)}`);
 
 function Num({ label, k, p, set, help, ...props }) {
   return (
@@ -72,38 +77,101 @@ export default function NewSoundModal({ lib, initial, onClose }) {
     return base;
   });
   const [name, setName] = useState("");
+  const [preview, setPreview] = useState(null);   // {params, analysis, levels, preview_s, name} | {error}
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(null);     // name being added
+  const [addError, setAddError] = useState(null);
+  const [audioUrl, setAudioUrl] = useState(null);
+  const seq = useRef(0);
   const p = params[type];
   const set = (k, v) => setParams((all) => ({ ...all, [type]: { ...all[type], [k]: v } }));
-  const up = lib.upload;
-  const reviewing = up?.stage === "analysed" && up.generator;
   const isNoise = type === "noise" || type === "gap";
+  const request = useMemo(() => cleaned(type, p), [type, p]);
+  const requestKey = JSON.stringify(request);
 
-  const preview = () => lib.generate(cleaned(type, p), name.trim());
-  const close = () => { if (reviewing) lib.discard(up.name); onClose(); };
+  // Preview after each change (debounced); stale replies are ignored.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      seq.current += 1;
+      setLoading(true);
+      socket.emit("preview_sound", { seq: seq.current, params: request });
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [requestKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onPreview = (d) => {
+      if (d?.seq !== seq.current) return;
+      setLoading(false);
+      setPreview(d);
+      // Keep the noise the seed made while the other fields change.
+      if (!d.error && d.params?.seed != null) {
+        setParams((all) => {
+          const cur = all[d.params.type];
+          return cur && cur.seed === "" ? { ...all, [d.params.type]: { ...cur, seed: d.params.seed } } : all;
+        });
+      }
+    };
+    const onList = (d) => {
+      if (adding && d?.added === adding) onClose(adding);
+    };
+    const onError = (d) => { if (adding) { setAdding(null); setAddError(d?.error ?? "Couldn't add the sound"); } };
+    socket.on("sound_preview", onPreview);
+    socket.on("sound_library", onList);
+    socket.on("sound_library_error", onError);
+    return () => {
+      socket.off("sound_preview", onPreview);
+      socket.off("sound_library", onList);
+      socket.off("sound_library_error", onError);
+    };
+  }, [adding, onClose]);
+
+  // Audio for the play button.
+  useEffect(() => {
+    if (!preview?.wav) { setAudioUrl(null); return undefined; }
+    const url = URL.createObjectURL(new Blob([preview.wav], { type: "audio/wav" }));
+    setAudioUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [preview]);
+
+  const finalName = (name.trim() || preview?.name || "").replace(/(\.wav)?$/i, ".wav");
+  const exists = finalName && (lib.items ?? []).some((e) => e.name === finalName);
+  const ok = preview && !preview.error;
+  const lv = ok ? preview.levels : null;
+  const truncated = ok && preview.params.duration_s > preview.preview_s + 1e-9;
+
+  const add = () => {
+    setAddError(null);
+    setAdding(finalName);
+    // The seed the preview used, so the library gets the noise you heard.
+    socket.emit("generate_sound", { params: { ...request, ...(isNoise && preview?.params ? { seed: preview.params.seed } : {}) },
+      name: finalName, add: true });
+  };
 
   return (
-    <div className="modal-overlay" onClick={close}>
+    <div className="modal-overlay" onClick={() => onClose()}>
       <div className="modal sound-new-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="New sound">
         <h3>New sound</h3>
 
-        {!reviewing && (
-          <>
-            <div className="sound-type-tiles" role="radiogroup" aria-label="Sound type">
-              {TYPES.map((t) => (
-                <button key={t.key} type="button" role="radio" aria-checked={type === t.key}
-                  className={`sound-type-tile${type === t.key ? " sound-type-tile--active" : ""}`}
-                  onClick={() => setType(t.key)}>
-                  <b>{t.label}</b><span>{t.help}</span>
-                </button>
-              ))}
-            </div>
+        <div className="sound-type-tiles" role="radiogroup" aria-label="Sound type">
+          {TYPES.map((t) => (
+            <button key={t.key} type="button" role="radio" aria-checked={type === t.key}
+              className={`sound-type-tile${type === t.key ? " sound-type-tile--active" : ""}`}
+              onClick={() => setType(t.key)}>
+              <b>{t.label}</b><span>{t.help}</span>
+            </button>
+          ))}
+        </div>
 
+        <div className="sound-new-body">
+          <div className="sound-new-form">
             <div className="sound-gen-grid">
-              <Num label="Length (s)" k="duration_s" p={p} set={set} min="0.001" max="300" />
-              <Num label={RMS_TYPES.has(type) ? "Level, RMS (dBFS)" : "Level, peak (dBFS)"} k="level_dbfs" p={p} set={set} max="0"
-                help={RMS_TYPES.has(type) ? "Noise peaks ~12 dB above its RMS; a level that would clip is refused." : null} />
-              <Num label="Onset/offset ramp (ms)" k="ramp_ms" p={p} set={set} min="0"
-                help={type === "click_train" ? "Usually 0 for clicks: a ramp swallows the first ones." : "Raised cosine; stops the sound clicking on and off."} />
+              {type !== "click" && <Num label="Length (s)" k="duration_s" p={p} set={set} min="0.001" max="300" />}
+              <Num label={type === "click" ? "Level, peak (dBFS)" : "Level, RMS (dBFS)"} k="level_dbfs" p={p} set={set} max="0"
+                help={type === "click" ? "A click is described by its peak." : "Measured over the plateau, without the ramps."} />
+              {type !== "click" && (
+                <Num label="Onset/offset ramp (ms)" k="ramp_ms" p={p} set={set} min="0" help="Raised cosine; stops the sound clicking on and off." />
+              )}
 
               {type === "tone" && <Num label="Frequency (Hz)" k="freq_hz" p={p} set={set} min="20" max={MAX_HZ} />}
 
@@ -121,9 +189,9 @@ export default function NewSoundModal({ lib, initial, onClose }) {
                     <div className="sound-row">
                       <input type="number" step="1" min="0" value={p.seed ?? ""} placeholder="random"
                         onChange={(e) => set("seed", e.target.value === "" ? "" : Number(e.target.value))} />
-                      {p.seed !== "" && <button type="button" className="sound-link" onClick={() => set("seed", "")}>New noise</button>}
+                      <button type="button" className="sound-link" onClick={() => set("seed", "")}>New noise</button>
                     </div>
-                    <span className="sound-help">The same seed makes the identical noise (frozen). Blank draws a new one, recorded with the sound.</span>
+                    <span className="sound-help">The same seed makes the identical noise. Stored with the sound.</span>
                   </div>
                 </>
               )}
@@ -136,12 +204,11 @@ export default function NewSoundModal({ lib, initial, onClose }) {
                 </>
               )}
 
-              {type === "click_train" && (
+              {type === "click" && (
                 <>
-                  <Num label="Clicks per second" k="rate_hz" p={p} set={set} min="0.1" max="1000" />
-                  <Num label="Click width (µs)" k="click_us" p={p} set={set} min="21" />
+                  <Num label="Width (µs)" k="click_us" p={p} set={set} min="21" help="Rounded to whole samples (20.8 µs each at 48 kHz)." />
                   <Choice label="Polarity" k="polarity" p={p} set={set}
-                    options={[{ key: "positive", label: "All positive" }, { key: "alternating", label: "Alternating" }]} />
+                    options={[{ key: "positive", label: "Positive (condensation)" }, { key: "negative", label: "Negative (rarefaction)" }]} />
                 </>
               )}
 
@@ -165,35 +232,39 @@ export default function NewSoundModal({ lib, initial, onClose }) {
 
             <div className="sound-fblock">
               <label>File name</label>
-              <input type="text" value={name} placeholder="automatic (describes the sound)"
+              <input type="text" value={name} placeholder={preview?.name ?? "automatic (describes the sound)"}
                 onChange={(e) => setName(e.target.value)} />
+              {exists && <span className="sound-warn">Replaces the library file of this name.</span>}
             </div>
+          </div>
 
-            {up?.error && <p className="sound-error">{up.error}</p>}
-            <div className="modal-buttons">
-              <button type="button" className="save-button" onClick={preview} disabled={up?.stage === "generating"}>
-                {up?.stage === "generating" ? "Making…" : "Preview"}
-              </button>
-              <button type="button" className="reset-button" onClick={close}>Cancel</button>
+          <div className="sound-new-preview" aria-live="polite">
+            <div className="sound-row sound-new-preview__head">
+              <b>Preview</b>
+              {loading && <span className="sound-muted">updating…</span>}
+              {audioUrl && <audio controls src={audioUrl} className="sound-new-audio" />}
             </div>
-          </>
-        )}
+            {preview?.error && <p className="sound-error">{preview.error}</p>}
+            {ok && (
+              <>
+                <p className="sound-levels">
+                  Plateau RMS <b>{fmtDb(lv.plateau_rms_dbfs)} dBFS</b> · peak {fmtDb(lv.peak_dbfs)} dBFS · headroom {fmtDb(lv.headroom_db)} dB
+                </p>
+                {truncated && <p className="sound-muted">Showing the first {preview.preview_s} s of {preview.params.duration_s} s; Add renders it all.</p>}
+                <p className="sound-muted">Played here through your computer: for the shape and pitch, not the level. Use an output's Test button to hear it on the rig.</p>
+                <SoundView entry={{ analysis: preview.analysis }} />
+              </>
+            )}
+          </div>
+        </div>
 
-        {reviewing && (
-          <>
-            <h4 className="sound-gen-name">{up.name}{up.replaces ? " (replaces the library file of this name)" : ""}</h4>
-            <SoundView entry={{ analysis: up.analysis, sha256: up.analysis?.sha256 }} />
-            <div className="modal-buttons">
-              <button type="button" className="save-button" onClick={() => { lib.add(up.name); onClose(up.name); }}>
-                {up.replaces ? "Replace in library" : "Add to library"}
-              </button>
-              <button type="button" className="reset-button" onClick={() => {
-                if (up.generator?.seed != null && isNoise) set("seed", up.generator.seed);
-                lib.discard(up.name);
-              }}>Back to edit</button>
-            </div>
-          </>
-        )}
+        {addError && <p className="sound-error">{addError}</p>}
+        <div className="modal-buttons">
+          <button type="button" className="save-button" onClick={add} disabled={!ok || !!adding || loading}>
+            {adding ? "Adding…" : exists ? "Replace in library" : "Add to library"}
+          </button>
+          <button type="button" className="reset-button" onClick={() => onClose()}>Cancel</button>
+        </div>
       </div>
     </div>
   );

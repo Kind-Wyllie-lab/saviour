@@ -99,7 +99,12 @@ with "convert to WAV". Output, stored in the sidecar:
    `NewSoundModal.jsx`); noise colours white/pink/brown/blue/violet with
    band and notch were added to the plan; background noise is the noise
    type at a long length; "fresh noise per trial" is still a later protocol
-   option. A **New sound** modal: tone, noise burst (white /
+   option. Revised the same day (generator v2): the library holds single
+   sounds and the protocol designer repeats them, so a single click replaced
+   the click train and there are no presets; level is the plateau RMS (click:
+   peak); the window previews live. Open: a protocol that plays a file
+   longer than the file (e.g. 30 s of background from a 1 s noise) needs
+   looping on the module, which play steps can't do yet. A **New sound** modal: tone, noise burst (white /
    band-limited; frozen with a recorded seed, or fresh per trial as a
    protocol option later), continuous background noise, gap in noise, click
    train, AM tone, FM sweep. All with duration, level (dBFS), cosine onset/

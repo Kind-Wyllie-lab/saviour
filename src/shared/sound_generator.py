@@ -13,13 +13,18 @@ Types:
                notch_low_hz/notch_high_hz (optional), seed
   gap          a noise (same parameters) with a silent gap: gap_start_s,
                gap_ms, gap_ramp_ms (gap-prepulse inhibition)
-  click_train  rate_hz, click_us, polarity (positive/alternating)
+  click        click_us, polarity (positive/negative): one rectangular click;
+               a protocol repeats it (the library holds single sounds)
   am_tone      carrier_hz, mod_hz, depth (0-1)
   fm_sweep     start_hz, end_hz, sweep (linear/log)
-Every type: duration_s, level_dbfs, ramp_ms (raised-cosine onset/offset).
-Level is the peak for tones, clicks, AM and sweeps, and the RMS for noise
-and gaps (Gaussian noise peaks ~12 dB above its RMS; a level whose peaks
-wouldn't fit under full scale is refused, not clipped).
+Every type except click: duration_s, level_dbfs, ramp_ms (raised-cosine
+onset/offset). Level is the RMS over the plateau (the sound without its
+ramps; for a gap, the noise around it), the convention for stimulus levels
+and the figure that maps to dB SPL once an output is calibrated. A click's
+level is its peak (peak-equivalent SPL). Peaks that wouldn't fit under full
+scale are refused, not clipped (Gaussian noise peaks ~12 dB above its RMS).
+Version 1 (2026-11-26, morning) used the peak for tones, AM and sweeps and
+had a click train type.
 
 NumPy only (controller env).
 """
@@ -31,18 +36,18 @@ import struct
 
 import numpy as np
 
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 RATE = 48_000                  # the sound module's output rate
 MAX_HZ = 0.45 * RATE           # its usable band (sound_analysis.PASSBAND_FRACTION)
 MIN_HZ = 20.0
 MAX_DURATION_S = 300.0
 PEAK_CEILING_DBFS = -0.1       # rendered peaks must stay under this
 
-TYPES = ("tone", "noise", "gap", "click_train", "am_tone", "fm_sweep")
+TYPES = ("tone", "noise", "gap", "click", "am_tone", "fm_sweep")
 COLOURS = {                    # amplitude slope: |X(f)| ∝ f^slope
     "white": 0.0, "pink": -0.5, "brown": -1.0, "blue": 0.5, "violet": 1.0,
 }
-RMS_TYPES = ("noise", "gap")
+PEAK_TYPES = ("click",)
 
 DEFAULTS = {
     "common": {"duration_s": 1.0, "level_dbfs": -20.0, "ramp_ms": 5.0},
@@ -52,8 +57,7 @@ DEFAULTS = {
     "gap": {"colour": "white", "low_hz": 1000.0, "high_hz": 20000.0,
             "notch_low_hz": None, "notch_high_hz": None, "seed": None,
             "gap_start_s": 0.5, "gap_ms": 50.0, "gap_ramp_ms": 1.0},
-    "click_train": {"rate_hz": 10.0, "click_us": 100.0, "polarity": "positive",
-                    "ramp_ms": 0.0},          # a ramp would swallow the first click
+    "click": {"click_us": 100.0, "polarity": "positive", "ramp_ms": 0.0},
     "am_tone": {"carrier_hz": 8000.0, "mod_hz": 40.0, "depth": 1.0},
     "fm_sweep": {"start_hz": 2000.0, "end_hz": 20000.0, "sweep": "log"},
 }
@@ -99,6 +103,9 @@ def normalise(params: dict) -> dict:
          **{k: v for k, v in params.items() if v is not None or k in ("seed",)}}
     errors: list[str] = []
     out: dict = {"type": kind, "sample_rate": RATE}
+    if kind == "click":
+        # The file is the click itself; ramps don't apply.
+        p["duration_s"], p["ramp_ms"] = 0.001, 0.0
     out["duration_s"] = _num(p, "duration_s", errors, 0.001, MAX_DURATION_S)
     out["level_dbfs"] = _num(p, "level_dbfs", errors, -100.0, 0.0)
     out["ramp_ms"] = _num(p, "ramp_ms", errors, 0.0, 10_000.0)
@@ -144,14 +151,13 @@ def normalise(params: dict) -> dict:
             if None not in (gs, gm, gr, dur):
                 if gs + (gm + 2 * gr) / 1000 > dur + 1e-9:
                     errors.append("the gap (with its ramps) runs past the end of the sound")
-    elif kind == "click_train":
-        out["rate_hz"] = _num(p, "rate_hz", errors, 0.1, 1000.0)
+    elif kind == "click":
         out["click_us"] = _num(p, "click_us", errors, 1e6 / RATE, 100_000.0)
-        if p.get("polarity") not in ("positive", "alternating"):
-            errors.append("polarity must be positive or alternating")
+        if p.get("polarity") not in ("positive", "negative"):
+            errors.append("polarity must be positive or negative")
         out["polarity"] = p.get("polarity")
-        if out["rate_hz"] and out["click_us"] and out["click_us"] / 1e6 >= 1 / out["rate_hz"]:
-            errors.append("clicks are as long as the gap between them")
+        if out["click_us"]:
+            out["duration_s"] = round(max(1, round(out["click_us"] / 1e6 * RATE)) / RATE, 9)
     elif kind == "am_tone":
         out["carrier_hz"] = _num(p, "carrier_hz", errors, MIN_HZ, MAX_HZ)
         out["mod_hz"] = _num(p, "mod_hz", errors, 0.1, 5000.0)
@@ -199,40 +205,30 @@ def _noise(p: dict, n: int) -> np.ndarray:
     return x / rms if rms > 0 else x
 
 
+def _plateau(n: int, ramp: int) -> slice:
+    """The samples a level is measured over: all but the ramps."""
+    k = min(ramp, n // 2)
+    return slice(k, n - k) if n - 2 * k > 0 else slice(0, n)
+
+
 def render(p: dict) -> np.ndarray:
     """Samples (float64, mono) for normalised parameters *p*."""
     n = max(1, round(p["duration_s"] * RATE))
     t = np.arange(n) / RATE
     level = 10 ** (p["level_dbfs"] / 20)
+    ramp = round(p["ramp_ms"] / 1000 * RATE)
     kind = p["type"]
+    if kind == "click":
+        sign = -1.0 if p["polarity"] == "negative" else 1.0
+        return np.full(n, sign * level)
+    # Unit-shaped waveform, then scaled so its plateau RMS is the level.
     if kind == "tone":
-        x = level * np.sin(2 * np.pi * p["freq_hz"] * t)
+        x = np.sin(2 * np.pi * p["freq_hz"] * t)
     elif kind in ("noise", "gap"):
-        x = level * _noise(p, n)
-        if kind == "gap":
-            g0 = round(p["gap_start_s"] * RATE)
-            gr = round(p["gap_ramp_ms"] / 1000 * RATE)
-            gn = round(p["gap_ms"] / 1000 * RATE)
-            env = np.ones(n)
-            if gr:
-                fall = 0.5 + 0.5 * np.cos(np.pi * (np.arange(gr) + 0.5) / gr)
-                env[g0:g0 + gr] = fall[:len(env[g0:g0 + gr])]
-                env[g0 + gr + gn:g0 + 2 * gr + gn] = fall[::-1][:len(env[g0 + gr + gn:g0 + 2 * gr + gn])]
-            env[g0 + gr:g0 + gr + gn] = 0.0
-            x = x * env
-    elif kind == "click_train":
-        x = np.zeros(n)
-        width = max(1, round(p["click_us"] / 1e6 * RATE))
-        period = RATE / p["rate_hz"]
-        k = 0
-        while round(k * period) < n:
-            s = round(k * period)
-            sign = -1.0 if p["polarity"] == "alternating" and k % 2 else 1.0
-            x[s:s + width] = sign * level
-            k += 1
+        x = _noise(p, n)
     elif kind == "am_tone":
         mod = 1 - p["depth"] / 2 * (1 - np.cos(2 * np.pi * p["mod_hz"] * t))
-        x = level * mod * np.sin(2 * np.pi * p["carrier_hz"] * t)
+        x = mod * np.sin(2 * np.pi * p["carrier_hz"] * t)
     elif kind == "fm_sweep":
         f0, f1, dur = p["start_hz"], p["end_hz"], p["duration_s"]
         if p["sweep"] == "linear":
@@ -240,63 +236,114 @@ def render(p: dict) -> np.ndarray:
         else:
             k = math.log(f1 / f0) / dur
             phase = 2 * np.pi * f0 * (np.expm1(k * t)) / k
-        x = level * np.sin(phase)
+        x = np.sin(phase)
     else:  # pragma: no cover -- normalise() refuses unknown types
         raise GeneratorError([f"unknown type {kind}"])
-    return x * _ramp(n, round(p["ramp_ms"] / 1000 * RATE))
+    rms = float(np.sqrt(np.mean(x[_plateau(n, ramp)] ** 2)))
+    x = x * (level / rms) if rms > 0 else x
+    if kind == "gap":
+        # After scaling: the level is the noise's, not diluted by the gap.
+        g0 = round(p["gap_start_s"] * RATE)
+        gr = round(p["gap_ramp_ms"] / 1000 * RATE)
+        gn = round(p["gap_ms"] / 1000 * RATE)
+        env = np.ones(n)
+        if gr:
+            fall = 0.5 + 0.5 * np.cos(np.pi * (np.arange(gr) + 0.5) / gr)
+            a, b = g0, min(n, g0 + gr)
+            env[a:b] = fall[:b - a]
+            a, b = min(n, g0 + gr + gn), min(n, g0 + 2 * gr + gn)
+            env[a:b] = fall[::-1][:b - a]
+        env[g0 + gr:g0 + gr + gn] = 0.0
+        x = x * env
+    return x * _ramp(n, ramp)
 
 
-def generate(params: dict) -> tuple[np.ndarray, dict]:
+def levels(x: np.ndarray, p: dict) -> dict:
+    """What a rendered sound measures: plateau RMS, peak and headroom (dB
+    below full scale), shown beside the level setting."""
+    n = len(x)
+    ramp = round(p["ramp_ms"] / 1000 * RATE)
+    sl = _plateau(n, ramp)
+    seg = x[sl]
+    if p["type"] == "gap":
+        g0 = round(p["gap_start_s"] * RATE)
+        gn = round((p["gap_ms"] + 2 * p["gap_ramp_ms"]) / 1000 * RATE)
+        keep = np.ones(n, bool)
+        keep[g0:g0 + gn] = False
+        seg = x[keep[sl.start:sl.stop].nonzero()[0] + sl.start] if keep[sl].any() else seg
+    rms = float(np.sqrt(np.mean(np.asarray(seg, float) ** 2))) if len(seg) else 0.0
+    peak = float(np.max(np.abs(x))) if n else 0.0
+
+    def db(v):
+        return round(20 * math.log10(v), 2) if v > 0 else None
+
+    return {"plateau_rms_dbfs": db(rms), "peak_dbfs": db(peak),
+            "headroom_db": round(-20 * math.log10(peak), 2) if peak > 0 else None}
+
+
+def generate(params: dict, *, max_s: float | None = None) -> tuple[np.ndarray, dict]:
     """(float32 mono samples, normalised parameters incl. seed and version).
-    Raises GeneratorError (bad parameters, or peaks over full scale)."""
+    *max_s* renders only that much (a preview of a long sound; the
+    parameters still say the full length). Raises GeneratorError (bad
+    parameters, or peaks over full scale)."""
     p = normalise(params)
-    x = render(p)
+    q = dict(p)
+    if max_s is not None and q["duration_s"] > max_s:
+        q["duration_s"] = max_s
+    x = render(q)
     peak = float(np.max(np.abs(x))) if len(x) else 0.0
     if peak > 10 ** (PEAK_CEILING_DBFS / 20):
         peak_db = 20 * math.log10(peak)
-        what = "RMS" if p["type"] in RMS_TYPES else "level"
         raise GeneratorError([
-            f"peaks would reach {peak_db:+.1f} dBFS and clip: lower the {what} "
+            f"peaks would reach {peak_db:+.1f} dBFS and clip: lower the level "
             f"by at least {peak_db - PEAK_CEILING_DBFS:.1f} dB"])
     p["generator_version"] = GENERATOR_VERSION
     return x.astype(np.float32), p
 
 
 def default_name(p: dict) -> str:
-    """A file name describing the sound, e.g. noise_pink_1-20kHz_40ms_-20dB.wav."""
+    """A file name describing the sound, e.g. noise_pink_1k-20kHz_40ms_-20dBrms.wav."""
     def hz(v):
         return f"{v / 1000:g}k" if v >= 1000 else f"{v:g}"
 
     def dur(s):
         return f"{s * 1000:g}ms" if s < 1 else f"{s:g}s"
 
-    lvl = f"{p['level_dbfs']:g}dB"
     kind = p["type"]
+    lvl = f"{p['level_dbfs']:g}dB" + ("pk" if kind in PEAK_TYPES else "rms")
     if kind == "tone":
         parts = ["tone", f"{hz(p['freq_hz'])}Hz"]
     elif kind in ("noise", "gap"):
         parts = [kind, p["colour"], f"{hz(p['low_hz'])}-{hz(p['high_hz'])}Hz"]
         if kind == "gap":
             parts.append(f"gap{p['gap_ms']:g}ms")
-    elif kind == "click_train":
-        parts = ["clicks", f"{p['rate_hz']:g}Hz", f"{p['click_us']:g}us"]
+    elif kind == "click":
+        parts = ["click", f"{p['click_us']:g}us", p["polarity"]]
     elif kind == "am_tone":
         parts = ["am", f"{hz(p['carrier_hz'])}Hz", f"mod{p['mod_hz']:g}Hz"]
     else:
         parts = ["sweep", f"{hz(p['start_hz'])}-{hz(p['end_hz'])}Hz", p["sweep"]]
-    name = "_".join([*parts, dur(p["duration_s"]), lvl]).replace(".", "p")
+    if kind != "click":                 # a click's length is its width
+        parts.append(dur(p["duration_s"]))
+    name = "_".join([*parts, lvl]).replace(".", "p")
     return name[:80] + ".wav"
 
 
-def wav_bytes(x: np.ndarray, rate: int = RATE) -> bytes:
-    """Mono 24-bit PCM WAV of *x* (-1..1)."""
-    v = np.round(np.clip(x, -1.0, 1.0 - 2**-23) * 2**23).astype(np.int32)
-    b = np.empty((len(v), 3), dtype=np.uint8)
-    b[:, 0] = v & 0xFF
-    b[:, 1] = (v >> 8) & 0xFF
-    b[:, 2] = (v >> 16) & 0xFF
-    data = b.tobytes()
-    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 3, 3, 24)
+def wav_bytes(x: np.ndarray, rate: int = RATE, bits: int = 24) -> bytes:
+    """Mono PCM WAV of *x* (-1..1): 24-bit for the library, 16-bit for a
+    browser preview."""
+    if bits == 16:
+        data = np.round(np.clip(x, -1.0, 1.0 - 2**-15) * 2**15).astype("<i2").tobytes()
+    else:
+        v = np.round(np.clip(x, -1.0, 1.0 - 2**-23) * 2**23).astype(np.int32)
+        b = np.empty((len(v), 3), dtype=np.uint8)
+        b[:, 0] = v & 0xFF
+        b[:, 1] = (v >> 8) & 0xFF
+        b[:, 2] = (v >> 16) & 0xFF
+        data = b.tobytes()
+        bits = 24
+    width = bits // 8
+    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * width, width, bits)
     return (b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE"
             + b"fmt " + struct.pack("<I", len(fmt)) + fmt
             + b"data" + struct.pack("<I", len(data)) + data

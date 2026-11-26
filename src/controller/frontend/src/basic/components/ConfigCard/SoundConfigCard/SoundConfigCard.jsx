@@ -10,7 +10,7 @@ import "./SoundConfigCard.css";
 
 // Sound module (sound HAT: HiFiBerry DAC8x = 4 stereo outputs, Pi DAC Pro = 1).
 // Outputs tab: what the module detected and a Test button per output; Library:
-// the controller's sound library (plans/sound-library.md); Settings: the
+// the controller's sound library (plans/sound-library.md); Playback: the
 // defaults a sound plays with and the welfare limits. The detected hardware (`sound_hardware`) is
 // read-only runtime state, shown from module.config rather than the form.
 // Saves send the whole form like every card (set_all prunes omitted sections).
@@ -18,14 +18,14 @@ import "./SoundConfigCard.css";
 const TABS = [
   { key: "outputs", label: "Outputs" },
   { key: "library", label: "Library" },
-  { key: "settings", label: "Settings" },
+  { key: "playback", label: "Playback" },
   { key: "basic", label: "Basic" },
   { key: "export", label: "Export" },
 ];
 
 const TAB_COPY_SECTION = {
   basic: { key: "module", label: "Basic" },
-  settings: { key: "sound", label: "Sound" },
+  playback: { key: "sound", label: "Playback" },
   export: { key: "export", label: "Export" },
 };
 
@@ -42,6 +42,12 @@ function setIn(obj, path, value) {
   p[path[path.length - 1]] = value;
   return out;
 }
+
+// A gain factor as dB, e.g. 0.5 -> "−6.0 dB".
+const volumeDb = (v) => {
+  const n = Number(v);
+  return n > 0 ? `${(20 * Math.log10(n)).toFixed(1).replace("-", "−")} dB` : "silent";
+};
 
 const fmtLen = (s) => (typeof s === "number" ? `${s < 10 ? s.toFixed(1) : Math.round(s)} s` : "");
 
@@ -87,7 +93,7 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
 
   const runTest = (output) => {
     const params = { filename: testFile, output };
-    // Play with what's in the Settings fields now, so a level can be found
+    // Play with what's in the Playback fields now, so a level can be found
     // by ear before saving.
     if (Number.isFinite(Number(sound.volume)) && sound.volume !== "") params.volume = Number(sound.volume);
     if (Number(sound.duration) > 0) params.duration_s = Number(sound.duration);
@@ -157,7 +163,7 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
                 {fileNames.map((f) => <option key={f} value={f}>{f} ({fmtLen(files[f])})</option>)}
               </select>
               <span className="sound-help">
-                Plays at volume {sound.volume ?? 1}, cut to {sound.duration ?? 1} s (Settings tab; unsaved values are used).
+                Plays at volume {sound.volume ?? 1}, cut to {sound.duration ?? 1} s (Playback tab; unsaved values are used).
               </span>
             </div>
 
@@ -194,13 +200,21 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
 
         {activeTab === "library" && <LibraryTab moduleFiles={files} />}
 
-        {activeTab === "settings" && (
+        {activeTab === "playback" && (
           <>
             <div className="sound-fblock">
-              <label>Volume</label>
-              <input type="number" min="0" step="0.05" value={sound.volume ?? ""}
-                onChange={(e) => set(["sound", "volume"], e.target.value === "" ? "" : Number(e.target.value))} />
-              <span className="sound-help">Gain on the file: 1 plays it as stored (files are made with a -3 dB peak), 0.5 is half the amplitude (-6 dB). A protocol step can set its own.</span>
+              <label htmlFor={`sound-volume-${id}`}>Volume</label>
+              <div className="sound-slider">
+                <input id={`sound-volume-${id}`} type="range" min="0" max="1" step="0.05"
+                  value={Math.min(1, Math.max(0, Number(sound.volume ?? 1)))}
+                  onChange={(e) => set(["sound", "volume"], Number(e.target.value))} />
+                <output htmlFor={`sound-volume-${id}`} className="sound-slider__value">
+                  {Number(sound.volume ?? 1).toFixed(2)}
+                  <span className="sound-muted"> ({volumeDb(sound.volume ?? 1)})</span>
+                </output>
+              </div>
+              <span className="sound-help">Gain on the file: 1 plays it as stored, 0.5 is half the amplitude (−6 dB). A protocol step can set its own.</span>
+              {Number(sound.volume) > 1 && <span className="sound-warn">Saved value {sound.volume} is above 1 (it may clip); moving the slider sets it back in range.</span>}
             </div>
             <div className="sound-fblock">
               <label>Length (s)</label>

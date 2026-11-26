@@ -208,3 +208,34 @@ def test_generate_sound_over_socketio(lib):
     assert sent and sent[0][1] == "sync_sound_library"
     client.emit("generate_sound", {"params": {"type": "tone", "freq_hz": 99999}})
     assert any("freq_hz" in e["error"] for e in flow._events(client, "sound_library_error"))
+
+
+class TestPreview:
+    def test_preview_stores_nothing_and_returns_audio(self, lib):
+        out = lib.preview({"type": "noise", "colour": "pink", "duration_s": 30})
+        assert out["preview_s"] == 10.0 and out["params"]["duration_s"] == 30
+        assert isinstance(out["params"]["seed"], int)
+        assert out["levels"]["plateau_rms_dbfs"] == pytest.approx(-20, abs=0.05)
+        assert out["wav"][:4] == b"RIFF" and "spectrogram" in out["analysis"]
+        assert out["name"].endswith(".wav")
+        assert lib.library_names() == []
+        with pytest.raises(SoundLibraryError, match="lower the level"):
+            lib.preview({"type": "noise", "level_dbfs": -2})
+
+
+def test_preview_and_add_over_socketio(lib):
+    flow = TestSocketFlow()
+    app, sio, sent, _ = flow._setup(lib)
+    client = sio.test_client(app)
+    client.emit("preview_sound", {"seq": 7, "params": {"type": "tone", "freq_hz": 3000}})
+    client.emit("preview_sound", {"seq": 8, "params": {"type": "tone", "freq_hz": 30000}})
+    previews = flow._events(client, "sound_preview")
+    assert previews[0]["seq"] == 7 and previews[0]["wav"][:4] == b"RIFF"
+    assert previews[1]["seq"] == 8 and "freq_hz" in previews[1]["error"]
+    assert lib.library_names() == [] and sent == []
+
+    client.emit("generate_sound", {"params": {"type": "tone", "freq_hz": 3000},
+                                   "name": "cue_3k", "add": True})
+    lists = flow._events(client, "sound_library")
+    assert lists[-1]["added"] == "cue_3k.wav" and lib.library_names() == ["cue_3k.wav"]
+    assert sent and sent[-1][1] == "sync_sound_library"

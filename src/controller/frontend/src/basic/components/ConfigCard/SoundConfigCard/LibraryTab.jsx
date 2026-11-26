@@ -3,7 +3,7 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useSoundLibrary from "./useSoundLibrary";
 import SoundView from "./SoundView";
 import NewSoundModal from "./NewSoundModal";
-import { TYPES } from "./soundTypes";
+import { TYPES, levelKind } from "./soundTypes";
 
 // The controller's sound library, from a sound module's card: every file
 // (built-ins + uploads) with its analysis, upload (analysed before it's
@@ -26,10 +26,11 @@ function describe(g) {
     if (g.type === "gap") bits.push(`${g.gap_ms} ms gap at ${g.gap_start_s} s`);
     bits.push(`seed ${g.seed}`);
   }
-  if (g.type === "click_train") bits.push(`${g.rate_hz}/s, ${g.click_us} µs, ${g.polarity}`);
+  if (g.type === "click") bits.push(`${g.click_us} µs, ${g.polarity}`);
+  if (g.type === "click_train") bits.push(`click train ${g.rate_hz}/s, ${g.click_us} µs, ${g.polarity}`);
   if (g.type === "am_tone") bits.push(`${hz(g.carrier_hz)} at ${g.mod_hz} Hz, depth ${g.depth}`);
   if (g.type === "fm_sweep") bits.push(`${hz(g.start_hz)} → ${hz(g.end_hz)}, ${g.sweep}`);
-  bits.push(`${g.level_dbfs} dBFS ${g.type === "noise" || g.type === "gap" ? "RMS" : "peak"}`,
+  bits.push(`${g.level_dbfs} dBFS ${levelKind(g)}`,
     `${g.ramp_ms} ms ramps`, `generator v${g.generator_version}`);
   return bits.join(" · ");
 }

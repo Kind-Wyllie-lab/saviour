@@ -47,15 +47,18 @@ class TestNoise:
         assert p[(f > 4100) & (f < 5900)].max() < 1e-6 * p.max()
 
     def test_clipping_refused_not_clipped(self):
-        with pytest.raises(g.GeneratorError, match="lower the RMS"):
+        with pytest.raises(g.GeneratorError, match="lower the level"):
             g.generate({"type": "noise", "level_dbfs": -3})
 
 
 class TestOtherTypes:
-    def test_tone_peak_and_ramps(self):
-        x, _ = g.generate({"type": "tone", "freq_hz": 5000, "level_dbfs": -20, "ramp_ms": 5})
+    def test_tone_level_is_rms_and_ramps(self):
+        x, p = g.generate({"type": "tone", "freq_hz": 5000, "level_dbfs": -20, "ramp_ms": 5})
         a = sa.analyse(x, g.RATE, render=False)
-        assert a["peak_dbfs"] == pytest.approx(-20, abs=0.05)
+        assert a["peak_dbfs"] == pytest.approx(-16.99, abs=0.05)      # RMS + 3.01 dB
+        lv = g.levels(x, p)
+        assert lv["plateau_rms_dbfs"] == pytest.approx(-20, abs=0.01)
+        assert lv["headroom_db"] == pytest.approx(16.99, abs=0.05)
         assert a["spectrum"]["dominant_hz"] == pytest.approx(5000, abs=5)
         assert not a["abrupt_start"] and not a["abrupt_end"]
         assert abs(x[0]) < 1e-3
@@ -67,12 +70,33 @@ class TestOtherTypes:
         assert np.all(x[s:s + round(0.05 * g.RATE)] == 0)
         assert np.abs(x[round(0.2 * g.RATE):round(0.3 * g.RATE)]).max() > 0.05
 
-    def test_clicks(self):
-        x, _ = g.generate({"type": "click_train", "rate_hz": 10, "click_us": 100,
-                           "polarity": "alternating", "duration_s": 1, "level_dbfs": -6})
-        starts = np.flatnonzero(np.diff(np.abs(x) > 0, prepend=0) == 1)
-        assert len(starts) == 10 and np.allclose(np.diff(starts), g.RATE / 10, atol=1)
-        assert x[starts[0]] > 0 > x[starts[1]]
+    def test_single_click_level_is_peak(self):
+        x, p = g.generate({"type": "click", "click_us": 100, "polarity": "negative",
+                           "level_dbfs": -6, "duration_s": 5, "ramp_ms": 3})
+        assert len(x) == 5 and np.allclose(x, -(10 ** (-6 / 20)))   # 100 µs at 48 kHz
+        assert p["duration_s"] == pytest.approx(5 / g.RATE, abs=1e-8) and p["ramp_ms"] == 0
+        assert g.default_name(p) == "click_100us_negative_-6dBpk.wav"
+
+    @pytest.mark.parametrize("params", [
+        {"type": "noise", "duration_s": 0.04, "ramp_ms": 2, "seed": 4},
+        {"type": "tone", "duration_s": 0.05, "ramp_ms": 10},
+        {"type": "am_tone", "duration_s": 1, "ramp_ms": 100},
+        {"type": "fm_sweep", "duration_s": 0.5, "ramp_ms": 20},
+    ])
+    def test_short_burst_level_measured_on_its_plateau(self, params):
+        x, p = g.generate({**params, "level_dbfs": -24})
+        assert g.levels(x, p)["plateau_rms_dbfs"] == pytest.approx(-24, abs=0.01)
+        whole = 20 * np.log10(np.sqrt(np.mean(x.astype(float) ** 2)))
+        assert whole < -24                       # the ramps pull the whole-file RMS down
+
+    def test_gap_level_is_the_noise_around_it(self):
+        x, p = g.generate({"type": "gap", "duration_s": 1, "gap_ms": 300, "seed": 5,
+                           "level_dbfs": -20})
+        assert g.levels(x, p)["plateau_rms_dbfs"] == pytest.approx(-20, abs=0.2)
+
+    def test_preview_renders_at_most_max_s(self):
+        x, p = g.generate({"type": "noise", "duration_s": 60, "seed": 1}, max_s=10)
+        assert len(x) == 10 * g.RATE and p["duration_s"] == 60
 
     def test_sweep_spans_its_band(self):
         x, _ = g.generate({"type": "fm_sweep", "start_hz": 2000, "end_hz": 16000,
@@ -99,7 +123,7 @@ class TestValidation:
         ({"type": "noise", "notch_low_hz": 3000}, "needs both"),
         ({"type": "gap", "duration_s": 0.5, "gap_start_s": 0.48, "gap_ms": 50}, "past the end"),
         ({"type": "am_tone", "carrier_hz": 21000, "mod_hz": 1000}, r"carrier \+ modulation"),
-        ({"type": "click_train", "rate_hz": 1000, "click_us": 2000}, "as long as the gap"),
+        ({"type": "click", "polarity": "alternating"}, "positive or negative"),
         ({"type": "fm_sweep", "start_hz": 4000, "end_hz": 4000}, "use a tone"),
     ])
     def test_refusals(self, params, msg):
@@ -118,8 +142,9 @@ def test_names_are_library_names():
         assert sa.NAME_RE.match(g.default_name(p)), g.default_name(p)
 
 
-def test_wav_round_trip():
+@pytest.mark.parametrize("bits,tol", [(24, 2e-7), (16, 4e-5)])
+def test_wav_round_trip(bits, tol):
     x, _ = g.generate({"type": "tone", "level_dbfs": -6})
-    y, rate, fmt = sa.read_wav(g.wav_bytes(x))
-    assert rate == g.RATE and fmt["format"] == "pcm24" and fmt["channels"] == 1
-    assert np.allclose(y[:, 0], x, atol=2e-7)
+    y, rate, fmt = sa.read_wav(g.wav_bytes(x, bits=bits))
+    assert rate == g.RATE and fmt["format"] == f"pcm{bits}" and fmt["channels"] == 1
+    assert np.allclose(y[:, 0], x, atol=tol)

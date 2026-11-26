@@ -16,8 +16,12 @@ Socket.IO (registered from controller.py, every variant):
   upload_sound_start {filename, total_bytes, total_chunks}   admin
   upload_sound_chunk {index, data}        admin  -> sound_upload_progress,
                                                     then sound_upload_analysis
-  generate_sound {params, name?}          admin  -> sound_upload_analysis (with
-                                                    `generator`: the full parameters)
+  preview_sound {params, seq}             admin  -> sound_preview (analysis, levels and
+                                                    a 16-bit WAV of up to PREVIEW_MAX_S;
+                                                    nothing stored)
+  generate_sound {params, name?, add?}    admin  -> sound_upload_analysis (with
+                                                    `generator`), or with add: added
+                                                    straight away (sound_library)
   add_sound {name}                        admin  (the analysed upload or generated sound)
   discard_sound {name}                    admin
   delete_sound {name}                     admin  (refused while a saved protocol uses it)
@@ -42,6 +46,7 @@ BUILTIN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                            "modules", "variants", "sound", "sounds")
 MAX_BYTES = 100 * 1024 * 1024      # 16 s of 192 kHz 24-bit stereo is 18 MB
 PENDING_TTL_S = 3600
+PREVIEW_MAX_S = 10.0
 _RENDER_KEYS = ("envelope", "spectrogram")
 
 
@@ -231,6 +236,21 @@ class SoundLibrary:
         return self.stage(name, sound_generator.wav_bytes(samples, full["sample_rate"]),
                           generator=full)
 
+    def preview(self, params: dict) -> dict:
+        """Render (up to PREVIEW_MAX_S) and analyse without storing: {params
+        (normalised, incl. the seed drawn for blank), analysis, levels,
+        preview_s, wav}. Raises SoundLibraryError listing the problems."""
+        try:
+            samples, full = sound_generator.generate(params, max_s=PREVIEW_MAX_S)
+        except sound_generator.GeneratorError as e:
+            raise SoundLibraryError("; ".join(e.errors)) from e
+        analysis = sound_analysis.analyse(samples[:, None], full["sample_rate"])
+        return {"params": full, "analysis": analysis,
+                "levels": sound_generator.levels(samples, full),
+                "preview_s": round(len(samples) / full["sample_rate"], 6),
+                "name": sound_generator.default_name(full),
+                "wav": sound_generator.wav_bytes(samples, full["sample_rate"], bits=16)}
+
     def add(self, name: str) -> dict:
         with self._lock:
             pending = self._pending.pop(name, None)
@@ -360,8 +380,21 @@ def register(web, library: SoundLibrary, *, protocols, get_modules: Callable[[],
             raise SoundLibraryError("Upload incomplete: size mismatch, try again")
         reply("sound_upload_analysis", library.stage(up["filename"], data))
 
+    def preview(d: dict) -> None:
+        seq = d.get("seq")
+        try:
+            reply("sound_preview", {"seq": seq, **library.preview(d.get("params") or {})})
+        except SoundLibraryError as e:
+            reply("sound_preview", {"seq": seq, "error": str(e)})
+
     def generate(d: dict) -> None:
-        reply("sound_upload_analysis", library.generate(d.get("params") or {}, d.get("name")))
+        staged = library.generate(d.get("params") or {}, d.get("name"))
+        if not d.get("add"):
+            reply("sound_upload_analysis", staged)
+            return
+        entry = library.add(staged["name"])
+        broadcast(added=entry["name"])
+        push()
 
     def add(d: dict) -> None:
         entry = library.add(str(d.get("name", "")))
@@ -382,6 +415,7 @@ def register(web, library: SoundLibrary, *, protocols, get_modules: Callable[[],
         "get_sound_file": (get_file, False),
         "upload_sound_start": (upload_start, True),
         "upload_sound_chunk": (upload_chunk, True),
+        "preview_sound": (preview, True),
         "generate_sound": (generate, True),
         "add_sound": (add, True),
         "discard_sound": (discard, True),

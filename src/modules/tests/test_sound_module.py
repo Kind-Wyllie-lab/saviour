@@ -34,6 +34,8 @@ def _make_sound(**attrs) -> SoundModule:
     m = SoundModule.__new__(SoundModule)
     m.logger = MagicMock()
     m._sounds_dir = "/nonexistent/sounds"
+    m._library_dir = "/nonexistent/library"
+    m._peak_cache = {}
     m.hardware_fault = None
     m.hardware = {}
     m.sound_to_play = None
@@ -59,11 +61,10 @@ class TestGetAvailableSounds:
     def test_missing_sounds_dir_returns_empty_list_not_crash(self):
         m = _make_sound()
         assert m._get_available_sounds() == []
-        m.logger.warning.assert_called_once()
 
     def test_lists_only_files(self, tmp_path):
-        (tmp_path / "a.wav").write_bytes(b"x")
-        (tmp_path / "b.wav").write_bytes(b"x")
+        for n in ("a.wav", "b.wav"):
+            soundfile.write(tmp_path / n, np.zeros((480, 2), np.float32), 48000)
         (tmp_path / "subdir").mkdir()
         m = _make_sound(_sounds_dir=str(tmp_path))
         assert sorted(m._get_available_sounds()) == ["a.wav", "b.wav"]
@@ -250,3 +251,111 @@ class TestSessionProtocol:
         m._on_stream_error("aplay exited (1)")
         ok, detail = m._check_recording_alive()
         assert ok is False and "aplay exited" in detail
+
+
+def _write_tone(path, amp=0.5, secs=0.5):
+    soundfile.write(path, np.full(int(secs * 48_000), amp, np.float32), 48_000,
+                    subtype="FLOAT")
+
+
+def _limits(m, peak=0, length=0):
+    m.config.get.side_effect = lambda k, d=None: {
+        "sound.volume": 1, "sound.duration": 1, "sound.output_latency_offset_ms": 0,
+        "sound.max_peak_dbfs": peak, "sound.max_length_s": length}.get(k, d)
+
+
+class TestLibrary:
+    def _module(self, tmp_path):
+        (tmp_path / "sounds").mkdir()
+        _write_tone(tmp_path / "sounds" / "builtin.wav")
+        return _make_sound(_sounds_dir=str(tmp_path / "sounds"),
+                           _library_dir=str(tmp_path / "lib"))
+
+    def test_fetches_missing_and_removes_dropped(self, tmp_path):
+        m = self._module(tmp_path)
+        (tmp_path / "lib").mkdir()
+        _write_tone(tmp_path / "lib" / "old.wav")
+        fetched = []
+
+        def fake_download(url, dest, digest):
+            fetched.append(url)
+            _write_tone(dest)
+
+        with patch(f"{_MOD}._download", side_effect=fake_download), \
+             patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            r = m.sync_sound_library("http://10.0.0.1:5000",
+                                     [{"name": "new.wav", "sha256": "ab"}])
+        assert r == {"result": "success", "fetched": ["new.wav"], "removed": ["old.wav"],
+                     "failed": {}}
+        assert fetched == ["http://10.0.0.1:5000/sound_library/new.wav"]
+        assert sorted(m._get_available_sounds()) == ["builtin.wav", "new.wav"]
+        assert m.hardware["library_files"] == ["new.wav"]
+        assert m._sound_path("builtin.wav").endswith("sounds/builtin.wav")
+        status = m.facade.send_status.call_args.args[0]
+        assert status["type"] == "module_config_updated"
+
+    def test_unchanged_file_not_fetched_again(self, tmp_path):
+        from src.modules.variants.sound.sound_module import _sha256
+        m = self._module(tmp_path)
+        (tmp_path / "lib").mkdir()
+        _write_tone(tmp_path / "lib" / "same.wav")
+        digest = _sha256(str(tmp_path / "lib" / "same.wav"))
+        with patch(f"{_MOD}._download") as dl:
+            r = m.sync_sound_library("http://c", [{"name": "same.wav", "sha256": digest}])
+        dl.assert_not_called()
+        assert r["fetched"] == [] and r["removed"] == []
+        m.facade.send_status.assert_not_called()
+
+    def test_failed_fetch_reported(self, tmp_path):
+        m = self._module(tmp_path)
+        with patch(f"{_MOD}._download", side_effect=ValueError("checksum mismatch")):
+            r = m.sync_sound_library("http://c", [{"name": "x.wav", "sha256": "ab"}])
+        assert r["result"] == "error" and r["failed"] == {"x.wav": "checksum mismatch"}
+
+    def test_download_checks_the_hash(self, tmp_path):
+        from src.modules.variants.sound import sound_module as sm
+        src = tmp_path / "src.wav"
+        src.write_bytes(b"abc")
+        dest = tmp_path / "dest.wav"
+        with pytest.raises(ValueError, match="checksum"):
+            sm._download(src.as_uri(), str(dest), "0" * 64)
+        assert not dest.exists() and not (tmp_path / "dest.wav.part").exists()
+        sm._download(src.as_uri(), str(dest), sm._sha256(str(src)))
+        assert dest.read_bytes() == b"abc"
+
+
+class TestLimits:
+    def _module(self, tmp_path, **limits):
+        _write_tone(tmp_path / "loud.wav", amp=0.5, secs=2.0)    # peak -6 dBFS
+        m = _make_sound(_sounds_dir=str(tmp_path))
+        m.hardware = {"files": {"loud.wav": 2.0}}
+        _limits(m, **limits)
+        return m
+
+    def test_off_by_default(self, tmp_path):
+        assert self._module(tmp_path)._over_limit("loud.wav", 1, None) is None
+
+    def test_peak_limit_counts_the_volume(self, tmp_path):
+        m = self._module(tmp_path, peak=-12)
+        assert m._file_peak_dbfs("loud.wav") == pytest.approx(-6.02, abs=0.01)
+        assert "over this module's limit of -12 dBFS" in m._over_limit("loud.wav", 1, None)
+        assert m._over_limit("loud.wav", 0.5, None) is None      # -12 dBFS
+
+    def test_length_limit_uses_the_cut(self, tmp_path):
+        m = self._module(tmp_path, length=1.5)
+        assert "plays for 2 s" in m._over_limit("loud.wav", 1, None)
+        assert m._over_limit("loud.wav", 1, 1.0) is None
+
+    def test_play_sound_refused_over_the_limit(self, tmp_path):
+        m = self._module(tmp_path, peak=-20)
+        r = m._play_sound("loud.wav", output=1)
+        assert r["result"] == "error" and "-20 dBFS" in r["message"]
+
+    def test_protocol_over_the_limit_refuses_the_recording(self, tmp_path):
+        m = self._module(tmp_path, length=1)
+        protocol = {"version": 1, "steps": [
+            {"at_s": 1, "action": "play", "params": {"file": "loud.wav"}}]}
+        exp = None
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            exp = m._expand_protocol(protocol)
+        assert not exp.ok and any("limit of 1 s" in e for e in exp.errors)

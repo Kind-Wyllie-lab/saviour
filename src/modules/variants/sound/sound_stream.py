@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from src.shared.resample import resample
+
 F_SETPIPE_SZ = 1031
 F_GETPIPE_SZ = 1032
 FADE_S = 0.005  # fade-out where a sound is cut short, so it doesn't click
@@ -87,11 +89,8 @@ def load_sound(path: str, rate: int, volume: float = 1.0,
     else:
         data = data[:, :2]
     if file_rate != rate and len(data):
-        n = max(1, round(len(data) * rate / file_rate))
-        t_new = np.arange(n) * (file_rate / rate)
-        t_old = np.arange(len(data))
-        data = np.stack([np.interp(t_new, t_old, data[:, c]) for c in range(2)],
-                        axis=1).astype(np.float32)
+        # Band-limited: what *rate* can't hold is filtered out, not aliased.
+        data = resample(data, file_rate, rate)
     if duration_s is not None:
         keep = max(1, round(duration_s * rate))
         if keep < len(data):

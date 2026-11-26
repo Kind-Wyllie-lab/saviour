@@ -43,6 +43,8 @@ def _make_sound(**attrs) -> SoundModule:
     m._stream_lock = threading.Lock()
     m._protocol_status = {"running": False}
     m._protocol_error = None
+    m._test_stop = None
+    m._test_thread = None
     m._sound_file_handle = None
     m._sound_file_lock = threading.Lock()
     m.current_sound_event_file = None
@@ -251,6 +253,96 @@ class TestSessionProtocol:
         m._on_stream_error("aplay exited (1)")
         ok, detail = m._check_recording_alive()
         assert ok is False and "aplay exited" in detail
+
+
+class TestProtocolTest:
+    """test_protocol: the protocol's sounds now, from the controller's
+    start_at, nothing recorded."""
+
+    SHORT = {"version": 1, "steps": [
+        {"at_s": 0.1, "action": "play", "params": {"file": "tone.wav", "output": 2, "duration_s": 0.2}},
+        {"at_s": 0.3, "action": "pulse", "params": {"pin": 4, "width_s": 0.1}}]}
+
+    def _module(self, tmp_path):
+        sounds = tmp_path / "sounds"
+        sounds.mkdir()
+        soundfile.write(sounds / "tone.wav", np.full(48_000, 0.1, np.float32), 48_000)
+        m = _make_sound(_sounds_dir=str(sounds))
+        m.facade.get_recording_status.return_value = False
+        return m
+
+    def _states(self, m):
+        return [c.args[0]["state"] for c in m.facade.send_status.call_args_list
+                if c.args[0].get("type") == "sound_protocol_test"]
+
+    def _wait(self, m, timeout=5):
+        end = time.time() + timeout
+        while m._protocol_test_running() and time.time() < end:
+            time.sleep(0.02)
+
+    def test_scheduled_from_start_at_and_finishes(self, tmp_path):
+        m = self._module(tmp_path)
+        start_at = time.time() + 0.2
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)), \
+                patch(f"{_MOD}.SoundStream", FakeStream):
+            res = m.test_protocol(self.SHORT, start_at=start_at)
+            assert res["result"] == "success", res
+            stream = FakeStream.instances[-1]
+            assert [(round(t - start_at, 6), out) for t, _, out, _ in stream.scheduled] == [(0.1, 2)]
+            assert stream.scheduled[0][3]["source"].startswith("protocol test")
+            self._wait(m)
+        assert self._states(m) == ["running", "finished"]
+        assert stream.running is False and m._stream is None
+        assert m._sound_file_handle is None   # nothing recorded
+
+    def test_stop_ends_it(self, tmp_path):
+        m = self._module(tmp_path)
+        long = {"version": 1, "steps": [
+            {"at_s": 30, "action": "play", "params": {"file": "tone.wav"}}]}
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)), \
+                patch(f"{_MOD}.SoundStream", FakeStream):
+            assert m.test_protocol(long)["result"] == "success"
+            m.stop_protocol_test()
+            self._wait(m)
+        assert self._states(m)[-1] == "stopped" and m._stream is None
+
+    def test_past_start_at_starts_now(self, tmp_path):
+        m = self._module(tmp_path)
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)), \
+                patch(f"{_MOD}.SoundStream", FakeStream):
+            res = m.test_protocol(self.SHORT, start_at=time.time() - 60)
+            assert res["started_at"] > time.time()
+            m.stop_protocol_test()
+            self._wait(m)
+
+    def test_refusals(self, tmp_path):
+        m = self._module(tmp_path)
+        ttl_only = {"version": 1, "steps": [
+            {"at_s": 1, "action": "pulse", "params": {"pin": 4, "width_s": 1}}]}
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            assert "no sound steps" in m.test_protocol(ttl_only)["message"]
+            bad = {"version": 1, "steps": [
+                {"at_s": 1, "action": "play", "params": {"file": "tone.wav", "output": 9}}]}
+            assert "invalid" in m.test_protocol(bad)["message"]
+            m.facade.get_recording_status.return_value = True
+            assert "recording" in m.test_protocol(self.SHORT)["message"]
+        assert set(self._states(m)) == {"refused"}
+
+    def test_a_recording_takes_over(self, tmp_path):
+        m = self._module(tmp_path)
+        long = {"version": 1, "steps": [
+            {"at_s": 30, "action": "play", "params": {"file": "tone.wav"}}]}
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)), \
+                patch(f"{_MOD}.SoundStream", FakeStream):
+            m.test_protocol(long)
+            m.recording = SimpleNamespace(session_protocol=None)
+            m.facade.get_filename_prefix.return_value = str(tmp_path / "exp")
+            m.facade.get_segment_id.return_value = 0
+            m.facade.get_utc_time.return_value = "x"
+            assert m._start_new_recording() is True
+            self._wait(m)
+        assert not m._protocol_test_running()
+        m._close_sound_event_file()
 
 
 def _write_tone(path, amp=0.5, secs=0.5):

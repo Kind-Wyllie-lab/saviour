@@ -70,7 +70,8 @@ Status: planned 2026-11-26; phase 1 (the page) built 2026-11-26, not yet viewed 
    step's length when the session loads (`plans/sound-library.md`), lifting
    the 1 s limit; recordings longer steps loop (crossfade) with a warning for
    tones and calls. Session record gets per-step recipe, seed and audio hash.
-6. **Test across modules.** Test routine runs the TTL and sound parts
+6. **Test across modules.** Built 2026-11-26 (`test_protocol_rig`, sound
+   `test_protocol`); not yet heard on the rig. Test routine runs the TTL and sound parts
    together (sound modules get a `test_protocol` like TTL's).
 
 ## Open questions

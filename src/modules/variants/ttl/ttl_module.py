@@ -585,13 +585,17 @@ class TTLModule(Module):
         self._send_protocol_test_status("refused", message=message)
         return {"result": "error", "message": message}
 
-    def test_protocol(self, protocol: dict | None = None) -> dict:
+    def test_protocol(self, protocol: dict | None = None,
+                      start_at: float | None = None) -> dict:
         """Run *protocol* (default: the current session's) on the
         scheduled pins now, timed exactly as in a recording, without
         recording: nothing is written to a CSV or the session, and every
         scheduled pin is set inactive at the end (or on stop). Refused while
         recording. Progress goes out as `ttl_protocol_test` status messages
-        (running / finished / stopped / error)."""
+        (running / finished / stopped / error). *start_at*: the protocol's
+        t = 0 as wall-clock seconds (the controller gives the TTL and sound
+        modules the same one for a rig test); default shortly after the
+        command, as is one already more than 1 s past."""
         if self.is_recording:
             return self._refuse_protocol_test(
                 "Can't test the protocol while recording — it is already running "
@@ -616,7 +620,13 @@ class TTLModule(Module):
             if flag is not None:
                 flag.set()
 
-        t0 = time.time() + self._PROTOCOL_TEST_LEAD_S
+        now = time.time()
+        try:
+            t0 = float(start_at) if start_at is not None else None
+        except (TypeError, ValueError):
+            t0 = None
+        if t0 is None or t0 != t0 or t0 in (float("inf"), float("-inf")) or t0 < now - 1.0:
+            t0 = now + self._PROTOCOL_TEST_LEAD_S
         self._protocol_status = {
             "running": True,
             "test": True,

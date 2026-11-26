@@ -81,6 +81,12 @@ def _download(url: str, dest: str, digest: str | None) -> None:
 class SoundModule(Module):
     # A re-armed module skips protocol sounds more than this far in the past.
     _PROTOCOL_RESUME_GRACE_S = 0.5
+    # A test with no start_at from the controller starts this long after the
+    # command; one whose start_at is already this far past starts now instead.
+    _PROTOCOL_TEST_LEAD_S = 0.5
+    # How long after the last sound ends the test stream stays open (the
+    # output queue still holds the tail).
+    _PROTOCOL_TEST_TAIL_S = 0.5
     _PROTOCOL_LATE_LOG_LIMIT = 20
     _RATE = 48_000
 
@@ -108,6 +114,8 @@ class SoundModule(Module):
         self._stream_lock = threading.Lock()
         self._protocol_status: dict = {"running": False}
         self._protocol_error: str | None = None
+        self._test_stop: threading.Event | None = None
+        self._test_thread: threading.Thread | None = None
 
         self.module_checks = [self._check_hifiberry]
 
@@ -117,6 +125,8 @@ class SoundModule(Module):
             "use_this_sound_file": self._use_this_sound_file,
             "validate_protocol": self.validate_protocol,
             "protocol_status": self.protocol_status,
+            "test_protocol": self.test_protocol,
+            "stop_protocol_test": self.stop_protocol_test,
             "sync_sound_library": self.sync_sound_library,
         }
 
@@ -444,13 +454,15 @@ class SoundModule(Module):
                 return float(value)
         return time.time()
 
-    def _open_protocol_stream(self, expansion):
+    def _open_protocol_stream(self, expansion, t0: float | None = None):
         """Load the sounds and open the stream: (stream, cues with samples,
-        t0, skipped) or raise RuntimeError with the reason."""
+        t0, skipped) or raise RuntimeError with the reason. *t0*: the
+        protocol's start (default: the session's)."""
         hw = self.hardware
         if not hw.get("present"):
             raise RuntimeError(self.hardware_fault or "no sound card")
-        t0 = self._protocol_t0()
+        if t0 is None:
+            t0 = self._protocol_t0()
         cutoff = (time.time() - t0) - self._PROTOCOL_RESUME_GRACE_S
         upcoming = [c for c in expansion.cues if c.t_s >= cutoff]
         skipped = len(expansion.cues) - len(upcoming)
@@ -521,6 +533,114 @@ class SoundModule(Module):
             f"{expansion.duration_s:.3f}s on output(s) {expansion.outputs}, "
             f"output latency {stream.latency_s * 1000:.1f} ms"
             + (f", {skipped} past sound(s) skipped (re-arm)" if skipped else ""))
+
+    # -- Test routine: the protocol's sounds now, nothing recorded -----------
+
+    def _send_protocol_test_status(self, state: str, **extra) -> None:
+        msg = {"type": "sound_protocol_test", "state": state, **extra}
+        try:
+            self.facade.send_status(msg)
+        except Exception as e:                              # noqa: BLE001 -- status is best effort
+            self.logger.debug(f"Could not send protocol test status: {e}")
+
+    def _refuse_protocol_test(self, message: str) -> dict:
+        self._send_protocol_test_status("refused", message=message)
+        return {"result": "error", "message": message}
+
+    def _protocol_test_running(self) -> bool:
+        return self._test_thread is not None and self._test_thread.is_alive()
+
+    def test_protocol(self, protocol: dict | None = None,
+                      start_at: float | None = None) -> dict:
+        """Play *protocol*'s sounds (default: the session's) now, timed as
+        in a recording, without recording anything. *start_at*: the
+        protocol's t = 0 as wall-clock seconds (the controller gives the TTL
+        and sound modules the same one, so a rig test runs in step on their
+        PTP clocks); default shortly after the command. Refused while
+        recording. Progress goes out as `sound_protocol_test` status
+        messages (running / finished / stopped / error / refused)."""
+        if self.facade.get_recording_status() is True or (
+                self._stream is not None and not self._protocol_test_running()):
+            return self._refuse_protocol_test(
+                "Can't test the protocol while recording: it is already running "
+                "as part of the session")
+        if self._protocol_test_running():
+            return self._refuse_protocol_test(
+                "A protocol test is already running: stop it first")
+        expansion = self._expand_protocol(protocol)
+        if expansion is None:
+            return self._refuse_protocol_test("No protocol to test")
+        if not expansion.ok:
+            return self._refuse_protocol_test(
+                "Protocol invalid: " + "; ".join(expansion.errors[:5]))
+        if not expansion.cues:
+            return self._refuse_protocol_test("The protocol has no sound steps")
+        now = time.time()
+        try:
+            t0 = float(start_at) if start_at is not None else None
+        except (TypeError, ValueError):
+            t0 = None
+        if t0 is None or not math.isfinite(t0) or t0 < now - 1.0:
+            t0 = now + self._PROTOCOL_TEST_LEAD_S
+        try:
+            stream, prepared, t0, skipped = self._open_protocol_stream(expansion, t0)
+        except Exception as e:                              # noqa: BLE001 -- refuse with the reason
+            return self._refuse_protocol_test(f"Can't open the sound output: {e}")
+        self._protocol_status = {
+            "running": True, "test": True, "session_start_at": t0,
+            "total": len(expansion.cues), "fired": 0, "late": 0, "max_late_ms": 0.0,
+            "missed": skipped, "resumed": False,
+        }
+        self._protocol_error = None
+        with self._stream_lock:
+            self._stream = stream
+        default_volume = self.config.get("sound.volume")
+        for c, samples in prepared:
+            stream.schedule(t0 + c.t_s, samples, c.output, {
+                "file": c.file, "volume": default_volume if c.volume is None else c.volume,
+                "duration_s": round(len(samples) / self._RATE, 6), "output": c.output,
+                "source": f"protocol test step={c.step} play", "planned_at": t0 + c.t_s})
+        end_at = t0 + expansion.duration_s + stream.latency_s + self._PROTOCOL_TEST_TAIL_S
+        stop = threading.Event()
+        self._test_stop = stop
+        self._test_thread = threading.Thread(
+            target=self._protocol_test_worker, args=(stream, end_at, stop),
+            daemon=True, name="sound-protocol-test")
+        self._test_thread.start()
+        info = {"started_at": t0, "duration_s": round(expansion.duration_s, 6),
+                "cues": len(expansion.cues), "outputs": expansion.outputs,
+                "warnings": expansion.warnings}
+        self._send_protocol_test_status("running", **info)
+        self.logger.info(f"Sound protocol test: {len(expansion.cues)} sound(s) over "
+                         f"{expansion.duration_s:.3f}s on output(s) {expansion.outputs}")
+        return {"result": "success", **info}
+
+    def _protocol_test_worker(self, stream, end_at: float, stop: threading.Event) -> None:
+        # Ends at end_at, on Stop, or when something else (a recording)
+        # takes the stream.
+        while not stop.wait(0.2):
+            if self._stream is not stream or time.time() >= end_at:
+                break
+        finished = not stop.is_set() and self._stream is stream
+        replaced = self._stream is not stream
+        if not replaced:
+            self._stop_protocol()
+        status = self._protocol_status if not replaced else {}
+        error = self._protocol_error
+        state = "error" if error else "finished" if finished else "stopped"
+        self._send_protocol_test_status(
+            state, fired=status.get("fired", 0), cues=status.get("total", 0),
+            late=status.get("late", 0), max_late_ms=status.get("max_late_ms", 0.0),
+            message=error or ("A recording started" if replaced else None))
+
+    def stop_protocol_test(self) -> dict:
+        """Stop a running protocol test: its sounds stop."""
+        if not self._protocol_test_running():
+            self._send_protocol_test_status("stopped", message="No protocol test was running")
+            return {"result": "success", "message": "No protocol test was running"}
+        if self._test_stop is not None:
+            self._test_stop.set()
+        return {"result": "success"}
 
     def _stop_protocol(self) -> None:
         with self._stream_lock:
@@ -609,6 +729,8 @@ class SoundModule(Module):
         # Check this module's part of the session protocol first: an invalid
         # one refuses the recording with the reasons, rather than running
         # part of it while the session looks healthy.
+        if self._protocol_test_running() and self._test_stop is not None:
+            self._test_stop.set()
         self._stop_protocol()
         expansion = self._expand_protocol()
         if expansion is not None and not expansion.ok:

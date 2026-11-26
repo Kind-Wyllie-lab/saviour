@@ -1823,6 +1823,35 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 self.socketio.emit('error', {'message': str(e)})
 
 
+        # Test routine across the rig (Protocols page): every module named
+        # runs its part of the protocol from one start time, a little ahead
+        # on the controller's clock (the PTP grandmaster), so TTL edges and
+        # sounds land together as they would in a recording.
+        PROTOCOL_TEST_LEAD_S = 1.0
+
+        @self.socketio.on("test_protocol_rig")
+        def handle_test_protocol_rig(data):
+            if not self._require_auth("auth_required"):
+                return
+            data = data or {}
+            protocol = data.get("protocol")
+            module_ids = [m for m in (data.get("module_ids") or []) if isinstance(m, str)]
+            if not isinstance(protocol, dict) or not module_ids:
+                self.socketio.emit("error", {"message": "test_protocol_rig needs a protocol and modules"},
+                                   room=request.sid)
+                return
+            start_at = time.time() + PROTOCOL_TEST_LEAD_S
+            for mid in module_ids:
+                self.facade.send_command(mid, "test_protocol",
+                                         {"protocol": protocol, "start_at": start_at})
+
+        @self.socketio.on("stop_protocol_test_rig")
+        def handle_stop_protocol_test_rig(data):
+            if not self._require_auth("auth_required"):
+                return
+            for mid in [m for m in ((data or {}).get("module_ids") or []) if isinstance(m, str)]:
+                self.facade.send_command(mid, "stop_protocol_test", {})
+
         @self.socketio.on("start_recording")
         def start_recording(data):
             """
@@ -5030,6 +5059,12 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                 # Protocol tab's Test routine button.
                 case "ttl_protocol_test":
                     self.socketio.emit("ttl_protocol_test", {
+                        k: v for k, v in status.items() if k != "type"
+                    } | {"module_id": module_id})
+
+                # The sound module's half of a rig Test routine.
+                case "sound_protocol_test":
+                    self.socketio.emit("sound_protocol_test", {
                         k: v for k, v in status.items() if k != "type"
                     } | {"module_id": module_id})
 

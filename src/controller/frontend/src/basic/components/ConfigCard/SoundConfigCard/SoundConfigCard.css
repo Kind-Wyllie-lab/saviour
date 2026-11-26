@@ -24,12 +24,59 @@ body.dark-mode .sound-card {
 
 .sound-outputs { border-collapse: collapse; width: auto; }
 .sound-outputs th,
-.sound-outputs td { padding: 5px 12px 5px 0; text-align: left; font-size: 0.9rem; }
+.sound-outputs td {
+  padding: 6px 14px 6px 0; text-align: left; font-size: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.sound-outputs tbody tr:last-child td { border-bottom: none; }
 .sound-outputs th { font-size: 0.78rem; font-weight: 600; color: var(--secondary-text-color); }
 
-.sound-test-btn { min-width: 84px; padding: 4px 12px; cursor: pointer; }
-.sound-test-btn:disabled { cursor: not-allowed; opacity: 0.55; }
-.sound-test-btn--active { outline: 2px solid var(--sound-ok); }
+/* Buttons: same look as the other cards' (.dmx-btn). */
+.sound-test-btn {
+  min-width: 84px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sound-test-btn:hover:not(:disabled) { border-color: var(--accent-color); }
+.sound-test-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+.sound-test-btn--active {
+  border-color: var(--sound-ok);
+  background: color-mix(in srgb, var(--sound-ok) 14%, var(--card-bg-color));
+}
+
+/* Inputs and selects: same look as .form-field's (ConfigCard.css). The
+   modal is a DOM child of .sound-card but scoped separately in case it
+   moves. */
+.sound-card input[type="text"],
+.sound-card input[type="number"],
+.sound-card select,
+.sound-new-modal input[type="text"],
+.sound-new-modal input[type="number"],
+.sound-new-modal select {
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.88em;
+}
+.sound-card input:focus-visible,
+.sound-card select:focus-visible,
+.sound-new-modal input:focus-visible,
+.sound-new-modal select:focus-visible {
+  outline: none;
+  border-color: var(--accent-color);
+}
+.sound-card input:disabled,
+.sound-card select:disabled { opacity: 0.4; cursor: not-allowed; }
+.sound-fblock { margin-bottom: 4px; }
 
 .sound-advanced summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; }
 

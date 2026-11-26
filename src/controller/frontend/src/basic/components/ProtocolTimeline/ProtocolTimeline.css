@@ -1,5 +1,6 @@
-/* Session/protocol timeline (Gantt). Colours come from the app theme tokens,
-   so light and dark themes each get their own values. */
+/* Session/protocol timeline (Gantt). The plot is black in both themes (like
+   a scope trace), so its colours are fixed; the toolbar and tooltip follow
+   the theme tokens. */
 .ptl {
   width: 100%;
   min-width: 0;
@@ -40,7 +41,7 @@
   position: relative;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--card-bg-color);
+  background: #000;
   overflow: hidden;
   user-select: none;
   cursor: crosshair;
@@ -49,31 +50,35 @@
 .ptl-plot svg { display: block; }
 
 .ptl-grid {
-  stroke: var(--border-color);
+  stroke: #3a3a3a;
   stroke-width: 1;
-  opacity: 0.6;
 }
 
-.ptl-grid--minor { opacity: 0.3; }
+.ptl-grid--minor { stroke: #222; }
 
 .ptl-baseline {
-  stroke: var(--border-color);
+  stroke: #262626;
+  stroke-width: 1;
+}
+
+.ptl-axis {
+  stroke: #777;
   stroke-width: 1;
 }
 
 .ptl-tick {
-  fill: var(--secondary-text-color);
+  fill: #aaa;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
 .ptl-label {
-  fill: var(--text-color);
+  fill: #e6e6e6;
   font-size: 12px;
 }
 
 .ptl-sublabel {
-  fill: var(--secondary-text-color);
+  fill: #999;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
@@ -86,18 +91,18 @@
 
 /* One row picked in the editor: the rest step back. */
 .ptl-bar--faded { opacity: 0.3; }
-.ptl-row--faded .ptl-label { fill: var(--secondary-text-color); }
+.ptl-row--faded .ptl-label { fill: #777; }
 .ptl-row--focus .ptl-label { font-weight: 700; }
 
 /* Where a running test is now. */
 .ptl-now {
-  stroke: var(--recording-color);
+  stroke: #ff4d4d;
   stroke-width: 2;
   pointer-events: none;
 }
 
 .ptl-cursor {
-  stroke: var(--secondary-text-color);
+  stroke: #bbb;
   stroke-width: 1;
   stroke-dasharray: 3 3;
   pointer-events: none;

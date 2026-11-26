@@ -12,7 +12,9 @@ import "./ProtocolTimeline.css";
 // duration: seconds the axis must cover
 // minDuration: the axis covers at least this much (an empty protocol still
 //   gets a grid); alwaysShow: with no rows, draw one placeholder row
-//   (emptyText) instead of only the text.
+//   (emptyText) instead of only the text; minRows: pad with blank rows to
+//   this many, so the chart keeps its height before outputs exist.
+// Plot on black, time axis along the bottom.
 //
 // Drag across the plot to zoom, double-click or "Reset zoom" to go back.
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
@@ -23,7 +25,8 @@ const LABEL_CHARS = 15;
 const clip = (t) => (t.length > LABEL_CHARS ? `${t.slice(0, LABEL_CHARS - 1)}…` : t);
 const ROW_H = 30;
 const BAR_H = 12;
-const AXIS_H = 26;
+const AXIS_H = 24;   // below the rows
+const TOP = 6;       // above the first row
 const PAD_R = 12;
 const TICK_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5,
   10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
@@ -50,10 +53,13 @@ function describe(bar) {
 // highlightRow: a row key to emphasise (the others fade), or null.
 // cursorT: a "now" line at this many seconds (a running test), or null.
 export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyText, highlightRow = null,
-  cursorT = null, minDuration = 0, alwaysShow = false }) {
+  cursorT = null, minDuration = 0, alwaysShow = false, minRows = 0 }) {
   const placeholder = alwaysShow && !rowsIn.length;
-  const rows = useMemo(
-    () => (placeholder ? [{ key: "__none", label: "No outputs" }] : rowsIn), [placeholder, rowsIn]);
+  const rows = useMemo(() => {
+    const out = placeholder ? [{ key: "__none", label: "No outputs" }] : [...rowsIn];
+    for (let i = out.length; i < minRows; i += 1) out.push({ key: `__pad${i}`, label: "", pad: true });
+    return out;
+  }, [placeholder, rowsIn, minRows]);
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(600);
   const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1, minDuration);
@@ -72,7 +78,8 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   // A changed protocol can end before the zoomed window: fall back to it all.
   const [v0, v1] = view && view[0] < fullEnd ? view : [0, fullEnd];
   const plotW = width - LABEL_W - PAD_R;
-  const height = AXIS_H + rows.length * ROW_H + 6;
+  const plotBottom = TOP + rows.length * ROW_H;
+  const height = plotBottom + AXIS_H;
   const xOf = (t) => LABEL_W + ((t - v0) / (v1 - v0)) * plotW;
   const tOf = (x) => v0 + ((x - LABEL_W) / plotW) * (v1 - v0);
 
@@ -131,8 +138,8 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
       setDrag({ ...drag, x1: Math.min(Math.max(x, LABEL_W), LABEL_W + plotW) });
       return;
     }
-    const ri = Math.floor((y - AXIS_H) / ROW_H);
-    if (ri < 0 || ri >= rows.length || x < LABEL_W) { setHover(null); return; }
+    const ri = Math.floor((y - TOP) / ROW_H);
+    if (ri < 0 || ri >= rows.length || x < LABEL_W || rows[ri].pad || rows[ri].key === "__none") { setHover(null); return; }
     // Hit target wider than the mark: ±4 px around each bar.
     let best = null;
     for (const b of bars) {
@@ -140,8 +147,8 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
       const d = x < b.x0 ? b.x0 - x : x > b.x1 ? x - b.x1 : 0;
       if (!best || d < best.d) best = { b, d };
     }
-    setHover(best ? { x, y: AXIS_H + ri * ROW_H, text: `${rows[ri].label} · ${describe(best.b)}` }
-                  : { x, y: AXIS_H + ri * ROW_H, text: `${rows[ri].label} · ${fmtTime(tOf(x), withMs)}`,
+    setHover(best ? { x, y: TOP + ri * ROW_H, text: `${rows[ri].label} · ${describe(best.b)}` }
+                  : { x, y: TOP + ri * ROW_H, text: `${rows[ri].label} · ${fmtTime(tOf(x), withMs)}`,
                       quiet: true });
   };
 
@@ -192,19 +199,20 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
         >
           {/* grid + axis */}
           {minuteLines.map((t) => (
-            <line key={`m${t}`} className="ptl-grid ptl-grid--minor" x1={xOf(t)} x2={xOf(t)} y1={AXIS_H} y2={height - 6} />
+            <line key={`m${t}`} className="ptl-grid ptl-grid--minor" x1={xOf(t)} x2={xOf(t)} y1={TOP} y2={plotBottom} />
           ))}
           {ticks.map((t) => (
             <g key={t}>
-              <line className="ptl-grid" x1={xOf(t)} x2={xOf(t)} y1={AXIS_H - 4} y2={height - 6} />
-              <text className="ptl-tick" x={xOf(t)} y={AXIS_H - 9} textAnchor="middle">
+              <line className="ptl-grid" x1={xOf(t)} x2={xOf(t)} y1={TOP} y2={plotBottom + 4} />
+              <text className="ptl-tick" x={xOf(t)} y={plotBottom + 17} textAnchor="middle">
                 {fmtTime(t, withMs)}
               </text>
             </g>
           ))}
+          <line className="ptl-axis" x1={LABEL_W} x2={LABEL_W + plotW} y1={plotBottom} y2={plotBottom} />
           {/* rows */}
           {rows.map((r, i) => {
-            const y = AXIS_H + i * ROW_H;
+            const y = TOP + i * ROW_H;
             return (
               <g key={r.key}
                 className={highlightRow === null ? undefined
@@ -224,7 +232,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
             );
           })}
           {placeholder && (
-            <text className="ptl-sublabel" x={LABEL_W + 8} y={AXIS_H + ROW_H / 2 + 4}>{emptyText}</text>
+            <text className="ptl-sublabel" x={LABEL_W + 8} y={TOP + ROW_H / 2 + 4}>{emptyText}</text>
           )}
           {/* bars */}
           {bars.map((b, i) => (
@@ -233,22 +241,22 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
               className={`ptl-bar${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${
                 highlightRow !== null && rows[b.ri].key !== highlightRow ? " ptl-bar--faded" : ""}`}
               x={b.x0}
-              y={AXIS_H + b.ri * ROW_H + (ROW_H - BAR_H) / 2}
+              y={TOP + b.ri * ROW_H + (ROW_H - BAR_H) / 2}
               width={Math.max(2, b.x1 - b.x0)}
               height={BAR_H}
               rx={Math.min(2, (b.x1 - b.x0) / 2)}
             />
           ))}
           {cursorT !== null && cursorT >= v0 && cursorT <= v1 && (
-            <line className="ptl-now" x1={xOf(cursorT)} x2={xOf(cursorT)} y1={AXIS_H - 4} y2={height - 6} />
+            <line className="ptl-now" x1={xOf(cursorT)} x2={xOf(cursorT)} y1={TOP} y2={plotBottom} />
           )}
           {/* hover crosshair */}
           {hover && !drag && (
-            <line className="ptl-cursor" x1={hover.x} x2={hover.x} y1={AXIS_H - 4} y2={height - 6} />
+            <line className="ptl-cursor" x1={hover.x} x2={hover.x} y1={TOP} y2={plotBottom} />
           )}
           {drag && (
-            <rect className="ptl-brush" x={Math.min(drag.x0, drag.x1)} y={AXIS_H - 4}
-              width={Math.abs(drag.x1 - drag.x0)} height={height - AXIS_H - 2} />
+            <rect className="ptl-brush" x={Math.min(drag.x0, drag.x1)} y={TOP}
+              width={Math.abs(drag.x1 - drag.x0)} height={plotBottom - TOP} />
           )}
         </svg>
         {hover && !drag && (

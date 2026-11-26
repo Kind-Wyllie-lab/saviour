@@ -363,7 +363,8 @@ function usesJitter(steps) {
     && ((Number(s.jitter_s?.[1]) || 0) > 0 || "spread_s" in s || usesJitter(s.steps)));
 }
 
-// The timeline always covers at least the first 10 min, steps or not.
+// The timeline always covers at least the first 10 min and has room for 8
+// rows (TTL lines, sound outputs), steps or not.
 const TIMELINE_MIN_S = 600;
 
 // renderTest(result): the Test routine controls, given the current
@@ -562,6 +563,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           duration={result?.durationS ?? 0}
           minDuration={TIMELINE_MIN_S}
           alwaysShow
+          minRows={8}
           highlightRow={focusPin}
           cursorT={cursorT}
           emptyText="Set a TTL pin to Scheduled or connect a sound module to get a row here."

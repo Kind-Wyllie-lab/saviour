@@ -6,6 +6,7 @@ import MicrophoneConfigCard   from "./MicrophoneConfigCard/MicrophoneConfigCard"
 import ControllerConfigCard   from './ControllerConfigCard/ControllerConfigCard';
 import TTLConfigCard          from './TTLConfigCard/TTLConfigCard';
 import DmxLightingConfigCard  from './DmxLightingConfigCard/DmxLightingConfigCard';
+import SoundConfigCard        from './SoundConfigCard/SoundConfigCard';
 
 function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   if (id === "controller") {
@@ -18,6 +19,9 @@ function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   // lighting type).
   if (module.type === "dmx_lighting") {
     return <DmxLightingConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
+  }
+  if (module.type === "sound") {
+    return <SoundConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   }
   if (module.type?.includes("camera")) {
     return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} syncServerModule={syncServerModule} />;

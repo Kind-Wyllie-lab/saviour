@@ -1,0 +1,34 @@
+/* Sound module config card */
+.sound-card {
+  --sound-ok: #1baf7a;
+  --sound-bad: #c2362f;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+body.dark-mode .sound-card {
+  --sound-ok: #199e70;
+  --sound-bad: #ef6b63;
+}
+
+.sound-muted { color: var(--secondary-text-color); font-size: 0.85rem; margin: 0; }
+.sound-help { display: block; color: var(--secondary-text-color); font-size: 0.78rem; margin-top: 2px; max-width: 520px; }
+.sound-error { color: var(--sound-bad); font-size: 0.85rem; }
+.sound-ok { color: var(--sound-ok); font-size: 0.85rem; }
+
+.sound-fblock { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sound-fblock > label { font-size: 0.85rem; font-weight: 600; }
+.sound-fblock input,
+.sound-fblock select { width: 100%; max-width: 240px; box-sizing: border-box; }
+
+.sound-outputs { border-collapse: collapse; width: auto; }
+.sound-outputs th,
+.sound-outputs td { padding: 5px 12px 5px 0; text-align: left; font-size: 0.9rem; }
+.sound-outputs th { font-size: 0.78rem; font-weight: 600; color: var(--secondary-text-color); }
+
+.sound-test-btn { min-width: 84px; padding: 4px 12px; cursor: pointer; }
+.sound-test-btn:disabled { cursor: not-allowed; opacity: 0.55; }
+.sound-test-btn--active { outline: 2px solid var(--sound-ok); }
+
+.sound-advanced summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; }

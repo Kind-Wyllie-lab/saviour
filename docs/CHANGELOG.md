@@ -11,6 +11,12 @@ This file is an archive, not a running log — new completed work should
 still get a full write-up in CLAUDE.md first; only move it here in a
 future condensing pass, the same way this batch was moved.
 
+## 2026-11-26
+
+- [x] **Sound module settings card with output Test buttons** (`SoundConfigCard/` new, `ConfigCard.jsx`, `web.py` relays the `play_sound` cmd_ack as `sound_test_result`).
+  - The sound module had only the generic card (raw `sound.*` keys and segment length). Now: an **Outputs** tab showing the detected board and output count (with the DAC8x "can't confirm the board is fitted" caveat), a test-sound picker (files with lengths) and a **Test** button per stereo output (channels 1-2, 3-4, …) that plays the file there and shows Played or the module's error. Tests use the Settings tab's current (unsaved) volume and length so a level can be found by ear; disabled while recording, signed out or with no card.
+  - **Settings** tab: volume and length with plain help; the output latency offset moved under Calibration. Segment length is no longer shown. Not yet clicked through in a browser.
+
 ## 2026-11-25
 
 - [x] **Lightning Pose keypoints on `hailo_camera`; `lightning_camera` folded in and deleted** (`src/modules/lp_decode.py` new, `hailo_infer.py` `HailoLPPoseDetector`, `hailo_camera_module.py`, `camera_base.py` `_frame_request_hook` + `_emit_csv_row`, `tools/convert_lp_pose_to_hailo.py` rewritten, `tools/lp_reference_outputs.py` new, AI tab in `CameraConfigCard.jsx`, `web.py` `set_hef_metadata` routing; tests `test_lp_decode.py`, `test_hailo_camera_lp.py`).

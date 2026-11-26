@@ -36,6 +36,10 @@ import struct
 import numpy as np
 
 GENERATOR_VERSION = 2
+# The sound builder asks for no length: a protocol step renders the recipe at
+# the step's length. The library's copy (for analysis, the Library tab and
+# output tests) is this long unless the caller passes duration_s.
+REFERENCE_DURATION_S = 1.0
 RATE = 48_000                  # the sound module's output rate
 MAX_HZ = 0.45 * RATE           # its usable band (sound_analysis.PASSBAND_FRACTION)
 MIN_HZ = 20.0
@@ -49,7 +53,7 @@ COLOURS = {                    # amplitude slope: |X(f)| ∝ f^slope
 PEAK_TYPES = ("click",)
 
 DEFAULTS = {
-    "common": {"duration_s": 1.0, "level_dbfs": -20.0, "ramp_ms": 5.0},
+    "common": {"duration_s": REFERENCE_DURATION_S, "level_dbfs": -20.0, "ramp_ms": 5.0},
     "tone": {"freq_hz": 5000.0},
     "noise": {"colour": "white", "low_hz": 1000.0, "high_hz": 20000.0,
               "notch_low_hz": None, "notch_high_hz": None, "seed": None},
@@ -271,12 +275,9 @@ def generate(params: dict, *, max_s: float | None = None) -> tuple[np.ndarray, d
 
 
 def default_name(p: dict) -> str:
-    """A file name describing the sound, e.g. noise_pink_1k-20kHz_40ms_-20dBrms.wav."""
+    """A file name describing the sound, e.g. noise_pink_1k-20kHz_-20dBrms.wav."""
     def hz(v):
         return f"{v / 1000:g}k" if v >= 1000 else f"{v:g}"
-
-    def dur(s):
-        return f"{s * 1000:g}ms" if s < 1 else f"{s:g}s"
 
     kind = p["type"]
     lvl = f"{p['level_dbfs']:g}dB" + ("pk" if kind in PEAK_TYPES else "rms")
@@ -290,8 +291,8 @@ def default_name(p: dict) -> str:
         parts = ["am", f"{hz(p['carrier_hz'])}Hz", f"mod{p['mod_hz']:g}Hz"]
     else:
         parts = ["sweep", f"{hz(p['start_hz'])}-{hz(p['end_hz'])}Hz", p["sweep"]]
-    if kind != "click":                 # a click's length is its width
-        parts.append(dur(p["duration_s"]))
+    # No length: a recipe is rendered at each protocol step's length (the
+    # library keeps a REFERENCE_DURATION_S copy), so it isn't part of the name.
     name = "_".join([*parts, lvl]).replace(".", "p")
     return name[:80] + ".wav"
 

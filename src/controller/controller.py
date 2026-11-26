@@ -12,6 +12,7 @@ Author: Andrew SG
 Created: 11/11/2025
 """
 
+import contextlib
 import os
 import sys
 
@@ -69,6 +70,8 @@ from src.controller.quick_setup import (
 )
 from src.controller.recording import Recording
 from src.controller.rig_check import RigMonitor
+from src.controller.sound_library import SoundLibrary
+from src.controller.sound_library import register as register_sound_library
 from src.controller.ttl_lines import TTLLineStore
 from src.controller.ttl_lines import (
     register_socket_handlers as register_ttl_line_handlers,
@@ -174,6 +177,14 @@ class Controller(ABC):
         register_protocol_handlers(self.web.socketio, self.protocol_library,
                                    require_auth=self.web._require_auth,
                                    logger=self.logger)
+        # Sound files for sound modules, analysed on upload and mirrored to
+        # every sound module (plans/sound-library.md).
+        self.sound_library = SoundLibrary()
+        self.push_sound_library = register_sound_library(
+            self.web, self.sound_library, protocols=self.protocol_library,
+            get_modules=self.modules.get_modules,
+            send_command=self.communication.send_command,
+            controller_url=self._own_url, logger=self.logger)
         # TTL lines confirmed on the acquisition system (Open Ephys etc.) and
         # the last alignment that proved them (plans/ttl-applications-ephys-sync.md).
         self.ttl_lines = TTLLineStore()
@@ -433,6 +444,7 @@ class Controller(ABC):
                             if creds:
                                 self.communication.send_command(module_id, "set_export_config", creds)
                             self.push_rfid_db_settings(module_id)
+                            self.push_sound_library(module_id)
 
                     elif command == 'set_export_config':
                         if result == 'success':
@@ -811,6 +823,13 @@ class Controller(ABC):
             "username": str(section.get("username", "") or "").strip(),
             "password": str(section.get("password", "") or ""),
         }
+
+    def _own_url(self) -> str:
+        """Where modules reach this controller's web server."""
+        ip = "localhost"
+        with contextlib.suppress(Exception):
+            ip = self.network.ip or ip
+        return f"http://{ip}:5000"
 
     def push_rfid_db_settings(self, module_id: str) -> bool:
         """Send the rfid_db settings to one module if it is an RFID module.

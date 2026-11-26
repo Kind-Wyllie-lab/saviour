@@ -4,8 +4,9 @@ SAVIOUR System - Sound Module Class
 
 Plays sounds on a Pi 5 sound HAT (HiFiBerry DAC8x: 4 stereo outputs;
 Raspberry Pi DAC Pro: 1), on command and from a session protocol's ``play``
-steps (plans/session-protocol.md). Sounds are files in the sounds/ folder
-(.wav, formatted to -3 dB peak).
+steps (plans/session-protocol.md). Sounds are the built-in files in the sounds/
+folder plus the controller's sound library, mirrored into LIBRARY_DIR by
+``sync_sound_library`` (plans/sound-library.md).
 
 The card and its outputs are found at start (sound_hardware.py) and
 reported to the controller in the ``sound_hardware`` runtime section of the
@@ -18,22 +19,63 @@ Author: Andrew SG
 Created: 27/01/2026
 """
 # Base Imports
+import contextlib
+import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 # Saviour Imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, check, command
 from modules.variants.sound import sound_hardware
 from modules.variants.sound.sound_stream import SoundStream, load_sound
-from shared import session_protocol
+from shared import session_protocol, sound_analysis
+
+# Library files mirrored from the controller (outside the checkout, so a
+# deploy's hard reset never touches them).
+LIBRARY_DIR = "/var/lib/saviour/sound_library"
+MAX_LIBRARY_FILE_BYTES = 100 * 1024 * 1024
 
 CSV_HEADER = ("Timestamp (ns), sound played, volume factor, duration (s), "
               "output, source\n")
+
+
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download(url: str, dest: str, digest: str | None) -> None:
+    """Fetch *url* to *dest* via a .part file; refuses a file over the size
+    limit or whose SHA-256 isn't *digest*."""
+    tmp = dest + ".part"
+    h = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, open(tmp, "wb") as f:
+            total = 0
+            while chunk := resp.read(1 << 20):
+                total += len(chunk)
+                if total > MAX_LIBRARY_FILE_BYTES:
+                    raise ValueError("file larger than 100 MB")
+                h.update(chunk)
+                f.write(chunk)
+        if digest and h.hexdigest() != digest:
+            raise ValueError("checksum mismatch")
+        os.replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 class SoundModule(Module):
@@ -50,6 +92,8 @@ class SoundModule(Module):
         # .wav files ship alongside this module; resolve relative to the file
         # so discovery/playback don't depend on the process CWD.
         self._sounds_dir = os.path.join(os.path.dirname(__file__), "sounds")
+        self._library_dir = LIBRARY_DIR
+        self._peak_cache: dict[str, tuple[tuple, float | None]] = {}
 
         # None once a sound card is detected; otherwise a human-readable
         # reason. Surfaced every heartbeat via get_health() (the System page's
@@ -73,6 +117,7 @@ class SoundModule(Module):
             "use_this_sound_file": self._use_this_sound_file,
             "validate_protocol": self.validate_protocol,
             "protocol_status": self.protocol_status,
+            "sync_sound_library": self.sync_sound_library,
         }
 
         self.command.set_commands(self.sound_commands)
@@ -106,7 +151,11 @@ class SoundModule(Module):
                 and previous.get("channels_from") == "alsa"):
             for k in ("channels", "outputs", "channels_from", "detail"):
                 hw[k] = previous[k]
-        hw["files"] = sound_hardware.sound_files(self._sounds_dir)
+        hw["files"] = self._all_sound_files()
+        hw["library_files"] = sorted(
+            n for n in sound_hardware.sound_files(self._library_dir)
+            if n not in sound_hardware.sound_files(self._sounds_dir))
+        hw["file_peaks_dbfs"] = {n: self._file_peak_dbfs(n) for n in hw["files"]}
         if hw != previous:
             self.hardware = hw
             try:
@@ -134,8 +183,8 @@ class SoundModule(Module):
             return {"result": "error", "message": "no sound file available"}
         if "/" in name or name.startswith("."):
             return {"result": "error", "message": f"not a sound file name: {name}"}
-        path = os.path.join(self._sounds_dir, name)
-        if not os.path.isfile(path):
+        path = self._sound_path(name)
+        if path is None:
             return {"result": "error", "message": f"no sound file {name}"}
         outputs = int(self.hardware.get("outputs") or 0)
         try:
@@ -147,6 +196,9 @@ class SoundModule(Module):
                     "message": f"output {output} doesn't exist ({outputs} on this card)"}
         volume = self.config.get("sound.volume") if volume is None else volume
         duration = self.config.get("sound.duration") if duration_s is None else duration_s
+        refused = self._over_limit(name, volume, duration)
+        if refused:
+            return {"result": "error", "message": refused}
 
         stream = self._stream
         if stream is not None and stream.running:
@@ -218,14 +270,121 @@ class SoundModule(Module):
         self.sound_to_play = filename
 
     def _get_available_sounds(self) -> list:
+        return sorted(self._all_sound_files())
+
+    """Sound files: built-ins + the controller's library"""
+    def _all_sound_files(self) -> dict:
+        """Name -> length (s) of every playable file; a built-in wins over a
+        library file of the same name (the controller refuses those)."""
+        return {**sound_hardware.sound_files(self._library_dir),
+                **sound_hardware.sound_files(self._sounds_dir)}
+
+    def _sound_path(self, name: str) -> str | None:
+        if not name or "/" in name or name.startswith("."):
+            return None
+        for directory in (self._sounds_dir, self._library_dir):
+            path = os.path.join(directory, name)
+            if os.path.isfile(path):
+                return path
+        return None
+
+    def _file_peak_dbfs(self, name: str) -> float | None:
+        """A file's peak level (dBFS), cached on its size and mtime. None
+        when it can't be read (not a WAV the analysis reads)."""
+        path = self._sound_path(name)
+        if path is None:
+            return None
         try:
-            return [
-                f for f in os.listdir(self._sounds_dir)
-                if os.path.isfile(os.path.join(self._sounds_dir, f))
-            ]
-        except FileNotFoundError:
-            self.logger.warning(f"No sounds directory at {self._sounds_dir}")
-            return []
+            st = os.stat(path)
+        except OSError:
+            return None
+        key = (path, st.st_size, st.st_mtime)
+        cached = self._peak_cache.get(name)
+        if cached and cached[0] == key:
+            return cached[1]
+        peak = None
+        try:
+            with open(path, "rb") as f:
+                x, _, _ = sound_analysis.read_wav(f.read())
+            p = float(abs(x).max()) if len(x) else 0.0
+            peak = round(20 * math.log10(p), 2) if p > 0 else None
+        except (OSError, sound_analysis.SoundFileError, ValueError):
+            peak = None
+        self._peak_cache[name] = (key, peak)
+        return peak
+
+    def _over_limit(self, name: str, volume, duration_s) -> str | None:
+        """Why playing *name* at gain *volume*, cut to *duration_s* (None =
+        whole file), would break the module's limits (sound.max_peak_dbfs,
+        sound.max_length_s; welfare caps, plans/sound-library.md), or None."""
+        try:
+            cap_db = float(self.config.get("sound.max_peak_dbfs", 0) or 0)
+            cap_s = float(self.config.get("sound.max_length_s", 0) or 0)
+            gain = float(volume if volume is not None else 1)
+        except (TypeError, ValueError):
+            return None
+        if cap_db < 0:
+            peak = self._file_peak_dbfs(name)
+            if peak is None:
+                return f"{name}: level unknown, so it can't be checked against the limit"
+            level = peak + 20 * math.log10(gain) if gain > 0 else None
+            if level is not None and level > cap_db + 0.01:
+                return (f"{name} at volume {gain:g} peaks at {level:.1f} dBFS, over this "
+                        f"module's limit of {cap_db:g} dBFS")
+        if cap_s > 0:
+            length = (self.hardware.get("files") or {}).get(name)
+            if duration_s is not None:
+                try:
+                    length = min(float(duration_s), length) if length else float(duration_s)
+                except (TypeError, ValueError):
+                    pass
+            if length is not None and length > cap_s + 1e-6:
+                return (f"{name} plays for {length:g} s, over this module's limit of "
+                        f"{cap_s:g} s")
+        return None
+
+    @command()
+    def sync_sound_library(self, controller_url: str = "", files: list | None = None) -> dict:
+        """Mirror the controller's sound library: fetch files that are
+        missing or differ (checked by SHA-256), remove ones it no longer has.
+        Built-ins are never touched."""
+        wanted = {}
+        for f in files or []:
+            name, digest = (f or {}).get("name"), (f or {}).get("sha256")
+            if isinstance(name, str) and sound_analysis.NAME_RE.match(name):
+                wanted[name] = digest
+        os.makedirs(self._library_dir, exist_ok=True)
+        fetched, removed, failed = [], [], {}
+        for name, digest in wanted.items():
+            path = os.path.join(self._library_dir, name)
+            if digest and os.path.isfile(path) and _sha256(path) == digest:
+                continue
+            if not controller_url:
+                failed[name] = "no controller_url"
+                continue
+            try:
+                _download(f"{controller_url.rstrip('/')}/sound_library/"
+                          f"{urllib.parse.quote(name)}", path, digest)
+                fetched.append(name)
+            except Exception as e:  # noqa: BLE001 -- reported per file
+                failed[name] = str(e)
+                self.logger.error(f"Sound library: fetching {name} failed: {e}")
+        for name in os.listdir(self._library_dir):
+            if name not in wanted and sound_analysis.NAME_RE.match(name):
+                with contextlib.suppress(OSError):
+                    os.remove(os.path.join(self._library_dir, name))
+                    removed.append(name)
+        if fetched or removed:
+            self.logger.info(f"Sound library: fetched {fetched or 'none'}, "
+                             f"removed {removed or 'none'}")
+            self.available_sounds = self._get_available_sounds()
+            before = self.hardware
+            if self._refresh_hardware() != before:
+                self.facade.send_status({
+                    "type": "module_config_updated", "reason": "sound_library",
+                    "config": self.config.get_all()})
+        return {"result": "error" if failed else "success", "fetched": fetched,
+                "removed": removed, "failed": failed}
 
     """Session protocol (plans/session-protocol.md)"""
     def _session_protocol(self):
@@ -238,9 +397,18 @@ class SoundModule(Module):
         if not protocol:
             return None
         hw = self._refresh_hardware()
-        return session_protocol.expand(
+        exp = session_protocol.expand(
             protocol, module_id=getattr(self, "module_id", None), module_type="sound",
             sound_files=hw.get("files"), outputs=hw.get("outputs") or None)
+        default_volume = self.config.get("sound.volume")
+        seen = set()
+        for c in exp.cues:
+            vol = default_volume if c.volume is None else c.volume
+            refused = self._over_limit(c.file, vol, c.duration_s)
+            if refused and refused not in seen:
+                seen.add(refused)
+                exp.errors.append(refused)
+        return exp
 
     def validate_protocol(self, protocol: dict | None = None) -> dict:
         exp = self._expand_protocol(protocol)
@@ -292,7 +460,7 @@ class SoundModule(Module):
         for c in upcoming:
             key = (c.file, c.volume, c.duration_s)
             if key not in cache:
-                cache[key] = load_sound(os.path.join(self._sounds_dir, c.file), self._RATE,
+                cache[key] = load_sound(self._sound_path(c.file), self._RATE,
                                         default_volume if c.volume is None else c.volume,
                                         c.duration_s)
             prepared.append((c, cache[key]))

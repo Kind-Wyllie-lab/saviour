@@ -1,6 +1,7 @@
 # Sound library: upload with analysis, generated stimuli, calibrated levels
 
-- **Status:** planned 2026-11-26, nothing built.
+- **Status:** phase 1 built 2026-11-26 (written up in CHANGELOG), not yet
+  run in a browser; phases 2-4 not started.
 - **Created:** 2026-11-26
 - **Owner:** ascottg
 - **CLAUDE.md ref:** "Open work → Reliability / UX" (one-liner)
@@ -80,7 +81,12 @@ with "convert to WAV". Output, stored in the sidecar:
 
 ## Phases
 
-1. **Upload + analysis + library.** Controller: library store, chunked
+1. **Upload + analysis + library.** *Built 2026-11-26.* Differences from
+   the plan below: the limits (`sound.max_peak_dbfs`, `sound.max_length_s`,
+   0 = off) are per module, not per output (per output comes with
+   calibration); they're enforced by the module (play_sound, its protocol
+   check at start and `validate_protocol`), not yet by the controller's
+   session-create check or the JS designer. Controller: library store, chunked
    upload (`upload_sound_*`, size cap), analysis on upload complete, shown
    before **Add to library** (cancel discards). Sound card: a **Library**
    tab listing files (rate, length, peak/RMS dBFS, warnings) with the

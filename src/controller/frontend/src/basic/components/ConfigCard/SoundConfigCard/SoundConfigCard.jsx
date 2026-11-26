@@ -5,16 +5,19 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import ConfigCardShell from "../ConfigCardShell";
 import ExportConfigSection from "../ExportConfigSection";
+import LibraryTab from "./LibraryTab";
 import "./SoundConfigCard.css";
 
 // Sound module (sound HAT: HiFiBerry DAC8x = 4 stereo outputs, Pi DAC Pro = 1).
-// Outputs tab: what the module detected and a Test button per output; Settings:
-// the defaults a sound plays with. The detected hardware (`sound_hardware`) is
+// Outputs tab: what the module detected and a Test button per output; Library:
+// the controller's sound library (plans/sound-library.md); Settings: the
+// defaults a sound plays with and the welfare limits. The detected hardware (`sound_hardware`) is
 // read-only runtime state, shown from module.config rather than the form.
 // Saves send the whole form like every card (set_all prunes omitted sections).
 
 const TABS = [
   { key: "outputs", label: "Outputs" },
+  { key: "library", label: "Library" },
   { key: "settings", label: "Settings" },
   { key: "basic", label: "Basic" },
   { key: "export", label: "Export" },
@@ -189,6 +192,8 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
           </>
         )}
 
+        {activeTab === "library" && <LibraryTab moduleFiles={files} />}
+
         {activeTab === "settings" && (
           <>
             <div className="sound-fblock">
@@ -202,6 +207,21 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
               <input type="number" min="0.01" step="0.1" value={sound.duration ?? ""}
                 onChange={(e) => set(["sound", "duration"], e.target.value === "" ? "" : Number(e.target.value))} />
               <span className="sound-help">Sounds longer than this are cut (with a short fade). A protocol step can set its own.</span>
+            </div>
+            <div className="config-section-divider" />
+            <h4 className="sound-subhead">Limits</h4>
+            <p className="sound-muted">The module refuses a sound (test, protocol or manual) that would go over these. 0 = no limit. Levels are digital (dBFS) until the outputs are calibrated in dB SPL.</p>
+            <div className="sound-fblock">
+              <label>Max peak level (dBFS)</label>
+              <input type="number" max="0" step="1" value={sound.max_peak_dbfs ?? 0}
+                onChange={(e) => set(["sound", "max_peak_dbfs"], e.target.value === "" ? 0 : Math.min(0, Number(e.target.value)))} />
+              <span className="sound-help">The file's peak plus the volume, e.g. a -6 dBFS file at volume 0.5 peaks at -12 dBFS.</span>
+            </div>
+            <div className="sound-fblock">
+              <label>Max length (s)</label>
+              <input type="number" min="0" step="1" value={sound.max_length_s ?? 0}
+                onChange={(e) => set(["sound", "max_length_s"], e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))} />
+              <span className="sound-help">Longest a single sound may play (after any cut).</span>
             </div>
             <details className="sound-advanced">
               <summary>Calibration</summary>

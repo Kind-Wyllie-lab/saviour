@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-26
 
+- [x] **Built-in `8k.wav` removed** from `src/modules/variants/sound/sounds/` (and its `original/` copy): not wanted, and built-ins can't be deleted from the Library tab since every update restores them. `dog_bark.wav` stays.
+
 - [x] **Sound library: recordings and built sounds kept apart; gap recipe dropped; audible click preview** (`sound_library.py`, `sound_generator.py`, `LibraryTab.jsx`, `NewSoundModal.jsx`).
   - Every library entry has `kind`: `recipe` (made in the sound builder, kept with its parameters) or `recording` (uploaded, incl. the built-ins). The Library tab shows them as two sections, **Recordings** (Upload recording…) and **Built sounds** (Build sound…, with a recipe column and the level as the recipe set it).
   - The gap-in-noise type is gone: a protocol makes a gap from two noise steps.

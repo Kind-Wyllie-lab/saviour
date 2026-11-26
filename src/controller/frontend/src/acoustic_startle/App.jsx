@@ -16,6 +16,7 @@ import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
+import Protocols from "/src/basic/pages/Protocols/Protocols";
 
 document.title="Acoustic Startle";
 
@@ -24,6 +25,7 @@ const pages = [
     { label: "Dashboard", path: "/" },
     { label: "Settings", path: "/settings" },
     { label: "Recording", path: "/recording" },
+    { label: "Protocols", path: "/protocols" },
     { label: "System", path: "/system" },
     { label: "Storage", path: "/storage" },
     { label: "Post-Process", path: "/post-process" },
@@ -43,6 +45,7 @@ function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/recording/*" element={<Recording />} />
+                <Route path="/protocols" element={<Protocols />} />
                 <Route path="/system" element={<System />} />
                 <Route path="/storage" element={<Storage />} />
             <Route path="/post-process" element={<PostProcess />} />

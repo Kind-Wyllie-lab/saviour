@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-26
 
+- [x] **Protocols page** (phase 1 of `plans/protocol-page.md`; `basic/pages/Protocols/Protocols.jsx`, `ProtocolDesigner.jsx` `asPage`, route + sidebar entry in all five variants): the protocol library and designer as a page, step table and timeline at full width, checked against the whole rig (every sound module; a TTL module, picked when there are several, which the Test routine runs on), a rig summary line, and a leave-page prompt with unsaved changes. The TTL card's and New Session form's designer windows stay, with an **Open the Protocols page** button. Next: requirements, then the capability manifest.
+
 - [x] **Sound library as a compact list** (`LibraryTab.jsx`, `SoundConfigCard.css`): the wide tables (which wrapped badly or scrolled) became two lines per sound: ▶, name, built-in tag, ✓ on module / copying…, Delete; then grey details (recording: rate · length · peak · RMS · checks; built sound: recipe · level · ramps · checks). Clicking a sound opens its player, waveform and spectrogram under its own row instead of below the list.
 
 - [x] **Sound builder: no length field** (`NewSoundModal.jsx`, `sound_generator.py` `REFERENCE_DURATION_S`, `LibraryTab.jsx`): a protocol step will render a recipe at the step's length, so the builder no longer asks; the library keeps a 1 s reference copy, file names drop the length, and the Built sounds table drops its Length column. Until per-step rendering is built, a built sound plays at most 1 s in a protocol (`plans/sound-library.md`).

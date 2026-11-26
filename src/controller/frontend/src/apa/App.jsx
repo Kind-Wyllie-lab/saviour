@@ -17,12 +17,14 @@ import RecordingStatusWidget from "../basic/components/RecordingStatusWidget/Rec
 import FaultAlertModal from "../basic/components/FaultAlertModal/FaultAlertModal";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
+import Protocols from "/src/basic/pages/Protocols/Protocols";
 
 document.title = "APA";
 
 const pages = [
   { label: "Dashboard", path: "/" },
   { label: "Recording", path: "/recording" },
+  { label: "Protocols", path: "/protocols" },
   { label: "Settings", path: "/settings" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
@@ -43,6 +45,7 @@ function App() {
           <Routes>
             <Route path="/" element={<APADashboard />} />
             <Route path="/recording/*" element={<Recording />} />
+            <Route path="/protocols" element={<Protocols />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/system" element={<System />} />
             <Route path="/storage" element={<Storage />} />

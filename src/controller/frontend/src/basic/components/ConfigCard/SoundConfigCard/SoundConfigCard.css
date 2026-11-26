@@ -187,3 +187,15 @@ body.dark-mode .sound-view__warnings { color: #e0a030; }
   background: var(--card-bg-color); color: var(--accent-color); cursor: pointer; font-size: 0.75rem;
 }
 .sound-play-btn:hover { border-color: var(--accent-color); }
+
+/* Library tables stay inside the card: names wrap, cells tighter, and the
+   table scrolls sideways if the card is still narrower. */
+.sound-library__scroll { max-width: 100%; overflow-x: auto; }
+.sound-library__table { width: 100%; }
+.sound-library__table th,
+.sound-library__table td { padding: 5px 8px 5px 0; }
+.sound-library__table td:nth-child(2) { overflow-wrap: anywhere; min-width: 120px; }
+.sound-library__table td:nth-child(2) .sound-link { overflow-wrap: anywhere; }
+.sound-library__table td:not(:nth-child(2)) { white-space: nowrap; }
+.sound-library__table td:nth-child(3).sound-muted { white-space: normal; min-width: 140px; }
+.sound-library, .sound-library__section { max-width: 100%; }

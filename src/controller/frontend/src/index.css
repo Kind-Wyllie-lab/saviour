@@ -183,9 +183,10 @@ body {
 /* Links follow the theme instead of the browser's default blue (unreadable
    on dark themes). Halfway between accent and text: the accent alone can be
    a deep shade chosen for white button text (e.g. Terminal amber). Rules
-   with a class still set their own colour. */
-a,
-a:visited {
+   with a class still set their own colour: :where() keeps this rule at zero
+   specificity, since a bare `a:visited` (0,1,1) outranks a class like
+   `.nav-link` (0,1,0) and turned every visited sidebar link accent-coloured. */
+:where(a, a:visited) {
   color: color-mix(in srgb, var(--accent-color) 50%, var(--text-color));
 }
 

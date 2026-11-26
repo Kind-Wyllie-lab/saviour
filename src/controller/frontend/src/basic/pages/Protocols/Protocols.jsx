@@ -3,7 +3,7 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useModules from "/src/hooks/useModules";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
-import { scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { freePins, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { ProtocolTestControls } from "/src/basic/components/Protocol/ProtocolTest";
 import useProtocolTest from "/src/basic/components/Protocol/useProtocolTest";
 
@@ -32,6 +32,7 @@ export default function Protocols() {
       : !loggedIn ? "Sign in as admin to run a test."
       : !result || result.edges.length === 0 ? "Add some TTL steps first."
       : !result.ok ? "Fix the problems first."
+      : result.pins.some((p) => !scheduledPins(ttl).includes(p)) ? "Set the lines it uses to Scheduled first (TTL card, Pins tab)."
       : null;
     return (
       <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
@@ -69,6 +70,7 @@ export default function Protocols() {
         library={library}
         moduleLabel={ttl ? (ttl.name || ttl.id) : null}
         scheduledPins={ttl ? scheduledPins(ttl) : []}
+        freePins={ttl ? freePins(ttl) : []}
         pinConfigs={ttl?.config?.ttl?.pins ?? {}}
         moduleId={ttl?.id ?? null}
         soundModules={soundModules}

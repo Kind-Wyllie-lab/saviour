@@ -433,3 +433,8 @@
   margin-right: 4px;
 }
 .pe-block .pe-step { background: var(--card-bg-color); }
+.pe-hint-inline {
+  align-self: center;
+  font-size: 0.8em;
+  color: var(--secondary-text-color);
+}

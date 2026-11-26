@@ -22,7 +22,7 @@ export const MAX_EDGES = 200_000;
 
 // What each action takes, for the editor.
 export const ACTION_PARAMS = {
-  set:   [{ key: "level", kind: "level" }],
+  set:   [{ key: "level", kind: "level" }, { key: "duration_s", kind: "number", unit: "s", step: "any", min: 0, optional: true }],
   pulse: [{ key: "width_s", kind: "number", unit: "s", step: "any", min: 0 }],
   train: [
     { key: "rate_hz", kind: "number", unit: "Hz", step: "any", min: 0 },
@@ -328,7 +328,21 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
           errors.push(`step ${where}: level must be 'high' or 'low' (got ${show(level)})`);
           continue;
         }
-        for (const pin of pins ?? []) edges.push({ t_s: t0, pin, level, step: where, action });
+        // duration_s (optional): hold the level this long, then the other
+        // level; absent or 0 = until another step changes it.
+        let hold = params.duration_s ?? 0;
+        if (hold !== 0) {
+          hold = num(hold, "duration_s", where, errors, { minimum: 0 });
+          if (hold === null) continue;
+          if (hold > 0 && hold < MIN_WIDTH_S) {
+            warnings.push(`step ${where}: duration_s ${hold} is below ${MIN_WIDTH_S} s; timing may not hold`);
+          }
+        }
+        const back = level === "high" ? "low" : "high";
+        for (const pin of pins ?? []) {
+          edges.push({ t_s: t0, pin, level, step: where, action });
+          if (hold > 0) edges.push({ t_s: t0 + hold, pin, level: back, step: where, action });
+        }
       } else if (action === "pulse") {
         const width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
         if (pins === null || width === null) continue;

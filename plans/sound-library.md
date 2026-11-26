@@ -160,6 +160,12 @@ parameters, else `recording`):
   hash of the rendered audio, so it can be re-rendered and checked.
   The protocol designer previews a step at its length with `preview_sound`.
 
+The sound builder has no length field (2026-11-26): the library's copy of a
+recipe is `REFERENCE_DURATION_S` (1 s) and names carry no length. **Until
+per-step rendering is built, a protocol step plays that 1 s copy cut to the
+step, so a built sound can't play longer than 1 s** (a recording plays up to
+its own length). A sweep spans whatever length it's rendered at.
+
 Gap-in-noise was dropped as a recipe: a protocol builds a gap from two
 noise steps. The browser preview repeats a click 4× (250 ms apart) and pads
 sounds under 0.4 s with silence, since browsers skip very short audio; the

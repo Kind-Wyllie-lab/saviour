@@ -5,7 +5,7 @@ export const TYPES = [
   { key: "noise", label: "Noise", help: "Coloured, band-limited noise: startle pulses, prepulses, background; a protocol makes gaps." },
   { key: "click", label: "Click", help: "One short rectangular click; a protocol repeats it." },
   { key: "am_tone", label: "AM tone", help: "A tone whose amplitude is modulated." },
-  { key: "fm_sweep", label: "Sweep", help: "A tone gliding from one frequency to another." },
+  { key: "fm_sweep", label: "Sweep", help: "A tone gliding from one frequency to another over the length the protocol plays it." },
 ];
 
 // What a generated sound's level means. Generator v2: the RMS over the

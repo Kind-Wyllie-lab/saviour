@@ -22,7 +22,9 @@ const COLOURS = [
 ];
 
 const NOISE = { colour: "white", low_hz: 1000, high_hz: 20000, notch_low_hz: "", notch_high_hz: "", seed: "" };
-const COMMON = { duration_s: 1, level_dbfs: -20, ramp_ms: 5 };
+// No length: a protocol step plays a recipe at the step's length; the library
+// keeps a 1 s reference copy (REFERENCE_DURATION_S).
+const COMMON = { level_dbfs: -20, ramp_ms: 5 };
 const DEFAULTS = {
   tone: { ...COMMON, freq_hz: 5000 },
   noise: { ...COMMON, ...NOISE },
@@ -137,7 +139,6 @@ export default function NewSoundModal({ lib, initial, onClose }) {
   const exists = finalName && (lib.items ?? []).some((e) => e.name === finalName);
   const ok = preview && !preview.error;
   const lv = ok ? preview.levels : null;
-  const truncated = ok && preview.params.duration_s > preview.preview_s + 1e-9;
 
   const add = () => {
     setAddError(null);
@@ -165,7 +166,6 @@ export default function NewSoundModal({ lib, initial, onClose }) {
         <div className="sound-new-body">
           <div className="sound-new-form">
             <div className="sound-gen-grid">
-              {type !== "click" && <Num label="Length (s)" k="duration_s" p={p} set={set} min="0.001" max="300" />}
               <Num label={type === "click" ? "Level, peak (dBFS)" : "Level, RMS (dBFS)"} k="level_dbfs" p={p} set={set} max="0"
                 help={type === "click" ? "A click is described by its peak." : "Measured over the plateau, without the ramps."} />
               {type !== "click" && (
@@ -241,7 +241,7 @@ export default function NewSoundModal({ lib, initial, onClose }) {
                 <p className="sound-levels">
                   Plateau RMS <b>{fmtDb(lv.plateau_rms_dbfs)} dBFS</b> · peak {fmtDb(lv.peak_dbfs)} dBFS · headroom {fmtDb(lv.headroom_db)} dB
                 </p>
-                {truncated && <p className="sound-muted">Showing the first {preview.preview_s} s of {preview.params.duration_s} s; Add renders it all.</p>}
+                {type !== "click" && <p className="sound-muted">Shown 1 s long. A protocol step plays it at the step's length, with these ramps at its start and end.</p>}
                 {preview.listen_note && <p className="sound-muted">{preview.listen_note}</p>}
                 <p className="sound-muted">Played here through your computer: for the shape and pitch, not the level. Use an output's Test button to hear it on the rig.</p>
                 <SoundView entry={{ analysis: preview.analysis }} />

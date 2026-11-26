@@ -111,7 +111,7 @@ export default function LibraryTab({ moduleFiles }) {
       <table className="sound-outputs sound-library__table">
         <thead>
           {kind === "recipe"
-            ? <tr><th /><th>Sound</th><th>Recipe</th><th>Length</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
+            ? <tr><th /><th>Sound</th><th>Recipe</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
             : <tr><th /><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>}
         </thead>
         <tbody>
@@ -129,7 +129,6 @@ export default function LibraryTab({ moduleFiles }) {
                 {kind === "recipe" ? (
                   <>
                     <td className="sound-muted">{recipeSummary(g)}</td>
-                    <td>{fmtLen(a.duration_s)}</td>
                     <td>{g ? `${g.level_dbfs} dBFS ${levelKind(g)}` : "–"}</td>
                   </>
                 ) : (

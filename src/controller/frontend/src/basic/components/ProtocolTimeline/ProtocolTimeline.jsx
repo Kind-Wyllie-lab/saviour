@@ -16,7 +16,9 @@ import "./ProtocolTimeline.css";
 //   this many, so the chart keeps its height before outputs exist.
 // Plot on black, time axis along the bottom.
 //
-// Drag across the plot to zoom, double-click or "Reset zoom" to go back.
+// Zoom: drag across the plot, the − / + buttons, or Ctrl+scroll at the
+// pointer (out to 6 h or the whole protocol); Shift+scroll pans. Double-click
+// or "Reset zoom" goes back to the default view.
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
 // says how many), so a long fast train stays drawable and readable.
 
@@ -28,6 +30,8 @@ const BAR_H = 12;
 const AXIS_H = 24;   // below the rows
 const TOP = 6;       // above the first row
 const PAD_R = 12;
+const MIN_SPAN_S = 0.002;
+const MAX_SPAN_S = 6 * 3600;
 const TICK_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5,
   10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
 
@@ -64,6 +68,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const [width, setWidth] = useState(600);
   const fullEnd = Math.max(duration * 1.02, duration + 0.05, 1, minDuration);
   const [view, setView] = useState(null); // null = whole protocol
+  const plotRef = useRef(null);
   const [drag, setDrag] = useState(null);
   const [hover, setHover] = useState(null);
 
@@ -75,13 +80,49 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
     return () => ro.disconnect();
   }, []);
 
-  // A changed protocol can end before the zoomed window: fall back to it all.
-  const [v0, v1] = view && view[0] < fullEnd ? view : [0, fullEnd];
+  const maxSpan = Math.max(fullEnd, MAX_SPAN_S);
+  const [v0, v1] = view ?? [0, fullEnd];
   const plotW = width - LABEL_W - PAD_R;
   const plotBottom = TOP + rows.length * ROW_H;
   const height = plotBottom + AXIS_H;
   const xOf = (t) => LABEL_W + ((t - v0) / (v1 - v0)) * plotW;
   const tOf = (x) => v0 + ((x - LABEL_W) / plotW) * (v1 - v0);
+
+  // Scale the window by factor about time c, kept within [0, ...).
+  const zoomAbout = (factor, c, [a, b] = [v0, v1]) => {
+    const span = Math.min(Math.max((b - a) * factor, MIN_SPAN_S), maxSpan);
+    let n0 = c - (c - a) * (span / (b - a));
+    if (n0 < 0) n0 = 0;
+    setView([n0, n0 + span]);
+  };
+  const panBy = (dt, [a, b] = [v0, v1]) => {
+    const n0 = Math.max(0, a + dt);
+    setView([n0, n0 + (b - a)]);
+  };
+
+  // Wheel needs a non-passive listener to stop the page scrolling; it reads
+  // the latest window through a ref.
+  const live = useRef(null);
+  live.current = { v0, v1, plotW, zoomAbout, panBy };
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      const { v0: a, v1: b, plotW: w, zoomAbout: z, panBy: p } = live.current;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const x = e.clientX - el.getBoundingClientRect().left;
+        const c = a + (Math.min(Math.max(x - LABEL_W, 0), w) / w) * (b - a);
+        z(e.deltaY > 0 ? 1.25 : 0.8, c, [a, b]);
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        const d = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+        p((d / w) * (b - a), [a, b]);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [rows.length]);
 
   const rowIndex = useMemo(
     () => Object.fromEntries(rows.map((r, i) => [r.key, i])), [rows]);
@@ -171,7 +212,8 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
     return <div className="ptl-empty">{emptyText ?? "Nothing to show."}</div>;
   }
 
-  const zoomed = !!view && view[0] < fullEnd;
+  const zoomed = !!view;
+  const mid = (v0 + v1) / 2;
   return (
     <div className="ptl" ref={wrapRef}>
       <div className="ptl-toolbar">
@@ -180,12 +222,16 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
             : duration > 0 ? `Whole protocol · ${fmtTime(duration, duration < 60)}`
               : `No steps yet · showing ${fmtTime(fullEnd)}`}
         </span>
-        <span className="ptl-hint">Drag across the chart to zoom</span>
+        <span className="ptl-hint">Drag to zoom in · Ctrl+scroll to zoom · Shift+scroll to pan</span>
+        <button type="button" className="ptl-reset" title="Zoom out" aria-label="Zoom out"
+          disabled={v1 - v0 >= maxSpan - 1e-9} onClick={() => zoomAbout(2, zoomed ? mid : 0)}>−</button>
+        <button type="button" className="ptl-reset" title="Zoom in" aria-label="Zoom in"
+          disabled={v1 - v0 <= MIN_SPAN_S + 1e-12} onClick={() => zoomAbout(0.5, zoomed ? mid : 0)}>+</button>
         {zoomed && (
           <button type="button" className="ptl-reset" onClick={() => setView(null)}>Reset zoom</button>
         )}
       </div>
-      <div className="ptl-plot">
+      <div className="ptl-plot" ref={plotRef}>
         <svg
           width={width}
           height={height}

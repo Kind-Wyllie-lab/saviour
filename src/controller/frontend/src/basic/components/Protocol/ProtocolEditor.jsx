@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import ProtocolTimeline from "../ProtocolTimeline/ProtocolTimeline";
 import { fmtTime, stepPins } from "../../utils/sessionProtocol";
 import useProtocolExpansion from "./useProtocolExpansion";
@@ -371,13 +371,21 @@ const TIMELINE_MIN_S = 600;
 // validation; cursorT: seconds into a running test, drawn on the timeline.
 // renderTest(result, protocol): the Test routine controls; cursorT: seconds
 // into a running test, drawn on the timeline. allowClear: show "Clear".
+// freePins: lines the TTL module has that aren't Scheduled yet but could be;
+// steps may use them, and the editor says which need setting to Scheduled.
 export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinConfigs, moduleId,
-  soundModules = [], renderTest, cursorT = null, allowClear = true, intro }) {
+  soundModules = [], renderTest, cursorT = null, allowClear = true, intro, freePins = [] }) {
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const [pickedPin, setPickedPin] = useState("all");
-  const { pins, result, rows, spans } = useProtocolExpansion(protocol, scheduledPins, pinConfigs, moduleId, soundModules);
+  const scheduled = useMemo(() => (scheduledPins ?? []).map(Number), [scheduledPins]);
+  const usable = useMemo(
+    () => [...new Set([...scheduled, ...(freePins ?? []).map(Number)])].sort((a, b) => a - b),
+    [scheduled, freePins]);
+  const { pins, result, rows, spans } = useProtocolExpansion(protocol, usable, pinConfigs, moduleId, soundModules,
+    scheduled);
+  const notScheduled = (result?.pins ?? []).filter((p) => !scheduled.includes(p));
   const sound = { modules: soundModules };
   const canPlay = soundModules.length > 0;
   // A pin picked before it stopped being scheduled falls back to all pins.
@@ -416,8 +424,16 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </p>
       )}
 
-      {pins.length === 0 && !canPlay && (
-        <div className="pe-notice">No scheduled pins yet: set a pin's mode to “Scheduled (session protocol)” on the Pins tab.</div>
+      {pins.length === 0 && (
+        <div className="pe-notice">
+          No TTL lines to use: {moduleId ? "every line on this TTL module is set to another mode (Pins tab)." : "no TTL module is connected."}
+        </div>
+      )}
+      {notScheduled.length > 0 && (
+        <div className="pe-notice">
+          Needs {notScheduled.map((p) => pinName(pinConfigs, p)).join(", ")} set to “Scheduled (session protocol)”
+          on the TTL card's Pins tab before it can record or be tested.
+        </div>
       )}
 
       <div className="pe-top">

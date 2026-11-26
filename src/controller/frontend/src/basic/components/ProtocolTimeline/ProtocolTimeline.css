@@ -32,7 +32,8 @@
   cursor: pointer;
   font-size: 0.95em;
 }
-.ptl-reset:hover {
+.ptl-reset:disabled { opacity: 0.4; cursor: default; }
+.ptl-reset:hover:not(:disabled) {
   border-color: var(--accent-color);
   color: var(--accent-color);
 }

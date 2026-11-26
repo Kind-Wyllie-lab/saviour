@@ -16,6 +16,7 @@ import ProtocolDesigner from "../../Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
 import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
 import useProtocolTest from "../../Protocol/useProtocolTest";
+import { freePins } from "../../Protocol/protocolModules";
 import TTLLinesEditor from "./TTLLinesEditor";
 import AddPinModal from "./AddPinModal";
 import useTTLLines from "/src/hooks/useTTLLines";
@@ -171,6 +172,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
       : !loggedIn ? "Sign in as admin to run a test."
       : !result || result.edges.length === 0 ? "Add some steps first."
       : !result.ok ? "Fix the problems first."
+      : result.pins.some((p) => !scheduledPinList.includes(p)) ? "Set the lines it uses to Scheduled first (Pins tab)."
       : pinsUnsaved ? "Save first: the module doesn't know about the Pins tab changes yet."
       : null;
     return (
@@ -546,6 +548,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           library={protocolLibrary}
           moduleLabel={module.name || id}
           scheduledPins={scheduledPinList}
+          freePins={freePins({ config: { ttl: { ...module.config?.ttl, pins: ttlCfg.pins } } })}
           pinConfigs={ttlCfg.pins ?? {}}
           moduleId={id}
           canEdit={loggedIn}

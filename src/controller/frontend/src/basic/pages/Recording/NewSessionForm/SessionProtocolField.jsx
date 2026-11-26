@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { fmtTime } from "/src/basic/utils/sessionProtocol";
-import { checkForSession, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { checkForSession, freePins, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { pinName } from "/src/basic/components/Protocol/pinNames";
@@ -40,6 +40,7 @@ export default function SessionProtocolField({ value, onChange, targetModules, d
       : !loggedIn ? "Sign in as admin to run a test."
       : !result || result.edges.length === 0 ? "Add some steps first."
       : !result.ok ? "Fix the problems first."
+      : result.pins.some((p) => !scheduledPins(ttlModule).includes(p)) ? "Set the lines it uses to Scheduled first (TTL card, Pins tab)."
       : null;
     return (
       <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
@@ -85,6 +86,7 @@ export default function SessionProtocolField({ value, onChange, targetModules, d
           usedName={value || null}
           usedBadge="this session"
           scheduledPins={ttlModule ? scheduledPins(ttlModule) : []}
+          freePins={ttlModule ? freePins(ttlModule) : []}
           pinConfigs={ttlModule?.config?.ttl?.pins ?? {}}
           moduleId={ttlModule?.id ?? null}
           soundModules={soundModules}

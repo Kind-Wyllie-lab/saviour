@@ -36,7 +36,7 @@ function fmtWhen(ts) {
 export default function ProtocolDesigner({
   start, library, moduleLabel, usedName, usedBadge = "picked", scheduledPins, pinConfigs, moduleId,
   renderTest, cursorT, canEdit, onUse, useLabel = "Use this protocol", onSaved, onClose,
-  soundModules, asPage = false, headerExtra = null,
+  soundModules, asPage = false, headerExtra = null, freePins = [],
 }) {
   const { modules } = useModules();
   const navigate = useNavigate();
@@ -239,6 +239,7 @@ export default function ProtocolDesigner({
                   protocol={draft.protocol}
                   onChange={(protocol) => setDraft({ ...draft, protocol: protocol ?? structuredClone(EMPTY_PROTOCOL) })}
                   scheduledPins={scheduledPins}
+                  freePins={freePins}
                   pinConfigs={pinConfigs}
                   moduleId={moduleId}
                   soundModules={sounds}

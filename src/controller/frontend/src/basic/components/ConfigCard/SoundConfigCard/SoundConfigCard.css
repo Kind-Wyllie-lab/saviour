@@ -96,9 +96,6 @@ body.dark-mode .sound-warn { color: #e0a030; }
 
 /* Library */
 .sound-library { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.sound-library__table tbody tr { cursor: pointer; }
-.sound-library__table tbody tr:hover,
-.sound-library__row--selected { background: rgba(127, 127, 127, 0.08); }
 .sound-library__detail h4,
 .sound-upload-review h4 { margin: 0 0 8px; font-size: 0.95rem; word-break: break-all; }
 .sound-upload-review {
@@ -188,12 +185,28 @@ body.dark-mode .sound-view__warnings { color: #e0a030; }
 }
 .sound-play-btn:hover { border-color: var(--accent-color); }
 
-/* Library tables fit the card without scrolling: they take its width and
-   long names and recipes wrap (a scroll container showed a needless
-   horizontal scroll bar). */
-.sound-library__table { width: 100%; }
-.sound-library__table th,
-.sound-library__table td { padding: 5px 10px 5px 0; vertical-align: top; }
-.sound-library__table td:nth-child(2),
-.sound-library__table td:nth-child(2) .sound-link { overflow-wrap: anywhere; }
+/* Library: a compact two-line list (name + status, then grey details); the
+   opened sound's analysis sits under its row. */
+.sound-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-color); border-radius: 6px; }
+.sound-item + .sound-item { border-top: 1px solid var(--border-color); }
+.sound-item--open { background: rgba(127, 127, 127, 0.05); }
+.sound-item__row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; min-width: 0; }
+.sound-item__main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer;
+  color: var(--text-color); font: inherit;
+}
+.sound-item__main:hover .sound-item__name { color: var(--accent-color); }
+.sound-item__name { font-weight: 600; font-size: 0.9rem; overflow-wrap: anywhere; }
+.sound-item__facts { font-size: 0.78rem; color: var(--secondary-text-color); }
+.sound-item__facts .sound-ok, .sound-item__facts .sound-warn, .sound-item__facts .sound-error { font-size: inherit; }
+.sound-item__status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; font-size: 0.8rem; }
+.sound-item__status .sound-ok, .sound-item__status .sound-muted { font-size: inherit; }
+.sound-item__status .sound-tag { margin-left: 0; }
+.sound-item__detail { padding: 4px 10px 12px 48px; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 600px) {
+  .sound-item__row { flex-wrap: wrap; }
+  .sound-item__status { width: 100%; padding-left: 38px; }
+  .sound-item__detail { padding-left: 10px; }
+}
 .sound-library, .sound-library__section { min-width: 0; max-width: 100%; }

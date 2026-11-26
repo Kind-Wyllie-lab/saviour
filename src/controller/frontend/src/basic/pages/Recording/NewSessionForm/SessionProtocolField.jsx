@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { fmtTime } from "/src/basic/utils/sessionProtocol";
-import { checkForSession, freePins, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { checkForSession, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { pinName } from "/src/basic/components/Protocol/pinNames";
@@ -86,7 +86,6 @@ export default function SessionProtocolField({ value, onChange, targetModules, d
           usedName={value || null}
           usedBadge="this session"
           scheduledPins={ttlModule ? scheduledPins(ttlModule) : []}
-          freePins={ttlModule ? freePins(ttlModule) : []}
           pinConfigs={ttlModule?.config?.ttl?.pins ?? {}}
           moduleId={ttlModule?.id ?? null}
           soundModules={soundModules}

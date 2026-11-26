@@ -42,6 +42,12 @@ Status: planned 2026-11-26; phase 1 (the page) built 2026-11-26, not yet viewed 
    Test routine runs on that TTL module. The TTL card's and New Session
    form's designer windows stay for now, with a link to the page; they
    become links once the page covers everything they do.
+   **Since (2026-11-26):** the editor is by line: the protocol declares
+   `outputs` ({ttl: [pins], sound: [outputs]}, picked from Scheduled lines
+   and the sound module's outputs), steps are grouped and numbered per
+   line, repeats are trial blocks with each line's steps inside (shared
+   random gaps), other-mode TTL lines are grey reference rows on the
+   timeline. `outputs` is the seed of phase 2's `requires`.
 2. **Requirements.** Derived from the steps (module types, TTL lines, sound
    outputs, sound files), shown at the top of the page ("Needs: 1 TTL module
    with lines 1, 2 scheduled; 1 sound module with 2 outputs and dog_bark.wav")

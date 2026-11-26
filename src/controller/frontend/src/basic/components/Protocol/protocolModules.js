@@ -14,21 +14,6 @@ export function scheduledPins(module) {
     .sort((a, b) => a - b);
 }
 
-/** A TTL module's lines that a protocol could use but that aren't Scheduled
- *  yet: lines it has (`_available_pins`) that no other mode holds. A step on
- *  one is a requirement ("set line N to Scheduled"), not a mistake. */
-export function freePins(module) {
-  const ttl = module?.config?.ttl ?? {};
-  const pins = ttl.pins ?? {};
-  const busy = (p) => {
-    const mode = pins[p]?.mode ?? pins[String(p)]?.mode;
-    return mode && mode !== "None" && mode !== "scheduled";
-  };
-  return (Array.isArray(ttl._available_pins) ? ttl._available_pins : [])
-    .map(Number).filter((p) => Number.isInteger(p) && !busy(p) && pins[p]?.mode !== "scheduled")
-    .sort((a, b) => a - b);
-}
-
 /** A sound module's reported files ({name: length_s|null}) and output count;
  *  null for what it hasn't reported. */
 export function soundHardware(module) {

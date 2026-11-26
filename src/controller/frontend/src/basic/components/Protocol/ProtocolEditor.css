@@ -352,3 +352,84 @@
   border-radius: 6px;
   font-size: 0.88em;
 }
+
+/* Outputs the protocol uses: TTL lines (from Scheduled pins) and sound outputs. */
+.pe-outputs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pe-out-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pe-out-kind {
+  min-width: 7.5em;
+  font-size: 0.82em;
+  color: var(--secondary-text-color);
+}
+.pe-out-none {
+  font-size: 0.85em;
+  color: var(--secondary-text-color);
+}
+.pe-pin:disabled { cursor: default; opacity: 1; }
+
+/* Steps grouped by line, numbered per line. */
+.pe-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pe-track {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pe-track-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
+}
+.pe-track-name { font-weight: 600; }
+.pe-track-sub {
+  font-size: 0.8em;
+  color: var(--secondary-text-color);
+}
+.pe-track-flag {
+  font-size: 0.8em;
+  color: var(--warning-color, #d08a00);
+}
+.pe-track-add {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.pe-track .pe-step { margin-left: 18px; }
+
+/* A trial block: its repeat settings, then each line's steps inside. */
+.pe-block {
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent-color);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pe-block-head {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pe-block-name {
+  align-self: center;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.pe-block .pe-step { background: var(--card-bg-color); }

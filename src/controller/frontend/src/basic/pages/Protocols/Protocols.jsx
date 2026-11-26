@@ -3,7 +3,7 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useModules from "/src/hooks/useModules";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
-import { freePins, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { ProtocolTestControls } from "/src/basic/components/Protocol/ProtocolTest";
 import useProtocolTest from "/src/basic/components/Protocol/useProtocolTest";
 
@@ -70,7 +70,6 @@ export default function Protocols() {
         library={library}
         moduleLabel={ttl ? (ttl.name || ttl.id) : null}
         scheduledPins={ttl ? scheduledPins(ttl) : []}
-        freePins={ttl ? freePins(ttl) : []}
         pinConfigs={ttl?.config?.ttl?.pins ?? {}}
         moduleId={ttl?.id ?? null}
         soundModules={soundModules}

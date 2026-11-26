@@ -413,3 +413,45 @@ class TestSound:
 
     def test_unknown_module_type(self):
         assert not expand(_p(), module_type="camera").ok
+
+
+# ---------------------------------------------------------------------------
+# set with duration_s
+# ---------------------------------------------------------------------------
+
+class TestSetDuration:
+    def _edges(self, params, at=1.0):
+        exp = expand({"version": 1, "steps": [
+            {"at_s": at, "action": "set", "params": {"pin": 17, **params}}]})
+        return exp, [(e.t_s, e.level) for e in exp.edges]
+
+    def test_high_for_a_while_then_low(self):
+        exp, edges = self._edges({"level": "high", "duration_s": 2.5})
+        assert exp.ok, exp.errors
+        assert edges == [(1.0, "high"), (3.5, "low")]
+
+    def test_zero_or_absent_holds(self):
+        for extra in ({}, {"duration_s": 0}, {"duration_s": None}):
+            exp, edges = self._edges({"level": "high", **extra})
+            assert exp.ok and edges == [(1.0, "high")]
+
+    def test_low_for_a_while_then_high(self):
+        exp = expand({"version": 1, "steps": [
+            {"at_s": 0, "action": "set", "params": {"pin": 17, "level": "high"}},
+            {"at_s": 5, "action": "set",
+             "params": {"pin": 17, "level": "low", "duration_s": 1}}]})
+        assert exp.ok, exp.errors
+        assert [(e.t_s, e.level) for e in exp.edges] == [
+            (0.0, "high"), (5.0, "low"), (6.0, "high")]
+
+    def test_negative_or_text_refused(self):
+        for bad in (-1, "5", True):
+            exp, edges = self._edges({"level": "high", "duration_s": bad})
+            assert not exp.ok and edges == []
+
+    def test_overlap_with_a_later_step_is_caught(self):
+        exp = expand({"version": 1, "steps": [
+            {"at_s": 0, "action": "set",
+             "params": {"pin": 17, "level": "high", "duration_s": 10}},
+            {"at_s": 5, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]})
+        assert not exp.ok

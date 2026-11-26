@@ -36,6 +36,9 @@ Format (v1)::
   sorted, the k-th plus k*min_gap_s, so every valid placement is equally
   likely. E.g. 10 trials pseudo-randomly over 20 min, ≥ 60 s apart. Same
   seed, same placement.
+- ``set`` takes an optional ``duration_s``: hold the level that long, then
+  switch to the other level (a second edge from the same step); absent or 0
+  holds it until another step changes it.
 - ``pins`` (a list) in place of ``pin`` drives several pins with one step:
   the same edges on each, at the same instants.
 - A ``module`` key on a step is optional; ``expand(..., module_id=...)``
@@ -434,8 +437,23 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     errors.append(f"step {where}: level must be 'high' or 'low' "
                                   f"(got {level!r})")
                     continue
+                # duration_s (optional): hold the level this long, then the
+                # other level; absent or 0 = until another step changes it.
+                hold = params.get("duration_s", 0)
+                if hold is None or (not isinstance(hold, bool) and hold == 0):
+                    hold = 0.0
+                else:
+                    hold = _num(hold, "duration_s", where, errors, minimum=0)
+                    if hold is None:
+                        continue
+                    if 0 < hold < MIN_WIDTH_S:
+                        warnings.append(f"step {where}: duration_s {hold} is below "
+                                        f"{MIN_WIDTH_S} s; timing may not hold")
+                back = "low" if level == "high" else "high"
                 for pin in pins or ():
                     edges.append(Edge(t0, pin, level, where, action))
+                    if hold > 0:
+                        edges.append(Edge(t0 + hold, pin, back, where, action))
 
             elif action == "pulse":
                 width = _num(params.get("width_s"), "width_s", where, errors,

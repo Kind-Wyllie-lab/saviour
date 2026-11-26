@@ -124,6 +124,14 @@
       {"at_s": 9, "action": "play", "params": {"file": "a.wav", "volume": 2}},
       {"at_s": 12, "action": "play", "params": {"file": "a.wav", "duration_s": 0}},
       {"at_s": 13, "action": "play", "params": {}},
-      {"at_s": 14, "action": "play", "params": {"file": "b.wav", "duration_s": 3}}]}}
+      {"at_s": 14, "action": "play", "params": {"file": "b.wav", "duration_s": 3}}]}},
+    {"name": "set with duration", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "set", "params": {"pin": 17, "level": "high", "duration_s": 2.5}},
+      {"at_s": 5, "action": "set", "params": {"pin": 17, "level": "high", "duration_s": 0}},
+      {"at_s": 8, "action": "set", "params": {"pin": 17, "level": "low", "duration_s": 1}},
+      {"at_s": 12, "action": "set", "params": {"pin": 22, "level": "high", "duration_s": 0.001}}]}},
+    {"name": "set with bad duration", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "set", "params": {"pin": 17, "level": "high", "duration_s": -1}},
+      {"at_s": 2, "action": "set", "params": {"pin": 22, "level": "high", "duration_s": "5"}}]}}
   ]
 }

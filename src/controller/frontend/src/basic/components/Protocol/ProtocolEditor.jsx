@@ -301,13 +301,23 @@ function StepLine({ step, num, track, sound, inBlock, onChange, onRemove }) {
           </label>
         )}
         {action === "set" && (
-          <label className="pe-field">
-            <span className="pe-field-label">Level</span>
-            <select value={step.params?.level ?? ""} onChange={(e) => setParam("level", e.target.value)}>
-              <option value="high">High (active)</option>
-              <option value="low">Low (inactive)</option>
-            </select>
-          </label>
+          <>
+            <label className="pe-field">
+              <span className="pe-field-label">Level</span>
+              <select value={step.params?.level ?? ""} onChange={(e) => setParam("level", e.target.value)}>
+                <option value="high">High (active)</option>
+                <option value="low">Low (inactive)</option>
+              </select>
+            </label>
+            <NumField label="For" unit="s" value={step.params?.duration_s} width="5em" placeholder="0"
+              title="Hold the level this long, then switch to the other level; 0 or blank = until another step changes it"
+              onChange={(v) => {
+                // eslint-disable-next-line no-unused-vars -- blank drops the key
+                const { duration_s, ...rest } = step.params ?? {};
+                onChange({ ...step, params: v === "" ? rest : { ...rest, duration_s: v } });
+              }} />
+            {!(Number(step.params?.duration_s) > 0) && <span className="pe-hint-inline">indefinite</span>}
+          </>
         )}
         {action === "pulse" && (
           <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} />

@@ -3,7 +3,7 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useModules from "/src/hooks/useModules";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
-import { scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { rigTestBlocked, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { ProtocolTestControls } from "/src/basic/components/Protocol/ProtocolTest";
 import useProtocolTest from "/src/basic/components/Protocol/useProtocolTest";
 
@@ -25,21 +25,16 @@ export default function Protocols() {
   const [ttlId, setTtlId] = useState(null);
   const ttl = ttlModules.find((m) => m.id === ttlId) ?? ttlModules[0] ?? null;
 
-  const protocolTest = useProtocolTest(ttl?.id ?? "none");
-  const renderTest = ttl ? (result, draft) => {
-    const blocked = ttl.status === "RECORDING" ? "Recording: the module is busy."
-      : ttl.online === false ? "The module is offline."
-      : !loggedIn ? "Sign in as admin to run a test."
-      : !result || result.edges.length === 0 ? "Add some TTL steps first."
-      : !result.ok ? "Fix the problems first."
-      : result.pins.some((p) => !scheduledPins(ttl).includes(p)) ? "Set the lines it uses to Scheduled first (TTL card, Pins tab)."
-      : null;
-    return (
-      <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
-        running={protocolTest.running} blocked={blocked}
-        onStart={() => protocolTest.start(draft)} onStop={protocolTest.stop} />
-    );
-  } : undefined;
+  const soundRecords = useMemo(() => list.filter((m) => String(m?.type ?? "") === "sound"), [list]);
+  // The Test routine runs the TTL part on the picked TTL module and the
+  // sound part on every sound module, from one start time.
+  const protocolTest = useProtocolTest(ttl?.id ?? "none", soundRecords.map((m) => m.id));
+  const renderTest = ttl || soundRecords.length ? (result, draft) => (
+    <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
+      running={protocolTest.running}
+      blocked={rigTestBlocked({ result, ttl, sounds: soundRecords, loggedIn, scheduled: ttl ? scheduledPins(ttl) : [] })}
+      onStart={() => protocolTest.start(draft, result)} onStop={protocolTest.stop} />
+  ) : undefined;
 
   const rig = (
     <>

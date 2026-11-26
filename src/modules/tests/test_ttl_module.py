@@ -871,6 +871,19 @@ class TestProtocolTest:
         assert self._statuses(m)[-1]["fired"] == 3
         assert m._protocol_error is None
 
+    def test_starts_at_the_controllers_start_at(self, tmp_path):
+        m, _, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))
+        start_at = time.time() + 0.3
+        r = m.test_protocol(start_at=start_at)
+        assert r["started_at"] == start_at
+        m._protocol_thread.join(3)
+        m2, _, _ = self._bench(tmp_path, _proto(
+            {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))
+        r2 = m2.test_protocol(start_at=time.time() - 60)   # stale: starts now
+        assert r2["started_at"] > time.time() - 1
+        m2._protocol_thread.join(3)
+
     def test_uses_a_passed_protocol_over_the_saved_one(self, tmp_path):
         m, pins, _ = self._bench(tmp_path, _proto(
             {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 0.01}}))

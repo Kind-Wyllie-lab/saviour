@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { fmtTime } from "/src/basic/utils/sessionProtocol";
-import { checkForSession, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
+import { checkForSession, rigTestBlocked, scheduledPins, soundModulesOf } from "/src/basic/components/Protocol/protocolModules";
 import { useProtocolLibrary } from "/src/basic/components/Protocol/protocolLibrary";
 import ProtocolDesigner from "/src/basic/components/Protocol/ProtocolDesigner";
 import { pinName } from "/src/basic/components/Protocol/pinNames";
@@ -33,21 +33,16 @@ export default function SessionProtocolField({ value, onChange, targetModules, d
   // The designer validates against, and tests on, the target's first TTL module.
   const ttlModule = targetModules.find((m) => String(m.type ?? "").includes("ttl")) ?? null;
   const soundModules = useMemo(() => soundModulesOf(targetModules), [targetModules]);
-  const protocolTest = useProtocolTest(ttlModule?.id ?? "none");
-  const renderTest = ttlModule ? (result, draft) => {
-    const blocked = ttlModule.status === "RECORDING" ? "Recording: the module is busy."
-      : !ttlModule.online ? "The module is offline."
-      : !loggedIn ? "Sign in as admin to run a test."
-      : !result || result.edges.length === 0 ? "Add some steps first."
-      : !result.ok ? "Fix the problems first."
-      : result.pins.some((p) => !scheduledPins(ttlModule).includes(p)) ? "Set the lines it uses to Scheduled first (TTL card, Pins tab)."
-      : null;
-    return (
-      <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
-        running={protocolTest.running} blocked={blocked}
-        onStart={() => protocolTest.start(draft)} onStop={protocolTest.stop} />
-    );
-  } : undefined;
+  const soundRecords = useMemo(
+    () => targetModules.filter((m) => String(m?.type ?? "") === "sound"), [targetModules]);
+  const protocolTest = useProtocolTest(ttlModule?.id ?? "none", soundRecords.map((m) => m.id));
+  const renderTest = ttlModule || soundRecords.length ? (result, draft) => (
+    <ProtocolTestControls test={protocolTest.test} elapsed={protocolTest.elapsed}
+      running={protocolTest.running}
+      blocked={rigTestBlocked({ result, ttl: ttlModule, sounds: soundRecords, loggedIn,
+        scheduled: ttlModule ? scheduledPins(ttlModule) : [] })}
+      onStart={() => protocolTest.start(draft, result)} onStop={protocolTest.stop} />
+  ) : undefined;
 
   return (
     <>

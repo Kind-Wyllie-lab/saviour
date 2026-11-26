@@ -68,3 +68,28 @@ export function checkForSession(protocol, targetModules, durationMinutes) {
   }
   return { errors, warnings, runs, durationS: base.durationS };
 }
+
+/** Why a rig test can't start now, or null. result: the designer's
+ *  expansion; ttl: the TTL module (or null); sounds: the sound modules (full
+ *  module records); scheduled: the TTL module's Scheduled lines. */
+export function rigTestBlocked({ result, ttl, sounds = [], loggedIn, scheduled = [] }) {
+  const busy = (m) => m.status === "RECORDING";
+  const off = (m) => m.online === false;
+  const hasTtl = (result?.edges?.length ?? 0) > 0;
+  const hasSound = (result?.cues?.length ?? 0) > 0;
+  if (!loggedIn) return "Sign in as admin to run a test.";
+  if (!result || (!hasTtl && !hasSound)) return "Add some steps first.";
+  if (!result.ok) return "Fix the problems first.";
+  if (hasTtl) {
+    if (!ttl) return "No TTL module connected for the TTL steps.";
+    if (busy(ttl)) return "Recording: the TTL module is busy.";
+    if (off(ttl)) return "The TTL module is offline.";
+    if (result.pins.some((p) => !scheduled.includes(p))) return "Set the lines it uses to Scheduled first (TTL card, Pins tab).";
+  }
+  if (hasSound) {
+    if (!sounds.length) return "No sound module connected for the sound steps.";
+    if (sounds.some(busy)) return "Recording: the sound module is busy.";
+    if (sounds.some(off)) return "The sound module is offline.";
+  }
+  return null;
+}

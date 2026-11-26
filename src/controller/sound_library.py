@@ -331,11 +331,19 @@ def register(web, library: SoundLibrary, *, protocols, get_modules: Callable[[],
     @app.route("/sound_library/<name>")
     def serve_sound_library_file(name):
         """Unauthenticated like /hailo_models: modules fetch from here on the
-        closed LAN (threat model in CLAUDE.md)."""
-        if not NAME_RE.match(name) or not os.path.isfile(os.path.join(library.dir, name)):
+        closed LAN (threat model in CLAUDE.md). `?play=1` serves it inline
+        for the browser's Play button, built-ins included."""
+        from flask import request
+
+        play = request.args.get("play") is not None
+        path = os.path.join(library.dir, name)
+        if NAME_RE.match(name) and not os.path.isfile(path) and play \
+                and name in library.builtin_names():
+            path = os.path.join(library.builtin_dir, name)
+        if not NAME_RE.match(name) or not os.path.isfile(path):
             return "Not found", 404
-        return send_file(os.path.join(library.dir, name), as_attachment=True,
-                         download_name=name, mimetype="audio/wav")
+        return send_file(path, as_attachment=not play, download_name=name,
+                         mimetype="audio/wav", conditional=True)
 
     def push(module_id: str | None = None) -> int:
         params = {"controller_url": controller_url(), "files": library.manifest()}

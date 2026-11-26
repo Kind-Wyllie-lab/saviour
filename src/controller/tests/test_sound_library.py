@@ -71,6 +71,7 @@ class TestListing:
         lib.add("tone.wav")
         items = {e["name"]: e for e in lib.list()}
         assert items["8k.wav"]["builtin"] is True and items["tone.wav"]["builtin"] is False
+        assert items["8k.wav"]["kind"] == items["tone.wav"]["kind"] == "recording"
         assert items["8k.wav"]["analysis"]["sample_rate"] == 48000
         assert "envelope" in lib.get("8k.wav")["analysis"]
         assert lib.manifest() == [{"name": "tone.wav", "sha256": items["tone.wav"]["sha256"]}]
@@ -183,6 +184,7 @@ class TestGenerate:
         assert staged["analysis"]["rms_dbfs"] == pytest.approx(-20, abs=0.1)
         entry = lib.add(staged["name"])
         assert entry["source"] == "generator" and entry["generator"]["colour"] == "pink"
+        assert entry["kind"] == "recipe"
         side = json.loads((tmp_path / "lib" / (staged["name"][:-4] + ".json")).read_text())
         assert side["generator"]["generator_version"] >= 1
 
@@ -239,3 +241,26 @@ def test_preview_and_add_over_socketio(lib):
     lists = flow._events(client, "sound_library")
     assert lists[-1]["added"] == "cue_3k.wav" and lib.library_names() == ["cue_3k.wav"]
     assert sent and sent[-1][1] == "sync_sound_library"
+
+
+class TestListening:
+    def _frames(self, wav):
+        from src.shared import sound_analysis as sa
+        x, rate, _ = sa.read_wav(wav)
+        return x[:, 0], rate
+
+    def test_click_repeated_and_padded_for_the_browser(self, lib):
+        out = lib.preview({"type": "click", "click_us": 100})
+        x, rate = self._frames(out["wav"])
+        starts = np.flatnonzero(np.diff((np.abs(x) > 0).astype(int), prepend=0) == 1)
+        assert len(starts) == 4 and np.allclose(np.diff(starts), 0.25 * rate, atol=1)
+        assert "one click" in out["listen_note"]
+        assert out["analysis"]["duration_s"] < 0.001       # the analysis is of the sound
+
+    def test_short_burst_padded_long_sound_untouched(self, lib):
+        short = lib.preview({"type": "noise", "duration_s": 0.04, "ramp_ms": 2})
+        x, rate = self._frames(short["wav"])
+        assert len(x) == round(0.4 * rate) and short["listen_note"]
+        long = lib.preview({"type": "tone", "duration_s": 1})
+        assert long["listen_note"] is None
+        assert len(self._frames(long["wav"])[0]) == 48000

@@ -135,3 +135,32 @@ with "convert to WAV". Output, stored in the sidecar:
 - A sound above the per-output cap can't be played or saved into a
   protocol.
 - Two sound modules end up with identical library hashes after an upload.
+
+
+## Intended design: recipes vs recordings (agreed 2026-11-26)
+
+The library has two kinds of entry, shown as separate sections on the
+Library tab (`kind` on every entry: `recipe` when it has `generator`
+parameters, else `recording`):
+
+- **Recordings**: uploaded WAVs (USVs, predator sounds, anything recorded).
+  Can't be re-rendered. A protocol step plays them as they are, cut to the
+  step's length; a step longer than the file loops it (noise-like
+  recordings with a short crossfade) or is refused/warned in the designer
+  for tones and calls. Looping is not built yet.
+- **Built sounds (recipes)**: tone, noise, click, AM tone, sweep from the
+  sound builder. Not built yet: the sound module renders each from its
+  recipe **at the length the protocol step asks for** when the session
+  loads (`src/shared/sound_generator.py` is NumPy-only and already on the
+  module), so every step gets its own onset/offset ramps and plateau level.
+  The stored file becomes the reference copy (Library analysis, output
+  Test buttons). Per step: frozen noise (the recipe's seed) or fresh noise
+  (seed derived from the session seed + trial number). The session record
+  (phase 3) stores per step the recipe, generator version, seed used and a
+  hash of the rendered audio, so it can be re-rendered and checked.
+  The protocol designer previews a step at its length with `preview_sound`.
+
+Gap-in-noise was dropped as a recipe: a protocol builds a gap from two
+noise steps. The browser preview repeats a click 4× (250 ms apart) and pads
+sounds under 0.4 s with silence, since browsers skip very short audio; the
+analysis and the stored sound are unchanged.

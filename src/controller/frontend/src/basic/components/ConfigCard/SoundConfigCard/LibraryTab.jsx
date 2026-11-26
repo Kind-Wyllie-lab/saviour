@@ -14,6 +14,21 @@ const fmtLen = (s) => (s == null ? "–" : s < 1 ? `${Math.round(s * 1000)} ms` 
 const fmtRate = (hz) => (hz ? `${hz % 1000 ? (hz / 1000).toFixed(1) : hz / 1000} kHz` : "–");
 const fmtDb = (db) => (db == null ? "–" : db.toFixed(1));
 
+// Type and main frequency/colour, for the table.
+function recipeSummary(g) {
+  if (!g) return "–";
+  const kind = TYPES.find((t) => t.key === g.type)?.label ?? g.type.replace("_", " ");
+  const hz = (v) => (v >= 1000 ? `${+(v / 1000).toFixed(2)} kHz` : `${v} Hz`);
+  switch (g.type) {
+    case "tone": return `${kind}, ${hz(g.freq_hz)}`;
+    case "noise": case "gap": return `${g.colour} ${g.type === "gap" ? "gap noise" : "noise"}, ${hz(g.low_hz)}-${hz(g.high_hz)}`;
+    case "click": return `${kind}, ${g.click_us} µs`;
+    case "am_tone": return `${kind}, ${hz(g.carrier_hz)} at ${g.mod_hz} Hz`;
+    case "fm_sweep": return `${kind}, ${hz(g.start_hz)} → ${hz(g.end_hz)}`;
+    default: return kind;
+  }
+}
+
 // One line saying how a generated sound was made.
 function describe(g) {
   const kind = TYPES.find((t) => t.key === g.type)?.label ?? g.type;
@@ -53,87 +68,124 @@ export default function LibraryTab({ moduleFiles }) {
   const up = making ? null : lib.upload;
   const onModule = (name) => Object.prototype.hasOwnProperty.call(moduleFiles ?? {}, name);
 
+  const all = lib.items ?? [];
+  const recordings = all.filter((e) => e.kind !== "recipe");
+  const recipes = all.filter((e) => e.kind === "recipe");
+
+  const checks = (a) => {
+    const warn = a.warnings?.length ?? 0;
+    return a.error ? <span className="sound-error">unreadable</span>
+      : warn ? <span className="sound-warn" title={a.warnings.join("\n")}>{warn} warning{warn > 1 ? "s" : ""}</span>
+      : <span className="sound-ok">OK</span>;
+  };
+
+  const renderTable = (items, kind, empty) => {
+    if (lib.items == null) return <p className="sound-muted">Loading library…</p>;
+    if (!items.length) return <p className="sound-muted">{empty}</p>;
+    return (
+      <table className="sound-outputs sound-library__table">
+        <thead>
+          {kind === "recipe"
+            ? <tr><th>Sound</th><th>Recipe</th><th>Length</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
+            : <tr><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>}
+        </thead>
+        <tbody>
+          {items.map((e) => {
+            const a = e.analysis ?? {};
+            const g = e.generator;
+            return (
+              <tr key={e.name} className={selected === e.name ? "sound-library__row--selected" : ""}
+                onClick={() => setSelected(selected === e.name ? null : e.name)}>
+                <td>
+                  <button type="button" className="sound-link" aria-expanded={selected === e.name}>{e.name}</button>
+                  {e.builtin && <span className="sound-tag">built-in</span>}
+                </td>
+                {kind === "recipe" ? (
+                  <>
+                    <td className="sound-muted">{recipeSummary(g)}</td>
+                    <td>{fmtLen(a.duration_s)}</td>
+                    <td>{g ? `${g.level_dbfs} dBFS ${levelKind(g)}` : "–"}</td>
+                  </>
+                ) : (
+                  <>
+                    <td>{fmtRate(a.sample_rate)}</td>
+                    <td>{fmtLen(a.duration_s)}</td>
+                    <td>{fmtDb(a.peak_dbfs)}</td>
+                    <td>{fmtDb(a.rms_dbfs)}</td>
+                  </>
+                )}
+                <td>{checks(a)}</td>
+                <td>{onModule(e.name) ? <span className="sound-ok">✓</span> : <span className="sound-muted">copying…</span>}</td>
+                <td onClick={(ev) => ev.stopPropagation()}>
+                  {!e.builtin && (
+                    <button type="button" className="sound-link" disabled={!loggedIn}
+                      title={loggedIn ? `Delete ${e.name}` : "Sign in as admin to delete"}
+                      onClick={() => setConfirmDelete(e.name)}>Delete</button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  };
+
   return (
     <div className="sound-library">
-      <div className="sound-row">
-        <input ref={fileInput} type="file" accept=".wav,audio/wav,audio/x-wav" hidden
-          onChange={(e) => { lib.start(e.target.files?.[0]); e.target.value = ""; }} />
-        <button type="button" className="sound-test-btn" disabled={!loggedIn || up?.stage === "uploading"}
-          title={loggedIn ? "Upload a WAV file; it's analysed before you add it" : "Sign in as admin to upload"}
-          onClick={() => fileInput.current?.click()}>
-          Upload sound…
-        </button>
-        <button type="button" className="sound-test-btn" disabled={!loggedIn}
-          title={loggedIn ? "Make a tone, noise, gap, clicks or sweep" : "Sign in as admin to make sounds"}
-          onClick={() => { lib.discard(); setMaking({ initial: null }); }}>
-          New sound…
-        </button>
-        <span className="sound-muted">WAV (PCM or float). Shared by every sound module on this rig.</span>
-      </div>
-
-      {up?.stage === "uploading" && (
-        <p className="sound-muted">Uploading {up.filename}: {up.received ?? 0} / {up.total} chunks…</p>
-      )}
-      {up?.error && (
-        <p className="sound-error">{up.error} <button type="button" className="sound-link" onClick={() => lib.discard()}>Dismiss</button></p>
-      )}
-      {up?.stage === "analysed" && (
-        <div className="sound-upload-review">
-          <h4>{up.name}{up.replaces ? " (replaces the library file of this name)" : ""}</h4>
-          <SoundView entry={{ analysis: up.analysis, sha256: up.analysis?.sha256 }} />
-          <div className="sound-row">
-            <button type="button" className="sound-test-btn" onClick={() => { lib.add(up.name); setSelected(up.name); }}>
-              {up.replaces ? "Replace in library" : "Add to library"}
-            </button>
-            <button type="button" className="sound-test-btn" onClick={() => lib.discard(up.name)}>Cancel</button>
-          </div>
-        </div>
-      )}
+      <input ref={fileInput} type="file" accept=".wav,audio/wav,audio/x-wav" hidden
+        onChange={(e) => { lib.start(e.target.files?.[0]); e.target.value = ""; }} />
+      <p className="sound-muted">Shared by every sound module on this rig. A protocol plays these and repeats them (e.g. a sound for 1 s every 10 s).</p>
 
       {lib.error && !up?.error && (
         <p className="sound-error">{lib.error} <button type="button" className="sound-link" onClick={lib.clearError}>Dismiss</button></p>
       )}
 
-      {lib.items == null ? (
-        <p className="sound-muted">Loading library…</p>
-      ) : (
-        <table className="sound-outputs sound-library__table">
-          <thead>
-            <tr><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>
-          </thead>
-          <tbody>
-            {lib.items.map((e) => {
-              const a = e.analysis ?? {};
-              const warn = a.warnings?.length ?? 0;
-              return (
-                <tr key={e.name} className={selected === e.name ? "sound-library__row--selected" : ""}
-                  onClick={() => setSelected(selected === e.name ? null : e.name)}>
-                  <td>
-                    <button type="button" className="sound-link" aria-expanded={selected === e.name}>{e.name}</button>
-                    {e.builtin && <span className="sound-tag">built-in</span>}
-                    {e.source === "generator" && <span className="sound-tag">generated</span>}
-                  </td>
-                  <td>{fmtRate(a.sample_rate)}</td>
-                  <td>{fmtLen(a.duration_s)}</td>
-                  <td>{fmtDb(a.peak_dbfs)}</td>
-                  <td>{fmtDb(a.rms_dbfs)}</td>
-                  <td>{a.error ? <span className="sound-error">unreadable</span>
-                    : warn ? <span className="sound-warn" title={a.warnings.join("\n")}>{warn} warning{warn > 1 ? "s" : ""}</span>
-                    : <span className="sound-ok">OK</span>}</td>
-                  <td>{onModule(e.name) ? <span className="sound-ok">✓</span> : <span className="sound-muted">copying…</span>}</td>
-                  <td onClick={(ev) => ev.stopPropagation()}>
-                    {!e.builtin && (
-                      <button type="button" className="sound-link" disabled={!loggedIn}
-                        title={loggedIn ? `Delete ${e.name}` : "Sign in as admin to delete"}
-                        onClick={() => setConfirmDelete(e.name)}>Delete</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+      <section className="sound-library__section">
+        <div className="sound-row sound-library__head">
+          <h4>Recordings</h4>
+          <span className="sound-muted">Uploaded WAV files: USVs, predator sounds, anything recorded. Played as they are.</span>
+          <button type="button" className="sound-test-btn" disabled={!loggedIn || up?.stage === "uploading"}
+            title={loggedIn ? "Upload a WAV file (PCM or float); it's analysed before you add it" : "Sign in as admin to upload"}
+            onClick={() => fileInput.current?.click()}>
+            Upload recording…
+          </button>
+        </div>
+
+        {up?.stage === "uploading" && (
+          <p className="sound-muted">Uploading {up.filename}: {up.received ?? 0} / {up.total} chunks…</p>
+        )}
+        {up?.error && (
+          <p className="sound-error">{up.error} <button type="button" className="sound-link" onClick={() => lib.discard()}>Dismiss</button></p>
+        )}
+        {up?.stage === "analysed" && !up.generator && (
+          <div className="sound-upload-review">
+            <h4>{up.name}{up.replaces ? " (replaces the library file of this name)" : ""}</h4>
+            <SoundView entry={{ analysis: up.analysis, sha256: up.analysis?.sha256 }} />
+            <div className="sound-row">
+              <button type="button" className="sound-test-btn" onClick={() => { lib.add(up.name); setSelected(up.name); }}>
+                {up.replaces ? "Replace in library" : "Add to library"}
+              </button>
+              <button type="button" className="sound-test-btn" onClick={() => lib.discard(up.name)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {renderTable(recordings, "recording", "No recordings yet.")}
+      </section>
+
+      <section className="sound-library__section">
+        <div className="sound-row sound-library__head">
+          <h4>Built sounds</h4>
+          <span className="sound-muted">Tones, noise, clicks, AM tones and sweeps made in the sound builder, kept with their recipe.</span>
+          <button type="button" className="sound-test-btn" disabled={!loggedIn}
+            title={loggedIn ? "Build a tone, noise, click, AM tone or sweep" : "Sign in as admin to build sounds"}
+            onClick={() => { lib.discard(); setMaking({ initial: null }); }}>
+            Build sound…
+          </button>
+        </div>
+        {renderTable(recipes, "recipe", "No built sounds yet.")}
+      </section>
 
       {selected && (
         lib.detail?.name === selected

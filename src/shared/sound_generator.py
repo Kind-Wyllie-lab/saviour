@@ -11,20 +11,19 @@ Types:
   tone         freq_hz
   noise        colour (white/pink/brown/blue/violet), low_hz, high_hz,
                notch_low_hz/notch_high_hz (optional), seed
-  gap          a noise (same parameters) with a silent gap: gap_start_s,
-               gap_ms, gap_ramp_ms (gap-prepulse inhibition)
   click        click_us, polarity (positive/negative): one rectangular click;
                a protocol repeats it (the library holds single sounds)
   am_tone      carrier_hz, mod_hz, depth (0-1)
   fm_sweep     start_hz, end_hz, sweep (linear/log)
 Every type except click: duration_s, level_dbfs, ramp_ms (raised-cosine
 onset/offset). Level is the RMS over the plateau (the sound without its
-ramps; for a gap, the noise around it), the convention for stimulus levels
+ramps), the convention for stimulus levels
 and the figure that maps to dB SPL once an output is calibrated. A click's
 level is its peak (peak-equivalent SPL). Peaks that wouldn't fit under full
 scale are refused, not clipped (Gaussian noise peaks ~12 dB above its RMS).
 Version 1 (2026-11-26, morning) used the peak for tones, AM and sweeps and
-had a click train type.
+had a click train type. A gap-in-noise type was dropped the same day: a
+protocol builds a gap from two noise steps.
 
 NumPy only (controller env).
 """
@@ -43,7 +42,7 @@ MIN_HZ = 20.0
 MAX_DURATION_S = 300.0
 PEAK_CEILING_DBFS = -0.1       # rendered peaks must stay under this
 
-TYPES = ("tone", "noise", "gap", "click", "am_tone", "fm_sweep")
+TYPES = ("tone", "noise", "click", "am_tone", "fm_sweep")
 COLOURS = {                    # amplitude slope: |X(f)| ∝ f^slope
     "white": 0.0, "pink": -0.5, "brown": -1.0, "blue": 0.5, "violet": 1.0,
 }
@@ -54,9 +53,6 @@ DEFAULTS = {
     "tone": {"freq_hz": 5000.0},
     "noise": {"colour": "white", "low_hz": 1000.0, "high_hz": 20000.0,
               "notch_low_hz": None, "notch_high_hz": None, "seed": None},
-    "gap": {"colour": "white", "low_hz": 1000.0, "high_hz": 20000.0,
-            "notch_low_hz": None, "notch_high_hz": None, "seed": None,
-            "gap_start_s": 0.5, "gap_ms": 50.0, "gap_ramp_ms": 1.0},
     "click": {"click_us": 100.0, "polarity": "positive", "ramp_ms": 0.0},
     "am_tone": {"carrier_hz": 8000.0, "mod_hz": 40.0, "depth": 1.0},
     "fm_sweep": {"start_hz": 2000.0, "end_hz": 20000.0, "sweep": "log"},
@@ -115,7 +111,7 @@ def normalise(params: dict) -> dict:
 
     if kind == "tone":
         out["freq_hz"] = _num(p, "freq_hz", errors, MIN_HZ, MAX_HZ)
-    elif kind in ("noise", "gap"):
+    elif kind == "noise":
         colour = p.get("colour")
         if colour not in COLOURS:
             errors.append(f"colour must be one of {', '.join(COLOURS)}")
@@ -144,13 +140,6 @@ def normalise(params: dict) -> dict:
             errors.append("seed must be a whole number ≥ 0")
             seed = None
         out["seed"] = seed
-        if kind == "gap":
-            gs = out["gap_start_s"] = _num(p, "gap_start_s", errors, 0.0, MAX_DURATION_S)
-            gm = out["gap_ms"] = _num(p, "gap_ms", errors, 0.1, 60_000.0)
-            gr = out["gap_ramp_ms"] = _num(p, "gap_ramp_ms", errors, 0.0, 1000.0)
-            if None not in (gs, gm, gr, dur):
-                if gs + (gm + 2 * gr) / 1000 > dur + 1e-9:
-                    errors.append("the gap (with its ramps) runs past the end of the sound")
     elif kind == "click":
         out["click_us"] = _num(p, "click_us", errors, 1e6 / RATE, 100_000.0)
         if p.get("polarity") not in ("positive", "negative"):
@@ -224,7 +213,7 @@ def render(p: dict) -> np.ndarray:
     # Unit-shaped waveform, then scaled so its plateau RMS is the level.
     if kind == "tone":
         x = np.sin(2 * np.pi * p["freq_hz"] * t)
-    elif kind in ("noise", "gap"):
+    elif kind == "noise":
         x = _noise(p, n)
     elif kind == "am_tone":
         mod = 1 - p["depth"] / 2 * (1 - np.cos(2 * np.pi * p["mod_hz"] * t))
@@ -241,20 +230,6 @@ def render(p: dict) -> np.ndarray:
         raise GeneratorError([f"unknown type {kind}"])
     rms = float(np.sqrt(np.mean(x[_plateau(n, ramp)] ** 2)))
     x = x * (level / rms) if rms > 0 else x
-    if kind == "gap":
-        # After scaling: the level is the noise's, not diluted by the gap.
-        g0 = round(p["gap_start_s"] * RATE)
-        gr = round(p["gap_ramp_ms"] / 1000 * RATE)
-        gn = round(p["gap_ms"] / 1000 * RATE)
-        env = np.ones(n)
-        if gr:
-            fall = 0.5 + 0.5 * np.cos(np.pi * (np.arange(gr) + 0.5) / gr)
-            a, b = g0, min(n, g0 + gr)
-            env[a:b] = fall[:b - a]
-            a, b = min(n, g0 + gr + gn), min(n, g0 + 2 * gr + gn)
-            env[a:b] = fall[::-1][:b - a]
-        env[g0 + gr:g0 + gr + gn] = 0.0
-        x = x * env
     return x * _ramp(n, ramp)
 
 
@@ -265,12 +240,6 @@ def levels(x: np.ndarray, p: dict) -> dict:
     ramp = round(p["ramp_ms"] / 1000 * RATE)
     sl = _plateau(n, ramp)
     seg = x[sl]
-    if p["type"] == "gap":
-        g0 = round(p["gap_start_s"] * RATE)
-        gn = round((p["gap_ms"] + 2 * p["gap_ramp_ms"]) / 1000 * RATE)
-        keep = np.ones(n, bool)
-        keep[g0:g0 + gn] = False
-        seg = x[keep[sl.start:sl.stop].nonzero()[0] + sl.start] if keep[sl].any() else seg
     rms = float(np.sqrt(np.mean(np.asarray(seg, float) ** 2))) if len(seg) else 0.0
     peak = float(np.max(np.abs(x))) if n else 0.0
 
@@ -313,10 +282,8 @@ def default_name(p: dict) -> str:
     lvl = f"{p['level_dbfs']:g}dB" + ("pk" if kind in PEAK_TYPES else "rms")
     if kind == "tone":
         parts = ["tone", f"{hz(p['freq_hz'])}Hz"]
-    elif kind in ("noise", "gap"):
+    elif kind == "noise":
         parts = [kind, p["colour"], f"{hz(p['low_hz'])}-{hz(p['high_hz'])}Hz"]
-        if kind == "gap":
-            parts.append(f"gap{p['gap_ms']:g}ms")
     elif kind == "click":
         parts = ["click", f"{p['click_us']:g}us", p["polarity"]]
     elif kind == "am_tone":

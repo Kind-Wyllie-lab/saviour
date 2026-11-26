@@ -2,8 +2,7 @@
 // New sound window and the library's descriptions.
 export const TYPES = [
   { key: "tone", label: "Tone", help: "A pure tone, e.g. a conditioning cue." },
-  { key: "noise", label: "Noise", help: "Coloured, band-limited noise: startle pulses, prepulses, background." },
-  { key: "gap", label: "Gap in noise", help: "Noise with a silent gap, for gap-prepulse inhibition." },
+  { key: "noise", label: "Noise", help: "Coloured, band-limited noise: startle pulses, prepulses, background; a protocol makes gaps." },
   { key: "click", label: "Click", help: "One short rectangular click; a protocol repeats it." },
   { key: "am_tone", label: "AM tone", help: "A tone whose amplitude is modulated." },
   { key: "fm_sweep", label: "Sweep", help: "A tone gliding from one frequency to another." },

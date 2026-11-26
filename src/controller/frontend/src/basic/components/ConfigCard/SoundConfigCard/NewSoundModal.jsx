@@ -3,7 +3,7 @@ import socket from "/src/socket";
 import SoundView from "./SoundView";
 import { TYPES } from "./soundTypes";
 
-// "New sound": pick a type and set its parameters; the controller renders a
+// Sound builder: pick a type and set its parameters; the controller renders a
 // preview after each change (waveform, spectrogram, levels, and audio to
 // play here) and Add to library renders the full sound and adds it. The
 // library holds single sounds: repeating them is the protocol's job.
@@ -26,7 +26,6 @@ const COMMON = { duration_s: 1, level_dbfs: -20, ramp_ms: 5 };
 const DEFAULTS = {
   tone: { ...COMMON, freq_hz: 5000 },
   noise: { ...COMMON, ...NOISE },
-  gap: { ...COMMON, ...NOISE, gap_start_s: 0.5, gap_ms: 50, gap_ramp_ms: 1 },
   click: { level_dbfs: -20, click_us: 100, polarity: "positive" },
   am_tone: { ...COMMON, carrier_hz: 8000, mod_hz: 40, depth: 1 },
   fm_sweep: { ...COMMON, start_hz: 2000, end_hz: 20000, sweep: "log" },
@@ -85,7 +84,7 @@ export default function NewSoundModal({ lib, initial, onClose }) {
   const seq = useRef(0);
   const p = params[type];
   const set = (k, v) => setParams((all) => ({ ...all, [type]: { ...all[type], [k]: v } }));
-  const isNoise = type === "noise" || type === "gap";
+  const isNoise = type === "noise";
   const request = useMemo(() => cleaned(type, p), [type, p]);
   const requestKey = JSON.stringify(request);
 
@@ -150,8 +149,8 @@ export default function NewSoundModal({ lib, initial, onClose }) {
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <div className="modal sound-new-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="New sound">
-        <h3>New sound</h3>
+      <div className="modal sound-new-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Sound builder">
+        <h3>Sound builder</h3>
 
         <div className="sound-type-tiles" role="radiogroup" aria-label="Sound type">
           {TYPES.map((t) => (
@@ -193,14 +192,6 @@ export default function NewSoundModal({ lib, initial, onClose }) {
                     </div>
                     <span className="sound-help">The same seed makes the identical noise. Stored with the sound.</span>
                   </div>
-                </>
-              )}
-
-              {type === "gap" && (
-                <>
-                  <Num label="Gap starts at (s)" k="gap_start_s" p={p} set={set} min="0" />
-                  <Num label="Gap length (ms)" k="gap_ms" p={p} set={set} min="0.1" />
-                  <Num label="Gap ramps (ms)" k="gap_ramp_ms" p={p} set={set} min="0" help="Fall into and rise out of the gap." />
                 </>
               )}
 
@@ -251,6 +242,7 @@ export default function NewSoundModal({ lib, initial, onClose }) {
                   Plateau RMS <b>{fmtDb(lv.plateau_rms_dbfs)} dBFS</b> · peak {fmtDb(lv.peak_dbfs)} dBFS · headroom {fmtDb(lv.headroom_db)} dB
                 </p>
                 {truncated && <p className="sound-muted">Showing the first {preview.preview_s} s of {preview.params.duration_s} s; Add renders it all.</p>}
+                {preview.listen_note && <p className="sound-muted">{preview.listen_note}</p>}
                 <p className="sound-muted">Played here through your computer: for the shape and pitch, not the level. Use an output's Test button to hear it on the rig.</p>
                 <SoundView entry={{ analysis: preview.analysis }} />
               </>

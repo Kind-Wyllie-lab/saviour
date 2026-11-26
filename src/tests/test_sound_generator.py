@@ -63,13 +63,6 @@ class TestOtherTypes:
         assert not a["abrupt_start"] and not a["abrupt_end"]
         assert abs(x[0]) < 1e-3
 
-    def test_gap_is_silent(self):
-        x, p = g.generate({"type": "gap", "duration_s": 1, "gap_start_s": 0.4,
-                           "gap_ms": 50, "gap_ramp_ms": 1, "seed": 2, "level_dbfs": -20})
-        s = round(0.401 * g.RATE)
-        assert np.all(x[s:s + round(0.05 * g.RATE)] == 0)
-        assert np.abs(x[round(0.2 * g.RATE):round(0.3 * g.RATE)]).max() > 0.05
-
     def test_single_click_level_is_peak(self):
         x, p = g.generate({"type": "click", "click_us": 100, "polarity": "negative",
                            "level_dbfs": -6, "duration_s": 5, "ramp_ms": 3})
@@ -88,11 +81,6 @@ class TestOtherTypes:
         assert g.levels(x, p)["plateau_rms_dbfs"] == pytest.approx(-24, abs=0.01)
         whole = 20 * np.log10(np.sqrt(np.mean(x.astype(float) ** 2)))
         assert whole < -24                       # the ramps pull the whole-file RMS down
-
-    def test_gap_level_is_the_noise_around_it(self):
-        x, p = g.generate({"type": "gap", "duration_s": 1, "gap_ms": 300, "seed": 5,
-                           "level_dbfs": -20})
-        assert g.levels(x, p)["plateau_rms_dbfs"] == pytest.approx(-20, abs=0.2)
 
     def test_preview_renders_at_most_max_s(self):
         x, p = g.generate({"type": "noise", "duration_s": 60, "seed": 1}, max_s=10)
@@ -121,7 +109,7 @@ class TestValidation:
         ({"type": "noise", "colour": "green"}, "colour must be"),
         ({"type": "noise", "low_hz": 5000, "high_hz": 5005}, "10 Hz above"),
         ({"type": "noise", "notch_low_hz": 3000}, "needs both"),
-        ({"type": "gap", "duration_s": 0.5, "gap_start_s": 0.48, "gap_ms": 50}, "past the end"),
+        ({"type": "gap"}, "type must be"),
         ({"type": "am_tone", "carrier_hz": 21000, "mod_hz": 1000}, r"carrier \+ modulation"),
         ({"type": "click", "polarity": "alternating"}, "positive or negative"),
         ({"type": "fm_sweep", "start_hz": 4000, "end_hz": 4000}, "use a tone"),

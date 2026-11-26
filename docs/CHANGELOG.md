@@ -13,6 +13,12 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-26
 
+- [x] **Sound library: recordings and built sounds kept apart; gap recipe dropped; audible click preview** (`sound_library.py`, `sound_generator.py`, `LibraryTab.jsx`, `NewSoundModal.jsx`).
+  - Every library entry has `kind`: `recipe` (made in the sound builder, kept with its parameters) or `recording` (uploaded, incl. the built-ins). The Library tab shows them as two sections, **Recordings** (Upload recording…) and **Built sounds** (Build sound…, with a recipe column and the level as the recipe set it).
+  - The gap-in-noise type is gone: a protocol makes a gap from two noise steps.
+  - The browser preview played nothing for a click (a 100 µs click is 5 samples, which browsers skip). Its audio now plays a click 4 times, 250 ms apart, and pads anything under 0.4 s with silence, and says so; the analysis and stored sound are unchanged.
+  - Agreed design for protocols (not built): built sounds rendered from their recipe on the module at each step's length, recordings cut or looped → `plans/sound-library.md`.
+
 - [x] **Sound generator v2: live preview, RMS levels, single click; Playback tab with a volume slider** (`sound_generator.py`, `sound_library.py` `preview_sound` + `generate_sound` `add`, `NewSoundModal.jsx` rewritten, `soundTypes.js`, `LibraryTab.jsx`, `SoundConfigCard.jsx`; tests `test_sound_generator.py`, `test_sound_library.py`).
   - The library holds single sounds; repeating them (e.g. a click every 100 ms, a file for 1 s every 10 s) is the protocol designer's job. So the click train became one **click** (width, positive/negative polarity, level = peak), and no presets.
   - **Level is the RMS over the plateau** (the sound without its ramps; for a gap, the noise around it) for every type but the click: the convention for stimulus levels and the figure that maps to dB SPL after calibration. v1 used the peak for tones, AM and sweeps (a tone at -20 was 3 dB quieter than noise at -20). `GENERATOR_VERSION` 2; v1 files keep their files and parameters, and the library labels their level as v1 defined it.

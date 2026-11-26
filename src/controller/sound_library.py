@@ -47,6 +47,13 @@ BUILTIN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
 MAX_BYTES = 100 * 1024 * 1024      # 16 s of 192 kHz 24-bit stereo is 18 MB
 PENDING_TTL_S = 3600
 PREVIEW_MAX_S = 10.0
+# Browsers skip or swallow very short audio (a 100 µs click is 5 samples):
+# the preview's audio (not its analysis) pads short sounds with silence and
+# plays a click several times.
+LISTEN_MIN_S = 0.4
+LISTEN_PAD_S = 0.1
+LISTEN_CLICKS = 4
+LISTEN_CLICK_EVERY_S = 0.25
 _RENDER_KEYS = ("envelope", "spectrogram")
 
 
@@ -56,6 +63,23 @@ class SoundLibraryError(ValueError):
 
 def _summary(analysis: dict) -> dict:
     return {k: v for k, v in analysis.items() if k not in _RENDER_KEYS}
+
+
+def _for_listening(x, rate: int, kind: str):
+    """(samples for the browser to play, a note saying how they differ from
+    the sound, or None)."""
+    import numpy as np
+
+    pad = np.zeros(round(LISTEN_PAD_S * rate), dtype=x.dtype)
+    if kind == "click":
+        gap = np.zeros(max(0, round(LISTEN_CLICK_EVERY_S * rate) - len(x)), dtype=x.dtype)
+        out = np.concatenate([pad, *([x, gap] * LISTEN_CLICKS), pad])
+        return out, (f"Played {LISTEN_CLICKS} times, {LISTEN_CLICK_EVERY_S * 1000:g} ms "
+                     "apart, so it can be heard; the sound is one click.")
+    if len(x) / rate < LISTEN_MIN_S:
+        tail = np.zeros(max(0, round(LISTEN_MIN_S * rate) - len(x) - len(pad)), dtype=x.dtype)
+        return np.concatenate([pad, x, tail]), "Padded with silence so the browser plays it."
+    return x, None
 
 
 def protocol_sound_files(protocol: object) -> set[str]:
@@ -150,7 +174,8 @@ class SoundLibrary:
         source, analysis}; None if it doesn't exist."""
         if name in self.builtin_names():
             a = self._builtin_analysis(name) or {}
-            return {"name": name, "builtin": True, "sha256": a.get("sha256"),
+            return {"name": name, "builtin": True, "kind": "recording",
+                    "sha256": a.get("sha256"),
                     "size_bytes": a.get("size_bytes"), "added_at": None,
                     "source": "built-in",
                     "analysis": a if render else _summary(a)}
@@ -160,8 +185,10 @@ class SoundLibrary:
         if meta is None:
             # A file without a sidecar (copied in by hand): analyse it now.
             meta = self._write_sidecar(name, source="manual")
-        entry = {"name": name, "builtin": False, **{k: v for k, v in meta.items()
-                                                     if k != "analysis"}}
+        entry = {"name": name, "builtin": False,
+                 # Built in the sound builder (a recipe) or an uploaded recording.
+                 "kind": "recipe" if meta.get("generator") else "recording",
+                 **{k: v for k, v in meta.items() if k != "analysis"}}
         a = meta.get("analysis") or {}
         entry["analysis"] = a if render else _summary(a)
         return entry
@@ -244,12 +271,15 @@ class SoundLibrary:
             samples, full = sound_generator.generate(params, max_s=PREVIEW_MAX_S)
         except sound_generator.GeneratorError as e:
             raise SoundLibraryError("; ".join(e.errors)) from e
-        analysis = sound_analysis.analyse(samples[:, None], full["sample_rate"])
+        rate = full["sample_rate"]
+        analysis = sound_analysis.analyse(samples[:, None], rate)
+        listen, note = _for_listening(samples, rate, full["type"])
         return {"params": full, "analysis": analysis,
                 "levels": sound_generator.levels(samples, full),
-                "preview_s": round(len(samples) / full["sample_rate"], 6),
+                "preview_s": round(len(samples) / rate, 6),
                 "name": sound_generator.default_name(full),
-                "wav": sound_generator.wav_bytes(samples, full["sample_rate"], bits=16)}
+                "wav": sound_generator.wav_bytes(listen, rate, bits=16),
+                "listen_note": note}
 
     def add(self, name: str) -> dict:
         with self._lock:

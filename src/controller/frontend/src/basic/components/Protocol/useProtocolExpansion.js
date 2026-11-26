@@ -38,7 +38,7 @@ export function timelineOf(result, { pins = [], pinConfigs = null, soundModule =
   const soundRows = outs.map((o) => ({
     key: `snd:${o}`,
     label: outs.length > 1 || o > 1 ? `Sound ${o}` : "Sound",
-    sublabel: soundModule ? `${soundModule.name} · out ${o}` : `output ${o}`,
+    sublabel: soundModule ? `${soundModule.name} · ch ${2 * o - 1}-${2 * o}` : `ch ${2 * o - 1}-${2 * o}`,
   }));
   const edgeSpans = highSpans(result.edges ?? []).map((s) => ({
     row: s.pin,

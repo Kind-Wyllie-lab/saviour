@@ -191,6 +191,9 @@ function trackOf(step) {
 
 const TTL_ACTIONS = ["set", "pulse", "train"];
 
+// Sound output n is a stereo pair: channels 2n-1 and 2n (sound_hardware.py).
+const chans = (o) => `${2 * o - 1}-${2 * o}`;
+
 // The rows of the table and timeline: [{ key, kind, n, label, sub }].
 function tracksFor(outputs, pinConfigs) {
   return [
@@ -198,7 +201,7 @@ function tracksFor(outputs, pinConfigs) {
       const label = pinLabel(pinConfigs, p);
       return { key: `ttl:${p}`, kind: "ttl", n: p, label: label ?? `GPIO ${p}`, sub: label ? `GPIO ${p}` : "TTL line" };
     }),
-    ...outputs.sound.map((o) => ({ key: `snd:${o}`, kind: "snd", n: o, label: `Sound ${o}`, sub: `output ${o}` })),
+    ...outputs.sound.map((o) => ({ key: `snd:${o}`, kind: "snd", n: o, label: `Sound ${o}`, sub: `stereo output ${o} · channels ${chans(o)}` })),
   ];
 }
 
@@ -481,9 +484,9 @@ function OutputPicker({ outputs, used, scheduled, pinConfigs, soundOutputs, hasT
         </div>
       </div>
       <div className="pe-out-row">
-        <span className="pe-out-kind">Sound outputs</span>
+        <span className="pe-out-kind" title="Each output is a stereo pair of the card's channels">Sound outputs (stereo)</span>
         <div className="pe-pins">
-          {sndChoices.map((o) => chip("sound", o, `Output ${o}`, null,
+          {sndChoices.map((o) => chip("sound", o, `Output ${o}`, `ch ${chans(o)}`,
             o > soundOutputs ? "The sound module doesn't have this output" : null))}
           {sndChoices.length === 0 && (
             <span className="pe-out-none">{hasSound ? "The sound module reports no outputs." : "No sound module connected."}</span>
@@ -535,7 +538,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const rows = useMemo(() => {
     const out = [...stepRows];
     for (const o of outputs.sound) {
-      if (!out.some((r) => r.key === `snd:${o}`)) out.push({ key: `snd:${o}`, label: `Sound ${o}`, sublabel: `output ${o}` });
+      if (!out.some((r) => r.key === `snd:${o}`)) out.push({ key: `snd:${o}`, label: `Sound ${o}`, sublabel: `ch ${chans(o)}` });
     }
     return [...out, ...ref.rows];
   }, [stepRows, outputs.sound, ref.rows]);

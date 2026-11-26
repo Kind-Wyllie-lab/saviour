@@ -96,62 +96,78 @@ export default function LibraryTab({ moduleFiles }) {
   const recordings = all.filter((e) => e.kind !== "recipe");
   const recipes = all.filter((e) => e.kind === "recipe");
 
-  const checks = (a) => {
-    const warn = a.warnings?.length ?? 0;
-    return a.error ? <span className="sound-error">unreadable</span>
-      : warn ? <span className="sound-warn" title={a.warnings.join("\n")}>{warn} warning{warn > 1 ? "s" : ""}</span>
-      : <span className="sound-ok">OK</span>;
+  // Opened sound: waveform, spectrogram, facts and a player, under its row.
+  const renderDetail = (name) => {
+    if (lib.detail?.name !== name) return <p className="sound-muted sound-item__detail">Loading {name}…</p>;
+    return (
+      <div className="sound-item__detail sound-library__detail">
+        <div className="sound-row">
+          <audio controls preload="none" src={playUrl(name)} className="sound-new-audio" />
+          <span className="sound-muted">
+            Plays through your computer: for checking what it is, not the level.
+            {lib.detail.analysis?.sample_rate > 48000 && " Anything above ~20 kHz (USVs) is inaudible here; the spectrogram shows it."}
+          </span>
+        </div>
+        {lib.detail.generator && (
+          <div className="sound-row sound-gen-summary">
+            <span className="sound-muted">{describe(lib.detail.generator)}</span>
+            <button type="button" className="sound-link" disabled={!loggedIn}
+              onClick={() => { lib.discard(); setMaking({ initial: lib.detail.generator }); }}>
+              Edit a copy
+            </button>
+          </div>
+        )}
+        <SoundView entry={lib.detail} />
+      </div>
+    );
   };
 
+  // Two lines per sound: name and status, then the details in grey.
   const renderTable = (items, kind, empty) => {
     if (lib.items == null) return <p className="sound-muted">Loading library…</p>;
     if (!items.length) return <p className="sound-muted">{empty}</p>;
     return (
-      <table className="sound-outputs sound-library__table">
-        <thead>
-          {kind === "recipe"
-            ? <tr><th /><th>Sound</th><th>Recipe</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
-            : <tr><th /><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>}
-        </thead>
-        <tbody>
-          {items.map((e) => {
-            const a = e.analysis ?? {};
-            const g = e.generator;
-            return (
-              <tr key={e.name} className={selected === e.name ? "sound-library__row--selected" : ""}
-                onClick={() => setSelected(selected === e.name ? null : e.name)}>
-                <td onClick={(ev) => ev.stopPropagation()}>{playButton(e.name)}</td>
-                <td>
-                  <button type="button" className="sound-link" aria-expanded={selected === e.name}>{e.name}</button>
+      <ul className="sound-list">
+        {items.map((e) => {
+          const a = e.analysis ?? {};
+          const g = e.generator;
+          const warn = a.warnings?.length ?? 0;
+          const isOpen = selected === e.name;
+          const facts = kind === "recipe" && g
+            ? [recipeSummary(g), `${g.level_dbfs} dBFS ${levelKind(g)}`, g.type !== "click" ? `${g.ramp_ms} ms ramps` : null]
+            : [fmtRate(a.sample_rate), fmtLen(a.duration_s), `peak ${fmtDb(a.peak_dbfs)}`, `RMS ${fmtDb(a.rms_dbfs)} dBFS`];
+          return (
+            <li key={e.name} className={`sound-item${isOpen ? " sound-item--open" : ""}`}>
+              <div className="sound-item__row">
+                {playButton(e.name)}
+                <button type="button" className="sound-item__main" aria-expanded={isOpen}
+                  onClick={() => setSelected(isOpen ? null : e.name)}>
+                  <span className="sound-item__name">{e.name}</span>
+                  <span className="sound-item__facts">
+                    {facts.filter(Boolean).join(" · ")}
+                    {" · "}
+                    {a.error ? <span className="sound-error">unreadable</span>
+                      : warn ? <span className="sound-warn" title={a.warnings.join("\n")}>{warn} warning{warn > 1 ? "s" : ""}</span>
+                      : <span className="sound-ok">OK</span>}
+                  </span>
+                </button>
+                <span className="sound-item__status">
                   {e.builtin && <span className="sound-tag">built-in</span>}
-                </td>
-                {kind === "recipe" ? (
-                  <>
-                    <td className="sound-muted">{recipeSummary(g)}</td>
-                    <td>{g ? `${g.level_dbfs} dBFS ${levelKind(g)}` : "–"}</td>
-                  </>
-                ) : (
-                  <>
-                    <td>{fmtRate(a.sample_rate)}</td>
-                    <td>{fmtLen(a.duration_s)}</td>
-                    <td>{fmtDb(a.peak_dbfs)}</td>
-                    <td>{fmtDb(a.rms_dbfs)}</td>
-                  </>
-                )}
-                <td>{checks(a)}</td>
-                <td>{onModule(e.name) ? <span className="sound-ok">✓</span> : <span className="sound-muted">copying…</span>}</td>
-                <td onClick={(ev) => ev.stopPropagation()}>
+                  {onModule(e.name)
+                    ? <span className="sound-ok" title="Copied to this module">✓ on module</span>
+                    : <span className="sound-muted">copying…</span>}
                   {!e.builtin && (
                     <button type="button" className="sound-link" disabled={!loggedIn}
                       title={loggedIn ? `Delete ${e.name}` : "Sign in as admin to delete"}
                       onClick={() => setConfirmDelete(e.name)}>Delete</button>
                   )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </span>
+              </div>
+              {isOpen && renderDetail(e.name)}
+            </li>
+          );
+        })}
+      </ul>
     );
   };
 
@@ -210,33 +226,6 @@ export default function LibraryTab({ moduleFiles }) {
         </div>
         {renderTable(recipes, "recipe", "No built sounds yet.")}
       </section>
-
-      {selected && (
-        lib.detail?.name === selected
-          ? (
-            <div className="sound-library__detail">
-              <h4>{selected}</h4>
-              <div className="sound-row">
-                <audio controls preload="none" src={playUrl(selected)} className="sound-new-audio" />
-                <span className="sound-muted">
-                  Plays through your computer: for checking what it is, not the level.
-                  {lib.detail.analysis?.sample_rate > 48000 && " Anything above ~20 kHz (USVs) is inaudible here; the spectrogram shows it."}
-                </span>
-              </div>
-              {lib.detail.generator && (
-                <div className="sound-row sound-gen-summary">
-                  <span className="sound-muted">{describe(lib.detail.generator)}</span>
-                  <button type="button" className="sound-link" disabled={!loggedIn}
-                    onClick={() => { lib.discard(); setMaking({ initial: lib.detail.generator }); }}>
-                    Edit a copy
-                  </button>
-                </div>
-              )}
-              <SoundView entry={lib.detail} />
-            </div>
-          )
-          : <p className="sound-muted">Loading {selected}…</p>
-      )}
 
       {making && (
         <NewSoundModal lib={lib} initial={making.initial}

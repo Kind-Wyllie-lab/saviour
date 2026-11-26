@@ -219,3 +219,20 @@
     max-height: 30vh;
   }
 }
+
+/* On the Protocols page: part of the page, not a window. */
+.pdm--page { width: 100%; max-height: none; min-height: calc(100vh - 120px); }
+.pdm--page .pdm-body { grid-template-columns: 260px minmax(0, 1fr); }
+.pdm-head-extra {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  padding: 8px 16px; border-bottom: 1px solid var(--border-color); font-size: 0.88em;
+}
+.pdm-head-extra select {
+  padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 4px;
+  background: var(--bg-color); color: var(--text-color);
+}
+@media (max-width: 800px) { .pdm--page .pdm-body { grid-template-columns: 1fr; } }
+.pdm--page .pdm-foot {
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--card-bg-color); border-radius: 0 0 10px 10px;
+}

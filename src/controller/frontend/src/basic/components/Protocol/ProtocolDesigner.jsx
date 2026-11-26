@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router";
 import ProtocolEditor from "./ProtocolEditor";
 import { EMPTY_PROTOCOL, freeName, sameProtocol } from "./protocolLibrary";
 import "./ProtocolDesigner.css";
@@ -23,6 +24,9 @@ import { soundModulesOf } from "./protocolModules";
 // routine run against (null = none in reach: checked for format only).
 // soundModules: the sound modules play steps are offered for and checked
 // against (default: every sound module the controller knows).
+// asPage: render in the page (the Protocols page) instead of a modal: no
+// overlay, no Close, Escape does nothing; onClose is unused. headerExtra:
+// shown under the header (the page's "check against" picker).
 
 function fmtWhen(ts) {
   if (!ts) return "";
@@ -32,9 +36,10 @@ function fmtWhen(ts) {
 export default function ProtocolDesigner({
   start, library, moduleLabel, usedName, usedBadge = "picked", scheduledPins, pinConfigs, moduleId,
   renderTest, cursorT, canEdit, onUse, useLabel = "Use this protocol", onSaved, onClose,
-  soundModules,
+  soundModules, asPage = false, headerExtra = null,
 }) {
   const { modules } = useModules();
+  const navigate = useNavigate();
   const sounds = useMemo(() => soundModules ?? soundModulesOf(modules), [soundModules, modules]);
   const { items, error, clearError, change } = library;
   const [draft, setDraft] = useState(null); // { original, name, protocol }
@@ -133,7 +138,16 @@ export default function ProtocolDesigner({
     library.remove(draft.original);
   };
 
+  // Leaving the page with unsaved changes asks first (the modal asks on Close).
   useEffect(() => {
+    if (!asPage || !dirty) return undefined;
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [asPage, dirty]);
+
+  useEffect(() => {
+    if (asPage) return undefined;
     const onKey = (e) => { if (e.key === "Escape") close(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -141,18 +155,26 @@ export default function ProtocolDesigner({
 
   const shown = (items ?? []).filter((i) => i.name.toLowerCase().includes(filter.trim().toLowerCase()));
 
-  return createPortal(
-    <div className="pdm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className="pdm" role="dialog" aria-modal="true" aria-label="Protocol designer">
+  const panel = (
+      <div className={`pdm${asPage ? " pdm--page" : ""}`} {...(asPage
+        ? { "aria-label": "Protocol designer" }
+        : { role: "dialog", "aria-modal": "true", "aria-label": "Protocol designer" })}>
         <header className="pdm-head">
-          <h2>Protocol designer</h2>
+          <h2>{asPage ? "Protocols" : "Protocol designer"}</h2>
           <span className="pdm-head-sub">
             Protocols are saved on the controller and picked for each session.
             {moduleLabel ? ` Checked against ${moduleLabel}'s Scheduled pins.`
               : " No TTL module in reach: checked for format only."}
           </span>
-          <button type="button" className="pdm-x" onClick={close} aria-label="Close">✕</button>
+          {!asPage && (
+            <button type="button" className="pe-small" title="The same library and designer, checked against the whole rig"
+              onClick={() => { if (confirmDiscard()) { onClose(); navigate("/protocols"); } }}>
+              Open the Protocols page
+            </button>
+          )}
+          {!asPage && <button type="button" className="pdm-x" onClick={close} aria-label="Close">✕</button>}
         </header>
+        {headerExtra && <div className="pdm-head-extra">{headerExtra}</div>}
 
         <div className="pdm-body">
           <aside className="pdm-list">
@@ -253,10 +275,15 @@ export default function ProtocolDesigner({
               disabled={!canEdit || !dirty || !!nameProblem || !!pending}>
               {pending?.kind === "save" ? "Saving…" : "Save"}
             </button>
-            <button type="button" className="pe-small" onClick={close}>Close</button>
+            {!asPage && <button type="button" className="pe-small" onClick={close}>Close</button>}
           </div>
         </footer>
       </div>
+  );
+  if (asPage) return panel;
+  return createPortal(
+    <div className="pdm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      {panel}
     </div>,
     document.body,
   );

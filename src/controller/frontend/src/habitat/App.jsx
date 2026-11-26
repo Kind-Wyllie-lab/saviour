@@ -19,6 +19,7 @@ import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useFaultAlerts from "/src/hooks/useFaultAlerts";
 import RigCheckBanner from "/src/basic/components/RigCheck/RigCheckBanner";
+import Protocols from "/src/basic/pages/Protocols/Protocols";
 
 
 document.title="Habitat";
@@ -30,6 +31,7 @@ const pages = [
   { label: "Monitor", path: "/monitor" },
   { label: "Gates", path: "/gates" },
   { label: "Recording", path: "/recording" },
+  { label: "Protocols", path: "/protocols" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
     { label: "Post-Process", path: "/post-process" },
@@ -52,6 +54,7 @@ function App() {
             <Route path="/monitor" element={<Monitor />} />
             <Route path="/gates" element={<Gates />} />
             <Route path="/recording/*" element={<Recording />} />
+            <Route path="/protocols" element={<Protocols />} />
             <Route path="/system" element={<System />} />
             <Route path="/storage" element={<Storage />} />
             <Route path="/post-process" element={<PostProcess />} />

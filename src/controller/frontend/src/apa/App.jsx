@@ -23,9 +23,9 @@ document.title = "APA";
 
 const pages = [
   { label: "Dashboard", path: "/" },
-  { label: "Recording", path: "/recording" },
-  { label: "Protocols", path: "/protocols" },
   { label: "Settings", path: "/settings" },
+  { label: "Protocols", path: "/protocols" },
+  { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
     { label: "Post-Process", path: "/post-process" },

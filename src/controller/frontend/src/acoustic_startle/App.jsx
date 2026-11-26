@@ -24,8 +24,8 @@ document.title="Acoustic Startle";
 const pages = [
     { label: "Dashboard", path: "/" },
     { label: "Settings", path: "/settings" },
-    { label: "Recording", path: "/recording" },
     { label: "Protocols", path: "/protocols" },
+    { label: "Recording", path: "/recording" },
     { label: "System", path: "/system" },
     { label: "Storage", path: "/storage" },
     { label: "Post-Process", path: "/post-process" },

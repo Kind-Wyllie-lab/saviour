@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import useSoundLibrary from "./useSoundLibrary";
 import SoundView from "./SoundView";
+import NewSoundModal from "./NewSoundModal";
+import { TYPES } from "./soundTypes";
 
 // The controller's sound library, from a sound module's card: every file
 // (built-ins + uploads) with its analysis, upload (analysed before it's
@@ -12,11 +14,32 @@ const fmtLen = (s) => (s == null ? "–" : s < 1 ? `${Math.round(s * 1000)} ms` 
 const fmtRate = (hz) => (hz ? `${hz % 1000 ? (hz / 1000).toFixed(1) : hz / 1000} kHz` : "–");
 const fmtDb = (db) => (db == null ? "–" : db.toFixed(1));
 
+// One line saying how a generated sound was made.
+function describe(g) {
+  const kind = TYPES.find((t) => t.key === g.type)?.label ?? g.type;
+  const hz = (v) => (v >= 1000 ? `${+(v / 1000).toFixed(2)} kHz` : `${v} Hz`);
+  const bits = [kind];
+  if (g.type === "tone") bits.push(hz(g.freq_hz));
+  if (g.type === "noise" || g.type === "gap") {
+    bits.push(`${g.colour}, ${hz(g.low_hz)}-${hz(g.high_hz)}`);
+    if (g.notch_low_hz != null) bits.push(`notch ${hz(g.notch_low_hz)}-${hz(g.notch_high_hz)}`);
+    if (g.type === "gap") bits.push(`${g.gap_ms} ms gap at ${g.gap_start_s} s`);
+    bits.push(`seed ${g.seed}`);
+  }
+  if (g.type === "click_train") bits.push(`${g.rate_hz}/s, ${g.click_us} µs, ${g.polarity}`);
+  if (g.type === "am_tone") bits.push(`${hz(g.carrier_hz)} at ${g.mod_hz} Hz, depth ${g.depth}`);
+  if (g.type === "fm_sweep") bits.push(`${hz(g.start_hz)} → ${hz(g.end_hz)}, ${g.sweep}`);
+  bits.push(`${g.level_dbfs} dBFS ${g.type === "noise" || g.type === "gap" ? "RMS" : "peak"}`,
+    `${g.ramp_ms} ms ramps`, `generator v${g.generator_version}`);
+  return bits.join(" · ");
+}
+
 export default function LibraryTab({ moduleFiles }) {
   const loggedIn = useIsLoggedIn();
   const lib = useSoundLibrary();
   const [selected, setSelected] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [making, setMaking] = useState(null);       // null | { initial }
   const fileInput = useRef(null);
   const { open } = lib;
 
@@ -25,7 +48,8 @@ export default function LibraryTab({ moduleFiles }) {
     if (selected && lib.items && !lib.items.some((e) => e.name === selected)) setSelected(null);
   }, [lib.items, selected]);
 
-  const up = lib.upload;
+  // While the New sound window is open, the upload/generate state is its own.
+  const up = making ? null : lib.upload;
   const onModule = (name) => Object.prototype.hasOwnProperty.call(moduleFiles ?? {}, name);
 
   return (
@@ -37,6 +61,11 @@ export default function LibraryTab({ moduleFiles }) {
           title={loggedIn ? "Upload a WAV file; it's analysed before you add it" : "Sign in as admin to upload"}
           onClick={() => fileInput.current?.click()}>
           Upload sound…
+        </button>
+        <button type="button" className="sound-test-btn" disabled={!loggedIn}
+          title={loggedIn ? "Make a tone, noise, gap, clicks or sweep" : "Sign in as admin to make sounds"}
+          onClick={() => { lib.discard(); setMaking({ initial: null }); }}>
+          New sound…
         </button>
         <span className="sound-muted">WAV (PCM or float). Shared by every sound module on this rig.</span>
       </div>
@@ -81,6 +110,7 @@ export default function LibraryTab({ moduleFiles }) {
                   <td>
                     <button type="button" className="sound-link" aria-expanded={selected === e.name}>{e.name}</button>
                     {e.builtin && <span className="sound-tag">built-in</span>}
+                    {e.source === "generator" && <span className="sound-tag">generated</span>}
                   </td>
                   <td>{fmtRate(a.sample_rate)}</td>
                   <td>{fmtLen(a.duration_s)}</td>
@@ -106,8 +136,27 @@ export default function LibraryTab({ moduleFiles }) {
 
       {selected && (
         lib.detail?.name === selected
-          ? <div className="sound-library__detail"><h4>{selected}</h4><SoundView entry={lib.detail} /></div>
+          ? (
+            <div className="sound-library__detail">
+              <h4>{selected}</h4>
+              {lib.detail.generator && (
+                <div className="sound-row sound-gen-summary">
+                  <span className="sound-muted">{describe(lib.detail.generator)}</span>
+                  <button type="button" className="sound-link" disabled={!loggedIn}
+                    onClick={() => { lib.discard(); setMaking({ initial: lib.detail.generator }); }}>
+                    Edit a copy
+                  </button>
+                </div>
+              )}
+              <SoundView entry={lib.detail} />
+            </div>
+          )
           : <p className="sound-muted">Loading {selected}…</p>
+      )}
+
+      {making && (
+        <NewSoundModal lib={lib} initial={making.initial}
+          onClose={(added) => { setMaking(null); if (added) setSelected(added); }} />
       )}
 
       {confirmDelete && (

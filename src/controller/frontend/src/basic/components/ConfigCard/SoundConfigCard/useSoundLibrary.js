@@ -3,7 +3,7 @@ import socket from "/src/socket";
 
 // The controller's sound library (src/controller/sound_library.py): the
 // list (summaries), one file's full analysis on demand, and the
-// upload -> analyse -> add/cancel flow.
+// upload -> analyse -> add/cancel flow, and the same for generated sounds.
 const CHUNK = 256 * 1024;
 
 export default function useSoundLibrary() {
@@ -64,6 +64,14 @@ export default function useSoundLibrary() {
     })();
   }, []);
 
+  // Render a sound from generator parameters (src/shared/sound_generator.py);
+  // the result arrives like an upload's analysis, with `generator`.
+  const generate = useCallback((params, name) => {
+    setError(null);
+    setUpload({ stage: "generating" });
+    socket.emit("generate_sound", { params, name: name || undefined });
+  }, []);
+
   const add = useCallback((name) => {
     socket.emit("add_sound", { name });
     setUpload(null);
@@ -80,5 +88,5 @@ export default function useSoundLibrary() {
     socket.emit("delete_sound", { name });
   }, []);
 
-  return { items, detail, open, upload, start, add, discard, remove, error, clearError: () => setError(null) };
+  return { items, detail, open, upload, start, generate, add, discard, remove, error, clearError: () => setError(null) };
 }

@@ -16,7 +16,9 @@ Socket.IO (registered from controller.py, every variant):
   upload_sound_start {filename, total_bytes, total_chunks}   admin
   upload_sound_chunk {index, data}        admin  -> sound_upload_progress,
                                                     then sound_upload_analysis
-  add_sound {name}                        admin  (the analysed upload)
+  generate_sound {params, name?}          admin  -> sound_upload_analysis (with
+                                                    `generator`: the full parameters)
+  add_sound {name}                        admin  (the analysed upload or generated sound)
   discard_sound {name}                    admin
   delete_sound {name}                     admin  (refused while a saved protocol uses it)
 Changes broadcast `sound_library`; failures reply `sound_library_error`.
@@ -32,7 +34,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 
-from src.shared import sound_analysis
+from src.shared import sound_analysis, sound_generator
 from src.shared.sound_analysis import NAME_RE, SoundFileError
 
 LIBRARY_DIR = "/var/lib/saviour/sound_library"
@@ -174,7 +176,8 @@ class SoundLibrary:
 
     # ── changing ─────────────────────────────────────────────────────────────
     def _write_sidecar(self, name: str, *, source: str, original: str | None = None,
-                       analysis: dict | None = None) -> dict:
+                       analysis: dict | None = None,
+                       generator: dict | None = None) -> dict:
         if analysis is None:
             try:
                 analysis = sound_analysis.analyse_file(self._wav(name))
@@ -182,17 +185,19 @@ class SoundLibrary:
                 analysis = {"error": str(e)}
         meta = {"name": name, "sha256": analysis.get("sha256"),
                 "size_bytes": analysis.get("size_bytes"), "added_at": self._clock(),
-                "source": source, "original_filename": original, "analysis": analysis}
+                "source": source, "original_filename": original,
+                "generator": generator, "analysis": analysis}
         tmp = self._sidecar(name) + ".tmp"
         with open(tmp, "w") as f:
             json.dump(meta, f)
         os.replace(tmp, self._sidecar(name))
         return meta
 
-    def stage(self, filename: str, data: bytes) -> dict:
-        """Analyse an upload and hold it until add() or discard(). Returns
-        {name, replaces, analysis}; raises SoundLibraryError if it isn't a
-        readable WAV."""
+    def stage(self, filename: str, data: bytes, *, generator: dict | None = None) -> dict:
+        """Analyse an upload (or a generated sound, with its *generator*
+        parameters) and hold it until add() or discard(). Returns {name,
+        replaces, analysis[, generator]}; raises SoundLibraryError if it
+        isn't a readable WAV."""
         name = self.check_name(os.path.basename(filename or ""))
         if not data or len(data) > MAX_BYTES:
             raise SoundLibraryError(f"Sound files must be 1 byte to {MAX_BYTES // 2**20} MB")
@@ -205,9 +210,26 @@ class SoundLibrary:
             for k in [k for k, p in self._pending.items() if now - p["at"] > PENDING_TTL_S]:
                 del self._pending[k]
             self._pending[name] = {"data": data, "analysis": analysis, "at": now,
-                                   "original": filename}
-        return {"name": name, "replaces": os.path.isfile(self._wav(name)),
-                "analysis": analysis}
+                                   "original": None if generator else filename,
+                                   "generator": generator}
+        out = {"name": name, "replaces": os.path.isfile(self._wav(name)),
+               "analysis": analysis}
+        if generator:
+            out["generator"] = generator
+        return out
+
+    def generate(self, params: dict, name: str | None = None) -> dict:
+        """Render a sound from generator *params* (src/shared/sound_generator.py)
+        and stage it like an upload. The name defaults to one describing it."""
+        try:
+            samples, full = sound_generator.generate(params)
+        except sound_generator.GeneratorError as e:
+            raise SoundLibraryError("Can't make that sound: " + "; ".join(e.errors)) from e
+        name = (name or "").strip() or sound_generator.default_name(full)
+        if not name.lower().endswith(".wav"):
+            name += ".wav"
+        return self.stage(name, sound_generator.wav_bytes(samples, full["sample_rate"]),
+                          generator=full)
 
     def add(self, name: str) -> dict:
         with self._lock:
@@ -219,8 +241,9 @@ class SoundLibrary:
         with open(tmp, "wb") as f:
             f.write(pending["data"])
         os.replace(tmp, self._wav(name))
-        self._write_sidecar(name, source="upload", original=pending["original"],
-                            analysis=pending["analysis"])
+        self._write_sidecar(name, source="generator" if pending["generator"] else "upload",
+                            original=pending["original"], analysis=pending["analysis"],
+                            generator=pending["generator"])
         self._logger.info(f"Sound library: added {name} "
                           f"({len(pending['data']) // 1024} KiB)")
         return self.get(name, render=False)
@@ -337,6 +360,9 @@ def register(web, library: SoundLibrary, *, protocols, get_modules: Callable[[],
             raise SoundLibraryError("Upload incomplete: size mismatch, try again")
         reply("sound_upload_analysis", library.stage(up["filename"], data))
 
+    def generate(d: dict) -> None:
+        reply("sound_upload_analysis", library.generate(d.get("params") or {}, d.get("name")))
+
     def add(d: dict) -> None:
         entry = library.add(str(d.get("name", "")))
         broadcast(added=entry["name"])
@@ -356,6 +382,7 @@ def register(web, library: SoundLibrary, *, protocols, get_modules: Callable[[],
         "get_sound_file": (get_file, False),
         "upload_sound_start": (upload_start, True),
         "upload_sound_chunk": (upload_chunk, True),
+        "generate_sound": (generate, True),
         "add_sound": (add, True),
         "discard_sound": (discard, True),
         "delete_sound": (delete, True),

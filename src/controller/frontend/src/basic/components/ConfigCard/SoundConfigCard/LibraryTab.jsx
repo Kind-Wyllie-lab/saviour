@@ -107,6 +107,7 @@ export default function LibraryTab({ moduleFiles }) {
     if (lib.items == null) return <p className="sound-muted">Loading library…</p>;
     if (!items.length) return <p className="sound-muted">{empty}</p>;
     return (
+      <div className="sound-library__scroll">
       <table className="sound-outputs sound-library__table">
         <thead>
           {kind === "recipe"
@@ -153,6 +154,7 @@ export default function LibraryTab({ moduleFiles }) {
           })}
         </tbody>
       </table>
+      </div>
     );
   };
 

@@ -180,3 +180,10 @@ body.dark-mode .sound-view__warnings { color: #e0a030; }
 .sound-library__head h4 { margin: 0; font-size: 1rem; }
 .sound-library__head .sound-test-btn { margin-left: auto; }
 .sound-library__section + .sound-library__section { border-top: 1px solid var(--border-color); padding-top: 12px; }
+
+/* Play-in-browser button on library rows */
+.sound-play-btn {
+  width: 28px; height: 24px; padding: 0; border: 1px solid var(--border-color); border-radius: 4px;
+  background: var(--card-bg-color); color: var(--accent-color); cursor: pointer; font-size: 0.75rem;
+}
+.sound-play-btn:hover { border-color: var(--accent-color); }

@@ -264,3 +264,18 @@ class TestListening:
         long = lib.preview({"type": "tone", "duration_s": 1})
         assert long["listen_note"] is None
         assert len(self._frames(long["wav"])[0]) == 48000
+
+
+def test_play_serves_inline_incl_builtins(lib):
+    flow = TestSocketFlow()
+    app, _, _, _ = flow._setup(lib)
+    lib.stage("tone.wav", _wav())
+    lib.add("tone.wav")
+    c = app.test_client()
+    r = c.get("/sound_library/tone.wav?play=1")
+    assert r.status_code == 200 and r.data[:4] == b"RIFF"
+    assert "attachment" not in r.headers.get("Content-Disposition", "")
+    assert "attachment" in c.get("/sound_library/tone.wav").headers["Content-Disposition"]
+    assert c.get("/sound_library/8k.wav?play=1").status_code == 200   # built-in
+    assert c.get("/sound_library/8k.wav").status_code == 404          # modules: library only
+    assert c.get("/sound_library/nope.wav?play=1").status_code == 404

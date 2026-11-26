@@ -13,6 +13,8 @@ future condensing pass, the same way this batch was moved.
 
 ## 2026-11-26
 
+- [x] **Play library sounds in the browser** (`LibraryTab.jsx`, `sound_library.py`): a ▶/■ button on every Library row (one sound at a time) and a player in the opened sound's detail, built-ins included. `/sound_library/<name>?play=1` serves the file inline (and built-ins, which modules never fetch); without `?play` it's the modules' download as before. Says it's for checking what a sound is, not its level, and that USV content above ~20 kHz is inaudible in the browser.
+
 - [x] **Built-in `8k.wav` removed** from `src/modules/variants/sound/sounds/` (and its `original/` copy): not wanted, and built-ins can't be deleted from the Library tab since every update restores them. `dog_bark.wav` stays.
 
 - [x] **Sound library: recordings and built sounds kept apart; gap recipe dropped; audible click preview** (`sound_library.py`, `sound_generator.py`, `LibraryTab.jsx`, `NewSoundModal.jsx`).

@@ -14,6 +14,9 @@ const fmtLen = (s) => (s == null ? "–" : s < 1 ? `${Math.round(s * 1000)} ms` 
 const fmtRate = (hz) => (hz ? `${hz % 1000 ? (hz / 1000).toFixed(1) : hz / 1000} kHz` : "–");
 const fmtDb = (db) => (db == null ? "–" : db.toFixed(1));
 
+// The controller serves library files (and built-ins) inline for the browser.
+const playUrl = (name) => `/sound_library/${encodeURIComponent(name)}?play=1`;
+
 // Type and main frequency/colour, for the table.
 function recipeSummary(g) {
   if (!g) return "–";
@@ -68,6 +71,27 @@ export default function LibraryTab({ moduleFiles }) {
   const up = making ? null : lib.upload;
   const onModule = (name) => Object.prototype.hasOwnProperty.call(moduleFiles ?? {}, name);
 
+  // One sound plays in the browser at a time (row ▶ / ■).
+  const [playing, setPlaying] = useState(null);
+  const player = useRef(null);
+  useEffect(() => () => player.current?.pause(), []);
+  const togglePlay = (name) => {
+    player.current?.pause();
+    if (playing === name) { setPlaying(null); return; }
+    const a = new Audio(playUrl(name));
+    a.onended = () => setPlaying((p) => (p === name ? null : p));
+    a.onerror = () => setPlaying((p) => (p === name ? null : p));
+    player.current = a;
+    a.play().catch(() => setPlaying(null));
+    setPlaying(name);
+  };
+  const playButton = (name) => (
+    <button type="button" className="sound-play-btn" aria-label={`${playing === name ? "Stop" : "Play"} ${name} here`}
+      title={playing === name ? "Stop" : "Play in this browser"} onClick={() => togglePlay(name)}>
+      {playing === name ? "■" : "▶"}
+    </button>
+  );
+
   const all = lib.items ?? [];
   const recordings = all.filter((e) => e.kind !== "recipe");
   const recipes = all.filter((e) => e.kind === "recipe");
@@ -86,8 +110,8 @@ export default function LibraryTab({ moduleFiles }) {
       <table className="sound-outputs sound-library__table">
         <thead>
           {kind === "recipe"
-            ? <tr><th>Sound</th><th>Recipe</th><th>Length</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
-            : <tr><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>}
+            ? <tr><th /><th>Sound</th><th>Recipe</th><th>Length</th><th>Level</th><th>Checks</th><th>This module</th><th /></tr>
+            : <tr><th /><th>Sound</th><th>Rate</th><th>Length</th><th>Peak dBFS</th><th>RMS dBFS</th><th>Checks</th><th>This module</th><th /></tr>}
         </thead>
         <tbody>
           {items.map((e) => {
@@ -96,6 +120,7 @@ export default function LibraryTab({ moduleFiles }) {
             return (
               <tr key={e.name} className={selected === e.name ? "sound-library__row--selected" : ""}
                 onClick={() => setSelected(selected === e.name ? null : e.name)}>
+                <td onClick={(ev) => ev.stopPropagation()}>{playButton(e.name)}</td>
                 <td>
                   <button type="button" className="sound-link" aria-expanded={selected === e.name}>{e.name}</button>
                   {e.builtin && <span className="sound-tag">built-in</span>}
@@ -192,6 +217,13 @@ export default function LibraryTab({ moduleFiles }) {
           ? (
             <div className="sound-library__detail">
               <h4>{selected}</h4>
+              <div className="sound-row">
+                <audio controls preload="none" src={playUrl(selected)} className="sound-new-audio" />
+                <span className="sound-muted">
+                  Plays through your computer: for checking what it is, not the level.
+                  {lib.detail.analysis?.sample_rate > 48000 && " Anything above ~20 kHz (USVs) is inaudible here; the spectrogram shows it."}
+                </span>
+              </div>
               {lib.detail.generator && (
                 <div className="sound-row sound-gen-summary">
                   <span className="sound-muted">{describe(lib.detail.generator)}</span>

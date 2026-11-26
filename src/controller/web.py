@@ -5161,6 +5161,13 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
                             "result": status.get("result"),
                             "message": status.get("message", ""),
                         })
+                    elif command == "play_sound":
+                        # The sound card's output Test buttons.
+                        self.socketio.emit("sound_test_result", {
+                            "module_id": module_id,
+                            "result": status.get("result"),
+                            "message": status.get("message", ""),
+                        })
                     elif command == "list_audiomoths":
                         self.socketio.emit("audiomoth_list_response", {
                             "module_id": module_id,

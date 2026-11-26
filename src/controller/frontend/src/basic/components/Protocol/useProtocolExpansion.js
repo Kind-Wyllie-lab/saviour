@@ -57,6 +57,7 @@ export function timelineOf(result, { pins = [], pinConfigs = null, soundModule =
 
 // soundModules: [{ id, name, files, outputs }] (protocolModules.soundModulesOf).
 // With exactly one, sounds are checked against its files and outputs.
+// scheduledPins null: check the design only, any pin allowed.
 // rowPins: the pins that always get a timeline row (default: all of
 // scheduledPins, which here means every pin steps may use); used pins get one
 // anyway.
@@ -65,6 +66,7 @@ export default function useProtocolExpansion(protocol, scheduledPins, pinConfigs
   // Keyed on the contents: callers pass a fresh array every render.
   const pinsKey = [...(scheduledPins ?? [])].sort((a, b) => a - b).join(",");
   const pins = useMemo(() => (pinsKey ? pinsKey.split(",").map(Number) : []), [pinsKey]);
+  const anyPin = scheduledPins === null;
   const soundKey = JSON.stringify(soundModules ?? []);
   const soundModule = useMemo(() => {
     const list = JSON.parse(soundKey);
@@ -73,13 +75,13 @@ export default function useProtocolExpansion(protocol, scheduledPins, pinConfigs
 
   const result = useMemo(() => {
     if (!protocol) return null;
-    const ttl = expand(protocol, { moduleId, moduleType: "ttl", allowedPins: pins });
+    const ttl = expand(protocol, { moduleId, moduleType: "ttl", allowedPins: anyPin ? null : pins });
     const sound = expand(protocol, {
       moduleType: "sound", moduleId: soundModule?.id ?? null,
       soundFiles: soundModule?.files ?? null, outputs: soundModule?.outputs ?? null,
     });
     return mergeResults(ttl, sound);
-  }, [protocol, moduleId, pins, soundModule]);
+  }, [protocol, moduleId, pins, anyPin, soundModule]);
 
   const rowKey = rowPins ? [...rowPins].sort((a, b) => a - b).join(",") : null;
   const { rows, spans } = useMemo(

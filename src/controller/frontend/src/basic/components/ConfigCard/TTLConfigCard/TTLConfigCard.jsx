@@ -16,7 +16,6 @@ import ProtocolDesigner from "../../Protocol/ProtocolDesigner";
 import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
 import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
 import useProtocolTest from "../../Protocol/useProtocolTest";
-import { freePins } from "../../Protocol/protocolModules";
 import TTLLinesEditor from "./TTLLinesEditor";
 import AddPinModal from "./AddPinModal";
 import useTTLLines from "/src/hooks/useTTLLines";
@@ -548,7 +547,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           library={protocolLibrary}
           moduleLabel={module.name || id}
           scheduledPins={scheduledPinList}
-          freePins={freePins({ config: { ttl: { ...module.config?.ttl, pins: ttlCfg.pins } } })}
           pinConfigs={ttlCfg.pins ?? {}}
           moduleId={id}
           canEdit={loggedIn}

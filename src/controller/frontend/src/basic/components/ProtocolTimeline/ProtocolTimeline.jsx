@@ -49,6 +49,7 @@ function describe(bar) {
     return `${bar.count} pulses, ${fmtTime(bar.start, true)} → ${fmtTime(bar.end, true)}`
       + ` (zoom in to separate)`;
   }
+  if (bar.ref) return bar.held ? bar.label : `${bar.label} · ${fmtTime(bar.start, true)}`;
   const end = bar.held ? "end of protocol (held)" : fmtTime(bar.end, true);
   const len = bar.held ? "" : ` · ${dur(bar.end, bar.start)}`;
   return `${bar.label} · ${fmtTime(bar.start, true)} → ${end}${len}`;
@@ -140,13 +141,13 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
       const x0 = xOf(Math.max(s.start, v0));
       const x1 = Math.max(xOf(Math.min(end, v1)), x0 + 2);
       const prev = last[ri];
-      if (prev && !held && !prev.held && x0 <= prev.x1 + 1) {
+      if (prev && !held && !prev.held && !s.ref && x0 <= prev.x1 + 1) {
         prev.x1 = Math.max(prev.x1, x1);
         prev.end = end;
         prev.count += 1;
         continue;
       }
-      const bar = { ri, x0, x1, start: s.start, end, held, count: 1, label: s.label };
+      const bar = { ri, x0, x1, start: s.start, end, held, count: 1, label: s.label, ref: !!s.ref };
       out.push(bar);
       last[ri] = bar;
     }
@@ -261,8 +262,9 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
             const y = TOP + i * ROW_H;
             return (
               <g key={r.key}
-                className={highlightRow === null ? undefined
-                  : r.key === highlightRow ? "ptl-row--focus" : "ptl-row--faded"}>
+                className={[r.ref ? "ptl-row--ref" : "",
+                  highlightRow === null ? "" : r.key === highlightRow ? "ptl-row--focus" : "ptl-row--faded"]
+                  .filter(Boolean).join(" ") || undefined}>
                 <line className="ptl-baseline" x1={LABEL_W} x2={LABEL_W + plotW}
                   y1={y + ROW_H / 2 + BAR_H / 2} y2={y + ROW_H / 2 + BAR_H / 2} />
                 <title>{r.sublabel ? `${r.label} · ${r.sublabel}` : r.label}</title>
@@ -284,7 +286,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           {bars.map((b, i) => (
             <rect
               key={i}
-              className={`ptl-bar${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${
+              className={`ptl-bar${b.ref ? " ptl-bar--ref" : ""}${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${
                 highlightRow !== null && rows[b.ri].key !== highlightRow ? " ptl-bar--faded" : ""}`}
               x={b.x0}
               y={TOP + b.ri * ROW_H + (ROW_H - BAR_H) / 2}

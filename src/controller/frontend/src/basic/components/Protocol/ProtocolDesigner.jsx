@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import ProtocolEditor from "./ProtocolEditor";
-import { EMPTY_PROTOCOL, freeName, sameProtocol } from "./protocolLibrary";
+import { EMPTY_PROTOCOL, freeName, normaliseProtocol, sameProtocol } from "./protocolLibrary";
 import "./ProtocolDesigner.css";
 import { formatUtc } from "/src/basic/utils/time";
 import useModules from "/src/hooks/useModules";
@@ -36,7 +36,7 @@ function fmtWhen(ts) {
 export default function ProtocolDesigner({
   start, library, moduleLabel, usedName, usedBadge = "picked", scheduledPins, pinConfigs, moduleId,
   renderTest, cursorT, canEdit, onUse, useLabel = "Use this protocol", onSaved, onClose,
-  soundModules, asPage = false, headerExtra = null, freePins = [],
+  soundModules, asPage = false, headerExtra = null,
 }) {
   const { modules } = useModules();
   const navigate = useNavigate();
@@ -52,12 +52,12 @@ export default function ProtocolDesigner({
 
   const fromLibrary = (name) => {
     const it = byName[name];
-    return it ? { original: name, name, protocol: structuredClone(it.protocol) } : null;
+    return it ? { original: name, name, protocol: normaliseProtocol(structuredClone(it.protocol)) } : null;
   };
   const newDraft = (protocol, name) => ({
     original: null,
     name: freeName(name || "New protocol", items),
-    protocol: structuredClone(protocol ?? EMPTY_PROTOCOL),
+    protocol: normaliseProtocol(structuredClone(protocol ?? EMPTY_PROTOCOL)),
   });
 
   // Open on what we were asked for, once the library has loaded.
@@ -77,7 +77,7 @@ export default function ProtocolDesigner({
     if (pending.kind === "save" && change.saved === pending.name) {
       const it = byName[change.saved];
       if (it) {
-        setDraft({ original: it.name, name: it.name, protocol: structuredClone(it.protocol) });
+        setDraft({ original: it.name, name: it.name, protocol: normaliseProtocol(structuredClone(it.protocol)) });
         onSaved?.(it.name, it.protocol, pending.previous);
       }
       setPending(null);
@@ -239,7 +239,6 @@ export default function ProtocolDesigner({
                   protocol={draft.protocol}
                   onChange={(protocol) => setDraft({ ...draft, protocol: protocol ?? structuredClone(EMPTY_PROTOCOL) })}
                   scheduledPins={scheduledPins}
-                  freePins={freePins}
                   pinConfigs={pinConfigs}
                   moduleId={moduleId}
                   soundModules={sounds}

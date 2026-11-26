@@ -141,3 +141,7 @@
   border: 1px dashed var(--border-color);
   border-radius: 6px;
 }
+
+/* TTL lines in other modes (experiment start, clock, sync): reference only. */
+.ptl-bar--ref { fill: #6b6b6b; }
+.ptl-row--ref .ptl-label { fill: #8a8a8a; }

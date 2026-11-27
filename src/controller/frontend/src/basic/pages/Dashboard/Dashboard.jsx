@@ -9,11 +9,15 @@ import DraggableTile from "/src/basic/components/DraggableTile/DraggableTile";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import SoundPlayWidget from "/src/basic/components/SoundPlayWidget/SoundPlayWidget";
+import ProtocolPlaybackWidget from "/src/basic/components/ProtocolPlaybackWidget/ProtocolPlaybackWidget";
 import { streamInfo, isStreamModule } from "/src/basic/utils/moduleStreams";
 
 // MJPEG stream port by module type
 
-const COMPACT_BREAKPOINT = 1280;
+// Below this width (phones, narrow tablets) the dashboard is a simple stack;
+// above it, the customisable canvas. Was 1280, which put a 1280x720 laptop
+// on the stack (3 stream columns over full-width status cards).
+const COMPACT_BREAKPOINT = 760;
 
 // Free drag/resize canvas of tiles. On the wide layout the dashboard is a
 // canvas of "widgets" — camera/sensor streams plus status widgets (health
@@ -143,6 +147,8 @@ function useElementSize() {
 
 
 const isSoundModule = (m) => String(m?.type ?? "").includes("sound");
+// Rigs that can run a protocol get the protocol playback widget by default.
+const runsProtocols = (modules) => modules.some((m) => isSoundModule(m) || String(m?.type ?? "").includes("ttl"));
 
 // The default widget set for a fresh / unsaved view: every module stream
 // (cameras first), the two status widgets, and a play widget per sound module.
@@ -162,6 +168,7 @@ function defaultWidgets(modules) {
     ...streams,
     { id: "widget:health", type: "health" },
     { id: "widget:module-list", type: "module-list" },
+    ...(runsProtocols(modules) ? [{ id: "widget:protocol", type: "protocol" }] : []),
     ...sounds,
   ];
 }
@@ -301,8 +308,11 @@ function Dashboard() {
     const streams = widgets.filter((w) => w.type === "stream");
     const panels = widgets.filter((w) => w.type !== "stream");
 
-    const rightX = Math.max(DEFAULT_TILE_W, canvasW - PANEL_COL_W - ARRANGE_GAP);
-    const leftW = Math.max(320, rightX - ARRANGE_GAP);
+    // The status column narrows on a small screen (down to 260 px) so the
+    // streams keep most of the width; 360 px from a ~1200 px canvas up.
+    const panelW = Math.round(Math.min(PANEL_COL_W, Math.max(260, canvasW * 0.3)));
+    const rightX = Math.max(280, canvasW - panelW - ARRANGE_GAP);
+    const leftW = Math.max(260, rightX - ARRANGE_GAP);
 
     // Streams: fitted grid filling the left region; a fixed flow only as a
     // fallback before the canvas has been measured.
@@ -337,7 +347,7 @@ function Dashboard() {
       if (draft.layout[w.id]) { out[w.id] = draft.layout[w.id]; return; }
       const roomBelow = canvasH - y - ARRANGE_GAP - TILE_GRIP_PX;
       const maxHeight = Math.min(PANEL_MAX_H_CAP, Math.max(PANEL_MIN_H, roomBelow));
-      out[w.id] = { x: rightX, y, width: PANEL_COL_W, maxHeight }; // content-sized, capped
+      out[w.id] = { x: rightX, y, width: panelW, maxHeight }; // content-sized, capped
       y += TILE_GRIP_PX + (autoHeights[w.id] ?? PANEL_H_ESTIMATE) + ARRANGE_GAP;
     });
 
@@ -413,6 +423,7 @@ function Dashboard() {
     let w;
     if (key === "widget:health") w = { id: key, type: "health" };
     else if (key === "widget:module-list") w = { id: key, type: "module-list" };
+    else if (key === "widget:protocol") w = { id: key, type: "protocol" };
     else if (key.startsWith("sound:")) w = { id: key, type: "sound", target: key.slice("sound:".length) };
     else w = { id: key, type: "stream", target: key.slice("stream:".length) };
     setDraft((d) => {
@@ -518,6 +529,7 @@ function Dashboard() {
     const out = [];
     if (!present.has("widget:health")) out.push({ key: "widget:health", label: "Health summary" });
     if (!present.has("widget:module-list")) out.push({ key: "widget:module-list", label: "Module list" });
+    if (!present.has("widget:protocol")) out.push({ key: "widget:protocol", label: "Protocol playback" });
     groupModules.filter(isStreamModule).forEach((m) => {
       const id = `stream:${m.id}`;
       if (!present.has(id)) out.push({ key: id, label: streamInfo(m).label });
@@ -676,7 +688,7 @@ function Dashboard() {
           ) : (
             <div
               className="dashboard-compact-streams"
-              style={{ gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, moduleList.filter(isStreamModule).length))}, 1fr)` }}
+              style={{ gridTemplateColumns: `repeat(${Math.min(2, Math.max(1, moduleList.filter(isStreamModule).length))}, 1fr)` }}
             >
               {moduleList.filter(isStreamModule).map((m) => {
                 const info = streamInfo(m);
@@ -697,6 +709,7 @@ function Dashboard() {
           <div className="dashboard-compact-panel">
             <HealthSummaryWidget />
             <ModuleList modules={moduleList} />
+            {runsProtocols(moduleList) && <ProtocolPlaybackWidget />}
             {moduleList.filter(isSoundModule).map((m) => <SoundPlayWidget key={m.id} module={m} />)}
           </div>
         </div>
@@ -755,6 +768,8 @@ function Dashboard() {
                     )
                   ) : w.type === "health" ? (
                     <HealthSummaryWidget />
+                  ) : w.type === "protocol" ? (
+                    <ProtocolPlaybackWidget />
                   ) : (
                     <ModuleList modules={groupModules} />
                   )}

@@ -1,0 +1,11 @@
+/* Dashboard protocol playback: a card headed like the livestream cards. */
+.ppw { min-width: 0; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.ppw-header { padding-bottom: 0; gap: 8px; }
+.ppw-pick { margin-left: auto; max-width: 50%; }
+.ppw-empty { margin: 0; opacity: 0.7; font-size: 0.9em; }
+.ppw-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 0.9em; }
+.ppw-clock { font-variant-numeric: tabular-nums; font-size: 1.25em; font-weight: 600; }
+.ppw-total { font-weight: normal; opacity: 0.6; font-size: 0.8em; }
+.ppw-next { flex: 1; min-width: 12em; }
+.ppw-session { opacity: 0.6; font-size: 0.85em; }
+.ppw-note { margin: 0; opacity: 0.55; font-size: 0.75em; }

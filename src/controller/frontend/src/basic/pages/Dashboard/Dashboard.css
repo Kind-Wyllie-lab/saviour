@@ -259,9 +259,10 @@
 }
 
 .dashboard-compact-panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .dashboard-compact-panel .card {

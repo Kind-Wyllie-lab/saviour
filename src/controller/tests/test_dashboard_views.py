@@ -175,3 +175,21 @@ def test_default_marker_not_listed_as_a_view():
     s.set_default_id("main")
     assert [v["id"] for v in s.list()] == ["main"]
     assert os.path.exists(os.path.join(s.dir, "_meta.json"))
+
+
+def test_sound_and_protocol_widgets_saved():
+    store = _store()
+    saved = store.save(_view(widgets=[
+        {"id": "sound:sound_ef04", "type": "sound", "target": "sound_ef04"},
+        {"id": "widget:protocol", "type": "protocol"},
+    ]))
+    view = saved if isinstance(saved, dict) and "widgets" in saved else store.list()[0]
+    assert view["widgets"] == [
+        {"id": "sound:sound_ef04", "type": "sound", "target": "sound_ef04"},
+        {"id": "widget:protocol", "type": "protocol"},
+    ]
+
+
+def test_rejects_sound_widget_without_target():
+    with pytest.raises(ViewError):
+        _store().save(_view(widgets=[{"id": "sound:x", "type": "sound"}]))

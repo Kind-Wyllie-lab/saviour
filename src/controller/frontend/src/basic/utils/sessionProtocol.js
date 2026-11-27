@@ -8,7 +8,7 @@
 
 export const SUPPORTED_VERSION = 1;
 export const END_STATES = ["all_inactive", "hold"];
-export const TTL_ACTIONS = ["set", "pulse", "train"];
+export const TTL_ACTIONS = ["set", "pulse", "train", "square"];
 export const SOUND_ACTIONS = ["play"];
 export const ACTIONS = [...TTL_ACTIONS, ...SOUND_ACTIONS];
 export const MODULE_TYPES = ["ttl", "sound"];
@@ -391,9 +391,20 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
           edges.push({ t_s: t0, pin, level: "high", step: where, action });
           edges.push({ t_s: t0 + width, pin, level: "low", step: where, action });
         }
-      } else if (action === "train") {
+      } else if (action === "train" || action === "square") {
         const rate = num(params.rate_hz, "rate_hz", where, errors, { minimum: 0, exclusiveMin: true });
-        const width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
+        let width;
+        if (action === "square") {
+          // See src/shared/session_protocol.py.
+          let duty = num(params.duty ?? 0.5, "duty", where, errors, { minimum: 0, exclusiveMin: true });
+          if (duty !== null && duty >= 1) {
+            errors.push(`step ${where}: duty must be below 1 (got ${fmtG(duty)})`);
+            duty = null;
+          }
+          width = duty === null || rate === null ? null : duty / rate;
+        } else {
+          width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
+        }
         // count, or duration_s: see src/shared/session_protocol.py.
         let count;
         if ("duration_s" in params) {

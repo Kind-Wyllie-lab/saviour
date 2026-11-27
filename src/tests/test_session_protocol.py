@@ -530,3 +530,24 @@ class TestTrainByDuration:
         exp = expand({"version": 1, "steps": [{"at_s": 0, "action": "train", "params": {
             "pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 10, "count": 3}}]})
         assert exp.errors == ["step 0: give count or duration_s, not both"]
+
+
+class TestSquareWave:
+    def test_half_on_by_default(self):
+        exp = expand({"version": 1, "steps": [{"at_s": 0, "action": "square", "params": {
+            "pin": 17, "rate_hz": 5, "duration_s": 10}}]})
+        assert exp.ok, exp.errors
+        highs = [e.t_s for e in exp.edges if e.level == "high"]
+        lows = [e.t_s for e in exp.edges if e.level == "low"]
+        assert len(highs) == 50 and lows[0] == pytest.approx(0.1)
+
+    def test_duty(self):
+        exp = expand({"version": 1, "steps": [{"at_s": 0, "action": "square", "params": {
+            "pin": 17, "rate_hz": 2, "duty": 0.25, "count": 3}}]})
+        lows = [e.t_s for e in exp.edges if e.level == "low"]
+        assert lows == pytest.approx([0.125, 0.625, 1.125])
+
+    def test_duty_must_be_below_one(self):
+        exp = expand({"version": 1, "steps": [{"at_s": 0, "action": "square", "params": {
+            "pin": 17, "rate_hz": 2, "duty": 1, "count": 3}}]})
+        assert exp.errors == ["step 0: duty must be below 1 (got 1)"]

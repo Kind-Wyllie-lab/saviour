@@ -43,6 +43,10 @@ Format (v1)::
 - Top-level ``duration_s`` (optional): how long the protocol is meant to
   run, e.g. for a timed session to take its length from. Must be > 0; steps
   that run past it are a warning (nothing is stopped there).
+- ``square``: a square wave on a pin, ``rate_hz`` cycles a second, on for
+  ``duty`` of each cycle (default 0.5; 0 < duty < 1), for ``count`` cycles
+  or ``duration_s``, like ``train``; it expands to the same edges as a train
+  with ``width_s = duty / rate_hz``.
 - ``train`` takes ``count`` pulses, or ``duration_s`` instead: every pulse
   that starts within it, ``ceil(duration_s * rate_hz)`` (10 s at 5 Hz = 50).
 - ``set`` takes an optional ``duration_s``: hold the level that long, then
@@ -76,7 +80,7 @@ from dataclasses import dataclass, field
 
 SUPPORTED_VERSION = 1
 END_STATES = ("all_inactive", "hold")
-TTL_ACTIONS = ("set", "pulse", "train")
+TTL_ACTIONS = ("set", "pulse", "train", "square")
 SOUND_ACTIONS = ("play",)
 ACTIONS = TTL_ACTIONS + SOUND_ACTIONS
 MODULE_TYPES = ("ttl", "sound")
@@ -516,11 +520,21 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     edges.append(Edge(t0, pin, "high", where, action))
                     edges.append(Edge(t0 + width, pin, "low", where, action))
 
-            elif action == "train":
+            elif action in ("train", "square"):
                 rate = _num(params.get("rate_hz"), "rate_hz", where, errors,
                             minimum=0, exclusive_min=True)
-                width = _num(params.get("width_s"), "width_s", where, errors,
-                             minimum=0, exclusive_min=True)
+                if action == "square":
+                    # A square wave: on for `duty` of each cycle (default
+                    # half), so the width follows the frequency.
+                    duty = _num(params.get("duty", 0.5), "duty", where, errors,
+                                minimum=0, exclusive_min=True)
+                    if duty is not None and duty >= 1:
+                        errors.append(f"step {where}: duty must be below 1 (got {duty:g})")
+                        duty = None
+                    width = None if duty is None or rate is None else duty / rate
+                else:
+                    width = _num(params.get("width_s"), "width_s", where, errors,
+                                 minimum=0, exclusive_min=True)
                 # count, or duration_s: every pulse that starts within it
                 # (ceil(duration_s * rate_hz)).
                 if "duration_s" in params:

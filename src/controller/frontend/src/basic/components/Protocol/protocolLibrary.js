@@ -59,7 +59,7 @@ function stable(v) {
   return JSON.stringify(v);
 }
 
-const TTL_ACTIONS = new Set(["set", "pulse", "train"]);
+const TTL_ACTIONS = new Set(["set", "pulse", "train", "square"]);
 const intList = (xs) => [...new Set((Array.isArray(xs) ? xs : []).map(Number).filter(Number.isInteger))]
   .sort((x, y) => x - y);
 

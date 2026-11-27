@@ -17,7 +17,7 @@ import "./ProtocolEditor.css";
 // with params.pins is split on load, normaliseProtocol); a repeat inside a
 // trial block is edited in the JSON view.
 
-const ACTION_LABELS = { set: "Set level", pulse: "Single pulse", train: "Pulse train", play: "Play sound", repeat: "Repeat" };
+const ACTION_LABELS = { set: "Set level", pulse: "Single pulse", train: "Pulse train", square: "Square wave", play: "Play sound", repeat: "Repeat" };
 
 // sound: { modules: [{ id, name, files, outputs }] } -- the sound modules in
 // reach; files and outputs offered to a play step come from the one it names
@@ -45,6 +45,7 @@ function defaultParams(action, pins, sound) {
     case "set": return { ...pinParams(pins), level: "high" };
     case "pulse": return { ...pinParams(pins), width_s: 0.05 };
     case "train": return { ...pinParams(pins), rate_hz: 10, width_s: 0.02, count: 10 };
+    case "square": return { ...pinParams(pins), rate_hz: 5, duty: 0.5, duration_s: 10 };
     default: return {};
   }
 }
@@ -199,7 +200,7 @@ function trackOf(step) {
   return null;
 }
 
-const TTL_ACTIONS = ["set", "pulse", "train"];
+const TTL_ACTIONS = ["set", "pulse", "train", "square"];
 
 // Sound output n is a stereo pair: channels 2n-1 and 2n (sound_hardware.py).
 const chans = (o) => `${2 * o - 1}-${2 * o}`;
@@ -300,34 +301,20 @@ function referenceLines(pinConfigs) {
 
 // One step on a line: number, start time, what it does. The line itself
 // (pin, sound output) is implied by the group it sits in.
-// A pulse train's duty cycle (width × rate): shown as "% on", with a
-// one-click 50 % square wave. Set by duty: type a % and the width follows
-// the current rate. (Kept as width_s in the protocol.)
-function DutyCycle({ params, onWidth }) {
-  const rate = Number(params.rate_hz);
-  const width = Number(params.width_s);
-  if (!(rate > 0)) return null;
-  const duty = width > 0 ? Math.round(width * rate * 1000) / 10 : "";
-  const setDuty = (v) => {
-    if (v === "" || !(Number(v) > 0)) return;
-    onWidth(Math.round((Number(v) / 100 / rate) * 1e6) / 1e6);
-  };
+// A square wave's duty cycle: the share of each cycle it's on (duty, 0-1),
+// entered as a %; 50 % unless changed.
+function DutyCycle({ params, onDuty }) {
+  const duty = params.duty === undefined ? 50 : Math.round(Number(params.duty) * 1000) / 10;
   return (
-    <>
-      <NumField label="=" unit="% on" value={duty} width="4em"
-        title="Duty cycle: the share of each cycle the line is on. Typing one sets the width for this rate."
-        onChange={setDuty} />
-      {duty !== 50 && (
-        <button type="button" className="pe-small" title="50 % on, 50 % off"
-          onClick={() => setDuty(50)}>Square</button>
-      )}
-    </>
+    <NumField label="On" unit="%" value={Number.isFinite(duty) ? duty : params.duty} width="4em"
+      title="Duty cycle: the share of each cycle the line is on (50 % = an even square wave)"
+      onChange={(v) => onDuty(v === "" || !Number.isFinite(Number(v)) ? v : Math.round(Number(v) * 10) / 1000)} />
   );
 }
 
 // A pulse train runs for a number of pulses (count) or for a time
 // (duration_s: every pulse that starts within it).
-function TrainLength({ params, onParams }) {
+function TrainLength({ params, onParams, unit = "pulses" }) {
   const byTime = "duration_s" in params;
   const rate = Number(params.rate_hz);
   const pulses = byTime && rate > 0 && Number(params.duration_s) > 0
@@ -347,7 +334,7 @@ function TrainLength({ params, onParams }) {
       <label className="pe-field">
         <span className="pe-field-label">For</span>
         <select value={byTime ? "time" : "count"} onChange={(e) => switchTo(e.target.value)}>
-          <option value="count">Repeats</option>
+          <option value="count">{unit === "cycles" ? "Cycles" : "Repeats"}</option>
           <option value="time">Duration</option>
         </select>
       </label>
@@ -356,10 +343,10 @@ function TrainLength({ params, onParams }) {
           <NumField label="" unit="s" value={params.duration_s} width="4.5em"
             title="Every pulse that starts within this time"
             onChange={(v) => onParams({ ...params, duration_s: v })} />
-          {pulses !== null && <span className="pe-unit" title="Pulses in this train">= {pulses} pulses</span>}
+          {pulses !== null && <span className="pe-unit" title={`${unit} in this step`}>= {pulses} {unit}</span>}
         </>
       ) : (
-        <NumField label="" unit="pulses" int min={1} value={params.count} width="4.5em"
+        <NumField label="" unit={unit} int min={1} value={params.count} width="4.5em"
           onChange={(v) => onParams({ ...params, count: v })} />
       )}
     </>
@@ -410,9 +397,17 @@ function StepLine({ step, num, track, sound, inBlock, onChange, onRemove }) {
         {action === "train" && (
           <>
             <NumField label="Rate" unit="Hz" value={step.params?.rate_hz} onChange={(v) => setParam("rate_hz", v)} width="4.5em" />
-            <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} width="4.5em" />
-            <DutyCycle params={step.params ?? {}} onWidth={(w) => setParam("width_s", w)} />
+            <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} width="4.5em"
+              title="How long each pulse lasts" />
             <TrainLength params={step.params ?? {}} onParams={(params) => onChange({ ...step, params })} />
+          </>
+        )}
+        {action === "square" && (
+          <>
+            <NumField label="Frequency" unit="Hz" value={step.params?.rate_hz} onChange={(v) => setParam("rate_hz", v)} width="4.5em"
+              title="Cycles per second" />
+            <DutyCycle params={step.params ?? {}} onDuty={(d) => setParam("duty", d)} />
+            <TrainLength params={step.params ?? {}} unit="cycles" onParams={(params) => onChange({ ...step, params })} />
           </>
         )}
         {action === "play" && <PlayFields step={step} sound={sound} onChange={onChange} fixedOutput />}

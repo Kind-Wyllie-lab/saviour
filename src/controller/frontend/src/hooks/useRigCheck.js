@@ -59,7 +59,7 @@ export function confirmRigShortfall(rig, action = "Start this session",
   const parts = [];
   if (lines.length) parts.push(`This rig is missing required hardware:\n\n${lines.join("\n")}`);
   if (sync.length) {
-    parts.push(`Sync lines to check (pulse each with Test line on its TTL card and confirm `
+    parts.push(`Sync lines to check (pulse each with Run pattern on its TTL card and confirm `
       + `it in the acquisition software):\n\n${sync.map((w) => `• ${w}`).join("\n")}`);
   }
   return window.confirm(`${parts.join("\n\n")}\n\n${action} anyway?`);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import socket from "../../../../socket";
 import { confirmIfOtherAdmins } from "/src/clients";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
@@ -46,6 +46,10 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
+  // Plain line test (hold_pin): pins held on now; released after 60 s.
+  const [heldPins, setHeldPins] = useState({});
+  const holdTimers = useRef({});
+  useEffect(() => () => Object.values(holdTimers.current).forEach(clearTimeout), []);
   const protocolTest = useProtocolTest(id);
   const protocolLibrary = useProtocolLibrary();
   const [designer, setDesigner] = useState(null); // null = closed, else where it opens
@@ -104,6 +108,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
       setPinTestState((prev) => ({ ...prev, [pin]: "done" }));
       setTimeout(() => setPinTestState((prev) => { const n = { ...prev }; delete n[pin]; return n; }), 2000);
     }, 5000);
+  };
+
+  const holdPin = (pin) => {
+    const on = !heldPins[pin];
+    socket.emit("send_command", { module_id: id, type: "hold_pin", params: { pin: Number(pin), on, max_s: 60 } });
+    clearTimeout(holdTimers.current[pin]);
+    setHeldPins((prev) => { const n = { ...prev }; if (on) n[pin] = true; else delete n[pin]; return n; });
+    if (on) {
+      holdTimers.current[pin] = setTimeout(
+        () => setHeldPins((prev) => { const n = { ...prev }; delete n[pin]; return n; }), 60000);
+    }
   };
 
   const handlePaste = () => {
@@ -225,6 +240,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     setFormData={setFormData}
                     loggedIn={loggedIn}
                     testPin={testPin}
+                    holdPin={holdPin}
+                    heldPins={heldPins}
                     pinTestState={pinTestState}
                     status={lineStatus}
                   />

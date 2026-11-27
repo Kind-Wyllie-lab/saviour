@@ -7,11 +7,11 @@ import "./SyncGuideModal.css";
 
 // "Wiring and checking the sync" guide for an ephys / neurologger sync TTL
 // module: photos of the Open Ephys hardware and GUI, plus an animation of
-// what Test line looks like when it arrives. Opened from the TTL card's
+// what Run pattern looks like when it arrives. Opened from the TTL card's
 // Lines tab and Quick setup's Sync lines step. `lines`: [[gpio, {role,
 // channel}], ...].
 
-// What a Test line looks like arriving: irregular (pseudorandom) pulses
+// What Run pattern looks like arriving: irregular (pseudorandom) pulses
 // scrolling across one input channel, the others flat.
 function SyncPulseAnimation({ channel, logger = false }) {
   const ch = Number(channel) || 1;
@@ -101,7 +101,7 @@ export default function SyncGuideModal({ app, lines, onClose }) {
             </ul>
           </li>
           <li>
-            Press <strong>Test line</strong> and watch for the pulses on that channel in the Open Ephys
+            Press <strong>Run pattern</strong> and watch for the pulses on that channel in the Open Ephys
             GUI (a coloured column per channel), then press <strong>Seen in Open Ephys</strong>.
             <SyncPulseAnimation channel={lines.find(([, p]) => p.role === "sync")?.[1]?.channel} />
             {img("ephys-gui-ttls.webp") && (
@@ -118,7 +118,7 @@ export default function SyncGuideModal({ app, lines, onClose }) {
         <ol className="ttl-guide__steps">
           <li>Wire the sync line to the logger's digital (TTL) input, following its manual, with a
             shared ground.</li>
-          <li>Press <strong>Test line</strong>, check the pulses appear in the logger's data, then press
+          <li>Press <strong>Run pattern</strong>, check the pulses appear in the logger's data, then press
             <strong> Seen in the logger</strong>.
             <SyncPulseAnimation logger />
           </li>

@@ -76,7 +76,7 @@ function syncLead(kind) {
   const system = systemName(syncApplication(kind));
   const where = kind === "ephys" ? "the Open Ephys GUI" : system;
   return `Always check the signal from your ${label.toLowerCase()} sync module can be seen in ${where}. `
-    + `For each line press Test line, watch for the pulses in ${system}, then press Seen in ${system}.`;
+    + `For each line press Run pattern, watch for the pulses in ${system}, then press Seen in ${system}.`;
 }
 
 function StepHead({ title, lead }) {

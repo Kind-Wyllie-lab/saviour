@@ -1007,3 +1007,47 @@ def test_preview_names_pins_by_use():
     assert _use_name({"mode": "pseudorandom"}) == "Sync line"
     assert _use_name({"mode": "experiment_marker"}) == "Experiment marker"
     assert _use_name({"mode": "warp"}) == "warp"
+
+
+class TestHoldPin:
+    """Plain line test: on at the active level whatever the mode, then off."""
+
+    def _m(self, **kw):
+        m = _make_ttl(pin_configs={17: {"mode": "pseudorandom"}},
+                      output_pins=[_output_pin(17)], **kw)
+        m.config.get.side_effect = lambda k, d=None: "active_high" if k == "ttl.active_logic" else d
+        return m
+
+    def test_on_then_released(self):
+        import time as _t
+        m = self._m()
+        pin = m.output_pins[0]
+        assert m.hold_pin(17, on=True, max_s=5)["result"] == "success"
+        for _ in range(100):
+            if pin.on.called:
+                break
+            _t.sleep(0.01)
+        pin.on.assert_called()
+        assert m.hold_pin(17, on=False)["result"] == "success"
+        for _ in range(100):
+            if 17 not in m._pin_test_stop_flags:
+                break
+            _t.sleep(0.01)
+        assert 17 not in m._pin_test_stop_flags
+        pin.off.assert_called()
+
+    def test_releases_itself(self):
+        import time as _t
+        m = self._m()
+        m.hold_pin(17, on=True, max_s=0.1)
+        _t.sleep(0.4)
+        assert 17 not in m._pin_test_stop_flags
+        m.output_pins[0].off.assert_called()
+
+    def test_refused_while_recording(self):
+        m = self._m(is_recording=True)
+        assert m.hold_pin(17)["result"] == "error"
+
+    def test_input_pin_refused(self):
+        m = self._m()
+        assert m.hold_pin(4)["result"] == "error"

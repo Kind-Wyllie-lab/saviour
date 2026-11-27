@@ -43,6 +43,10 @@ if [ -z "$ARCH" ]; then
 fi
 if [ -z "$ARCH" ]; then
     echo "Could not detect the Hailo architecture (hailortcli / device not ready)." >&2
+    if ! ls /dev/hailo* >/dev/null 2>&1; then
+        echo "No /dev/hailo*: the driver isn't loaded. Reboot; hailo_camera then" >&2
+        echo "downloads the models itself." >&2
+    fi
     echo "Re-run with:  --arch hailo8   or   --arch hailo8l" >&2
     exit 1
 fi

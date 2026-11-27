@@ -7,7 +7,8 @@ import "./ProtocolTimeline.css";
 // protocol preview now; the live and after-session views (planned vs
 // actual, plans/session-protocol.md) reuse it with a second span set.
 //
-// rows:  [{ key, label, sublabel? }] (sublabel: a smaller second line)
+// rows:  [{ key, label, sublabel?, trace? }] (sublabel: a smaller second
+//   line; trace: draw the row as a high/low line, for TTL lines)
 // spans: [{ row, start, end (null = held to the end), label }]
 // duration: seconds the axis must cover
 // minDuration: the axis covers at least this much (an empty protocol still
@@ -72,7 +73,7 @@ function describe(bar) {
 // cursorT: a "now" line at this many seconds (a running test), or null.
 export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyText, highlightRow = null,
   cursorT = null, minDuration = 0, alwaysShow = false, minRows = 0, bands = [], endT = null,
-  onCreate = null, onPick = null, canCreate = null }) {
+  onCreate = null, onPick = null, onPickBand = null, canCreate = null }) {
   const placeholder = alwaysShow && !rowsIn.length;
   const rows = useMemo(() => {
     const out = placeholder ? [{ key: "__none", label: "No outputs" }] : [...rowsIn];
@@ -218,12 +219,13 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const onMove = (e) => {
     const { x, y } = svgPoint(e);
     if (drag) {
-      setDrag({ ...drag, x1: clampX(x), free: e.altKey });
+      setDrag({ ...drag, x1: clampX(x), free: e.altKey, shift: drag.shift || e.shiftKey });
       return;
     }
     if (hasBands && y >= TOP && y < rowsTop && x >= LABEL_W) {
       const band = bands.find((bd) => x >= xOf(bd.start) - 2 && x <= xOf(bd.end ?? bd.start) + 2);
-      setHover(band ? { x, y: TOP - ROW_H + BAND_H, text: band.title ?? band.label } : null);
+      setHover(band ? { x, y: TOP - ROW_H + BAND_H, onBar: !!onPickBand,
+        text: (band.title ?? band.label) + (onPickBand ? " · click to edit the block" : "") } : null);
       return;
     }
     const ri = rowAt(y);
@@ -247,8 +249,12 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
         if (onPick && b.step !== undefined && !b.ref) setDrag({ kind: "pick", bar: b, x0: x, x1: x });
         return;
       }
-      if (creatable(rows[ri])) setDrag({ kind: "create", ri, x0: x, x1: x, free: e.altKey });
+      if (creatable(rows[ri])) setDrag({ kind: "create", ri, x0: x, x1: x, free: e.altKey, shift: e.shiftKey });
       return;
+    }
+    if (onPickBand && hasBands && y >= TOP && y < rowsTop) {
+      const band = bands.find((bd) => x >= xOf(bd.start) - 2 && x <= xOf(bd.end ?? bd.start) + 2);
+      if (band) { setDrag({ kind: "band", band, x0: x, x1: x }); return; }
     }
     setDrag({ kind: "zoom", x0: x, x1: x });
   };
@@ -256,19 +262,22 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const onUp = () => {
     if (!drag) return;
     const moved = Math.abs(drag.x1 - drag.x0) > 4;
-    if (drag.kind === "zoom" && moved) {
+    if ((drag.kind === "zoom" || drag.kind === "band") && moved) {
       const a = tOf(Math.min(drag.x0, drag.x1));
       const b = tOf(Math.max(drag.x0, drag.x1));
       if (b - a > 0.001) setView([Math.max(0, a), b]);
     } else if (drag.kind === "pick" && !moved) {
       onPick(drag.bar.span);
+    } else if (drag.kind === "band" && !moved) {
+      onPickBand(drag.band);
     } else if (drag.kind === "create") {
       const key = rows[drag.ri].key;
-      if (!moved) onCreate(key, snapT(tOf(drag.x0), drag.free), null);
+      const mods = { shift: drag.shift };
+      if (!moved) onCreate(key, snapT(tOf(drag.x0), drag.free), null, mods);
       else {
         const a = snapT(tOf(Math.min(drag.x0, drag.x1)), drag.free);
         const b = snapT(tOf(Math.max(drag.x0, drag.x1)), drag.free);
-        onCreate(key, a, b > a ? b : null);
+        onCreate(key, a, b > a ? b : null, mods);
       }
     }
     setDrag(null);
@@ -351,8 +360,34 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           {placeholder && (
             <text className="ptl-sublabel" x={LABEL_W + 8} y={rowsTop + ROW_H / 2 + 4}>{emptyText}</text>
           )}
+          {/* TTL-style rows (row.trace): a high/low line, like a logic
+              analyser; bars stay as hit targets and for dense stretches. */}
+          {rows.map((r, ri) => {
+            if (!r.trace) return null;
+            const yTop = rowsTop + ri * ROW_H + (ROW_H - BAR_H) / 2;
+            const hi = yTop + 1;
+            const lo = yTop + BAR_H;
+            let d = `M${LABEL_W},${lo}`;
+            for (const b of bars) {
+              if (b.ri !== ri) continue;
+              const x1 = Math.max(b.x1, b.x0 + 1);
+              d += ` H${b.x0} V${hi} H${x1} V${lo}`;
+            }
+            d += ` H${LABEL_W + plotW}`;
+            const faded = highlightRow !== null && r.key !== highlightRow;
+            return (
+              <path key={`tr${r.key}`} d={d}
+                className={`ptl-trace${r.ref ? " ptl-trace--ref" : ""}${faded ? " ptl-bar--faded" : ""}`} />
+            );
+          })}
           {/* bars */}
-          {bars.map((b, i) => (
+          {bars.map((b, i) => (rows[b.ri].trace && b.count === 1 && !b.selected ? (
+            // Invisible on a trace row (the line shows it) except as a
+            // faint fill under the high part, so a level reads at a glance.
+            <rect key={i} className={`ptl-trace-fill${b.ref ? " ptl-trace-fill--ref" : ""}${b.held ? " ptl-bar--held" : ""}`}
+              x={b.x0} y={rowsTop + b.ri * ROW_H + (ROW_H - BAR_H) / 2 + 1}
+              width={Math.max(1, b.x1 - b.x0)} height={BAR_H - 1} />
+          ) : (
             <rect
               key={i}
               className={`ptl-bar${b.ref ? " ptl-bar--ref" : ""}${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${b.selected ? " ptl-bar--selected" : ""}${
@@ -363,7 +398,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
               height={BAR_H}
               rx={Math.min(2, (b.x1 - b.x0) / 2)}
             />
-          ))}
+          )))}
           {/* trial strip */}
           {hasBands && <text className="ptl-sublabel" x={8} y={TOP + BAND_H / 2 + 3}>Trials</text>}
           {bands.map((bd) => {

@@ -32,7 +32,7 @@ export function timelineOf(result, { pins = [], pinConfigs = null, soundModule =
   if (!result) return { rows: [], spans: [] };
   const pinRows = [...new Set([...pins, ...(result.pins ?? [])])].sort((a, b) => a - b).map((p) => {
     const label = pinLabel(pinConfigs, p);
-    return { key: p, label: label ?? `GPIO ${p}`, sublabel: label ? `GPIO ${p}` : undefined };
+    return { key: p, label: label ?? `GPIO ${p}`, sublabel: label ? `GPIO ${p}` : undefined, trace: true };
   });
   const outs = result.outputs ?? [];
   const soundRows = outs.map((o) => ({

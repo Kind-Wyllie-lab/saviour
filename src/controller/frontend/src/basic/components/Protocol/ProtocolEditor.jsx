@@ -270,7 +270,10 @@ function referenceLines(pinConfigs) {
     if (!REF_MODES[mode]) continue;
     const key = `ref:${p}`;
     const label = pinLabel(pinConfigs, Number(p)) ?? `GPIO ${p}`;
-    rows.push({ key, label, sublabel: REF_MODES[mode], ref: true });
+    // A clock or random sync train is drawn as a labelled block (too dense
+    // for a line); the rest as a high/low trace like the protocol's lines.
+    rows.push({ key, label, sublabel: REF_MODES[mode], ref: true,
+      trace: mode !== "experiment_clock" && mode !== "pseudorandom" });
     const num = (v, d) => (Number.isFinite(Number(v)) && v !== "" && v !== null ? Number(v) : d);
     if (mode === "experiment_start") {
       const t = num(c.delay_s, 0.001);
@@ -599,8 +602,11 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
-  // The step picked on the timeline: { top: i } or { block: b, inner: j }.
+  // What's picked on the timeline: a step { top: i }, a step in a trial
+  // block { block: b, inner: j }, or a whole block { wholeBlock: b }.
   const [picked, setPicked] = useState(null);
+  // The step list (table / JSON) under the timeline: folded by default.
+  const [listOpen, setListOpen] = useState(false);
   const scheduled = useMemo(() => (scheduledPins ?? []).map(Number), [scheduledPins]);
   const norm = useMemo(() => normaliseProtocol(protocol ?? EMPTY_PROTOCOL), [protocol]);
   const outputs = norm.outputs;
@@ -662,8 +668,17 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   // Timeline editing: a click or drag on a line adds a step there (a pulse
   // on a TTL line, a sound on a sound output; a drag sets its length), and
   // clicking a step opens it below the timeline.
-  const createAt = (rowKey, start, end) => {
-    const at = Math.round(start * 1000) / 1000;
+  const createAt = (rowKey, start, end, mods = {}) => {
+    // Inside a trial (unless Shift is held): the step goes into that trial
+    // block, timed from the trial's start, so every trial gets it.
+    const band = mods.shift ? null
+      : (rawBands ?? []).find((b) => start >= b.start - 1e-9 && start <= b.end + 1e-9);
+    let at = Math.round(start * 1000) / 1000;
+    if (band) {
+      const inner = steps[band.block]?.steps ?? [];
+      const first = inner.length ? Math.min(...inner.map((x) => Number(x.at_s) || 0)) : 0;
+      at = Math.max(0, Math.round((start - (band.start - first)) * 1000) / 1000);
+    }
     const len = end === null ? null : Math.round((end - start) * 1000) / 1000;
     let step;
     if (typeof rowKey === "number") {
@@ -674,9 +689,28 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       step.params = { ...step.params, output: Number(String(rowKey).slice(4)) };
       if (len) step.params.duration_s = len;
     } else return;
+    if (band) {
+      const inner = steps[band.block].steps ?? [];
+      update({ steps: steps.map((x, j) => (j === band.block ? { ...x, steps: [...inner, step] } : x)) });
+      setPicked({ block: band.block, inner: inner.length });
+      return;
+    }
     update({ steps: [...steps, step] });
     setPicked({ top: steps.length });
   };
+  const pickBand = (band) => setPicked({ wholeBlock: band.block });
+  // A new trial block after the last step, with one step on the first line
+  // so it shows on the timeline straight away; opened for editing.
+  const addBlock = () => {
+    const t = tracks[0];
+    if (!t) return;
+    const inner = newStep(t.kind === "ttl" ? "pulse" : "play", t.kind === "ttl" ? [t.n] : [], 0, sound);
+    if (t.kind !== "ttl") inner.params = { ...inner.params, output: t.n };
+    const at = result?.durationS > 0 ? Math.ceil(result.durationS / 10) * 10 + 10 : 10;
+    update({ steps: [...steps, { at_s: at, action: "repeat", times: 5, every_s: 30, jitter_s: [0, 0], steps: [inner] }] });
+    setPicked({ wholeBlock: steps.length });
+  };
+  const pickedBlock = picked?.wholeBlock !== undefined ? steps[picked.wholeBlock] : null;
   const pickSpan = (span) => {
     const m = /^(\d+)(?:\.\d+\.(\d+))?$/.exec(String(span.step ?? ""));
     if (!m) return;
@@ -761,7 +795,8 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
             {declared ? fmtTime(declared) : "steps end"}{" "}
             {result?.ok && result.durationS > 0 && !declared ? `at ${fmtTime(result.durationS, result.durationS < 60)}` : ""}
           </span>
-          <button type="button" className="pe-small" onClick={() => (jsonMode ? setJsonMode(false) : openJson())}>
+          <button type="button" className="pe-small"
+            onClick={() => { setListOpen(true); if (jsonMode) setJsonMode(false); else openJson(); }}>
             {jsonMode ? "Table view" : "Edit as JSON"}
           </button>
           {protocol && allowClear && (
@@ -772,39 +807,96 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </div>
       </div>
 
-      {jsonMode ? (
-        <div className="pe-json">
-          <textarea value={jsonText} spellCheck={false} rows={14} onChange={(e) => onJson(e.target.value)} />
-          {jsonError && <div className="pe-msg pe-msg--error">JSON: {jsonError}</div>}
+      <div className={`pe-timeline${result && !result.ok ? " pe-timeline--invalid" : ""}`}>
+        <div className="pe-timeline-title">
+          <span>
+            Timeline{result && !result.ok ? " (invalid protocol: may not match what would run)" : ""}
+          </span>
+          <button type="button" className="pe-add" disabled={!tracks.length}
+            title={tracks.length ? "Trials repeated with regular or random gaps; click inside a trial to add a step to every trial"
+              : "Pick the lines this protocol uses first"}
+            onClick={addBlock}>
+            + Trial block
+          </button>
+          <span className="pe-timeline-help">
+            Click inside a trial to add to its block (Shift: outside it) · click a trial mark to edit the block
+          </span>
         </div>
-      ) : (
-        <div className="pe-steps">
-          {tracks.length === 0 && (
-            <div className="pe-empty">Pick the TTL lines and sound outputs this protocol uses, above.</div>
-          )}
-          <TrackGroups steps={steps} tracks={tracks} sound={sound} inBlock={false} flags={flags}
-            onSteps={(s) => update({ steps: s })} />
-          {blocks.map(([s, i], k) => (
-            <TrialBlock key={i} step={s} num={k + 1} tracks={tracks} sound={sound} flags={flags}
-              onChange={(ns) => update({ steps: steps.map((x, j) => (j === i ? ns : x)) })}
-              onRemove={() => update({ steps: steps.filter((_, j) => j !== i) })} />
-          ))}
-          <div className="pe-add-row">
-            <button type="button" className="pe-add" disabled={!tracks.length}
-              title="Trials repeated with regular or random gaps; each line's steps inside are timed from each trial's start"
-              onClick={() => {
-                const last = steps.length ? Math.max(...steps.map((x) => Number(x.at_s) || 0)) : 0;
-                update({ steps: [...steps, { at_s: steps.length ? last + 10 : 0, action: "repeat", times: 5, every_s: 30, jitter_s: [0, 0], steps: [] }] });
-              }}>
-              + Trial block
-            </button>
-            {steps.length > 1 && (
-              <button type="button" className="pe-small" title="Order each line's steps by start time"
-                onClick={() => update({ steps: [...steps].sort((a, b) => (Number(a.at_s) || 0) - (Number(b.at_s) || 0)) })}>
-                Sort by time
-              </button>
+        <ProtocolTimeline
+          rows={rows}
+          spans={spans}
+          bands={bands}
+          duration={Math.max(result?.durationS ?? 0, declared ?? 0)}
+          endT={declared}
+          minDuration={TIMELINE_MIN_S}
+          alwaysShow
+          minRows={8}
+          cursorT={cursorT}
+          onCreate={createAt}
+          onPick={pickSpan}
+          onPickBand={pickBand}
+          canCreate={canCreate}
+          emptyText="Pick the TTL lines and sound outputs this protocol uses to get rows here."
+        />
+        {pickedStep && (
+          <div className="pe-picked">
+            <div className="pe-picked-head">
+              <span className="pe-picked-name">{pickedName ? pickedName[0].toUpperCase() + pickedName.slice(1) : "Step"}</span>
+              {picked.block !== undefined && (
+                <span className="pe-picked-hint">
+                  In a trial block: changes apply to every trial; times are from each trial&apos;s start.
+                </span>
+              )}
+              <button type="button" className="pe-remove" title="Close" onClick={() => setPicked(null)}>✕</button>
+            </div>
+            {pickedTrack ? (
+              <StepLine step={pickedStep} num={pickedNum} track={pickedTrack} sound={sound}
+                inBlock={picked.block !== undefined} onChange={changePicked} onRemove={removePicked} />
+            ) : (
+              <p className="pe-picked-hint">This step drives several lines: edit it in the step list below.</p>
             )}
           </div>
+        )}
+        {pickedBlock && (
+          <div className="pe-picked pe-picked--block">
+            <div className="pe-picked-head">
+              <span className="pe-picked-name">Trial block {blockNum[picked.wholeBlock]}</span>
+              <span className="pe-picked-hint">Its steps are timed from each trial&apos;s start.</span>
+              <button type="button" className="pe-remove" title="Close" onClick={() => setPicked(null)}>✕</button>
+            </div>
+            <TrialBlock step={pickedBlock} num={blockNum[picked.wholeBlock]} tracks={tracks} sound={sound} flags={flags}
+              onChange={(ns) => update({ steps: steps.map((x, j) => (j === picked.wholeBlock ? ns : x)) })}
+              onRemove={() => { update({ steps: steps.filter((_, j) => j !== picked.wholeBlock) }); setPicked(null); }} />
+          </div>
+        )}
+      </div>
+      {result && (
+        <div className="pe-check">
+          <div className={`pe-summary${result.ok ? "" : " pe-summary--bad"}`}>
+            <span className="pe-summary-icon" aria-hidden="true">{result.ok ? "✓" : "✕"}</span>
+            {result.ok
+              ? `Valid: ${[
+                result.edges.length || !result.cues.length
+                  ? `${result.edges.length} edges on ${result.pins.length ? result.pins.map((p) => pinName(pinConfigs, p)).join(", ") : "no lines"}` : null,
+                result.cues.length
+                  ? `${result.cues.length} sound${result.cues.length === 1 ? "" : "s"} on output ${result.outputs.join(", ")}` : null,
+              ].filter(Boolean).join(", ")}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
+              : `${errors.length} problem${errors.length === 1 ? "" : "s"}: the modules will refuse to record with this protocol`}
+          </div>
+          {unmet.length > 0 && (
+            <div className="pe-msg pe-msg--warn">
+              ⚠ This rig can't run it yet: {unmet.map(([k, why]) => `${tracks.find((t) => t.key === k)?.label ?? k} (${why})`).join("; ")}.
+            </div>
+          )}
+          {errors.slice(0, 8).map((m, i) => <div key={`e${i}`} className="pe-msg pe-msg--error">{m}</div>)}
+          {errors.length > 8 && <div className="pe-msg pe-msg--error">…and {errors.length - 8} more</div>}
+          {warnings.slice(0, 5).map((m, i) => <div key={`w${i}`} className="pe-msg pe-msg--warn">⚠ {m}</div>)}
+          {result.ok && result.edges.length > 0 && result.edges[0].t_s < 0.05 && (
+            <div className="pe-msg pe-msg--warn">
+              ⚠ The first TTL step at {result.edges[0].t_s} s lands a few ms late (the protocol starts with the
+              recording); use 0.05 s or later where exact timing matters.
+            </div>
+          )}
         </div>
       )}
 
@@ -836,77 +928,50 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         </div>
       )}
 
-      {result && (
-        <div className="pe-check">
-          <div className={`pe-summary${result.ok ? "" : " pe-summary--bad"}`}>
-            <span className="pe-summary-icon" aria-hidden="true">{result.ok ? "✓" : "✕"}</span>
-            {result.ok
-              ? `Valid: ${[
-                result.edges.length || !result.cues.length
-                  ? `${result.edges.length} edges on ${result.pins.length ? result.pins.map((p) => pinName(pinConfigs, p)).join(", ") : "no lines"}` : null,
-                result.cues.length
-                  ? `${result.cues.length} sound${result.cues.length === 1 ? "" : "s"} on output ${result.outputs.join(", ")}` : null,
-              ].filter(Boolean).join(", ")}, last at ${fmtTime(result.durationS, result.durationS < 60)}`
-              : `${errors.length} problem${errors.length === 1 ? "" : "s"}: the modules will refuse to record with this protocol`}
-          </div>
-          {unmet.length > 0 && (
-            <div className="pe-msg pe-msg--warn">
-              ⚠ This rig can't run it yet: {unmet.map(([k, why]) => `${tracks.find((t) => t.key === k)?.label ?? k} (${why})`).join("; ")}.
-            </div>
-          )}
-          {errors.slice(0, 8).map((m, i) => <div key={`e${i}`} className="pe-msg pe-msg--error">{m}</div>)}
-          {errors.length > 8 && <div className="pe-msg pe-msg--error">…and {errors.length - 8} more</div>}
-          {warnings.slice(0, 5).map((m, i) => <div key={`w${i}`} className="pe-msg pe-msg--warn">⚠ {m}</div>)}
-          {result.ok && result.edges.length > 0 && result.edges[0].t_s < 0.05 && (
-            <div className="pe-msg pe-msg--warn">
-              ⚠ The first TTL step at {result.edges[0].t_s} s lands a few ms late (the protocol starts with the
-              recording); use 0.05 s or later where exact timing matters.
-            </div>
-          )}
-        </div>
-      )}
-
       {renderTest && renderTest(result, norm)}
 
-      <div className={`pe-timeline${result && !result.ok ? " pe-timeline--invalid" : ""}`}>
-        <div className="pe-timeline-title">
-          Timeline preview{result && !result.ok ? " (invalid protocol: may not match what would run)" : ""}
-        </div>
-        <ProtocolTimeline
-          rows={rows}
-          spans={spans}
-          bands={bands}
-          duration={Math.max(result?.durationS ?? 0, declared ?? 0)}
-          endT={declared}
-          minDuration={TIMELINE_MIN_S}
-          alwaysShow
-          minRows={8}
-          cursorT={cursorT}
-          onCreate={createAt}
-          onPick={pickSpan}
-          canCreate={canCreate}
-          emptyText="Pick the TTL lines and sound outputs this protocol uses to get rows here."
-        />
-        {pickedStep && (
-          <div className="pe-picked">
-            <div className="pe-picked-head">
-              <span className="pe-picked-name">{pickedName ? pickedName[0].toUpperCase() + pickedName.slice(1) : "Step"}</span>
-              {picked.block !== undefined && (
-                <span className="pe-picked-hint">
-                  In a trial block: changes apply to every trial; times are from each trial&apos;s start.
-                </span>
-              )}
-              <button type="button" className="pe-remove" title="Close" onClick={() => setPicked(null)}>✕</button>
-            </div>
-            {pickedTrack ? (
-              <StepLine step={pickedStep} num={pickedNum} track={pickedTrack} sound={sound}
-                inBlock={picked.block !== undefined} onChange={changePicked} onRemove={removePicked} />
-            ) : (
-              <p className="pe-picked-hint">This step drives several lines: edit it in the table above.</p>
+      <details className="pe-list" open={listOpen} onToggle={(e) => setListOpen(e.currentTarget.open)}>
+        <summary>
+          Step list{steps.length ? ` (${steps.length} step${steps.length === 1 ? "" : "s"} and blocks)` : ""}
+          <span className="pe-list-hint"> · the same steps as a table, or as JSON</span>
+        </summary>
+        {jsonMode ? (
+          <div className="pe-json">
+            <textarea value={jsonText} spellCheck={false} rows={14} onChange={(e) => onJson(e.target.value)} />
+            {jsonError && <div className="pe-msg pe-msg--error">JSON: {jsonError}</div>}
+          </div>
+        ) : (
+          <div className="pe-steps">
+            {tracks.length === 0 && (
+              <div className="pe-empty">Pick the TTL lines and sound outputs this protocol uses, above.</div>
             )}
+            <TrackGroups steps={steps} tracks={tracks} sound={sound} inBlock={false} flags={flags}
+              onSteps={(s) => update({ steps: s })} />
+            {blocks.map(([s, i], k) => (
+              <TrialBlock key={i} step={s} num={k + 1} tracks={tracks} sound={sound} flags={flags}
+                onChange={(ns) => update({ steps: steps.map((x, j) => (j === i ? ns : x)) })}
+                onRemove={() => update({ steps: steps.filter((_, j) => j !== i) })} />
+            ))}
+            <div className="pe-add-row">
+              <button type="button" className="pe-add" disabled={!tracks.length}
+                title="Trials repeated with regular or random gaps; each line's steps inside are timed from each trial's start"
+                onClick={() => {
+                  const last = steps.length ? Math.max(...steps.map((x) => Number(x.at_s) || 0)) : 0;
+                  update({ steps: [...steps, { at_s: steps.length ? last + 10 : 0, action: "repeat", times: 5, every_s: 30, jitter_s: [0, 0], steps: [] }] });
+                }}>
+                + Trial block
+              </button>
+              {steps.length > 1 && (
+                <button type="button" className="pe-small" title="Order each line's steps by start time"
+                  onClick={() => update({ steps: [...steps].sort((a, b) => (Number(a.at_s) || 0) - (Number(b.at_s) || 0)) })}>
+                  Sort by time
+                </button>
+              )}
+            </div>
           </div>
         )}
-      </div>
+
+      </details>
     </div>
   );
 }

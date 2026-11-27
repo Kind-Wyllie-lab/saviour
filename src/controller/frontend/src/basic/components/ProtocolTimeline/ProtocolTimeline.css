@@ -165,3 +165,9 @@
 .ptl-bar--selected { fill: #fff; stroke: var(--accent-color); stroke-width: 2; }
 .ptl-plot--editable svg { cursor: crosshair; }
 .ptl-plot--editable.ptl-plot--onbar svg { cursor: pointer; }
+
+/* TTL rows as a logic trace: low along the bottom, high along the top. */
+.ptl-trace { fill: none; stroke: var(--accent-color); stroke-width: 1.5; stroke-linejoin: miter; }
+.ptl-trace--ref { stroke: #6b6b6b; }
+.ptl-trace-fill { fill: var(--accent-color); fill-opacity: 0.18; }
+.ptl-trace-fill--ref { fill: #6b6b6b; }

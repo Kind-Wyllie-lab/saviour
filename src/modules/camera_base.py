@@ -40,7 +40,7 @@ from picamera2.outputs import PyavOutput, SplittableOutput
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
-from src.modules import crop_geometry
+from src.modules import crop_geometry, exposure_check
 from src.shared.ratelimit_log import RateLimitedLogger
 
 
@@ -308,6 +308,11 @@ class CameraBase(Module):
         self._exposure_sample_history: collections.deque = collections.deque(maxlen=3)
         self._exposure_over_pct = 0.0    # % of sampled pixels at/near white
         self._exposure_under_pct = 0.0   # % at/near black
+        # exposure_check verdict over the history: "ok" | "over" | "under" |
+        # "low_contrast"; and the latest sample (histogram etc.) for the
+        # camera card's /exposure.json.
+        self._exposure_verdict = "ok"
+        self._exposure_latest: dict | None = None
         self._exposure_last_sample_s = 0.0
         # so the WARNING log fires on the transition, not every frame
         self._exposure_warned = False
@@ -1606,18 +1611,20 @@ class CameraBase(Module):
 
 
     def _apply_exposure_overlay(self, frame) -> None:
-        """Draw a top-left 'OVEREXPOSED N%' / 'UNDEREXPOSED N%' warning when
-        _maybe_sample_exposure's rolling figure is over camera.exposure_warn_pct.
-        No-op otherwise."""
+        """Draw a top-left 'OVEREXPOSED N%' / 'UNDEREXPOSED N%' / 'LOW
+        CONTRAST' warning when exposure_check's rolling verdict says so (a
+        clipped background with a well-exposed subject is fine). No-op
+        otherwise."""
         try:
-            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
-            over, under = self._exposure_over_pct, self._exposure_under_pct
-            if max(over, under) < warn_pct:
-                return
-            if over >= under:
-                text, col = f"OVEREXPOSED {over:.0f}%", (60, 60, 255)   # BGR red
+            verdict = self._exposure_verdict
+            if verdict == "over":
+                text, col = f"OVEREXPOSED {self._exposure_over_pct:.0f}%", (60, 60, 255)   # BGR red
+            elif verdict == "under":
+                text, col = f"UNDEREXPOSED {self._exposure_under_pct:.0f}%", (0, 200, 255)  # amber
+            elif verdict == "low_contrast":
+                text, col = "LOW CONTRAST", (0, 200, 255)
             else:
-                text, col = f"UNDEREXPOSED {under:.0f}%", (0, 200, 255)  # amber
+                return
             cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
                         0.55, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
@@ -1626,10 +1633,10 @@ class CameraBase(Module):
             pass
 
     def _maybe_sample_exposure(self, arr) -> None:
-        """Once per camera.exposure_check_interval_s, measure what fraction of
-        a strided subsample of the frame is clipped to white / crushed to
-        black, and roll it into _exposure_over_pct / _exposure_under_pct
-        (mean of the last few samples, ~a few seconds). Logs a WARNING on the
+        """Once per camera.exposure_check_interval_s, assess a strided
+        subsample of the frame (exposure_check.assess: clipping, spread,
+        histogram) and roll the last few into _exposure_over_pct /
+        _exposure_under_pct / _exposure_verdict. Logs a WARNING on the
         transition into a sustained-bad state, cleared on recovery. Cheap: a
         ~1/64 subsample once a second."""
         now = time.monotonic()
@@ -1640,24 +1647,29 @@ class CameraBase(Module):
         try:
             hi = int(self.config.get("camera.exposure_clip_high", 250))
             lo = int(self.config.get("camera.exposure_clip_low", 5))
+            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
             sub = arr[::8, ::8]
             # any channel clipping counts as clipped
             luma = sub.max(axis=2) if sub.ndim == 3 else sub
-            n = luma.size or 1
-            over = 100.0 * int(np.count_nonzero(luma >= hi)) / n
-            under = 100.0 * int(np.count_nonzero(luma <= lo)) / n
-            self._exposure_sample_history.append((over, under))
-            h = self._exposure_sample_history
-            self._exposure_over_pct = sum(o for o, _ in h) / len(h)
-            self._exposure_under_pct = sum(u for _, u in h) / len(h)
+            sample = exposure_check.assess(luma, hi=hi, lo=lo, warn_pct=warn_pct)
+            self._exposure_latest = {**sample, "t": time.time(), "hi": hi, "lo": lo}
+            self._exposure_sample_history.append(sample)
+            rolled = exposure_check.verdict_of(list(self._exposure_sample_history), warn_pct)
+            self._exposure_over_pct = rolled["over_pct"]
+            self._exposure_under_pct = rolled["under_pct"]
+            self._exposure_verdict = rolled["verdict"]
 
-            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
-            bad = max(self._exposure_over_pct, self._exposure_under_pct) >= warn_pct
+            bad = rolled["verdict"] != "ok"
             if bad and not self._exposure_warned:
-                self.logger.warning(
-                    f"Exposure out of range: {self._exposure_over_pct:.1f}% of the "
-                    f"frame is clipped white, {self._exposure_under_pct:.1f}% crushed "
-                    f"black -- check exposure/gain")
+                why = {
+                    "over": f"{rolled['over_pct']:.1f}% of the frame is clipped white "
+                            f"and nothing in it is dark -- lower exposure/gain",
+                    "under": f"{rolled['under_pct']:.1f}% of the frame is crushed black "
+                             f"and nothing in it is bright -- raise exposure/gain",
+                    "low_contrast": f"the image uses only ~{rolled['span']:.0f} grey "
+                                    f"levels -- raise contrast or exposure",
+                }[rolled["verdict"]]
+                self.logger.warning(f"Exposure: {why}")
             elif not bad and self._exposure_warned:
                 self.logger.info("Exposure back within range")
             self._exposure_warned = bad
@@ -2100,6 +2112,18 @@ class CameraBase(Module):
         frontend livestream screenshot button both fetch — now lives on
         MJPEGStreamServer itself, so every module type that serves a
         monitoring stream gets it, not just cameras."""
+        @self.monitor_stream.app.route('/exposure.json')
+        def exposure_json():
+            """The latest exposure sample (histogram, clipping, verdict) for
+            the camera card's histogram. CORS-open like /snapshot.jpg."""
+            from flask import jsonify
+            latest = self._exposure_latest
+            body = jsonify({**(latest or {}), "verdict": self._exposure_verdict,
+                            "available": latest is not None})
+            body.headers["Access-Control-Allow-Origin"] = "*"
+            body.headers["Cache-Control"] = "no-store"
+            return body
+
         @self.monitor_stream.app.route('/shutdown')
         def shutdown():
             func = request.environ.get('werkzeug.server.shutdown')

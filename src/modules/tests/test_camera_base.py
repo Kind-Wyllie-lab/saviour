@@ -378,9 +378,32 @@ class TestExposureSampling:
         assert cam._exposure_under_pct == 100.0
         assert cam._exposure_over_pct == 0.0
 
+    @staticmethod
+    def _spread():
+        # A well-exposed scene: greys from 20 to 230 across the frame.
+        row = np.linspace(20, 230, 80).astype(np.uint8)
+        return np.repeat(np.tile(row, (80, 1))[:, :, None], 3, axis=2)
+
+    def test_white_arena_with_dark_rat_does_not_warn(self):
+        # 90 % clipped white (the arena), the rest spread 10-200 (the rat).
+        cam = self._cam()
+        frame = np.full((80, 80, 3), 255, dtype=np.uint8)
+        frame[:24, :24] = np.linspace(10, 200, 24).astype(np.uint8)[None, :, None]
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(frame)
+        assert cam._exposure_over_pct > 80
+        assert cam._exposure_verdict == "ok"
+        cam.logger.warning.assert_not_called()
+
+    def test_flat_grey_frame_is_low_contrast(self):
+        cam = self._cam()
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(np.full((80, 80, 3), 128, dtype=np.uint8))
+        assert cam._exposure_verdict == "low_contrast"
+
     def test_well_exposed_frame_does_not_warn(self):
         cam = self._cam()
-        mid = np.full((80, 80, 3), 128, dtype=np.uint8)
+        mid = self._spread()
         with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
             cam._maybe_sample_exposure(mid)
         assert cam._exposure_over_pct == 0.0
@@ -404,7 +427,7 @@ class TestExposureSampling:
     def test_recovery_logs_once(self):
         cam = self._cam()
         white = np.full((80, 80, 3), 255, dtype=np.uint8)
-        mid = np.full((80, 80, 3), 128, dtype=np.uint8)
+        mid = self._spread()
         for t, frame in [(10.0, white), (11.1, mid), (12.2, mid), (13.3, mid)]:
             with patch("src.modules.camera_base.time.monotonic", return_value=t):
                 cam._maybe_sample_exposure(frame)

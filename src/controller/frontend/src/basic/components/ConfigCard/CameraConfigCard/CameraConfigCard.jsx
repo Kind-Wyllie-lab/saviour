@@ -1,3 +1,4 @@
+import ExposureHistogram from "/src/basic/components/ExposureHistogram/ExposureHistogram";
 import { useCallback, useEffect, useRef, useState } from "react";
 import socket from "/src/socket";
 import useModules from "/src/hooks/useModules";
@@ -805,8 +806,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 <option value="high_quality">High quality (smoother, may cost framerate)</option>
               </select>
             </div>
+            <ExposureHistogram module={module} />
             <div className="form-field">
-              <label title="Rolling % of the frame clipped white or crushed black that shows the OVER/UNDEREXPOSED preview badge and logs a warning. Advisory only.">
+              <label title="% of the frame clipped white or crushed black before it can count as over/underexposed. A clipped background with a well-exposed subject (e.g. a dark rat in a white arena) never warns. Advisory only.">
                 Exposure warning threshold (%):
               </label>
               <input type="number" min="0" max="100" step="0.5"

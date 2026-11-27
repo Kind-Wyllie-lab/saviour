@@ -203,7 +203,11 @@ class SoundLibrary:
         out = []
         for n in self.library_names():
             meta = self._read_sidecar(n) or self._write_sidecar(n, source="manual")
-            out.append({"name": n, "sha256": meta.get("sha256")})
+            entry = {"name": n, "sha256": meta.get("sha256")}
+            # A built sound's recipe: the module renders it at any length.
+            if meta.get("generator"):
+                entry["generator"] = meta["generator"]
+            out.append(entry)
         return out
 
     # ── changing ─────────────────────────────────────────────────────────────

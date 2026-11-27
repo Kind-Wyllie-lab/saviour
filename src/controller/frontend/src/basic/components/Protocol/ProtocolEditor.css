@@ -438,3 +438,4 @@
   font-size: 0.8em;
   color: var(--secondary-text-color);
 }
+.pe-hint-inline--warn { color: var(--warning-color, #d08a00); }

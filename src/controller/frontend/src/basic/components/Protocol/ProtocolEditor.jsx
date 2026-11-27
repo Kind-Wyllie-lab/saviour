@@ -125,6 +125,11 @@ function PlayFields({ step, sound, onChange, fixedOutput = false }) {
   };
   const outputList = Array.from({ length: Math.max(outputs, Number(params.output) || 1) }, (_, i) => i + 1);
   const len = lengths[params.file];
+  // Built sounds stretch to the step's length; recordings stop at their end.
+  const chosen = step.module ? mods.filter((m) => m.id === step.module) : mods;
+  const stretch = chosen.length > 0 && chosen.every((m) => (m.recipes ?? []).includes(params.file));
+  const recipeMax = Math.min(...chosen.map((m) => m.recipeMax || 300), 300);
+  const over = !stretch && typeof len === "number" && Number(params.duration_s) > len + 1e-6;
   return (
     <>
       {mods.length > 1 && (
@@ -162,8 +167,13 @@ function PlayFields({ step, sound, onChange, fixedOutput = false }) {
         title="Gain factor (1 = the file as recorded); blank uses the module's volume setting"
         onChange={(v) => setParam("volume", v)} />
       <NumField label="Length" unit="s" value={params.duration_s} width="5em" placeholder="whole"
-        title="Cut the sound to this many seconds; blank plays the whole file"
+        title={stretch ? `A built sound: rendered at this length, up to ${recipeMax} s; blank plays its 1 s library copy`
+          : "Cut the sound to this many seconds; blank plays the whole file"}
         onChange={(v) => setParam("duration_s", v)} />
+      <span className={`pe-hint-inline${over ? " pe-hint-inline--warn" : ""}`}>
+        {stretch ? `any length up to ${recipeMax} s`
+          : typeof len === "number" ? `${over ? "⚠ " : ""}max ${len.toFixed(len < 10 ? 2 : 0)} s (the recording)` : ""}
+      </span>
     </>
   );
 }

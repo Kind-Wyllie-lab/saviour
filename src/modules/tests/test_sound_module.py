@@ -400,6 +400,20 @@ class TestBuiltSoundsStretch:
         assert m.hardware["recipes"] == ["tone.wav"]
         assert "tone.wav" in m.hardware["files"] and ".recipes.json" not in m.hardware["files"]
 
+    def test_a_new_recipe_alone_is_reported(self, tmp_path):
+        m = self._module(tmp_path)
+        m._recipes = {}
+        from src.modules.variants.sound.sound_module import _sha256
+        files = [{"name": "tone.wav", "sha256": _sha256(str(tmp_path / "lib" / "tone.wav")),
+                  "generator": dict(self.TONE)}]
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            m._refresh_hardware()
+            m.facade.send_status.reset_mock()
+            m.sync_sound_library("http://x", files)   # nothing fetched, recipe new
+        assert m.hardware["recipes"] == ["tone.wav"]
+        sent = [c.args[0] for c in m.facade.send_status.call_args_list]
+        assert any(x.get("type") == "module_config_updated" for x in sent)
+
     def test_protocol_step_longer_than_the_copy_is_valid(self, tmp_path):
         m = self._module(tmp_path)
         proto = {"version": 1, "steps": [

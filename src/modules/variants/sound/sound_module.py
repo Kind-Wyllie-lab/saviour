@@ -435,7 +435,8 @@ class SoundModule(Module):
                 if isinstance((f or {}).get("generator"), dict):
                     recipes[name] = f["generator"]
         os.makedirs(self._library_dir, exist_ok=True)
-        if recipes != getattr(self, "_recipes", {}):
+        recipes_changed = recipes != getattr(self, "_recipes", {})
+        if recipes_changed:
             self._recipes = recipes
             self._save_recipes()
         fetched, removed, failed = [], [], {}
@@ -458,12 +459,14 @@ class SoundModule(Module):
                 with contextlib.suppress(OSError):
                     os.remove(os.path.join(self._library_dir, name))
                     removed.append(name)
-        if fetched or removed:
-            self.logger.info(f"Sound library: fetched {fetched or 'none'}, "
-                             f"removed {removed or 'none'}")
+        if fetched or removed or recipes_changed:
+            if fetched or removed:
+                self.logger.info(f"Sound library: fetched {fetched or 'none'}, "
+                                 f"removed {removed or 'none'}")
             self.available_sounds = self._get_available_sounds()
-            before = self.hardware
-            if self._refresh_hardware() != before:
+            before = dict(self.hardware or {})
+            self._refresh_hardware()
+            if self.hardware != before:
                 self.facade.send_status({
                     "type": "module_config_updated", "reason": "sound_library",
                     "config": self.config.get_all()})

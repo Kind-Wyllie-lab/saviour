@@ -87,7 +87,7 @@ export function rigTestBlocked({ result, ttl, sounds = [], loggedIn, scheduled =
     if (!ttl) return "No TTL module connected for the TTL steps.";
     if (busy(ttl)) return "Recording: the TTL module is busy.";
     if (off(ttl)) return "The TTL module is offline.";
-    if (result.pins.some((p) => !scheduled.includes(p))) return "Set the lines it uses to Scheduled first (TTL card, Pins tab).";
+    if (result.pins.some((p) => !scheduled.includes(p))) return "Set the lines it uses to Protocol output first (TTL card, Pins tab).";
   }
   if (hasSound) {
     if (!sounds.length) return "No sound module connected for the sound steps.";

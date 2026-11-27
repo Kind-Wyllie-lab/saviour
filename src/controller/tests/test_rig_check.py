@@ -262,7 +262,10 @@ EPHYS_ITEM = {"label": "Ephys sync", "types": ["ttl"], "application": "ephys_syn
 
 
 def _ttl_mod(app=None, online=True):
-    cfg = {"ttl": {"application": app}} if app else {}
+    # A module's application now follows from its sync line's system.
+    system = {"ephys_sync": "open_ephys", "neurologger_sync": "neurologger"}.get(app)
+    cfg = ({"ttl": {"pins": {"26": {"mode": "pseudorandom", "system": system}}}}
+           if system else {"ttl": {"pins": {"5": {"mode": "scheduled"}}}} if app else {})
     return {"type": "ttl", "online": online, "status": "READY", "name": "",
             "config": cfg}
 
@@ -286,7 +289,7 @@ class TestConditionalItems:
         assert [i["label"] for i in shortfalls(r)] == ["Ephys sync"]
 
     def test_application_must_match(self):
-        mods = {"ttl_1": _ttl_mod("stimulus_control")}
+        mods = {"ttl_1": _ttl_mod("mixed")}
         assert evaluate([EPHYS_ITEM], mods, conditions={"ephys"})["level"] == "error"
         mods["ttl_2"] = _ttl_mod("ephys_sync")
         r = evaluate([EPHYS_ITEM], mods, conditions={"ephys"})

@@ -81,7 +81,7 @@ class TestStore:
         with pytest.raises(TTLLinesError):
             store.confirm("ttl_2904", _ttl(), 4)
 
-    def test_mixed_without_roles_not_listed(self, tmp_path):
+    def test_module_without_wired_lines_not_listed(self, tmp_path):
         store, _ = _store(tmp_path)
         ttl = {"pins": {"19": {"mode": "experiment_clock"}}}
         assert store.status(_modules(ttl)) == {}
@@ -107,8 +107,7 @@ class TestWiring:
 
     def test_stimulus_modules_are_not_sync_wiring(self, tmp_path):
         store, _ = _store(tmp_path)
-        ttl = {"application": "stimulus_control", "pins": {
-            "5": {"mode": "interval_pulse", "role": "stimulus"}}}
+        ttl = {"pins": {"5": {"mode": "scheduled"}}}
         assert sync_wiring(store.status(_modules(ttl))) == []
 
     def test_sync_module_without_sync_line(self):

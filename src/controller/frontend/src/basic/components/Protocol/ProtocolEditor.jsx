@@ -257,6 +257,7 @@ const renameSteps = (msg, names) =>
 // timeline for reference. Returns { rows, spans }.
 const REF_MODES = {
   experiment_start: "experiment start",
+  experiment_marker: "experiment marker",
   experiment_clock: "experiment clock",
   pseudorandom: "pseudorandom sync",
   interval_pulse: "interval pulses",
@@ -281,7 +282,9 @@ function referenceLines(pinConfigs) {
         spans.push({ row: key, start: i * every, end: i * every + w, label: `interval pulse ${i + 1}`, ref: true });
       }
     } else {
-      const what = mode === "experiment_clock"
+      const what = mode === "experiment_marker"
+        ? "active for the whole recording"
+        : mode === "experiment_clock"
         ? `clock: ${num(c.period, 1)} s period, ${Math.round(num(c.duty_cycle, 0.75) * 100)} % high, for the whole recording`
         : mode === "pseudorandom"
           ? `random sync pulses ${num(c.min_interval, 0.1)}-${num(c.max_interval, 1)} s apart, for the whole recording`
@@ -483,12 +486,12 @@ function OutputPicker({ outputs, used, scheduled, pinConfigs, soundOutputs, hasT
         <div className="pe-pins">
           {ttlChoices.map((p) => {
             const label = pinLabel(pinConfigs, p);
-            const bad = !scheduled.includes(p) ? `GPIO ${p} isn't set to Scheduled on the TTL module` : null;
+            const bad = !scheduled.includes(p) ? `GPIO ${p} isn't a Protocol output on the TTL module` : null;
             return chip("ttl", p, label ?? `GPIO ${p}`, label ? String(p) : null, bad);
           })}
           {ttlChoices.length === 0 && (
             <span className="pe-out-none">
-              {hasTtl ? "None set to Scheduled: set a line's mode to Scheduled on the TTL card (Settings)." : "No TTL module connected."}
+              {hasTtl ? "No Protocol outputs: set a pin's Use to Protocol output on the TTL card (Settings)." : "No TTL module connected."}
             </span>
           )}
         </div>
@@ -535,7 +538,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const names = useMemo(() => stepNames(steps, tracks), [steps, tracks]);
   const flags = Object.fromEntries([
     ...outputs.ttl.filter((p) => !scheduled.includes(p)).map((p) => [`ttl:${p}`,
-      moduleId ? "not set to Scheduled on the TTL module" : "no TTL module connected"]),
+      moduleId ? "not a Protocol output on the TTL module" : "no TTL module connected"]),
     ...outputs.sound.filter((o) => o > soundOutputs).map((o) => [`snd:${o}`,
       soundModules.length ? "the sound module has no such output" : "no sound module connected"]),
   ]);
@@ -583,7 +586,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       {intro !== undefined ? intro : (
         <p className="pe-intro">
           Steps run on the modules during every recording, timed from session start on their
-          PTP clocks. A TTL line must be in <strong>Scheduled</strong> mode (Pins tab) to be
+          PTP clocks. A TTL line must be a <strong>Protocol output</strong> (TTL card, Pins tab) to be
           used, and manual pulses on it are refused while recording.
         </p>
       )}

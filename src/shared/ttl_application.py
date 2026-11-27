@@ -1,15 +1,24 @@
 """
-What a TTL module is for, and what its pins do
+What each TTL pin is used for, and what a TTL module syncs with
 (plans/ttl-applications-ephys-sync.md).
 
-``ttl.application`` (``mixed`` / ``ephys_sync`` / ``neurologger_sync`` /
-``stimulus_control``) says what a TTL module is used for; each pin can take a
-``role`` (``sync``, ``experiment_start``, ``stimulus``, ``marker_in``) that
-fixes which modes it may use, plus ``channel`` (the acquisition system's
-digital input it is wired to) and a free ``label``. The definitions live in
-``ttl_applications.json`` next to this file, which the frontend imports too.
+Each pin has a *use* (its ``role``), which follows from its mode: a sync line
+(``pseudorandom``), an experiment marker (``experiment_marker``: active for
+the whole recording), a protocol output (``scheduled``), plus the less common
+start pulse, event input, regular pulses, clock and manual output. A sync
+line can say which system it feeds (``ttl.pins.<gpio>.system``:
+``open_ephys`` / ``neurologger``), plus ``channel`` (that system's input it is
+wired to); every pin has a free ``label``.
 
-Pure: stdlib only, so the module, the controller and tools can all use it.
+The module's *application* (``ephys_sync`` / ``neurologger_sync`` /
+``mixed``) is worked out from its sync line's system; rig check, the session
+record and the New Session "External sync" choice use it. Older configs set
+``ttl.application`` directly and a pin ``role``: a sync line without a
+system still takes its system from such an application.
+
+The definitions live in ``ttl_applications.json`` next to this file, which the
+frontend imports too. Pure: stdlib only, so the module, the controller and
+tools can all use it.
 """
 
 from __future__ import annotations
@@ -25,11 +34,14 @@ with open(_PATH, encoding="utf-8") as _f:
 
 APPLICATIONS: dict = DEFINITIONS["applications"]
 ROLES: dict = DEFINITIONS["roles"]
+SYNC_SYSTEMS: dict = DEFINITIONS["sync_systems"]
+USES: list = DEFINITIONS["uses"]
 DEFAULT_APPLICATION: str = DEFINITIONS["default_application"]
 CONFIRM_MAX_AGE_DAYS: float = float(DEFINITIONS["confirm_max_age_days"])
 # What a session can be synchronised with ("External sync" on New Session):
 # {kind: {label, application, system, description}}.
 EXTERNAL_SYNC: dict = DEFINITIONS.get("external_sync", {})
+_ROLE_OF_MODE: dict = {m: r for r, spec in ROLES.items() for m in spec["modes"]}
 
 
 def external_sync_kind(value: object = None, legacy_ephys: bool = False) -> str | None:
@@ -48,11 +60,36 @@ def sync_application(kind: str | None) -> str | None:
     return (EXTERNAL_SYNC.get(kind) or {}).get("application") if kind else None
 
 
+def pin_role(pin_config: dict | None) -> str:
+    """A pin's use, from its mode (``custom`` for an unknown mode)."""
+    mode = (pin_config or {}).get("mode")
+    return _ROLE_OF_MODE.get(mode if mode is not None else "None", "custom")
+
+
+def _sorted_pins(ttl_config: dict | None) -> list:
+    return sorted(((ttl_config or {}).get("pins") or {}).items(),
+                  key=lambda kv: int(kv[0]))
+
+
+def pin_system(pin_config: dict | None, ttl_config: dict | None = None) -> str | None:
+    """The system a sync line feeds (a ``SYNC_SYSTEMS`` key) or None. A sync
+    line without one takes it from an older config's ``ttl.application``."""
+    if pin_role(pin_config) != "sync":
+        return None
+    pin = pin_config or {}
+    if "system" in pin:   # "" = none; an unknown name is reported by validate()
+        return pin["system"] if pin["system"] in SYNC_SYSTEMS else None
+    legacy = (ttl_config or {}).get("application")
+    return (APPLICATIONS.get(legacy) or {}).get("system")
+
+
 def application_of(ttl_config: dict | None) -> str:
-    """The module's application from its ``ttl`` config section (unknown or
-    missing reads as the default)."""
-    app = (ttl_config or {}).get("application") or DEFAULT_APPLICATION
-    return app if app in APPLICATIONS else DEFAULT_APPLICATION
+    """The module's application, from its sync line's system."""
+    for _gpio, pin in _sorted_pins(ttl_config):
+        system = pin_system(pin, ttl_config)
+        if system:
+            return SYNC_SYSTEMS[system]["application"]
+    return DEFAULT_APPLICATION
 
 
 def module_application(module: dict | None) -> str | None:
@@ -67,61 +104,35 @@ def label(application: str) -> str:
     return (APPLICATIONS.get(application) or {}).get("label", application)
 
 
-def pin_role(pin_config: dict | None) -> str:
-    """A pin's role; pins without one (or with an unknown one) are
-    ``custom``."""
-    role = (pin_config or {}).get("role")
-    return role if role in ROLES else "custom"
-
-
 def validate(ttl_config: dict | None) -> list[str]:
-    """Problems with the application / pin roles, as sentences. Empty when
-    fine. ``mixed`` only checks roles that are set."""
-    cfg = ttl_config or {}
-    app = application_of(cfg)
-    spec = APPLICATIONS[app]
-    allowed = spec.get("roles")
+    """Problems with the pins' uses, as sentences. Empty when fine."""
     problems = []
     counts: dict[str, int] = {}
-    for gpio, pin in sorted((cfg.get("pins") or {}).items(), key=lambda kv: int(kv[0])):
-        role = (pin or {}).get("role")
-        if not role:
-            if allowed is not None:
-                problems.append(f"GPIO {gpio} has no role ({label(app)} lines each need one)")
-            continue
-        if role not in ROLES:
-            problems.append(f"GPIO {gpio}: unknown role '{role}'")
-            continue
-        if allowed is not None and role not in allowed:
-            problems.append(f"GPIO {gpio}: {ROLES[role]['label']} isn't used by {label(app)}")
-        mode = (pin or {}).get("mode")
-        if mode not in ROLES[role]["modes"]:
-            problems.append(
-                f"GPIO {gpio}: a {ROLES[role]['label'].lower()} must be "
-                f"{' or '.join(ROLES[role]['modes'])} (is {mode})")
+    for gpio, pin in _sorted_pins(ttl_config):
+        role = pin_role(pin)
         counts[role] = counts.get(role, 0) + 1
+        system = (pin or {}).get("system")
+        if role == "sync" and system and system not in SYNC_SYSTEMS:
+            problems.append(f"GPIO {gpio}: unknown sync system '{system}'")
     for role, n in counts.items():
-        cap = ROLES[role].get("max")
+        cap = (ROLES.get(role) or {}).get("max")
         if cap and n > cap:
             problems.append(f"{n} {ROLES[role]['label'].lower()}s; at most {cap}")
-    for role in spec.get("requires") or []:
-        if not counts.get(role):
-            problems.append(f"{label(app)} needs a {ROLES[role]['label'].lower()}")
     return problems
 
 
 def lines(ttl_config: dict | None, role: str | None = None) -> list[dict]:
-    """Pins with a role, as ``{gpio, role, mode, channel, label}``, in GPIO
-    order (optionally only one role)."""
+    """Every pin with a known use, as ``{gpio, role, mode, channel, label,
+    system}``, in GPIO order (optionally only one use)."""
     out = []
-    for gpio, pin in sorted(((ttl_config or {}).get("pins") or {}).items(),
-                            key=lambda kv: int(kv[0])):
+    for gpio, pin in _sorted_pins(ttl_config):
         r = pin_role(pin)
         if r == "custom" or (role and r != role):
             continue
         out.append({"gpio": int(gpio), "role": r, "mode": (pin or {}).get("mode"),
                     "channel": (pin or {}).get("channel"),
-                    "label": (pin or {}).get("label") or ""})
+                    "label": (pin or {}).get("label") or "",
+                    "system": pin_system(pin, ttl_config)})
     return out
 
 

@@ -105,6 +105,9 @@ class TTLModule(Module):
         self.pseudorandom_pins = []  # Pins configured as pseudorandom
         self.interval_pulse_pins = []  # Pins configured as interval_pulse
         self.experiment_start_pins = []  # Pins configured as experiment_start
+        # Active for the whole recording (on at start, off at stop).
+        self.experiment_marker_pins = []
+        self._markers_on: set[int] = set()
         self.scheduled_pins = []  # Pins driven by the session's protocol
         self.generator_threads = {}  # Store generator threads
 
@@ -241,9 +244,8 @@ class TTLModule(Module):
 
     @check()
     def _check_ttl_application(self) -> tuple[bool, str]:
-        """The pins match what this module is for (ttl.application): e.g.
-        an ephys sync module has exactly one sync line, in pseudorandom
-        mode. plans/ttl-applications-ephys-sync.md"""
+        """The pins' uses make sense (at most one sync line, a known sync
+        system). plans/ttl-applications-ephys-sync.md"""
         ttl_cfg = self.config.get("ttl", {}) or {}
         problems = ttl_application.validate(ttl_cfg)
         app = ttl_application.label(ttl_application.application_of(ttl_cfg))
@@ -407,6 +409,18 @@ class TTLModule(Module):
                         self._set_output_inactive(p)
                         delivered += 1
                         next_fire += interval_s
+                finally:
+                    self._set_output_inactive(p)
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                    self.logger.info(f"test_pin: finished on GPIO {pin_number}")
+
+        elif mode == "experiment_marker":
+            def _run_test(p, stop, dur):
+                self.logger.info(
+                    f"test_pin: experiment_marker on GPIO {pin_number} held active for {dur}s")
+                try:
+                    self._set_output_active(p)
+                    stop.wait(dur)
                 finally:
                     self._set_output_inactive(p)
                     self._pin_test_stop_flags.pop(pin_number, None)
@@ -1011,6 +1025,10 @@ class TTLModule(Module):
             # Stop all pin generators
             self._stop_pin_generators()
 
+            # Experiment markers go inactive now, with the edge logged
+            # before the events file closes.
+            self._end_experiment_markers()
+
             # Return all output pins to resting (inactive) state
             self._set_all_output_pins_inactive()
 
@@ -1202,6 +1220,7 @@ class TTLModule(Module):
             self.pseudorandom_pins = []
             self.interval_pulse_pins = []
             self.experiment_start_pins = []
+            self.experiment_marker_pins = []
             self.scheduled_pins = []
 
             # Track pin assignments for logging
@@ -1346,6 +1365,22 @@ class TTLModule(Module):
                                 self.logger.error(
                                     f"Pin {pin_number} retry failed: {e2}")
 
+                    elif pin_type == "experiment_marker":
+                        # Active from recording start until it stops
+                        # (_start_experiment_markers / _end_experiment_markers).
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            self._set_output_inactive(pin_obj)
+                            self.experiment_marker_pins.append(pin_number)
+                            self.logger.info(
+                                f"Assigned output pin {pin_number} as "
+                                f"experiment_marker (initial state: inactive)")
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to assign experiment_marker pin {pin_number}: {e}")
+
                     elif pin_type == "scheduled":
                         # An output the session protocol (ttl.protocol) owns:
                         # held inactive, driven only by the protocol runner
@@ -1457,6 +1492,8 @@ class TTLModule(Module):
 
             for pin_number in self.experiment_start_pins:
                 self._start_experiment_start(pin_number)
+
+            self._start_experiment_markers()
 
             self.logger.info(
                 f"Started {len(self.experiment_clock_pins)} experiment clock, "
@@ -1695,6 +1732,34 @@ class TTLModule(Module):
             self.logger.error(f"Error starting interval_pulse on pin {pin_number}: {e}")
             return False
 
+
+    def _marker_pin_objs(self):
+        for pin_number in self.experiment_marker_pins:
+            pin_obj = next(
+                (p for p in self.output_pins if p.pin.number == pin_number), None)
+            if pin_obj is None:
+                self.logger.error(
+                    f"Could not find pin object for experiment_marker pin {pin_number}")
+                continue
+            yield pin_number, pin_obj
+
+    def _start_experiment_markers(self):
+        """Experiment marker pins go active as the recording starts."""
+        for pin_number, pin_obj in self._marker_pin_objs():
+            self._set_output_active(pin_obj)
+            self._markers_on.add(pin_number)
+            self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
+            self.logger.info(f"Experiment marker on GPIO {pin_number} active")
+
+    def _end_experiment_markers(self):
+        """...and inactive as it stops."""
+        for pin_number, pin_obj in self._marker_pin_objs():
+            if pin_number not in self._markers_on:
+                continue
+            self._markers_on.discard(pin_number)
+            self._set_output_inactive(pin_obj)
+            self._write_ttl_event(time.time_ns(), pin_number, TTLValue.LOW)
+            self.logger.info(f"Experiment marker on GPIO {pin_number} inactive")
 
     def _start_experiment_start(self, pin_number):
         """Start the experiment_start generator for a specific pin.

@@ -111,13 +111,11 @@ function makeModules() {
       config: {
         module: { name: "Ephys sync", group: "other" },
         ttl: {
-          application: "ephys_sync",
-          _application_options: ["mixed", "ephys_sync", "neurologger_sync", "stimulus_control"],
           active_logic: "active_low",
           _active_logic_options: ["active_low", "active_high"],
           _available_pins: [2, 3, 4, 17, 19, 22, 26, 27],
           _available_modes: ["None", "pseudorandom", "experiment_clock", "interval_pulse",
-                             "experiment_start", "scheduled", "input"],
+                             "experiment_start", "experiment_marker", "scheduled", "input"],
           _mode_settings_schema: {
             _pseudorandom: {
               _min_interval: { type: "float", min: 0, default: 0.1 },
@@ -131,9 +129,9 @@ function makeModules() {
             _input: { _debounce_ms: { type: "int", min: 0, default: 50 } },
           },
           pins: {
-            26: { mode: "pseudorandom", role: "sync", channel: 1,
+            26: { mode: "pseudorandom", system: "open_ephys", channel: 1,
                   min_interval: 0.1, max_interval: 1, pulse_duration: 0.2 },
-            19: { mode: "experiment_start", role: "experiment_start", channel: 2,
+            19: { mode: "experiment_start", channel: 2,
                   delay_s: 0.001, pulse_duration_s: 0.02 },
           },
         },
@@ -160,7 +158,7 @@ function makeModules() {
           _active_logic_options: ["active_low", "active_high"],
           _available_pins: [2, 3, 4, 17, 19, 22, 26, 27],
           _available_modes: ["None", "pseudorandom", "experiment_clock", "interval_pulse",
-                             "experiment_start", "scheduled", "input"],
+                             "experiment_start", "experiment_marker", "scheduled", "input"],
           _mode_settings_schema: {
             _experiment_clock: {
               _duty_cycle: { type: "float", min: 0.1, max: 1.0, default: "0.75" },

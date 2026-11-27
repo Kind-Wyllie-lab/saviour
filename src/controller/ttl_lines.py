@@ -132,8 +132,8 @@ class TTLLineStore:
         return out
 
     def status(self, modules: dict) -> dict:
-        """Every TTL module with an application other than ``mixed``, or with
-        role lines: ``{module_id: {application, label, name, online, lines,
+        """Every TTL module with a sync system, or with a line wired to
+        another system: ``{module_id: {application, label, name, online, lines,
         problems, last_verified}}``."""
         out = {}
         for mid, m in sorted((modules or {}).items()):
@@ -142,7 +142,10 @@ class TTLLineStore:
                 continue
             ttl_cfg = (m.get("config") or {}).get("ttl") or {}
             lines = ttl_application.lines(ttl_cfg)
-            if app == "mixed" and not lines:
+            # Listed when it has a line that's wired to another system (a
+            # sync line, an experiment marker, a start pulse).
+            if app == "mixed" and not any(
+                    ttl_application.ROLES[ln["role"]].get("channel") for ln in lines):
                 continue
             with self._lock:
                 last = copy.deepcopy(self._data.get(mid, {}).get("last_verified"))

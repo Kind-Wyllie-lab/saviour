@@ -2,8 +2,9 @@
 // acquisition system, per module and pin, tied to the wiring at the time.
 // The mock ephys sync module (fixtures.js) starts with its sync line
 // confirmed and its experiment-start line not.
-import { ROLES, CONFIRM_MAX_AGE_DAYS, applicationOf, applicationLabel, validateTTL }
-  from "/src/basic/utils/ttlApplications";
+import {
+  ROLES, CONFIRM_MAX_AGE_DAYS, applicationOf, applicationLabel, validateTTL, pinRole, pinSystem,
+} from "/src/basic/utils/ttlApplications";
 
 const store = {
   "ttl-ephys-2904": {
@@ -17,9 +18,9 @@ const wiringKey = (l) => `${l.gpio}:${l.mode}:${l.channel ?? "None"}`;
 
 function lines(ttl) {
   return Object.entries(ttl?.pins ?? {})
-    .filter(([, p]) => ROLES[p?.role])
-    .map(([g, p]) => ({ gpio: Number(g), role: p.role, mode: p.mode,
-      channel: p.channel || null, label: p.label || "" }))
+    .filter(([, p]) => ROLES[pinRole(p)])
+    .map(([g, p]) => ({ gpio: Number(g), role: pinRole(p), mode: p.mode,
+      channel: p.channel || null, label: p.label || "", system: pinSystem(p, ttl) }))
     .sort((a, b) => a.gpio - b.gpio);
 }
 
@@ -38,7 +39,7 @@ export function ttlLinesPayload(modules) {
     const ttl = m.config?.ttl ?? {};
     const app = applicationOf(ttl);
     const ls = lines(ttl);
-    if (app === "mixed" && !ls.length) continue;
+    if (app === "mixed" && !ls.some((l) => ROLES[l.role]?.channel)) continue;
     out[mid] = { application: app, label: applicationLabel(app), name: m.name || mid,
       online: m.online !== false, lines: ls.map((l) => lineState(mid, l)),
       problems: validateTTL(ttl), last_verified: store[mid]?.last_verified ?? null };

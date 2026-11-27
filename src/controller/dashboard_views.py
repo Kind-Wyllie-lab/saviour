@@ -39,7 +39,9 @@ import os
 import re
 import tempfile
 
-WIDGET_TYPES = frozenset({"stream", "health", "module-list"})
+WIDGET_TYPES = frozenset({"stream", "health", "module-list", "sound", "protocol"})
+# Widget types that name a module (``target``).
+_TARGETED = frozenset({"stream", "sound"})
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 _ID_RE = re.compile(r"[a-z0-9-]+")
@@ -236,10 +238,10 @@ class DashboardViewStore:
                 raise ViewError(f"Duplicate widget id {wid!r}")
             seen_ids.add(wid)
             widget = {"id": wid, "type": wtype}
-            if wtype == "stream":
+            if wtype in _TARGETED:
                 target = str(item.get("target", "")).strip()
                 if not target:
-                    raise ViewError("A stream widget needs a target module id")
+                    raise ViewError(f"A {wtype} widget needs a target module id")
                 widget["target"] = target
             widgets.append(widget)
         return widgets

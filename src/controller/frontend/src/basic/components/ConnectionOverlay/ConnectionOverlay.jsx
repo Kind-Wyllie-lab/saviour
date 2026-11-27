@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import socket from "/src/socket";
+import { isShuttingDown, onShuttingDown } from "/src/powerState";
 import "./ConnectionOverlay.css";
 
 function ConnectionOverlay() {
   const [visible, setVisible] = useState(!socket.connected);
   const [attempt, setAttempt] = useState(0);
   const timerRef = useRef(null);
+  const [shuttingDown, setShuttingDownState] = useState(isShuttingDown);
+  useEffect(() => onShuttingDown(setShuttingDownState), []);
 
   useEffect(() => {
     const onDisconnect = () => {
@@ -30,7 +33,7 @@ function ConnectionOverlay() {
     };
   }, []);
 
-  if (!visible) return null;
+  if (!visible || shuttingDown) return null;
 
   return (
     <div className="conn-overlay">

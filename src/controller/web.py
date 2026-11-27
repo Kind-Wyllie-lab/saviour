@@ -43,7 +43,7 @@ from flask import (
 )
 from flask_socketio import SocketIO
 
-from src.controller import compose, framesync_check, rest_api
+from src.controller import compose, framesync_check, rest_api, shutdown_wait
 from src.controller import system_update as su
 from src.controller.config import Config
 from src.controller.dashboard_views import DashboardViewStore, ViewError
@@ -3784,16 +3784,34 @@ class Web(ABC):  # noqa: B024 -- subclassed per rig; no required overrides
             if not self._require_auth("auth_required"):
                 return
             self.logger.info("Shutdown SAVIOUR requested — sending shutdown to all modules then shutting down controller")
-            for mid in list(self.facade.get_modules().keys()):
+            modules = self.facade.get_modules() or {}
+            for mid in list(modules.keys()):
                 try:
                     self.facade.send_command(mid, "shutdown", {})
                 except Exception as e:
                     self.logger.error(f"Failed to send shutdown to module {mid}: {e}")
-            self.socketio.emit("shutdown_saviour_ack", {})
+            targets = [{"id": mid, "name": (m or {}).get("name") or mid,
+                        "ip": (m or {}).get("ip")}
+                       for mid, m in modules.items()]
+            self.socketio.emit("shutdown_saviour_ack", {
+                "modules": [{"id": t["id"], "name": t["name"], "down": False}
+                            for t in targets]})
+
             def _shutdown():
-                time.sleep(5)
+                # Wait (up to SHUTDOWN_WAIT_S) until every module has
+                # actually halted (stops answering ping), reporting each one,
+                # so the browser can say when it's safe to cut the power.
+                down = shutdown_wait.wait_for_modules_down(
+                    targets, timeout_s=shutdown_wait.SHUTDOWN_WAIT_S,
+                    on_change=lambda st: self.socketio.emit(
+                        "shutdown_saviour_progress", {"modules": st}),
+                    sleep=self.socketio.sleep)
+                self.socketio.emit("shutdown_saviour_controller", {
+                    "all_down": all(down.values()),
+                    "halt_s": shutdown_wait.CONTROLLER_HALT_S})
+                self.socketio.sleep(1)
                 subprocess.Popen(['sudo', 'shutdown', 'now'])
-            threading.Thread(target=_shutdown, daemon=True).start()
+            self.socketio.start_background_task(_shutdown)
 
 
         @self.socketio.on('reboot_saviour')

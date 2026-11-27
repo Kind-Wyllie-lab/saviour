@@ -150,6 +150,14 @@
       {"at_s": 0, "action": "repeat", "times": 3, "spread_s": 100, "min_gap_s": 30, "max_gap_s": 10, "steps": [
         {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]},
       {"at_s": 0, "action": "repeat", "times": 3, "spread_s": 100, "max_gap_s": "x", "steps": [
-        {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}]}}
+        {"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}]}},
+    {"name": "declared duration, steps inside", "protocol": {"version": 1, "duration_s": 1200, "steps": [
+      {"at_s": 10, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}},
+    {"name": "declared duration, steps past it", "protocol": {"version": 1, "duration_s": 30.5, "steps": [
+      {"at_s": 10, "action": "pulse", "params": {"pin": 17, "width_s": 1}},
+      {"at_s": 30, "action": "pulse", "params": {"pin": 17, "width_s": 2}}]}},
+    {"name": "declared duration, bad", "protocol": {"version": 1, "duration_s": 0, "steps": [
+      {"at_s": 10, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}},
+    {"name": "declared duration, text", "protocol": {"version": 1, "duration_s": "20 min", "steps": []}}
   ]
 }

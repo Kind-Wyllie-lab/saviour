@@ -145,3 +145,23 @@
 /* TTL lines in other modes (experiment start, clock, sync): reference only. */
 .ptl-bar--ref { fill: #6b6b6b; }
 .ptl-row--ref .ptl-label { fill: #8a8a8a; }
+
+/* Trial strip: one mark per trial of a trial block, coloured per block. */
+.ptl-band { fill-opacity: 0.85; }
+.ptl-band--c0 { fill: #e0a03a; }
+.ptl-band--c1 { fill: #4fb0c6; }
+.ptl-band--c2 { fill: #b07cd8; }
+.ptl-band--c3 { fill: #6cc070; }
+.ptl-band--c4 { fill: #e06c75; }
+.ptl-band--c5 { fill: #d0c060; }
+.ptl-band-label { fill: #000; font-size: 10px; font-weight: 600; pointer-events: none; }
+
+/* The protocol's declared duration. */
+.ptl-end { stroke: #e06c75; stroke-width: 1.5; stroke-dasharray: 5 3; }
+.ptl-end-label { fill: #e06c75; font-size: 10px; }
+
+/* Editing: new-step preview, the picked step, cursors. */
+.ptl-create { fill: var(--accent-color); fill-opacity: 0.45; stroke: var(--accent-color); }
+.ptl-bar--selected { fill: #fff; stroke: var(--accent-color); stroke-width: 2; }
+.ptl-plot--editable svg { cursor: crosshair; }
+.ptl-plot--editable.ptl-plot--onbar svg { cursor: pointer; }

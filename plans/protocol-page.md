@@ -70,6 +70,18 @@ Status: planned 2026-11-26; phase 1 (the page) built 2026-11-26, not yet viewed 
    step's length when the session loads (`plans/sound-library.md`), lifting
    the 1 s limit; recordings longer steps loop (crossfade) with a warning for
    tones and calls. Session record gets per-step recipe, seed and audio hash.
+7. **Timeline editing (DAW-style).** First cut built 2026-11-27: a click
+   on a protocol line adds a step there (pulse on a TTL line, sound on a
+   sound output), a drag sets its length, snapped to the grid (~60 snaps
+   per view, Alt for none); clicking a bar opens that step under the
+   timeline (a step inside a trial block edits the block's step, every
+   trial); coloured trial marks above the rows (one per trial, coloured per
+   block); optional top-level `duration_s` drawn as an "end" line, steps
+   past it warned, and New Session offers "Record for <duration> (timed
+   session)". Zoom-by-drag moved to the time axis in the designer. Next:
+   drag a bar to move it and its edges to resize; click inside a trial
+   mark to add to that block; drag across the strip to make a trial block;
+   delete key and undo; the step table becoming secondary (collapsed).
 6. **Test across modules.** Built 2026-11-26 (`test_protocol_rig`, sound
    `test_protocol`); not yet heard on the rig. Test routine runs the TTL and sound parts
    together (sound modules get a `test_protocol` like TTL's).

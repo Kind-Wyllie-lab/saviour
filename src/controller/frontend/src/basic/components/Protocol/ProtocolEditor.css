@@ -439,3 +439,16 @@
   color: var(--secondary-text-color);
 }
 .pe-hint-inline--warn { color: var(--warning-color, #d08a00); }
+
+/* The step picked on the timeline, edited under it. */
+.pe-picked {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  background: var(--card-bg, transparent);
+}
+.pe-picked-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.35rem; }
+.pe-picked-name { font-weight: 600; }
+.pe-picked-hint { font-size: 0.82rem; opacity: 0.75; flex: 1; margin: 0; }
+.pe-picked-head .pe-remove { margin-left: auto; }

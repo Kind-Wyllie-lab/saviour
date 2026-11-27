@@ -352,6 +352,13 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
           targetModules={targetModules}
           durationMinutes={recordingMode === "timed" ? totalDurationMins : null}
           onCheck={setProtocolOk}
+          onUseDuration={(sec) => {
+            const total = Math.round(sec);
+            setRecordingMode("timed");
+            setDurationHours(String(Math.floor(total / 3600)));
+            setDurationMinutes(String(Math.floor((total % 3600) / 60)));
+            setDurationSeconds(String(total % 60));
+          }}
         />
 
         <ExternalSyncField value={externalSync} onChange={setExternalSync} rig={rig} ttlLines={ttlLines} />

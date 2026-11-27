@@ -40,6 +40,9 @@ Format (v1)::
   [min_gap_s, max_gap_s]; if they add up to more than ``spread_s`` their
   parts above the minimum are scaled down to fit; the run then starts at a
   draw in [0, spread_s - their sum]. Gaps first, then that offset.
+- Top-level ``duration_s`` (optional): how long the protocol is meant to
+  run, e.g. for a timed session to take its length from. Must be > 0; steps
+  that run past it are a warning (nothing is stopped there).
 - ``set`` takes an optional ``duration_s``: hold the level that long, then
   switch to the other level (a second edge from the same step); absent or 0
   holds it until another step changes it.
@@ -292,6 +295,15 @@ def expand(protocol: dict, *, module_id: str | None = None,
     if isinstance(seed, bool) or not isinstance(seed, int):
         errors.append(f"seed must be a whole number (got {seed!r})")
         seed = 0
+    # duration_s (optional): how long the protocol is meant to run; a timed
+    # session can take its length from it. Steps past it are only warned
+    # about: the modules don't stop anything at that point.
+    declared = protocol.get("duration_s")
+    if declared is not None and (isinstance(declared, bool)
+                                 or not isinstance(declared, (int, float))
+                                 or not math.isfinite(declared) or declared <= 0):
+        errors.append("duration_s must be a positive number of seconds")
+        declared = None
     steps = protocol.get("steps")
     if not isinstance(steps, list):
         errors.append("protocol needs a 'steps' list")
@@ -574,6 +586,9 @@ def expand(protocol: dict, *, module_id: str | None = None,
         level_now[e.pin] = (e.level, e.step)
 
     out.edges = edges
+    if declared is not None and out.duration_s > declared + 1e-9:
+        warnings.append(f"steps run until {out.duration_s:.3f} s, past the "
+                        f"protocol's duration ({declared:g} s)")
     return out
 
 

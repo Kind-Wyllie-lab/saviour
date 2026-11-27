@@ -157,10 +157,13 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
   soundFiles = null, outputs = null, stretchable = null } = {}) {
   const out = { edges: [], cues: [], errors: [], warnings: [], endState: "all_inactive" };
   const { errors, warnings } = out;
-  const finish = () => {
-    out.ok = errors.length === 0;
+  const finish = (complete = false) => {
     const lastEdge = out.edges.length ? out.edges[out.edges.length - 1].t_s : 0;
     out.durationS = Math.max(lastEdge, ...out.cues.map(cueEnd), 0);
+    if (complete && out.declaredS && out.durationS > out.declaredS + 1e-9) {
+      warnings.push(`steps run until ${out.durationS.toFixed(3)} s, past the protocol's duration (${fmtG(out.declaredS)} s)`);
+    }
+    out.ok = errors.length === 0;
     out.pins = [...new Set(out.edges.map((e) => e.pin))].sort((a, b) => a - b);
     out.outputs = [...new Set(out.cues.map((c) => c.output))].sort((a, b) => a - b);
     return out;
@@ -187,6 +190,13 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
     errors.push(`seed must be a whole number (got ${show(seed)})`);
     seed = 0;
   }
+  // duration_s (optional): see src/shared/session_protocol.py.
+  let declared = protocol.duration_s ?? null;
+  if (declared !== null && !(isNum(declared) && declared > 0)) {
+    errors.push("duration_s must be a positive number of seconds");
+    declared = null;
+  }
+  out.declaredS = declared;
   const steps = protocol.steps;
   if (!Array.isArray(steps)) {
     errors.push("protocol needs a 'steps' list");
@@ -452,7 +462,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
   }
 
   out.edges = edges;
-  return finish();
+  return finish(true);
 }
 
 /** Every module ID a step (or repeat block) names in a protocol. */

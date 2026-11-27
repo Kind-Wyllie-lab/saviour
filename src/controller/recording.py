@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import os
+import secrets
 import shutil
 import threading
 import time
@@ -713,7 +714,18 @@ class Recording:
         configs = {mid: (c or {}).get("true_config") or {}
                    for mid, c in (self.facade.get_module_configs() or {}).items()}
         from src.controller.protocol_library import check_for_session
-        errors, warnings = check_for_session(protocol, modules, configs, duration_minutes)
+        # "New random times each session": the session's copy gets its own
+        # seed, drawn now, so every module draws the same times and the
+        # session record keeps the seed that was used. The check runs on
+        # that copy (a draw could, rarely, make trials overlap).
+        per_session = protocol.get("seed_mode") == "per_session"
+        for _attempt in range(5 if per_session else 1):
+            if per_session:
+                protocol = {**protocol, "seed": secrets.randbelow(1_000_000)}
+            errors, warnings = check_for_session(
+                protocol, modules, configs, duration_minutes)
+            if not errors:
+                break
         if errors:
             more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
             return None, [], (f"Protocol “{protocol_name}” can't run on this session: "

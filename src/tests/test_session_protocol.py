@@ -510,3 +510,23 @@ class TestDeclaredDuration:
     def test_must_be_positive_seconds(self, bad):
         exp = expand({"version": 1, "duration_s": bad, "steps": []})
         assert exp.errors == ["duration_s must be a positive number of seconds"]
+
+
+class TestTrainByDuration:
+    def _highs(self, params):
+        exp = expand({"version": 1, "steps": [
+            {"at_s": 0, "action": "train", "params": {"pin": 17, **params}}]})
+        assert exp.ok, exp.errors
+        return [e.t_s for e in exp.edges if e.level == "high"]
+
+    def test_every_pulse_starting_within_the_duration(self):
+        highs = self._highs({"rate_hz": 5, "width_s": 0.1, "duration_s": 10})
+        assert len(highs) == 50 and highs[-1] == pytest.approx(9.8)
+
+    def test_partial_period_counts_its_pulse(self):
+        assert len(self._highs({"rate_hz": 3, "width_s": 0.05, "duration_s": 1.1})) == 4
+
+    def test_not_both(self):
+        exp = expand({"version": 1, "steps": [{"at_s": 0, "action": "train", "params": {
+            "pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 10, "count": 3}}]})
+        assert exp.errors == ["step 0: give count or duration_s, not both"]

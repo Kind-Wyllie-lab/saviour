@@ -394,7 +394,18 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
       } else if (action === "train") {
         const rate = num(params.rate_hz, "rate_hz", where, errors, { minimum: 0, exclusiveMin: true });
         const width = num(params.width_s, "width_s", where, errors, { minimum: 0, exclusiveMin: true });
-        const count = int(params.count, "count", where, errors, 1);
+        // count, or duration_s: see src/shared/session_protocol.py.
+        let count;
+        if ("duration_s" in params) {
+          if ("count" in params) {
+            errors.push(`step ${where}: give count or duration_s, not both`);
+            continue;
+          }
+          const dur = num(params.duration_s, "duration_s", where, errors, { minimum: 0, exclusiveMin: true });
+          count = dur === null || rate === null ? null : Math.max(1, Math.ceil(dur * rate - 1e-9));
+        } else {
+          count = int(params.count, "count", where, errors, 1);
+        }
         if (pins === null || rate === null || width === null || count === null) continue;
         const period = 1 / rate;
         if (width >= period) {

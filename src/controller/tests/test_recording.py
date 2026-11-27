@@ -2248,6 +2248,26 @@ class TestSessionProtocol:
         assert r["success"] is True
         assert rec.sessions[r["session_name"]].protocol == _PROTO
 
+    def test_new_random_times_each_session(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        facade.get_protocol.side_effect = lambda n: {**_PROTO, "seed": 1,
+                                                     "seed_mode": "per_session"}
+        seeds = set()
+        for k in range(6):
+            r = rec.create_session(f"exp{k}", "all", protocol_name="tones")
+            p = rec.sessions[r["session_name"]].protocol
+            assert p["seed_mode"] == "per_session" and isinstance(p["seed"], int)
+            seeds.add(p["seed"])
+        assert len(seeds) > 1   # 6 draws from a million all equal: never
+
+    def test_fixed_seed_kept(self):
+        rec, facade = _make_recording()
+        _ttl_facade(facade)
+        facade.get_protocol.side_effect = lambda n: {**_PROTO, "seed": 42}
+        r = rec.create_session("exp1", "all", protocol_name="tones")
+        assert rec.sessions[r["session_name"]].protocol["seed"] == 42
+
     def test_unknown_protocol_refused(self):
         rec, facade = _make_recording()
         _ttl_facade(facade)

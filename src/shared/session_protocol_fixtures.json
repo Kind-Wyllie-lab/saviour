@@ -158,6 +158,13 @@
       {"at_s": 30, "action": "pulse", "params": {"pin": 17, "width_s": 2}}]}},
     {"name": "declared duration, bad", "protocol": {"version": 1, "duration_s": 0, "steps": [
       {"at_s": 10, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}},
-    {"name": "declared duration, text", "protocol": {"version": 1, "duration_s": "20 min", "steps": []}}
+    {"name": "declared duration, text", "protocol": {"version": 1, "duration_s": "20 min", "steps": []}},
+    {"name": "train by duration", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 10}},
+      {"at_s": 20, "action": "train", "params": {"pin": 22, "rate_hz": 3, "width_s": 0.05, "duration_s": 1.1}},
+      {"at_s": 30, "action": "train", "params": {"pin": 22, "rate_hz": 10, "width_s": 0.02, "duration_s": 0.01}}]}},
+    {"name": "train by duration, errors", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 10, "count": 3}},
+      {"at_s": 2, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 0}}]}}
   ]
 }

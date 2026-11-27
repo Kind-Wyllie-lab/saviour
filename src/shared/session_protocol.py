@@ -43,6 +43,8 @@ Format (v1)::
 - Top-level ``duration_s`` (optional): how long the protocol is meant to
   run, e.g. for a timed session to take its length from. Must be > 0; steps
   that run past it are a warning (nothing is stopped there).
+- ``train`` takes ``count`` pulses, or ``duration_s`` instead: every pulse
+  that starts within it, ``ceil(duration_s * rate_hz)`` (10 s at 5 Hz = 50).
 - ``set`` takes an optional ``duration_s``: hold the level that long, then
   switch to the other level (a second edge from the same step); absent or 0
   holds it until another step changes it.
@@ -519,7 +521,18 @@ def expand(protocol: dict, *, module_id: str | None = None,
                             minimum=0, exclusive_min=True)
                 width = _num(params.get("width_s"), "width_s", where, errors,
                              minimum=0, exclusive_min=True)
-                count = _int(params.get("count"), "count", where, errors, 1)
+                # count, or duration_s: every pulse that starts within it
+                # (ceil(duration_s * rate_hz)).
+                if "duration_s" in params:
+                    if "count" in params:
+                        errors.append(f"step {where}: give count or duration_s, not both")
+                        continue
+                    dur = _num(params.get("duration_s"), "duration_s", where, errors,
+                               minimum=0, exclusive_min=True)
+                    count = (None if dur is None or rate is None
+                             else max(1, math.ceil(dur * rate - 1e-9)))
+                else:
+                    count = _int(params.get("count"), "count", where, errors, 1)
                 if pins is None or rate is None or width is None or count is None:
                     continue
                 period = 1.0 / rate

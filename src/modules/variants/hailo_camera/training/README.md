@@ -45,6 +45,28 @@ don't expect state-of-the-art accuracy from a first pass. Real accuracy
 here is genuinely unknown until it's actually trained and checked, not
 something either this README or the prep script can promise.
 
+### One camera or all nine pooled
+
+`prepare_lp_project.py` (below) builds a project from one camera's 92
+frames. `prepare_lp_pooled.py` instead pools every view into one project
+(819 labelled rows from 9 cameras): the model learns every angle, so the
+same `.hef` can run on any camera, and it trains on 9× the images. Its
+held-out set is split by **frame id**, not by row, because two views of the
+same instant are nearly the same pose and a per-row split would leak test
+frames into training. It writes `CollectedData_heldout.csv` (for
+`eval-quant --labels`) and a `set_paths.py` that fixes the absolute paths
+after the folder is copied to the training machine:
+
+```bash
+python prepare_lp_pooled.py \
+    --labels-dir /path/to/LP3D_hailo_extras/training_labels \
+    --base-config /path/to/lightning-pose/scripts/configs/config_default.yaml \
+    --out lp_single_view --videos /path/to/SHARE_lp3d_package/test_videos/*.mp4
+# on the training machine:
+python lp_single_view/set_paths.py
+litpose train lp_single_view/config.yaml --output_dir lp_single_view/outputs
+```
+
 ## Pipeline
 
 1. **Assemble the project.** `prepare_lp_project.py` copies the labelled

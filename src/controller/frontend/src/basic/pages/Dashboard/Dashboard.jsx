@@ -8,6 +8,7 @@ import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCa
 import DraggableTile from "/src/basic/components/DraggableTile/DraggableTile";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import SoundPlayWidget from "/src/basic/components/SoundPlayWidget/SoundPlayWidget";
 import { streamInfo, isStreamModule } from "/src/basic/utils/moduleStreams";
 
 // MJPEG stream port by module type
@@ -141,8 +142,10 @@ function useElementSize() {
 }
 
 
+const isSoundModule = (m) => String(m?.type ?? "").includes("sound");
+
 // The default widget set for a fresh / unsaved view: every module stream
-// (cameras first) plus the two status widgets.
+// (cameras first), the two status widgets, and a play widget per sound module.
 function defaultWidgets(modules) {
   const streams = modules
     .filter(isStreamModule)
@@ -153,10 +156,13 @@ function defaultWidgets(modules) {
       return ac - bc;
     })
     .map((m) => ({ id: `stream:${m.id}`, type: "stream", target: m.id }));
+  const sounds = modules.filter(isSoundModule)
+    .map((m) => ({ id: `sound:${m.id}`, type: "sound", target: m.id }));
   return [
     ...streams,
     { id: "widget:health", type: "health" },
     { id: "widget:module-list", type: "module-list" },
+    ...sounds,
   ];
 }
 
@@ -361,7 +367,7 @@ function Dashboard() {
   };
   const cleanWidgets = () =>
     widgetsRef.current.map(({ id, type, target }) =>
-      type === "stream" ? { id, type, target } : { id, type });
+      type === "stream" || type === "sound" ? { id, type, target } : { id, type });
   const viewPayload = (over = {}) => {
     const d = draftRef.current;
     return {
@@ -407,6 +413,7 @@ function Dashboard() {
     let w;
     if (key === "widget:health") w = { id: key, type: "health" };
     else if (key === "widget:module-list") w = { id: key, type: "module-list" };
+    else if (key.startsWith("sound:")) w = { id: key, type: "sound", target: key.slice("sound:".length) };
     else w = { id: key, type: "stream", target: key.slice("stream:".length) };
     setDraft((d) => {
       const n = d.widgets.length % 6;
@@ -514,6 +521,10 @@ function Dashboard() {
     groupModules.filter(isStreamModule).forEach((m) => {
       const id = `stream:${m.id}`;
       if (!present.has(id)) out.push({ key: id, label: streamInfo(m).label });
+    });
+    groupModules.filter(isSoundModule).forEach((m) => {
+      const id = `sound:${m.id}`;
+      if (!present.has(id)) out.push({ key: id, label: `Play sound: ${m.name || m.id}` });
     });
     return out;
   }, [draft.id, widgets, groupModules]);
@@ -686,6 +697,7 @@ function Dashboard() {
           <div className="dashboard-compact-panel">
             <HealthSummaryWidget />
             <ModuleList modules={moduleList} />
+            {moduleList.filter(isSoundModule).map((m) => <SoundPlayWidget key={m.id} module={m} />)}
           </div>
         </div>
       ) : (
@@ -695,8 +707,9 @@ function Dashboard() {
             {widgets.map((w) => {
               const t = effectiveLayout[w.id] || { x: 0, y: 0, width: DEFAULT_TILE_W };
               const isStream = w.type === "stream";
-              const mod = isStream ? moduleList.find((m) => m.id === w.target) : null;
-              if (isStream && draft.group && (!mod || mod.group !== draft.group)) {
+              const isSound = w.type === "sound";
+              const mod = isStream || isSound ? moduleList.find((m) => m.id === w.target) : null;
+              if ((isStream || isSound) && draft.group && (!mod || mod.group !== draft.group)) {
                 return null;
               }
               const info = isStream && mod ? streamInfo(mod) : null;
@@ -730,6 +743,12 @@ function Dashboard() {
                         settingsId={mod.id}
                       />
                     ) : (
+                      <div className="dashboard-widget-missing">
+                        {w.target}<br />not connected
+                      </div>
+                    )
+                  ) : isSound ? (
+                    mod ? <SoundPlayWidget module={mod} /> : (
                       <div className="dashboard-widget-missing">
                         {w.target}<br />not connected
                       </div>

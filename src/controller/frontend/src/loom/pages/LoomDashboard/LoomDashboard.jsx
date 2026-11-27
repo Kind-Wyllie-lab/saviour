@@ -5,6 +5,7 @@ import useModules from "/src/hooks/useModules";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import SoundPlayWidget from "/src/basic/components/SoundPlayWidget/SoundPlayWidget";
 import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
 import LoomRecordingTimer from "/src/loom/components/LoomRecordingTimer/LoomRecordingTimer";
 import { StageDropdown } from "/src/loom/LoomStageContext";
@@ -269,6 +270,7 @@ function LoomDashboard() {
           <StageDropdown />
           <HealthSummaryWidget />
           <ModuleList modules={moduleList} />
+          {moduleList.filter((m) => String(m?.type ?? "").includes("sound")).map((m) => <SoundPlayWidget key={m.id} module={m} />)}
           <LoomStimulusControl />
         </div>
       </div>

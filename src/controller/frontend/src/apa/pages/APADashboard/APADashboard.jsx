@@ -5,6 +5,7 @@ import "./APADashboard.css";
 import useModules from "/src/hooks/useModules";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import SoundPlayWidget from "/src/basic/components/SoundPlayWidget/SoundPlayWidget";
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
 import APACommands from "../../components/APACommands/APACommands";
 
@@ -74,6 +75,7 @@ function APADashboard() {
     <>
       <HealthSummaryWidget />
       <ModuleList modules={moduleList} />
+      {moduleList.filter((m) => String(m?.type ?? "").includes("sound")).map((m) => <SoundPlayWidget key={m.id} module={m} />)}
       <APACommands modules={moduleList} />
     </>
   );

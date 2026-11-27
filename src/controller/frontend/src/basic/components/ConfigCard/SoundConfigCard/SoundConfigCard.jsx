@@ -93,10 +93,10 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
 
   const runTest = (output) => {
     const params = { filename: testFile, output };
-    // Play with what's in the Playback fields now, so a level can be found
-    // by ear before saving.
+    // Play at the volume on the Playback tab now, so a level can be found by
+    // ear before saving; the whole file (a protocol step sets its own length).
     if (Number.isFinite(Number(sound.volume)) && sound.volume !== "") params.volume = Number(sound.volume);
-    if (Number(sound.duration) > 0) params.duration_s = Number(sound.duration);
+    if (Number(files[testFile]) > 0) params.duration_s = Number(files[testFile]);
     setTest({ output, state: "playing" });
     socket.emit("send_command", { module_id: id, type: "play_sound", params });
     clearTimeout(timer.current);
@@ -163,7 +163,7 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
                 {fileNames.map((f) => <option key={f} value={f}>{f} ({fmtLen(files[f])})</option>)}
               </select>
               <span className="sound-help">
-                Plays at volume {sound.volume ?? 1}, cut to {sound.duration ?? 1} s (Playback tab; unsaved values are used).
+                Plays the whole file at volume {sound.volume ?? 1} (Playback tab; unsaved values are used).
               </span>
             </div>
 
@@ -215,12 +215,6 @@ function SoundConfigCard({ id, module, clipboard, onCopy }) {
               </div>
               <span className="sound-help">Gain on the file: 1 plays it as stored, 0.5 is half the amplitude (−6 dB). A protocol step can set its own.</span>
               {Number(sound.volume) > 1 && <span className="sound-warn">Saved value {sound.volume} is above 1 (it may clip); moving the slider sets it back in range.</span>}
-            </div>
-            <div className="sound-fblock">
-              <label>Length (s)</label>
-              <input type="number" min="0.01" step="0.1" value={sound.duration ?? ""}
-                onChange={(e) => set(["sound", "duration"], e.target.value === "" ? "" : Number(e.target.value))} />
-              <span className="sound-help">Sounds longer than this are cut (with a short fade). A protocol step can set its own.</span>
             </div>
             <div className="config-section-divider" />
             <h4 className="sound-subhead">Limits</h4>

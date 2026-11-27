@@ -1858,13 +1858,15 @@ class TestDestructiveSystemActions:
     def test_shutdown_saviour_notifies_modules_then_powers_off(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             web, facade = _make_web_with_facade()
-            facade.get_modules.return_value = {"cam1": {}, "cam2": {}}
+            facade.get_modules.return_value = {"cam1": {"ip": "10.0.0.2"}, "cam2": {}}
             client = _connected_client(web)
             _login(web, client, tmpdir)
 
-            with patch("src.controller.web.threading.Thread") as mock_thread, \
+            with patch.object(web.socketio, "start_background_task") as bg, \
                  patch("src.controller.web.subprocess.Popen") as mock_popen, \
-                 patch("src.controller.web.time.sleep"):
+                 patch.object(web.socketio, "sleep"), \
+                 patch("src.controller.web.shutdown_wait.wait_for_modules_down",
+                       return_value={"cam1": True, "cam2": True}) as wait:
                 client.emit("shutdown_saviour")
 
                 sent_ids = {c.args[0] for c in facade.send_command.call_args_list}
@@ -1872,10 +1874,14 @@ class TestDestructiveSystemActions:
                 assert all(
                     c.args[1] == "shutdown" for c in facade.send_command.call_args_list
                 )
-                assert client.get_received()[0]["name"] == "shutdown_saviour_ack"
+                ack = client.get_received()[0]
+                assert ack["name"] == "shutdown_saviour_ack"
+                assert [m["id"] for m in ack["args"][0]["modules"]] == ["cam1", "cam2"]
 
-                target = mock_thread.call_args.kwargs["target"]
-                target()
+                bg.call_args.args[0]()
+                assert wait.call_args.args[0][0]["ip"] == "10.0.0.2"
+                names = [m["name"] for m in client.get_received()]
+                assert "shutdown_saviour_controller" in names
                 mock_popen.assert_called_once_with(["sudo", "shutdown", "now"])
 
     def test_reboot_controller_acks_then_reboots(self):

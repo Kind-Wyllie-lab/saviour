@@ -4,6 +4,8 @@ import socket from "/src/socket";
 import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 import ConnectedClients from "/src/basic/components/ConnectedClients/ConnectedClients";
 import { confirmIfOtherAdmins } from "/src/clients";
+import { setShuttingDown } from "/src/powerState";
+import useModules from "/src/hooks/useModules";
 
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
@@ -16,17 +18,36 @@ const SIDEBAR_WIDTH_KEY = "saviour_sidebar_width";
 // automatic maximum.
 const SIDEBAR_MIN_W = 112;
 const SIDEBAR_MAX_W = 320;
+// Pages that change how a recording runs: locked while anything records, so
+// nobody edits settings or protocols mid-experiment.
+const LOCKED_WHILE_RECORDING = new Set(["/settings", "/protocols"]);
+
 const clampSidebarWidth = (w) => Math.round(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w)));
 
 function Sidebar({ navItems }) {
   const [showPowerModal, setShowPowerModal]   = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [shutdownState, setShutdownState]     = useState(null); // null | "sent" | "acked"
+  // Shut down all: null | "sent" (waiting for the controller) | "modules"
+  // (modules halting, shutdownModules ticks them off) | "controller" (the
+  // controller is halting: count down) | "safe".
+  const [shutdownState, setShutdownState]     = useState(null);
+  const [shutdownModules, setShutdownModules] = useState([]);
+  const [shutdownAllDown, setShutdownAllDown] = useState(true);
+  const [haltLeft, setHaltLeft]               = useState(null);
   const [hostname, setHostname]               = useState(null);
   const [version, setVersion]                 = useState(null);
   const [configDirty, setConfigDirty]         = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { moduleList } = useModules();
+  const recording = moduleList.some((m) => m.status === "RECORDING");
+  // Already on a locked page (or opened by its URL) when recording starts:
+  // back to the dashboard, unless there are unsaved changes to lose.
+  useEffect(() => {
+    if (recording && LOCKED_WHILE_RECORDING.has(location.pathname) && !configDirty) {
+      navigate("/", { replace: true });
+    }
+  }, [recording, location.pathname, configDirty, navigate]);
 
   // Update modal state
   const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged, git }
@@ -153,10 +174,38 @@ function Sidebar({ navItems }) {
   };
 
   useEffect(() => {
-    const onAck = () => setShutdownState("acked");
+    const onAck = (d) => { setShutdownState("modules"); setShutdownModules(d?.modules ?? []); };
+    const onProgress = (d) => setShutdownModules(d?.modules ?? []);
+    const onController = (d) => {
+      setShutdownAllDown(d?.all_down !== false);
+      setShutdownState("controller");
+      setHaltLeft(Number(d?.halt_s) || 20);
+    };
     socket.on("shutdown_saviour_ack", onAck);
-    return () => socket.off("shutdown_saviour_ack", onAck);
+    socket.on("shutdown_saviour_progress", onProgress);
+    socket.on("shutdown_saviour_controller", onController);
+    return () => {
+      socket.off("shutdown_saviour_ack", onAck);
+      socket.off("shutdown_saviour_progress", onProgress);
+      socket.off("shutdown_saviour_controller", onController);
+    };
   }, []);
+
+  // The controller's own halt: once it has said it's going (or the socket
+  // dropped while modules were halting, e.g. it was already going down),
+  // count down and then say it's safe to cut the power.
+  useEffect(() => {
+    if (shutdownState !== "modules") return;
+    const onDisc = () => { setShutdownState("controller"); setHaltLeft((h) => h ?? 20); };
+    socket.on("disconnect", onDisc);
+    return () => socket.off("disconnect", onDisc);
+  }, [shutdownState]);
+  useEffect(() => {
+    if (shutdownState !== "controller" || haltLeft === null) return;
+    if (haltLeft <= 0) { setShutdownState("safe"); return; }
+    const t = setTimeout(() => setHaltLeft((h) => h - 1), 1000);
+    return () => clearTimeout(t);
+  }, [shutdownState, haltLeft]);
 
   // Fetch version info when modal opens
   useEffect(() => {
@@ -283,6 +332,7 @@ function Sidebar({ navItems }) {
   const handleShutdownAll = () => {
     if (!confirmIfOtherAdmins("Shut down all devices")) return;
     socket.emit("shutdown_saviour");
+    setShuttingDown(true);
     setShutdownState("sent");
   };
 
@@ -481,8 +531,11 @@ function Sidebar({ navItems }) {
 
         <nav className="main-nav">
           {navItems.map(({ label, path, disabled }) =>
-            disabled ? (
-              <span key={path} className="nav-link disabled">{label}</span>
+            disabled || (recording && LOCKED_WHILE_RECORDING.has(path)) ? (
+              <span key={path} className="nav-link disabled"
+                title={disabled ? undefined : "Locked while recording: stop the recording to change settings or protocols"}>
+                {label}{!disabled && <span className="nav-link-lock">locked while recording</span>}
+              </span>
             ) : (
               <NavLink key={path} to={path} className="nav-link" onClick={handleNavClick(path)}>{label}</NavLink>
             )
@@ -756,7 +809,7 @@ function Sidebar({ navItems }) {
           <div className="modal power-modal" onClick={e => e.stopPropagation()}>
             {shutdownState ? (
               <div className="power-status">
-                {shutdownState === "acked" ? (
+                {shutdownState === "safe" ? (
                   <svg className="power-status-icon power-status-icon--done" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
                     <line x1="12" y1="2" x2="12" y2="12" />
@@ -765,13 +818,29 @@ function Sidebar({ navItems }) {
                   <span className="power-spinner" aria-hidden="true" />
                 )}
                 <h3 className="modal-title">
-                  {shutdownState === "acked" ? "Powering off" : "Shutting down…"}
+                  {shutdownState === "safe" ? "Safe to turn off power"
+                    : shutdownState === "controller" ? "Controller shutting down…"
+                    : "Shutting down…"}
                 </h3>
                 <p className="power-status-text">
-                  {shutdownState === "acked"
-                    ? "Shutdown acknowledged. All devices are powering off."
-                    : "Sending the shutdown command to all devices…"}
+                  {shutdownState === "sent" && "Sending the shutdown command to all devices…"}
+                  {shutdownState === "modules" && "Waiting for each module to power off…"}
+                  {shutdownState === "controller" && `Modules done. Give the controller ${haltLeft ?? ""} s more to finish.`}
+                  {shutdownState === "safe" && (shutdownAllDown
+                    ? "Every device has shut down. You can switch off the power now."
+                    : "The controller has shut down. Some modules didn't confirm (below): check their lights before switching off.")}
                 </p>
+                {shutdownModules.length > 0 && (
+                  <ul className="power-module-list">
+                    {shutdownModules.map((m) => (
+                      <li key={m.id} className={m.down ? "power-module--down" : ""}>
+                        <span className="power-module-mark">{m.down ? "✓" : shutdownState === "safe" ? "?" : "…"}</span>
+                        {m.name}
+                        <span className="power-module-state">{m.down ? "off" : shutdownState === "safe" ? "not confirmed" : "shutting down"}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             ) : (<>
               <div className="power-header">

@@ -811,3 +811,16 @@ body.sidebar-resizing {
 @keyframes power-spin {
     to { transform: rotate(360deg); }
 }
+
+/* Shut down all: each module ticked off as it powers down. */
+.power-module-list { list-style: none; margin: 0.75rem 0 0; padding: 0; text-align: left; font-size: 0.9rem; max-height: 14rem; overflow-y: auto; }
+.power-module-list li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.15rem 0; opacity: 0.8; }
+.power-module-list li.power-module--down { opacity: 1; }
+.power-module-mark { width: 1.2em; text-align: center; }
+.power-module--down .power-module-mark { color: var(--success-color, #3c9a5f); }
+.power-module-state { margin-left: auto; opacity: 0.6; font-size: 0.85em; }
+
+/* A page that can't be opened now (e.g. Settings / Protocols while
+   recording): greyed, with the reason on a second line. */
+.nav-link.disabled { opacity: 0.45; cursor: not-allowed; }
+.nav-link-lock { display: block; font-family: var(--font-body, inherit); font-size: 0.6em; opacity: 0.9; }

@@ -81,7 +81,9 @@ Status: planned 2026-11-26; phase 1 (the page) built 2026-11-26, not yet viewed 
    session)". Zoom-by-drag moved to the time axis in the designer. Next:
    drag a bar to move it and its edges to resize; click inside a trial
    mark to add to that block; drag across the strip to make a trial block;
-   delete key and undo; the step table becoming secondary (collapsed).
+   delete key and undo. (Done since: the step table folded under the
+   timeline, trial marks open their block, clicks inside a trial add to
+   it, TTL rows drawn as high/low traces.)
 6. **Test across modules.** Built 2026-11-26 (`test_protocol_rig`, sound
    `test_protocol`); not yet heard on the rig. Test routine runs the TTL and sound parts
    together (sound modules get a `test_protocol` like TTL's).

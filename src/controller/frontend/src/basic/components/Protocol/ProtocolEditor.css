@@ -452,3 +452,12 @@
 .pe-picked-name { font-weight: 600; }
 .pe-picked-hint { font-size: 0.82rem; opacity: 0.75; flex: 1; margin: 0; }
 .pe-picked-head .pe-remove { margin-left: auto; }
+
+/* Timeline-first: the title row carries "+ Trial block" and the help. */
+.pe-timeline-title { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.pe-timeline-help { font-size: 0.8rem; opacity: 0.65; font-weight: normal; }
+/* The step list (table / JSON), folded under the timeline. */
+.pe-list { margin-top: 0.75rem; }
+.pe-list > summary { cursor: pointer; font-weight: 600; padding: 0.3rem 0; }
+.pe-list-hint { font-weight: normal; opacity: 0.65; font-size: 0.85rem; }
+.pe-picked--block .pe-block { margin: 0; border: none; padding: 0; }

@@ -68,6 +68,14 @@ class TTLEvent:
     pin_description: str = ""
 
 
+def _use_name(pin_config: dict) -> str:
+    """What the pin is used for, as the TTL card names it ("Protocol output",
+    "Sync line", ...); the raw mode when it's unknown."""
+    role = ttl_application.pin_role(pin_config)
+    spec = ttl_application.ROLES.get(role)
+    return spec["label"] if spec else str(pin_config.get("mode", "?"))
+
+
 class TTLModule(Module):
     # pulse_pin() blocks the command-dispatch thread for the pulse duration
     # so it can report real onset/offset timestamps synchronously (no ZMQ
@@ -1925,8 +1933,7 @@ class TTLModule(Module):
 
             for idx, pin_num in enumerate(pin_numbers):
                 cfg  = self.pin_configs.get(pin_num, {})
-                mode = cfg.get("mode", "?")
-                desc = cfg.get("description", "")
+                desc = cfg.get("label") or cfg.get("description") or ""
                 buf  = snapshot[pin_num]
 
                 y0 = PADDING // 2 + idx * ROW_H
@@ -1936,9 +1943,10 @@ class TTLModule(Module):
                 is_active = elec_high if active_logic == "active_high" else not elec_high
 
                 # ── Header ────────────────────────────────────────────────
-                parts = [f"GPIO {pin_num}", mode.upper()]
+                parts = [f"GPIO {pin_num}", _use_name(cfg).upper()]
                 if desc:
-                    parts.append(desc)
+                    # OpenCV's Hershey font draws ASCII only.
+                    parts.append(str(desc).encode("ascii", "replace").decode())
                 cv2.putText(frame, "  |  ".join(parts),
                             (trace_x0, y0 + 14),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 180, 180), 1)

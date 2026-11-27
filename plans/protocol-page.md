@@ -65,7 +65,7 @@ Status: planned 2026-11-26; phase 1 (the page) built 2026-11-26, not yet viewed 
 4. **Rows on the Y axis.** The timeline gets one row per action target from
    the manifest (TTL line N state, sound output N with the sound's name on
    each block); hover shows the step; clicking a block selects its step.
-5. **Sound steps.** Library picker (Recordings / Built sounds) with ▶ preview,
+5. **Sound steps.** Per-step rendering of built sounds built 2026-11-27 (module renders the recipe at the step's length; recordings cut). Still to do: the library picker with preview and looping recordings. Library picker (Recordings / Built sounds) with ▶ preview,
    output, level, length. Built sounds rendered on the sound module at the
    step's length when the session loads (`plans/sound-library.md`), lifting
    the 1 s limit; recordings longer steps loop (crossfade) with a warning for

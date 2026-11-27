@@ -31,12 +31,14 @@ import time
 import urllib.parse
 import urllib.request
 
+import numpy as np
+
 # Saviour Imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, check, command
 from modules.variants.sound import sound_hardware
 from modules.variants.sound.sound_stream import SoundStream, load_sound
-from shared import session_protocol, sound_analysis
+from shared import session_protocol, sound_analysis, sound_generator
 
 # Library files mirrored from the controller (outside the checkout, so a
 # deploy's hard reset never touches them).
@@ -100,6 +102,9 @@ class SoundModule(Module):
         self._sounds_dir = os.path.join(os.path.dirname(__file__), "sounds")
         self._library_dir = LIBRARY_DIR
         self._peak_cache: dict[str, tuple[tuple, float | None]] = {}
+        # Built sounds' recipes (from the controller's manifest): rendered at
+        # whatever length a play asks for instead of cutting the 1 s copy.
+        self._recipes: dict[str, dict] = self._load_recipes()
 
         # None once a sound card is detected; otherwise a human-readable
         # reason. Surfaced every heartbeat via get_health() (the System page's
@@ -166,6 +171,9 @@ class SoundModule(Module):
             n for n in sound_hardware.sound_files(self._library_dir)
             if n not in sound_hardware.sound_files(self._sounds_dir))
         hw["file_peaks_dbfs"] = {n: self._file_peak_dbfs(n) for n in hw["files"]}
+        # Files a play can stretch to any length (built sounds, not clicks).
+        hw["recipes"] = sorted(n for n in hw["library_files"] if self._recipe(n))
+        hw["recipe_max_s"] = sound_generator.MAX_DURATION_S
         if hw != previous:
             self.hardware = hw
             try:
@@ -213,7 +221,10 @@ class SoundModule(Module):
         stream = self._stream
         if stream is not None and stream.running:
             # The session's stream holds the card: mix it in there.
-            samples = load_sound(path, self._RATE, float(volume), duration)
+            try:
+                samples = self._samples(name, float(volume), duration)
+            except RuntimeError as e:
+                return {"result": "error", "message": str(e)}
             stream.schedule(None, samples, output, {
                 "file": name, "volume": volume, "duration_s": len(samples) / self._RATE,
                 "output": output, "source": "manual"})
@@ -222,7 +233,7 @@ class SoundModule(Module):
         device = self._playback_device()
         if device is None:
             return {"result": "error", "message": self.hardware_fault or "no sound card"}
-        if output != 1:
+        if output != 1 or (duration and self._recipe(name)):
             return self._play_once_on_stream(path, name, output, float(volume), duration)
 
         timestamp = time.time_ns()
@@ -244,7 +255,10 @@ class SoundModule(Module):
     def _play_once_on_stream(self, path, name, output, volume, duration):
         """Outputs past the first need the multichannel stream: open one for
         this sound only."""
-        samples = load_sound(path, self._RATE, volume, duration)
+        try:
+            samples = self._samples(name, volume, duration)
+        except RuntimeError as e:
+            return {"result": "error", "message": str(e)}
         played = {}
         stream = SoundStream(
             self._playback_device(), int(self.hardware.get("channels") or 2),
@@ -288,6 +302,58 @@ class SoundModule(Module):
         library file of the same name (the controller refuses those)."""
         return {**sound_hardware.sound_files(self._library_dir),
                 **sound_hardware.sound_files(self._sounds_dir)}
+
+    # -- built sounds: render at the length asked for ------------------------
+
+    _RECIPES_FILE = ".recipes.json"   # hidden: not listed as a sound
+
+    def _load_recipes(self) -> dict:
+        try:
+            with open(os.path.join(self._library_dir, self._RECIPES_FILE)) as f:
+                data = json.load(f)
+            return {k: v for k, v in data.items() if isinstance(v, dict)}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _save_recipes(self) -> None:
+        try:
+            path = os.path.join(self._library_dir, self._RECIPES_FILE)
+            with open(path + ".tmp", "w") as f:
+                json.dump(self._recipes, f)
+            os.replace(path + ".tmp", path)
+        except OSError as e:
+            self.logger.warning(f"Could not save sound recipes: {e}")
+
+    def _recipe(self, name: str) -> dict | None:
+        """*name*'s recipe when it is a library built sound that renders at
+        any length (a click has one length), else None. A built-in file of
+        the same name wins, as for playing."""
+        recipe = getattr(self, "_recipes", {}).get(name)
+        if not recipe or recipe.get("type") == "click":
+            return None
+        if os.path.isfile(os.path.join(self._sounds_dir, name)):
+            return None
+        return recipe
+
+    def _samples(self, name: str, volume: float, duration_s: float | None):
+        """*name* as float32 stereo frames at the output rate, gain applied:
+        a built sound rendered at *duration_s* (its ramps at the new ends),
+        anything else read from its file and cut to *duration_s*. Raises
+        RuntimeError with the reason."""
+        recipe = self._recipe(name) if duration_s else None
+        if recipe is not None:
+            try:
+                x, _ = sound_generator.generate({**recipe, "duration_s": float(duration_s)})
+            except sound_generator.GeneratorError as e:
+                raise RuntimeError(f"{name}: {e}") from e
+            data = np.repeat(x[:, None], 2, axis=1)
+            if volume != 1.0:
+                data = data * np.float32(volume)
+            return np.ascontiguousarray(data, dtype=np.float32)
+        path = self._sound_path(name)
+        if path is None:
+            raise RuntimeError(f"no sound file {name}")
+        return load_sound(path, self._RATE, volume, duration_s)
 
     def _sound_path(self, name: str) -> str | None:
         if not name or "/" in name or name.startswith("."):
@@ -343,6 +409,8 @@ class SoundModule(Module):
                         f"module's limit of {cap_db:g} dBFS")
         if cap_s > 0:
             length = (self.hardware.get("files") or {}).get(name)
+            if duration_s is not None and self._recipe(name):
+                length = None   # rendered at duration_s, not cut from the file
             if duration_s is not None:
                 try:
                     length = min(float(duration_s), length) if length else float(duration_s)
@@ -359,11 +427,17 @@ class SoundModule(Module):
         missing or differ (checked by SHA-256), remove ones it no longer has.
         Built-ins are never touched."""
         wanted = {}
+        recipes = {}
         for f in files or []:
             name, digest = (f or {}).get("name"), (f or {}).get("sha256")
             if isinstance(name, str) and sound_analysis.NAME_RE.match(name):
                 wanted[name] = digest
+                if isinstance((f or {}).get("generator"), dict):
+                    recipes[name] = f["generator"]
         os.makedirs(self._library_dir, exist_ok=True)
+        if recipes != getattr(self, "_recipes", {}):
+            self._recipes = recipes
+            self._save_recipes()
         fetched, removed, failed = [], [], {}
         for name, digest in wanted.items():
             path = os.path.join(self._library_dir, name)
@@ -409,7 +483,8 @@ class SoundModule(Module):
         hw = self._refresh_hardware()
         exp = session_protocol.expand(
             protocol, module_id=getattr(self, "module_id", None), module_type="sound",
-            sound_files=hw.get("files"), outputs=hw.get("outputs") or None)
+            sound_files=hw.get("files"), outputs=hw.get("outputs") or None,
+            stretchable=set(hw.get("recipes") or ()))
         default_volume = self.config.get("sound.volume")
         seen = set()
         for c in exp.cues:
@@ -472,9 +547,8 @@ class SoundModule(Module):
         for c in upcoming:
             key = (c.file, c.volume, c.duration_s)
             if key not in cache:
-                cache[key] = load_sound(self._sound_path(c.file), self._RATE,
-                                        default_volume if c.volume is None else c.volume,
-                                        c.duration_s)
+                cache[key] = self._samples(
+                    c.file, default_volume if c.volume is None else c.volume, c.duration_s)
             prepared.append((c, cache[key]))
         stream = SoundStream(self._playback_device(), int(hw.get("channels") or 2),
                              rate=self._RATE, extra_latency_s=self._extra_latency_s(),

@@ -187,6 +187,9 @@ class TestGenerate:
         assert entry["kind"] == "recipe"
         side = json.loads((tmp_path / "lib" / (staged["name"][:-4] + ".json")).read_text())
         assert side["generator"]["generator_version"] >= 1
+        # The module gets the recipe, to render it at a step's length.
+        [m] = [x for x in lib.manifest() if x["name"] == staged["name"]]
+        assert m["generator"]["colour"] == "pink" and m["generator"]["seed"] == staged["generator"]["seed"]
 
     def test_bad_parameters_explained(self, lib):
         with pytest.raises(SoundLibraryError, match="freq_hz"):

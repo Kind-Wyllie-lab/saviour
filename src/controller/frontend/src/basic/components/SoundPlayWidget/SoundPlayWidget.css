@@ -106,3 +106,53 @@
 }
 .spw-status--ok { color: var(--success-color, #3a9d5d); }
 .spw-status--bad { color: var(--recording-color); }
+
+.spw-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.spw-slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent-color);
+}
+.spw-slider-value {
+  min-width: 7.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+}
+.spw-db {
+  color: var(--secondary-text-color);
+  font-size: 0.85em;
+}
+.spw-reset {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-color);
+  font-size: 0.78em;
+  cursor: pointer;
+}
+.spw-length {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.spw-length input {
+  width: 9em;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+.spw-length input:focus { outline: none; border-color: var(--accent-color); }
+.spw-length input.spw-bad { border-color: var(--recording-color); }
+.spw-max {
+  font-size: 0.8em;
+  color: var(--secondary-text-color);
+}

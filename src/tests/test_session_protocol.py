@@ -259,7 +259,8 @@ def _py_result(case):
                  allowed_pins=set(case["allowed_pins"]) if "allowed_pins" in case
                  else None,
                  module_type=case.get("module_type"),
-                 sound_files=case.get("sound_files"), outputs=case.get("outputs"))
+                 sound_files=case.get("sound_files"), outputs=case.get("outputs"),
+                 stretchable=set(case["stretchable"]) if "stretchable" in case else None)
     return {"edges": [[round(e.t_s, 9), e.pin, e.level, e.step, e.action]
                       for e in exp.edges],
             "cues": [[round(c.t_s, 9), c.output, c.file, c.volume, c.duration_s,
@@ -279,7 +280,8 @@ const out = doc.cases.map((c) => {{
                                  allowedPins: c.allowed_pins ?? null,
                                  moduleType: c.module_type ?? null,
                                  soundFiles: c.sound_files ?? null,
-                                 outputs: c.outputs ?? null }});
+                                 outputs: c.outputs ?? null,
+                                 stretchable: c.stretchable ?? null }});
   const r9 = (x) => Math.round(x * 1e9) / 1e9;
   return {{ edges: r.edges.map((e) => [r9(e.t_s), e.pin, e.level, e.step, e.action]),
            cues: r.cues.map((q) => [r9(q.t_s), q.output, q.file, q.volume, q.duration_s,

@@ -20,7 +20,10 @@ export function soundHardware(module) {
   const hw = module?.config?.sound_hardware ?? {};
   const files = hw.files && typeof hw.files === "object" && !Array.isArray(hw.files) ? hw.files : null;
   const outputs = Number.isInteger(hw.outputs) && hw.outputs >= 1 ? hw.outputs : null;
-  return { files, outputs, board: hw.board ?? null };
+  // Built sounds the module renders at any length (up to recipeMax s).
+  const recipes = Array.isArray(hw.recipes) ? hw.recipes : [];
+  const recipeMax = Number(hw.recipe_max_s) || 300;
+  return { files, outputs, board: hw.board ?? null, recipes, recipeMax };
 }
 
 /** Sound modules in a module list (array or {id: module}), for the designer:

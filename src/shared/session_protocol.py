@@ -254,7 +254,8 @@ def expand(protocol: dict, *, module_id: str | None = None,
            allowed_pins: set[int] | None = None,
            module_type: str | None = None,
            sound_files: dict | None = None,
-           outputs: int | None = None) -> Expansion:
+           outputs: int | None = None,
+           stretchable=None) -> Expansion:
     """Expand *protocol* into time-ordered edges and cues and validate it.
 
     *module_type*: "ttl" or "sound" keeps only that module type's actions
@@ -263,6 +264,8 @@ def expand(protocol: dict, *, module_id: str | None = None,
     ``scheduled`` pins); None skips that check. *sound_files*: file name ->
     length in seconds (None if unknown) on the sound module; None skips the
     file check. *outputs*: the sound module's output count; None skips it.
+    *stretchable*: names of built sounds the module renders at a step's
+    ``duration_s`` (their length is the cut, not capped by the file).
     """
     out = Expansion()
     errors, warnings = out.errors, out.warnings
@@ -423,6 +426,10 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     continue
                 file_len = (sound_files or {}).get(name)
                 if isinstance(file_len, bool) or not isinstance(file_len, (int, float)):
+                    file_len = None
+                # A built sound (stretchable) is rendered at the cut's length,
+                # so the cut isn't capped by its library copy.
+                if cut is not None and stretchable and name in stretchable:
                     file_len = None
                 lengths = [x for x in (cut, file_len) if x is not None]
                 cues.append(Cue(t0, output, name, volume, cut,

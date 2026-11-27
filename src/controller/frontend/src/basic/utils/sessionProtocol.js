@@ -147,13 +147,14 @@ export const cueEnd = (c) => c.t_s + (c.length_s ?? 0);
 /**
  * Expand a protocol into time-ordered edges (TTL) and cues (sound) and
  * validate it. Options as in Python: moduleType ("ttl" | "sound" | null),
- * allowedPins, soundFiles ({name: length_s | null}), outputs.
+ * allowedPins, soundFiles ({name: length_s | null}), outputs, stretchable
+ * (built sounds rendered at the step's duration_s: not capped by the file).
  * Returns { edges: [{t_s, pin, level, step, action}],
  *           cues: [{t_s, output, file, volume, duration_s, length_s, step, action}],
  *           errors, warnings, endState, ok, durationS, pins, outputs }.
  */
 export function expand(protocol, { moduleId = null, allowedPins = null, moduleType = null,
-  soundFiles = null, outputs = null } = {}) {
+  soundFiles = null, outputs = null, stretchable = null } = {}) {
   const out = { edges: [], cues: [], errors: [], warnings: [], endState: "all_inactive" };
   const { errors, warnings } = out;
   const finish = () => {
@@ -315,6 +316,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
         if (name === null || output === null) continue;
         let fileLen = soundFiles ? soundFiles[name] : null;
         if (!isNum(fileLen)) fileLen = null;
+        if (cut !== null && stretchable && [...stretchable].includes(name)) fileLen = null;
         const lengths = [cut, fileLen].filter((x) => x !== null);
         cues.push({ t_s: t0, output, file: name, volume, duration_s: cut,
           length_s: lengths.length ? Math.min(...lengths) : null, step: where, action });

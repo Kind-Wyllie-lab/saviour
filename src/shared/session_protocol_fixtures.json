@@ -132,6 +132,12 @@
       {"at_s": 12, "action": "set", "params": {"pin": 22, "level": "high", "duration_s": 0.001}}]}},
     {"name": "set with bad duration", "protocol": {"version": 1, "steps": [
       {"at_s": 1, "action": "set", "params": {"pin": 17, "level": "high", "duration_s": -1}},
-      {"at_s": 2, "action": "set", "params": {"pin": 22, "level": "high", "duration_s": "5"}}]}}
+      {"at_s": 2, "action": "set", "params": {"pin": 22, "level": "high", "duration_s": "5"}}]}},
+    {"name": "built sounds stretch", "module_type": "sound", "outputs": 2,
+     "sound_files": {"tone.wav": 1.0, "bark.wav": 2.0}, "stretchable": ["tone.wav"], "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "play", "params": {"file": "tone.wav", "duration_s": 10}},
+      {"at_s": 20, "action": "play", "params": {"file": "tone.wav"}},
+      {"at_s": 30, "action": "play", "params": {"file": "bark.wav", "duration_s": 10}},
+      {"at_s": 40, "action": "play", "params": {"file": "tone.wav", "duration_s": 0.5}}]}}
   ]
 }

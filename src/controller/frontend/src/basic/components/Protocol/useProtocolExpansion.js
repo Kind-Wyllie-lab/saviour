@@ -79,6 +79,7 @@ export default function useProtocolExpansion(protocol, scheduledPins, pinConfigs
     const sound = expand(protocol, {
       moduleType: "sound", moduleId: soundModule?.id ?? null,
       soundFiles: soundModule?.files ?? null, outputs: soundModule?.outputs ?? null,
+      stretchable: soundModule?.recipes ?? null,
     });
     return mergeResults(ttl, sound);
   }, [protocol, moduleId, pins, anyPin, soundModule]);

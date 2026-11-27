@@ -345,6 +345,80 @@ class TestProtocolTest:
         m._close_sound_event_file()
 
 
+class TestBuiltSoundsStretch:
+    """Built sounds (recipes from the manifest) render at the length a play
+    asks for; recordings are cut from their file."""
+
+    TONE = {"type": "tone", "freq_hz": 1000, "level_dbfs": -20, "ramp_ms": 5,
+            "duration_s": 1.0, "generator_version": 2}
+
+    def _module(self, tmp_path):
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        soundfile.write(lib / "tone.wav", np.full(48_000, 0.1, np.float32), 48_000)
+        soundfile.write(lib / "bark.wav", np.full(96_000, 0.1, np.float32), 48_000)
+        m = _make_sound(_library_dir=str(lib), _sounds_dir=str(tmp_path / "none"))
+        m._recipes = {"tone.wav": dict(self.TONE)}
+        return m
+
+    def test_recipe_rendered_at_the_asked_length(self, tmp_path):
+        m = self._module(tmp_path)
+        x = m._samples("tone.wav", 1.0, 5.0)
+        assert x.shape == (5 * 48_000, 2)
+        rms = float(np.sqrt(np.mean(x[48_000:96_000, 0] ** 2)))
+        assert 20 * np.log10(rms) == pytest.approx(-20, abs=0.2)
+
+    def test_recording_cut_not_stretched(self, tmp_path):
+        m = self._module(tmp_path)
+        assert m._samples("bark.wav", 1.0, 5.0).shape[0] == 2 * 48_000
+        assert m._samples("bark.wav", 1.0, 0.5).shape[0] == 24_000
+
+    def test_no_length_plays_the_file(self, tmp_path):
+        m = self._module(tmp_path)
+        assert m._samples("tone.wav", 1.0, None).shape[0] == 48_000
+
+    def test_clicks_and_too_long_refused_or_kept(self, tmp_path):
+        m = self._module(tmp_path)
+        m._recipes["tone.wav"] = {"type": "click", "click_us": 100, "level_dbfs": -6}
+        assert m._recipe("tone.wav") is None
+        m._recipes["tone.wav"] = dict(self.TONE)
+        with pytest.raises(RuntimeError):
+            m._samples("tone.wav", 1.0, 10_000)
+
+    def test_sync_stores_recipes_and_hardware_lists_them(self, tmp_path):
+        m = self._module(tmp_path)
+        m._recipes = {}
+        from src.modules.variants.sound.sound_module import _sha256
+        files = [{"name": "tone.wav", "sha256": _sha256(str(tmp_path / "lib" / "tone.wav")),
+                  "generator": dict(self.TONE)},
+                 {"name": "bark.wav", "sha256": _sha256(str(tmp_path / "lib" / "bark.wav"))}]
+        m.sync_sound_library("http://x", files)
+        assert m._recipes == {"tone.wav": self.TONE}
+        assert m._load_recipes() == {"tone.wav": self.TONE}
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            m._refresh_hardware()
+        assert m.hardware["recipes"] == ["tone.wav"]
+        assert "tone.wav" in m.hardware["files"] and ".recipes.json" not in m.hardware["files"]
+
+    def test_protocol_step_longer_than_the_copy_is_valid(self, tmp_path):
+        m = self._module(tmp_path)
+        proto = {"version": 1, "steps": [
+            {"at_s": 1, "action": "play", "params": {"file": "tone.wav", "duration_s": 8}}]}
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            exp = m._expand_protocol(proto)
+        assert exp.ok, exp.errors
+        assert exp.cues[0].length_s == 8
+
+    def test_limit_counts_the_rendered_length(self, tmp_path):
+        m = self._module(tmp_path)
+        m.config.get.side_effect = lambda k, d=None: {
+            "sound.volume": 1, "sound.max_length_s": 3}.get(k, d)
+        with patch(f"{_MOD}.sound_hardware.detect", return_value=dict(DAC8X)):
+            m._refresh_hardware()
+        assert m._over_limit("tone.wav", 1, 5) is not None
+        assert m._over_limit("tone.wav", 1, 2) is None
+
+
 def _write_tone(path, amp=0.5, secs=0.5):
     soundfile.write(path, np.full(int(secs * 48_000), amp, np.float32), 48_000,
                     subtype="FLOAT")

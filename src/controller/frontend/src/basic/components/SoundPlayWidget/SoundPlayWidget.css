@@ -1,0 +1,28 @@
+.spw {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.spw-title { font-weight: 600; }
+.spw-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.spw-file { flex: 1 1 10em; min-width: 0; }
+.spw-play {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-color);
+  background: var(--accent-color);
+  color: #fff;
+  cursor: pointer;
+}
+.spw-play:disabled { opacity: 0.45; cursor: not-allowed; }
+.spw-status {
+  font-size: 0.8em;
+  color: var(--secondary-text-color);
+}
+.spw-status--bad { color: var(--recording-color); }

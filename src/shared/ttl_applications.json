@@ -1,56 +1,29 @@
 {
-    "_comment": "What a TTL module is for (ttl.application) and the roles its pins can take (ttl.pins.<gpio>.role). One source for the module (validation), the controller (rig check, session record, post-processing) and the frontend (the card). plans/ttl-applications-ephys-sync.md external_sync: what a session can be synchronised with (the New Session 'External sync' choice); each names the TTL application that drives it.",
-    "default_application": "mixed",
+    "_comment": "What each TTL pin is used for, and what a TTL module syncs with. A pin's use follows from its mode (uses / roles below); a sync line can name the system it feeds (ttl.pins.<gpio>.system, sync_systems), and the module's application (ephys_sync / neurologger_sync / mixed) is worked out from that: rig check, session record and the External sync choice use it. One source for the module, the controller and the frontend. plans/ttl-applications-ephys-sync.md. external_sync: what a session can be synchronised with (New Session 'External sync').",
     "confirm_max_age_days": 7,
     "applications": {
         "mixed": {
             "label": "General TTL",
-            "description": "Every pin mode and setting, no guidance. Use this when the module does several unrelated jobs.",
-            "roles": null,
-            "requires": []
+            "description": "No sync line with a system set."
         },
         "ephys_sync": {
             "label": "Ephys sync",
-            "description": "Sends a sync pulse train to an ephys acquisition system (Open Ephys) so its data can be aligned with every camera and microphone.",
-            "roles": [
-                "sync",
-                "experiment_start",
-                "marker_in"
-            ],
-            "requires": [
-                "sync"
-            ],
+            "description": "Its sync line feeds an ephys acquisition system (Open Ephys).",
+            "system": "open_ephys",
             "guide": "open_ephys"
         },
         "neurologger_sync": {
             "label": "Neurologger sync",
-            "description": "Sends a sync pulse train to a wireless neurologger so its data can be aligned with every camera and microphone.",
-            "roles": [
-                "sync",
-                "experiment_start",
-                "marker_in"
-            ],
-            "requires": [
-                "sync"
-            ],
+            "description": "Its sync line feeds a wireless neurologger.",
+            "system": "neurologger",
             "guide": "neurologger"
-        },
-        "stimulus_control": {
-            "label": "Stimulus control",
-            "description": "Drives stimuli (lights, shocks, tones via other hardware) from pulse trains or the session protocol.",
-            "roles": [
-                "stimulus",
-                "experiment_start",
-                "marker_in"
-            ],
-            "requires": []
         }
     },
     "roles": {
         "sync": {
             "label": "Sync line",
             "detail": "pseudorandom",
-            "description": "A pseudorandom pulse train the acquisition system records alongside its own data. Alignment matches these pulses on both sides.",
+            "description": "Pseudorandom pulses that another system records alongside its own data, so it can be aligned with every camera and microphone. Optionally say which system.",
             "modes": [
                 "pseudorandom"
             ],
@@ -58,33 +31,68 @@
             "max": 1,
             "channel": true
         },
-        "experiment_start": {
-            "label": "Experiment start",
-            "description": "One pulse when recording starts.",
+        "experiment_marker": {
+            "label": "Experiment marker",
+            "description": "Goes active when the recording starts and inactive when it stops.",
             "modes": [
-                "experiment_start"
+                "experiment_marker"
             ],
             "output": true,
             "channel": true
         },
-        "stimulus": {
-            "label": "Stimulus",
-            "description": "A pulse train or the session protocol driving a stimulus.",
+        "protocol": {
+            "label": "Protocol output",
+            "description": "Driven by the session protocol. Shown in the Protocol designer under its label.",
             "modes": [
-                "interval_pulse",
-                "scheduled",
-                "experiment_clock",
-                "None"
+                "scheduled"
             ],
             "output": true
         },
+        "experiment_start": {
+            "label": "Start pulse",
+            "description": "One pulse when the recording starts.",
+            "modes": [
+                "experiment_start"
+            ],
+            "output": true,
+            "channel": true,
+            "more": true
+        },
         "marker_in": {
-            "label": "Event marker (input)",
+            "label": "Event input",
             "description": "Logs each edge on an input line, e.g. a lever press or another system's trigger.",
             "modes": [
                 "input"
             ],
-            "output": false
+            "output": false,
+            "more": true
+        },
+        "regular_pulses": {
+            "label": "Regular pulses",
+            "description": "A pulse every so often while recording.",
+            "modes": [
+                "interval_pulse"
+            ],
+            "output": true,
+            "more": true
+        },
+        "clock": {
+            "label": "Clock",
+            "description": "A square wave for the whole recording.",
+            "modes": [
+                "experiment_clock"
+            ],
+            "output": true,
+            "more": true
+        },
+        "manual": {
+            "label": "Manual output",
+            "description": "Held inactive; only Test and the REST pulse endpoint drive it.",
+            "modes": [
+                "None"
+            ],
+            "output": true,
+            "more": true
         }
     },
     "external_sync": {
@@ -100,5 +108,25 @@
             "system": "the logger",
             "description": "A wireless neurologger records alongside SAVIOUR; a Neurologger sync TTL module sends it the sync pulses."
         }
-    }
+    },
+    "sync_systems": {
+        "open_ephys": {
+            "label": "Open Ephys",
+            "application": "ephys_sync",
+            "name": "Open Ephys",
+            "channel_label": "Ephys Digital In Channel No."
+        },
+        "neurologger": {
+            "label": "Neurologger",
+            "application": "neurologger_sync",
+            "name": "the logger",
+            "channel_label": "Logger input No."
+        }
+    },
+    "uses": [
+        "sync",
+        "experiment_marker",
+        "protocol"
+    ],
+    "default_application": "mixed"
 }

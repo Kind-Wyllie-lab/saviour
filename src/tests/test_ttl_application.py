@@ -10,65 +10,73 @@ def _ttl(app=None, **pins):
     return cfg
 
 
-SYNC = {"mode": "pseudorandom", "role": "sync", "channel": 1}
+SYNC = {"mode": "pseudorandom", "channel": 1}
 
 
 class TestApplication:
-    def test_default_and_unknown_read_as_mixed(self):
+    def test_follows_the_sync_lines_system(self):
         assert ta.application_of({}) == "mixed"
-        assert ta.application_of({"application": "nope"}) == "mixed"
-        assert ta.application_of({"application": "ephys_sync"}) == "ephys_sync"
+        assert ta.application_of(_ttl(g26=SYNC)) == "mixed"
+        assert ta.application_of(_ttl(g26={**SYNC, "system": "open_ephys"})) == "ephys_sync"
+        assert ta.application_of(_ttl(g26={**SYNC, "system": "neurologger"})) \
+            == "neurologger_sync"
+        assert ta.application_of(_ttl(g26={**SYNC, "system": "nope"})) == "mixed"
+
+    def test_older_configs_keep_their_application(self):
+        # ttl.application set directly, sync line without a system.
+        assert ta.application_of(_ttl("ephys_sync", g26=SYNC)) == "ephys_sync"
+        # ... but an explicit "no system" on the line wins
+        assert ta.application_of(_ttl("ephys_sync", g26={**SYNC, "system": ""})) == "mixed"
+        # and an application with no sync line means nothing now
+        assert ta.application_of({"application": "ephys_sync"}) == "mixed"
 
     def test_module_application_only_for_ttl(self):
         assert ta.module_application({"type": "camera"}) is None
         assert ta.module_application({"type": "ttl", "config": {}}) == "mixed"
         assert ta.module_application({"type": "ttl", "config": {
-            "ttl": {"application": "ephys_sync"}}}) == "ephys_sync"
+            "ttl": _ttl(g26={**SYNC, "system": "open_ephys"})}}) == "ephys_sync"
 
-    def test_every_application_role_is_defined(self):
-        for spec in ta.APPLICATIONS.values():
-            for role in (spec.get("roles") or []) + (spec.get("requires") or []):
-                assert role in ta.ROLES
+    def test_definitions_hang_together(self):
+        for use in ta.USES:
+            assert use in ta.ROLES and not ta.ROLES[use].get("more")
+        for system in ta.SYNC_SYSTEMS.values():
+            assert system["application"] in ta.APPLICATIONS
+        modes = [m for r in ta.ROLES.values() for m in r["modes"]]
+        assert len(modes) == len(set(modes))
+
+
+class TestRoles:
+    def test_role_follows_the_mode(self):
+        assert ta.pin_role({"mode": "pseudorandom"}) == "sync"
+        assert ta.pin_role({"mode": "experiment_marker"}) == "experiment_marker"
+        assert ta.pin_role({"mode": "scheduled"}) == "protocol"
+        assert ta.pin_role({"mode": "input", "role": "sync"}) == "marker_in"
+        assert ta.pin_role({"mode": "None"}) == ta.pin_role({}) == "manual"
+        assert ta.pin_role({"mode": "warp"}) == "custom"
 
 
 class TestValidate:
-    def test_mixed_roleless_pins_are_fine(self):
+    def test_fine(self):
         assert ta.validate(_ttl(g19={"mode": "experiment_clock"})) == []
-
-    def test_mixed_checks_roles_that_are_set(self):
-        problems = ta.validate(_ttl(g19={"mode": "input", "role": "sync"}))
-        assert any("must be pseudorandom" in p for p in problems)
-
-    def test_ephys_sync_ok(self):
-        assert ta.validate(_ttl("ephys_sync", g26=SYNC, g19={
-            "mode": "experiment_start", "role": "experiment_start", "channel": 2})) == []
-
-    def test_ephys_sync_missing_sync(self):
-        problems = ta.validate(_ttl("ephys_sync", g19={
-            "mode": "experiment_start", "role": "experiment_start"}))
-        assert problems == ["Ephys sync needs a sync line"]
-
-    def test_role_needed_outside_mixed(self):
-        problems = ta.validate(_ttl("ephys_sync", g26=SYNC, g4={"mode": "input"}))
-        assert problems == ["GPIO 4 has no role (Ephys sync lines each need one)"]
-
-    def test_role_not_offered_by_application(self):
-        problems = ta.validate(_ttl("ephys_sync", g26=SYNC, g5={
-            "mode": "interval_pulse", "role": "stimulus"}))
-        assert any("Stimulus isn't used by Ephys sync" in p for p in problems)
+        assert ta.validate(_ttl(g26={**SYNC, "system": "open_ephys"},
+                                g6={"mode": "experiment_marker"})) == []
 
     def test_at_most_one_sync(self):
-        problems = ta.validate(_ttl("ephys_sync", g26=SYNC, g27=SYNC))
+        problems = ta.validate(_ttl(g26=SYNC, g27=SYNC))
         assert any("at most 1" in p for p in problems)
+
+    def test_unknown_system(self):
+        assert ta.validate(_ttl(g26={**SYNC, "system": "telepathy"})) == [
+            "GPIO 26: unknown sync system 'telepathy'"]
 
 
 class TestLines:
     def test_lines_and_sync_line(self):
         cfg = _ttl("ephys_sync", g26=SYNC, g19={"mode": "experiment_clock"},
-                   g4={"mode": "input", "role": "marker_in", "label": "lever"})
-        assert [ln["gpio"] for ln in ta.lines(cfg)] == [4, 26]
+                   g4={"mode": "input", "label": "lever"})
+        assert [ln["gpio"] for ln in ta.lines(cfg)] == [4, 19, 26]
         assert ta.sync_line(cfg) == {"gpio": 26, "role": "sync", "mode": "pseudorandom",
-                                     "channel": 1, "label": ""}
+                                     "channel": 1, "label": "", "system": "open_ephys"}
         assert ta.sync_line(_ttl()) is None
 
     def test_wiring_key_changes_with_channel(self):

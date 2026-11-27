@@ -1,11 +1,15 @@
-// What a TTL module is for (ttl.application) and what its pins do (pin
-// roles). The definitions are src/shared/ttl_applications.json, the same file
-// the module and controller read (src/shared/ttl_application.py, whose
-// validate() this mirrors). plans/ttl-applications-ephys-sync.md
+// What each TTL pin is used for (its role, which follows from its mode) and
+// what a TTL module syncs with (its application, worked out from its sync
+// line's system). The definitions are src/shared/ttl_applications.json, the
+// same file the module and controller read (src/shared/ttl_application.py,
+// which this mirrors). plans/ttl-applications-ephys-sync.md
 import defs from "@saviour-shared/ttl_applications.json";
 
 export const APPLICATIONS = defs.applications;
 export const ROLES = defs.roles;
+export const SYNC_SYSTEMS = defs.sync_systems;
+// The three main uses offered first; the rest of ROLES under "More".
+export const USES = defs.uses;
 export const DEFAULT_APPLICATION = defs.default_application;
 export const CONFIRM_MAX_AGE_DAYS = defs.confirm_max_age_days;
 export const SYNC_APPLICATIONS = ["ephys_sync", "neurologger_sync"];
@@ -26,11 +30,34 @@ export function syncModules(ttlLines, kind) {
     .filter(([, m]) => m.application === app)
     .map(([id, m]) => ({ id, ...m }));
 }
-export const APPLICATION_ORDER = ["ephys_sync", "neurologger_sync", "stimulus_control", "mixed"];
+// For rig profile items ("expects a TTL module used for ...").
+export const APPLICATION_ORDER = ["ephys_sync", "neurologger_sync", "mixed"];
+
+const ROLE_OF_MODE = Object.fromEntries(
+  Object.entries(ROLES).flatMap(([r, spec]) => spec.modes.map((m) => [m, r])));
+
+// A pin's use, from its mode ("custom" for an unknown mode).
+export function pinRole(pin) {
+  return ROLE_OF_MODE[pin?.mode ?? "None"] ?? "custom";
+}
+
+const sortedPins = (ttlCfg) =>
+  Object.entries(ttlCfg?.pins ?? {}).sort(([a], [b]) => Number(a) - Number(b));
+
+// The system a sync line feeds (a SYNC_SYSTEMS key) or null. A line without
+// one takes it from an older config's ttl.application.
+export function pinSystem(pin, ttlCfg) {
+  if (pinRole(pin) !== "sync") return null;
+  if (pin && "system" in pin) return SYNC_SYSTEMS[pin.system] ? pin.system : null;
+  return APPLICATIONS[ttlCfg?.application]?.system ?? null;
+}
 
 export function applicationOf(ttlCfg) {
-  const app = ttlCfg?.application || DEFAULT_APPLICATION;
-  return APPLICATIONS[app] ? app : DEFAULT_APPLICATION;
+  for (const [, pin] of sortedPins(ttlCfg)) {
+    const system = pinSystem(pin, ttlCfg);
+    if (system) return SYNC_SYSTEMS[system].application;
+  }
+  return DEFAULT_APPLICATION;
 }
 
 // A module's application, or null when it isn't a TTL module.
@@ -43,29 +70,20 @@ export function applicationLabel(app) {
   return APPLICATIONS[app]?.label ?? app;
 }
 
-// "Ephys sync" for a TTL module with an application, else null.
+// "Ephys sync" for a TTL module with a sync system, else null.
 export function moduleKindLabel(module) {
   const app = moduleApplication(module);
   return app && app !== DEFAULT_APPLICATION ? applicationLabel(app) : null;
 }
 
-// "Sync line (pseudorandom)": the role's label plus its `detail`, for
-// pickers and headers (validation messages use the bare label).
+// "Sync line (pseudorandom)": the role's label plus its `detail`.
 export function roleLabel(role) {
   const r = ROLES[role];
-  if (!r) return "No role";
+  if (!r) return "Other";
   return r.detail ? `${r.label} (${r.detail})` : r.label;
 }
 
-export function pinRole(pin) {
-  return ROLES[pin?.role] ? pin.role : "custom";
-}
-
-export function rolesFor(app) {
-  return APPLICATIONS[app]?.roles ?? null;
-}
-
-// Where a channel goes, in the application's own words.
+// Where a channel goes, in the system's own words.
 export function channelLabel(app) {
   return app === "neurologger_sync" ? "Logger input No." : "Ephys Digital In Channel No.";
 }
@@ -79,34 +97,18 @@ export function systemName(app) {
 }
 
 export function validateTTL(ttlCfg) {
-  const app = applicationOf(ttlCfg);
-  const spec = APPLICATIONS[app];
-  const allowed = spec.roles;
   const problems = [];
   const counts = {};
-  const pins = Object.entries(ttlCfg?.pins ?? {}).sort(([a], [b]) => Number(a) - Number(b));
-  for (const [gpio, pin] of pins) {
-    const role = pin?.role;
-    if (!role) {
-      if (allowed) problems.push(`GPIO ${gpio} has no role (${spec.label} lines each need one)`);
-      continue;
-    }
-    if (!ROLES[role]) { problems.push(`GPIO ${gpio}: unknown role '${role}'`); continue; }
-    if (allowed && !allowed.includes(role)) {
-      problems.push(`GPIO ${gpio}: ${ROLES[role].label} isn't used by ${spec.label}`);
-    }
-    if (!ROLES[role].modes.includes(pin?.mode)) {
-      problems.push(`GPIO ${gpio}: a ${ROLES[role].label.toLowerCase()} must be `
-        + `${ROLES[role].modes.join(" or ")} (is ${pin?.mode})`);
-    }
+  for (const [gpio, pin] of sortedPins(ttlCfg)) {
+    const role = pinRole(pin);
     counts[role] = (counts[role] ?? 0) + 1;
+    if (role === "sync" && pin?.system && !SYNC_SYSTEMS[pin.system]) {
+      problems.push(`GPIO ${gpio}: unknown sync system '${pin.system}'`);
+    }
   }
   for (const [role, n] of Object.entries(counts)) {
-    const cap = ROLES[role].max;
+    const cap = ROLES[role]?.max;
     if (cap && n > cap) problems.push(`${n} ${ROLES[role].label.toLowerCase()}s; at most ${cap}`);
-  }
-  for (const role of spec.requires ?? []) {
-    if (!counts[role]) problems.push(`${spec.label} needs a ${ROLES[role].label.toLowerCase()}`);
   }
   return problems;
 }

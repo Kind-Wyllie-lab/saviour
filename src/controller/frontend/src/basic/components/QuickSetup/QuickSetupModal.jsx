@@ -291,8 +291,8 @@ export default function QuickSetupModal({ lastRun, onClose, onDone }) {
                   <ul className="qs-plain-list">
                     {syncMissing.map((i) => (
                       <li key={i.label}>
-                        {i.label}: {i.count} of {i.min}. Set a TTL module's “Used for” to{" "}
-                        {EXTERNAL_SYNC[externalSync].label.replace(/ \(.*\)$/, "")} sync.
+                        {i.label}: {i.count} of {i.min}. On a TTL module, set a sync line&apos;s “Used with” to{" "}
+                        {EXTERNAL_SYNC[externalSync].label.replace(/ \(.*\)$/, "")}.
                       </li>
                     ))}
                     {syncIssues.map((w) => <li key={w}>{w}</li>)}

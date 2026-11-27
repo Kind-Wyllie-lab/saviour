@@ -163,7 +163,7 @@ export default function ProtocolDesigner({
           <h2>{asPage ? "Protocols" : "Protocol designer"}</h2>
           <span className="pdm-head-sub">
             Protocols are saved on the controller and picked for each session.
-            {moduleLabel ? ` Checked against ${moduleLabel}'s Scheduled pins.`
+            {moduleLabel ? ` Checked against ${moduleLabel}'s Protocol outputs.`
               : " No TTL module in reach: checked for format only."}
           </span>
           {!asPage && (

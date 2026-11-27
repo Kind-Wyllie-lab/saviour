@@ -28,6 +28,8 @@ def _make_ttl(**attrs) -> TTLModule:
     m.pseudorandom_pins = []
     m.interval_pulse_pins = []
     m.experiment_start_pins = []
+    m.experiment_marker_pins = []
+    m._markers_on = set()
     m.scheduled_pins = []
     m._protocol_status = {"running": False}
     m._protocol_error = None
@@ -407,28 +409,28 @@ class TestWriteTtlEvent:
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(123, 4, TTLValue.LOW)
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "123,4,input,TTLValue.LOW,lever,custom\n"
+        assert line == "123,4,input,TTLValue.LOW,lever,marker_in\n"
 
     def test_missing_description_writes_empty_not_literal_none(self):
         m = _make_ttl(pin_configs={4: {"mode": "input"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(123, 4, TTLValue.LOW)
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "123,4,input,TTLValue.LOW,,custom\n"
+        assert line == "123,4,input,TTLValue.LOW,,marker_in\n"
 
     def test_source_appended_to_description(self):
         m = _make_ttl(pin_configs={19: {"mode": "None", "description": "marker"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(1, 19, TTLValue.HIGH, source="api")
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1,19,None,TTLValue.HIGH,marker [api],custom\n"
+        assert line == "1,19,None,TTLValue.HIGH,marker [api],manual\n"
 
     def test_source_with_no_description(self):
         m = _make_ttl(pin_configs={19: {"mode": "None"}})
         m._ttl_file_handle = MagicMock()
         m._write_ttl_event(1, 19, TTLValue.HIGH, source="api")
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1,19,None,TTLValue.HIGH,[api],custom\n"
+        assert line == "1,19,None,TTLValue.HIGH,[api],manual\n"
 
 
 class TestPinRoleColumn:
@@ -461,11 +463,12 @@ class TestCheckTtlApplication:
                                )._check_ttl_application()
         assert ok and "General TTL" in msg
 
-    def test_ephys_sync_needs_a_sync_line(self):
-        ok, msg = self._module({"application": "ephys_sync", "pins": {
-            "19": {"mode": "experiment_start", "role": "experiment_start"}}}
+    def test_two_sync_lines_are_a_problem(self):
+        ok, msg = self._module({"pins": {
+            "19": {"mode": "pseudorandom", "system": "open_ephys"},
+            "26": {"mode": "pseudorandom"}}}
         )._check_ttl_application()
-        assert not ok and "needs a sync line" in msg
+        assert not ok and "at most 1" in msg and msg.startswith("Ephys sync")
 
     def test_ephys_sync_ok(self):
         ok, _ = self._module({"application": "ephys_sync", "pins": {
@@ -491,7 +494,7 @@ class TestSendEdgeStatus:
             m._handle_input_pin_low(pin_obj)
 
         line = m._ttl_file_handle.write.call_args.args[0]
-        assert line == "1000,4,input,TTLValue.LOW,lever,custom\n"
+        assert line == "1000,4,input,TTLValue.LOW,lever,marker_in\n"
         m.communication.send_status.assert_called_once_with({
             "type": "ttl_edge",
             "pin": 4,
@@ -957,3 +960,42 @@ class TestSessionProtocol:
         m.recording.session_protocol_start_at = t0
         got, resumed = m._resolve_protocol_start("h")
         assert got == t0 and resumed is True
+
+
+class TestExperimentMarker:
+    """experiment_marker: active from recording start until it stops, both
+    edges in the events file."""
+
+    def _module(self):
+        pin = MagicMock()
+        pin.pin.number = 6
+        m = _make_ttl(output_pins=[pin], experiment_marker_pins=[6],
+                      pin_configs={6: {"mode": "experiment_marker"}})
+        m._set_output_active = MagicMock()
+        m._set_output_inactive = MagicMock()
+        m._write_ttl_event = MagicMock()
+        return m, pin
+
+    def test_active_at_start_inactive_at_stop(self):
+        m, pin = self._module()
+        m._start_experiment_markers()
+        m._set_output_active.assert_called_once_with(pin)
+        assert m._write_ttl_event.call_args[0][1:] == (6, TTLValue.HIGH)
+        m._end_experiment_markers()
+        m._set_output_inactive.assert_called_once_with(pin)
+        assert m._write_ttl_event.call_args[0][1:] == (6, TTLValue.LOW)
+
+    def test_stop_without_start_logs_nothing(self):
+        m, _pin = self._module()
+        m._end_experiment_markers()
+        m._write_ttl_event.assert_not_called()
+
+    def test_assigned_as_an_output(self):
+        m = _make_ttl()
+        m.config.get.side_effect = _cfg({"6": {"mode": "experiment_marker"}})
+        m._cleanup_gpio = MagicMock()
+        with patch("src.modules.variants.ttl.ttl_module.gpiozero") as gz:
+            gz.LED.return_value = MagicMock()
+            m.assign_pins()
+        assert m.experiment_marker_pins == [6]
+        assert len(m.output_pins) == 1

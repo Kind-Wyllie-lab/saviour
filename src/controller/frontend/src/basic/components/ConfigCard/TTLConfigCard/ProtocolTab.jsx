@@ -42,7 +42,7 @@ export default function ProtocolTab({
     <div className="pe">
       <p className="pe-intro">
         Protocols are picked for each session in the <strong>New Session</strong> form on the
-        Recording page, and run on this module's <strong>Scheduled</strong> pins (Pins tab),
+        Recording page, and run on this module's <strong>Protocol outputs</strong> (Pins tab),
         timed from session start. Here you can check a protocol against this module, preview it
         and run it on the pins with Test routine.
       </p>
@@ -63,7 +63,7 @@ export default function ProtocolTab({
       )}
 
       {pins.length === 0 && (
-        <div className="pe-notice">No scheduled pins yet: set a pin's mode to “Scheduled (session protocol)” on the Pins tab.</div>
+        <div className="pe-notice">No Protocol outputs yet: set a pin's Use to “Protocol output” on the Pins tab.</div>
       )}
 
       <div className="pe-top">

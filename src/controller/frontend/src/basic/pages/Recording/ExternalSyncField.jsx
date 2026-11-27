@@ -28,8 +28,8 @@ export default function ExternalSyncField({ value, onChange, rig, ttlLines }) {
         <ul className="external-sync-field__warnings">
           {missing.map((i) => (
             <li key={i.label}>
-              {i.label}: {i.count} of {i.min} — set a TTL module's “Used for” to{" "}
-              {EXTERNAL_SYNC[kind].label.replace(/ \(.*\)$/, "")} sync
+              {i.label}: {i.count} of {i.min} — on a TTL module, set a sync line&apos;s “Used with” to{" "}
+              {EXTERNAL_SYNC[kind].label.replace(/ \(.*\)$/, "")}
             </li>
           ))}
           {sync.map((w) => <li key={w}>{w}</li>)}

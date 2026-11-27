@@ -3,13 +3,6 @@
         "group": "ttl"
     },
     "ttl": {
-        "application": "mixed",
-        "_application_options": [
-            "mixed",
-            "ephys_sync",
-            "neurologger_sync",
-            "stimulus_control"
-        ],
         "active_logic": "active_low",
         "_active_logic_options": [
             "active_low",
@@ -35,6 +28,7 @@
             "experiment_clock",
             "interval_pulse",
             "experiment_start",
+            "experiment_marker",
             "scheduled",
             "input"
         ],
@@ -101,6 +95,7 @@
                     "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"
                 }
             },
+            "_experiment_marker": {},
             "_scheduled": {},
             "_input": {
                 "_debounce_ms": {

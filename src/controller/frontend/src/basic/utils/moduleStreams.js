@@ -1,4 +1,4 @@
-import { applicationLabel, roleLabel, DEFAULT_APPLICATION } from "/src/basic/utils/ttlApplications";
+import { applicationLabel, applicationOf, roleLabel, pinRole } from "/src/basic/utils/ttlApplications";
 
 // Which live preview a module serves (MJPEG port + label). Shared by the
 // dashboard and Quick setup (plans/rig-quick-setup.md).
@@ -76,9 +76,9 @@ export function moduleSettingsSummary(m) {
     if (labels) add("AudioMoths labelled", labels);
   } else if (m?.type === "ttl" && c.ttl) {
     const pins = Object.entries(c.ttl.pins ?? {});
-    add("Used for", applicationLabel(c.ttl.application || DEFAULT_APPLICATION));
+    add("Syncs with", applicationLabel(applicationOf(c.ttl)));
     add("Pins", pins.length
-      ? pins.map(([g, p]) => `GPIO ${g} (${p.role ? roleLabel(p.role) : p.mode ?? "?"})`).join(", ")
+      ? pins.map(([g, p]) => `GPIO ${g} (${p.label || roleLabel(pinRole(p))})`).join(", ")
       : "None");
   } else if (m?.type === "rfid" && c.rfid) {
     add("Reader", c.rfid.mock?.enabled ? "Simulated bus" : (c.rfid.serial_port || "Auto-detect"));

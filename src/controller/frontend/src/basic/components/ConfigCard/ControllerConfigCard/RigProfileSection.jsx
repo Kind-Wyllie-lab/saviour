@@ -65,7 +65,7 @@ export default function RigProfileSection({ rig, onChange }) {
         page, asks for confirmation before a session starts and is noted in the
         session record; an <em>optional</em> one shows amber. Types accept wildcards:
         <code> *camera</code> matches any camera type. <em>Used for</em> narrows a TTL
-        item to modules set to that job (e.g. Ephys sync); <em>Only for</em> counts the item only for sessions created with that
+        item to modules whose sync line names that system (e.g. Ephys sync); <em>Only for</em> counts the item only for sessions created with that
         <em> External sync</em> choice (e.g. Ephys).
       </p>
 

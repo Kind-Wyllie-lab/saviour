@@ -17,30 +17,10 @@ import { useProtocolLibrary } from "../../Protocol/protocolLibrary";
 import { ProtocolTestControls } from "../../Protocol/ProtocolTest";
 import useProtocolTest from "../../Protocol/useProtocolTest";
 import TTLLinesEditor from "./TTLLinesEditor";
-import AddPinModal from "./AddPinModal";
 import useTTLLines from "/src/hooks/useTTLLines";
 import {
-  APPLICATIONS, APPLICATION_ORDER, DEFAULT_APPLICATION, applicationOf, applicationLabel, pinLabel,
+  DEFAULT_APPLICATION, applicationOf, applicationLabel,
 } from "/src/basic/utils/ttlApplications";
-
-// "None" is a real output mode (a plain output pin held inactive, with no
-// automatic generator) added so test_pin()/the REST /pulse endpoint have a
-// pin to drive without racing experiment_clock/pseudorandom/interval_pulse.
-// "experiment_start" fires a single delayed pulse once, at recording start --
-// sugar over interval_pulse(repeat_count=1) with its own honest mode name and
-// a simpler delay_s/pulse_duration_s-only schema (both server-driven from
-// _mode_settings_schema, nothing hardcoded here beyond the label/badge).
-// "scheduled" is an output driven by the session protocol (ttl.protocol,
-// plans/session-protocol.md); its steps live in the protocol, not per pin.
-const OUTPUT_MODES = new Set([
-  "experiment_clock", "pseudorandom", "interval_pulse", "experiment_start", "None",
-  "scheduled",
-]);
-const MODE_LABELS = {
-  None: "None (manual output)",
-  experiment_start: "Experiment Start (one pulse)",
-  scheduled: "Scheduled (session protocol)",
-};
 
 const TAB_COPY_SECTION = {
   basic:  { key: "module",    label: "Basic"  },
@@ -63,7 +43,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
-  const [addingPin, setAddingPin] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
@@ -73,87 +52,19 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const isRecording = module.status === "RECORDING";
 
   const ttlCfg = formData?.ttl ?? {};
-  // What this module is for (plans/ttl-applications-ephys-sync.md): "mixed"
-  // keeps the free per-pin modes below; anything else gets role-based lines.
-  const application = applicationOf(ttlCfg);
+  // "Ephys sync" etc., from the sync line's system
+  // (plans/ttl-applications-ephys-sync.md).
   const savedApplication = applicationOf(module.config?.ttl);
   const { lines: ttlLines } = useTTLLines(JSON.stringify(module.config?.ttl?.pins ?? {}) + savedApplication);
   const lineStatus = ttlLines?.modules?.[id] ?? null;
-  const tabs = TABS.map((t) => (t.key === "pins" && application !== DEFAULT_APPLICATION
-    ? { ...t, label: "Lines" } : t));
+  const tabs = TABS;
   const availablePins = module.config?.ttl?._available_pins ?? [];
-  const availableModes = module.config?.ttl?._available_modes ?? [];
   const schema = module.config?.ttl?._mode_settings_schema ?? {};
   const activeLogicOptions = module.config?.ttl?._active_logic_options ?? ["active_low", "active_high"];
 
-  const assignedPins = Object.keys(ttlCfg.pins ?? {}).map(Number);
-  const unassignedPins = availablePins.filter((p) => !assignedPins.includes(p));
-  const sortedPins = Object.keys(ttlCfg.pins ?? {}).sort((a, b) => Number(a) - Number(b));
-
-  const addPin = (parsed, newMode) => {
-    const defaults = schema[`_${newMode}`] ?? {};
-    setFormData((prev) => ({
-      ...prev,
-      ttl: {
-        ...prev.ttl,
-        pins: {
-          ...prev.ttl.pins,
-          [parsed]: {
-            mode: newMode,
-            ...Object.fromEntries(
-              Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
-            ),
-          },
-        },
-      },
-    }));
-  };
-
-  const removePin = (pin) => {
-    setFormData((prev) => {
-      const newPins = { ...prev.ttl.pins };
-      delete newPins[pin];
-      return { ...prev, ttl: { ...prev.ttl, pins: newPins } };
-    });
-  };
-
-  const changeMode = (pin, mode) => {
-    const defaults = schema[`_${mode}`] ?? {};
-    setFormData((prev) => ({
-      ...prev,
-      ttl: {
-        ...prev.ttl,
-        pins: {
-          ...prev.ttl.pins,
-          [pin]: {
-            mode,
-            // The label names the wire, not the mode: keep it across modes.
-            ...(prev.ttl.pins[pin]?.label ? { label: prev.ttl.pins[pin].label } : {}),
-            ...Object.fromEntries(
-              Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
-            ),
-          },
-        },
-      },
-    }));
-  };
-
-  const changeField = (pin, field, val) => {
-    setFormData((prev) => ({
-      ...prev,
-      ttl: {
-        ...prev.ttl,
-        pins: {
-          ...prev.ttl.pins,
-          [pin]: { ...prev.ttl.pins[pin], [field]: val },
-        },
-      },
-    }));
-  };
-
-  const scheduledPinList = sortedPins
+  const scheduledPinList = Object.keys(ttlCfg.pins ?? {})
     .filter((p) => ttlCfg.pins[p]?.mode === "scheduled")
-    .map(Number);
+    .map(Number).sort((a, b) => a - b);
   const setProtocol = (protocol) =>
     setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, protocol } }));
 
@@ -171,7 +82,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
       : !loggedIn ? "Sign in as admin to run a test."
       : !result || result.edges.length === 0 ? "Add some steps first."
       : !result.ok ? "Fix the problems first."
-      : result.pins.some((p) => !scheduledPinList.includes(p)) ? "Set the lines it uses to Scheduled first (Pins tab)."
+      : result.pins.some((p) => !scheduledPinList.includes(p)) ? "Set the lines it uses to Protocol output first (Pins tab)."
       : pinsUnsaved ? "Save first: the module doesn't know about the Pins tab changes yet."
       : null;
     return (
@@ -285,19 +196,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                       value={formData?.module?.group ?? ""}
                       onChange={e => handleChange(["module", "group"], e)} />
                   </div>
-                  <div className="form-field">
-                    <label>Used for:</label>
-                    <select
-                      value={application}
-                      onChange={(e) => setFormData((prev) => ({
-                        ...prev, ttl: { ...prev.ttl, application: e.target.value } }))}
-                    >
-                      {APPLICATION_ORDER.map((a) => (
-                        <option key={a} value={a}>{APPLICATIONS[a].label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <p className="field-hint">{APPLICATIONS[application].description}</p>
                 </>
               )}
 
@@ -318,107 +216,18 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                     </select>
                   </div>
 
-                  {application !== DEFAULT_APPLICATION ? (
-                    <TTLLinesEditor
-                      id={id}
-                      module={module}
-                      ttlCfg={{ ...ttlCfg, application }}
-                      schema={schema}
-                      availablePins={availablePins}
-                      setFormData={setFormData}
-                      loggedIn={loggedIn}
-                      testPin={testPin}
-                      pinTestState={pinTestState}
-                      status={lineStatus}
-                    />
-                  ) : (<>
-                  <div className="pin-list">
-                    {sortedPins.length === 0 && (
-                      <p className="no-pins-hint">No pins configured. Press Add pin below.</p>
-                    )}
-                    {sortedPins.map((pin) => {
-                      const settings = ttlCfg.pins[pin];
-                      const mode = settings.mode ?? "None";
-                      const isOutput = OUTPUT_MODES.has(mode);
-                      const modeFields = schema[`_${mode}`] ?? {};
-
-                      return (
-                        <div key={pin} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
-                          <div className="pin-card-header">
-                            <span className="pin-label">{pinLabel(pin)}</span>
-                            <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
-                              {isOutput ? "OUTPUT" : "INPUT"}
-                            </span>
-                            {isOutput && (
-                              <button
-                                className={`btn-test-pin${pinTestState[pin] === "testing" ? " btn-test-pin--active" : pinTestState[pin] === "done" ? " btn-test-pin--done" : ""}`}
-                                type="button"
-                                disabled={pinTestState[pin] === "testing"}
-                                onClick={() => testPin(pin)}
-                                title="Run a 5-second test pulse to validate the signal"
-                              >
-                                {pinTestState[pin] === "testing" ? "Testing…" : pinTestState[pin] === "done" ? "Done" : "Test"}
-                              </button>
-                            )}
-                            <button className="btn-remove" onClick={() => removePin(pin)}>✕</button>
-                          </div>
-
-                          <div className="field">
-                            <label>Mode</label>
-                            <select value={mode} onChange={(e) => changeMode(pin, e.target.value)}>
-                              {availableModes.map((m) => (
-                                <option key={m} value={m}>{MODE_LABELS[m] ?? m}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="field">
-                            <label>Label</label>
-                            <input type="text" value={settings.label ?? ""}
-                              placeholder={mode === "scheduled" ? "e.g. Lights (shown in protocols)" : "optional"}
-                              onChange={(e) => changeField(pin, "label", e.target.value)} />
-                          </div>
-
-                          {Object.entries(modeFields).map(([k, meta]) => {
-                            const fieldName = k.replace(/^_/, "");
-                            return (
-                              <div key={k} className="field">
-                                <label>{fieldName}</label>
-                                <input
-                                  type={meta.type === "float" || meta.type === "int" ? "number" : "text"}
-                                  min={meta.min}
-                                  max={meta.max}
-                                  step={meta.type === "float" ? "any" : undefined}
-                                  value={settings[fieldName] ?? ""}
-                                  onChange={(e) => {
-                                    const raw = e.target.value;
-                                    let val = raw;
-                                    if (meta.type === "float") val = raw === "" ? "" : parseFloat(raw);
-                                    else if (meta.type === "int") val = raw === "" ? "" : parseInt(raw, 10);
-                                    changeField(pin, fieldName, Number.isNaN(val) ? raw : val);
-                                  }}
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="add-pin-row">
-                    <button type="button" onClick={() => setAddingPin(true)}>Add pin</button>
-                  </div>
-                  {addingPin && (
-                    <AddPinModal
-                      pins={unassignedPins}
-                      options={availableModes.map((m) => ({ value: m, label: MODE_LABELS[m] ?? m }))}
-                      choiceLabel="Mode"
-                      onAdd={addPin}
-                      onClose={() => setAddingPin(false)}
-                    />
-                  )}
-                  </>)}
+                  <TTLLinesEditor
+                    id={id}
+                    module={module}
+                    ttlCfg={ttlCfg}
+                    schema={schema}
+                    availablePins={availablePins}
+                    setFormData={setFormData}
+                    loggedIn={loggedIn}
+                    testPin={testPin}
+                    pinTestState={pinTestState}
+                    status={lineStatus}
+                  />
                 </>
               )}
 

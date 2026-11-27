@@ -67,6 +67,7 @@ import contextlib
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -108,6 +109,14 @@ _PALETTE = [
     (255, 255, 0), (128, 0, 255), (0, 255, 255), (200, 200, 200), (0, 128, 255),
 ]
 HAILO_DEVICE = "/dev/hailo0"
+DOWNLOAD_HEFS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "download_hefs.sh")
+
+
+def _hailo_device_present() -> bool:
+    """The Hailo's character device exists, i.e. its driver bound."""
+    return os.path.exists(HAILO_DEVICE)
+
 _KP_COLOUR = (0, 255, 255)      # keypoints
 _BONE_COLOUR = (0, 255, 0)      # skeleton edges
 # A held-back CSV row is released with empty keypoints if its frame's result
@@ -132,6 +141,8 @@ class HailoCameraModule(CameraBase):
     def __init__(self, module_type="hailo_camera"):
         super().__init__(module_type)
         self._det_lock = threading.Lock()
+        self._hef_fetch: threading.Thread | None = None
+        self._hef_fetch_error: str | None = None
         self._rebuild_lock = threading.Lock()   # serialises rebuilds; not held per-frame
         self.detector = None                 # HailoDetector | HailoPoseDetector | None
         self._detector_error: str | None = None
@@ -244,6 +255,44 @@ class HailoCameraModule(CameraBase):
                 self.detector.set_threshold(threshold)
                 if hasattr(self.detector, "set_max_det"):
                     self.detector.set_max_det(max_det)
+
+    def _fetch_stock_hefs(self, hef_path: str) -> str:
+        """A stock model-zoo HEF is missing (download_hefs.sh failed or never
+        ran when the module was set up, usually because the Hailo driver
+        wasn't up yet). Run the script in the background, once per process,
+        and rebuild when it's done. Returns the status line to show."""
+        if self._hef_fetch is not None and self._hef_fetch.is_alive():
+            return "downloading the stock Hailo models…"
+        if self._hef_fetch_error:
+            return (f"HEF not found: {hef_path} — automatic download failed "
+                    f"({self._hef_fetch_error}); run download_hefs.sh by hand")
+        if not _hailo_device_present():
+            return ("HEF not found and the Hailo driver isn't loaded (no "
+                    "/dev/hailo*) — reboot this module; it downloads its "
+                    "models itself once the Hailo is up")
+
+        def _run() -> None:
+            self.logger.info("Stock HEFs missing — running download_hefs.sh")
+            try:
+                r = subprocess.run(["bash", DOWNLOAD_HEFS], capture_output=True,
+                                   text=True, timeout=1200, check=False)
+                if r.returncode != 0:
+                    lines = (r.stderr or r.stdout or "").strip().splitlines()
+                    self._hef_fetch_error = (lines[-1] if lines
+                                             else f"exit {r.returncode}")[-200:]
+                    self.logger.warning(
+                        f"download_hefs.sh failed: {self._hef_fetch_error}")
+                else:
+                    self.logger.info("Stock HEFs downloaded")
+            except Exception as e:  # timeout, bash missing …
+                self._hef_fetch_error = str(e)[-200:]
+                self.logger.warning(f"download_hefs.sh failed: {e}")
+            self._rebuild_detector_async()
+
+        self._hef_fetch = threading.Thread(target=_run, daemon=True,
+                                           name="hailo-hef-download")
+        self._hef_fetch.start()
+        return "downloading the stock Hailo models…"
 
     def _rebuild_detector_async(self) -> None:
         threading.Thread(target=self._build_detector, args=(True,),
@@ -506,7 +555,7 @@ class HailoCameraModule(CameraBase):
             if not os.path.exists(hef_path) and spec.get("uploaded"):
                 error = f"HEF not found: {hef_path} — upload it again from the AI tab"
             elif not os.path.exists(hef_path):
-                error = f"HEF not found: {hef_path} — run download_hefs.sh (wrong Hailo-8/8L arch is the usual cause)"
+                error = self._fetch_stock_hefs(hef_path)
             elif spec.get("meta_error"):
                 error = f"LP model metadata: {spec['meta_error']}"
             elif task == "lp_pose" and (fov := self._lp_static_fov_error(spec["meta"])):
@@ -527,6 +576,9 @@ class HailoCameraModule(CameraBase):
                         new_detector = HailoDetector(hef_path, threshold=threshold)
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …
                     error = f"{type(e).__name__}: {e}"
+                    if not _hailo_device_present():
+                        error = ("Hailo driver not loaded (no /dev/hailo*) — reboot "
+                                 "this module; a newly installed driver needs one")
 
             meta = new_detector.meta if isinstance(new_detector, HailoLPPoseDetector) else None
             with self._det_lock:

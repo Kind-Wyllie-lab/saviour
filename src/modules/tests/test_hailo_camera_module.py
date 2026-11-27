@@ -380,3 +380,51 @@ class TestDownloadHef:
             except OSError:
                 pass
         assert sorted(p.name for p in tmp_path.iterdir()) == ["m.hef"]
+
+
+_HCM = "src.modules.variants.hailo_camera.hailo_camera_module"
+
+
+def _fetch_module():
+    m = _module()
+    m._hef_fetch = None
+    m._hef_fetch_error = None
+    m._rebuild_detector_async = MagicMock()
+    return m
+
+
+class TestFetchStockHefs:
+    """A missing stock HEF is downloaded by the camera itself (the setup-time
+    download_hefs.sh run fails when the new Hailo driver isn't up yet)."""
+
+    def test_no_driver_asks_for_a_reboot_and_runs_nothing(self):
+        m = _fetch_module()
+        with patch(f"{_HCM}._hailo_device_present", return_value=False), \
+                patch(f"{_HCM}.subprocess.run") as run:
+            msg = m._fetch_stock_hefs("/x/yolov8s.hef")
+        assert "reboot" in msg
+        run.assert_not_called()
+        assert m._hef_fetch is None
+
+    def test_downloads_once_then_rebuilds(self):
+        m = _fetch_module()
+        done = MagicMock(returncode=0, stdout="Done.", stderr="")
+        with patch(f"{_HCM}._hailo_device_present", return_value=True), \
+                patch(f"{_HCM}.subprocess.run", return_value=done) as run:
+            msg = m._fetch_stock_hefs("/x/yolov8s.hef")
+            m._hef_fetch.join(2)
+        assert "downloading" in msg
+        assert run.call_args[0][0][-1].endswith("download_hefs.sh")
+        m._rebuild_detector_async.assert_called_once()
+        assert m._hef_fetch_error is None
+
+    def test_a_failed_download_is_reported_not_retried(self):
+        m = _fetch_module()
+        bad = MagicMock(returncode=1, stdout="", stderr="x\nOne or more downloads failed.")
+        with patch(f"{_HCM}._hailo_device_present", return_value=True), \
+                patch(f"{_HCM}.subprocess.run", return_value=bad) as run:
+            m._fetch_stock_hefs("/x/yolov8s.hef")
+            m._hef_fetch.join(2)
+            msg = m._fetch_stock_hefs("/x/yolov8s.hef")
+        assert run.call_count == 1
+        assert "One or more downloads failed." in msg

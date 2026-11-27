@@ -1872,6 +1872,19 @@ configure_module_dependencies() {
         done
     fi
 
+    # A freshly installed kernel driver (hailort-pcie-driver via dkms) often
+    # can't bind until a reboot: on a long-running Pi the probe fails
+    # allocating its DMA memory (dmesg "Failed allocating vdma engines",
+    # error -12) and no /dev/hailo0 appears. Flag the reboot; the web UI's
+    # Change type (--set-module-type) then reboots instead of just restarting
+    # the service, and hailo_camera fetches its models itself once the
+    # device is up (download_hefs.sh below can't tell 8 from 8L without it).
+    if lspci -nn 2>/dev/null | grep -qi '1e60:' && ! ls /dev/hailo* >/dev/null 2>&1; then
+        log "Hailo fitted but its driver isn't up (no /dev/hailo*): reboot required"
+        echo "    (Hailo driver installed: reboot this Pi before using the Hailo)"
+        touch /run/reboot-required
+    fi
+
     # POST_INSTALL: a script (relative to the variant folder) to run once the
     # apt deps are in. Used by hailo_camera to auto-detect Hailo-8/8L and fetch
     # the matching model-zoo HEFs -- hailortcli is available by now.
@@ -3004,6 +3017,13 @@ set_module_type() {
     sed -i "s/^TYPE=.*/TYPE=$1/" "$CONFIG_FILE"
     log "set-module-type: TYPE=$1, applying"
     apply_from_config
+    # Unattended (the web UI's Change type): if the new type's packages need
+    # a reboot (a kernel driver that couldn't bind, e.g. the Hailo's), do it
+    # now rather than leave a module that comes back unable to use them.
+    if [ -f /run/reboot-required ]; then
+        log "set-module-type: reboot required, rebooting"
+        systemctl reboot
+    fi
 }
 
 # ── Entry point ────────────────────────────────────────────────────────────────

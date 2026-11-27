@@ -121,7 +121,9 @@ export function sameProtocol(a, b) {
   return stable(strip(a)) === stable(strip(b));
 }
 
-export const EMPTY_PROTOCOL = { version: 1, seed: 1, end_state: "all_inactive", steps: [], outputs: { ttl: [], sound: [] } };
+// New protocols draw new random times for every session (seed_mode);
+// older ones without the key keep their fixed pattern.
+export const EMPTY_PROTOCOL = { version: 1, seed: 1, seed_mode: "per_session", end_state: "all_inactive", steps: [], outputs: { ttl: [], sound: [] } };
 
 /** "base", or "base 2", "base 3"… whichever isn't taken. */
 export function freeName(base, items) {

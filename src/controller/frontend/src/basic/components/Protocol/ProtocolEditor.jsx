@@ -17,7 +17,7 @@ import "./ProtocolEditor.css";
 // with params.pins is split on load, normaliseProtocol); a repeat inside a
 // trial block is edited in the JSON view.
 
-const ACTION_LABELS = { set: "Set level", pulse: "Pulse", train: "Pulse train", play: "Play sound", repeat: "Repeat" };
+const ACTION_LABELS = { set: "Set level", pulse: "Single pulse", train: "Pulse train", play: "Play sound", repeat: "Repeat" };
 
 // sound: { modules: [{ id, name, files, outputs }] } -- the sound modules in
 // reach; files and outputs offered to a play step come from the one it names
@@ -297,6 +297,72 @@ function referenceLines(pinConfigs) {
 
 // One step on a line: number, start time, what it does. The line itself
 // (pin, sound output) is implied by the group it sits in.
+// A pulse train's duty cycle (width × rate): shown as "% on", with a
+// one-click 50 % square wave. Set by duty: type a % and the width follows
+// the current rate. (Kept as width_s in the protocol.)
+function DutyCycle({ params, onWidth }) {
+  const rate = Number(params.rate_hz);
+  const width = Number(params.width_s);
+  if (!(rate > 0)) return null;
+  const duty = width > 0 ? Math.round(width * rate * 1000) / 10 : "";
+  const setDuty = (v) => {
+    if (v === "" || !(Number(v) > 0)) return;
+    onWidth(Math.round((Number(v) / 100 / rate) * 1e6) / 1e6);
+  };
+  return (
+    <>
+      <NumField label="=" unit="% on" value={duty} width="4em"
+        title="Duty cycle: the share of each cycle the line is on. Typing one sets the width for this rate."
+        onChange={setDuty} />
+      {duty !== 50 && (
+        <button type="button" className="pe-small" title="50 % on, 50 % off"
+          onClick={() => setDuty(50)}>Square</button>
+      )}
+    </>
+  );
+}
+
+// A pulse train runs for a number of pulses (count) or for a time
+// (duration_s: every pulse that starts within it).
+function TrainLength({ params, onParams }) {
+  const byTime = "duration_s" in params;
+  const rate = Number(params.rate_hz);
+  const pulses = byTime && rate > 0 && Number(params.duration_s) > 0
+    ? Math.max(1, Math.ceil(Number(params.duration_s) * rate - 1e-9)) : null;
+  const switchTo = (mode) => {
+    // eslint-disable-next-line no-unused-vars -- dropping the other way's key
+    const { count, duration_s, ...rest } = params;
+    if (mode === "time") {
+      const d = rate > 0 && Number(count) > 0 ? Math.round((Number(count) / rate) * 1000) / 1000 : 1;
+      onParams({ ...rest, duration_s: d });
+    } else {
+      onParams({ ...rest, count: pulses ?? 10 });
+    }
+  };
+  return (
+    <>
+      <label className="pe-field">
+        <span className="pe-field-label">For</span>
+        <select value={byTime ? "time" : "count"} onChange={(e) => switchTo(e.target.value)}>
+          <option value="count">Repeats</option>
+          <option value="time">Duration</option>
+        </select>
+      </label>
+      {byTime ? (
+        <>
+          <NumField label="" unit="s" value={params.duration_s} width="4.5em"
+            title="Every pulse that starts within this time"
+            onChange={(v) => onParams({ ...params, duration_s: v })} />
+          {pulses !== null && <span className="pe-unit" title="Pulses in this train">= {pulses} pulses</span>}
+        </>
+      ) : (
+        <NumField label="" unit="pulses" int min={1} value={params.count} width="4.5em"
+          onChange={(v) => onParams({ ...params, count: v })} />
+      )}
+    </>
+  );
+}
+
 function StepLine({ step, num, track, sound, inBlock, onChange, onRemove }) {
   const action = step?.action;
   const set = (patch) => onChange({ ...step, ...patch });
@@ -342,7 +408,8 @@ function StepLine({ step, num, track, sound, inBlock, onChange, onRemove }) {
           <>
             <NumField label="Rate" unit="Hz" value={step.params?.rate_hz} onChange={(v) => setParam("rate_hz", v)} width="4.5em" />
             <NumField label="Width" unit="s" value={step.params?.width_s} onChange={(v) => setParam("width_s", v)} width="4.5em" />
-            <NumField label="Count" int min={1} value={step.params?.count} onChange={(v) => setParam("count", v)} width="4.5em" />
+            <DutyCycle params={step.params ?? {}} onWidth={(w) => setParam("width_s", w)} />
+            <TrainLength params={step.params ?? {}} onParams={(params) => onChange({ ...step, params })} />
           </>
         )}
         {action === "play" && <PlayFields step={step} sound={sound} onChange={onChange} fixedOutput />}
@@ -744,18 +811,27 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
       {usesJitter(steps) && (
         <div className="pe-random">
           <div className="pe-random-controls">
-            <NumField label="Random gap pattern" int min={0} value={norm.seed ?? 1} width="7em"
-              onChange={(v) => update({ seed: v })} />
+            <label className="pe-field">
+              <span className="pe-field-label">Random times</span>
+              <select value={norm.seed_mode === "per_session" ? "per_session" : "fixed"}
+                onChange={(e) => update({ seed_mode: e.target.value })}>
+                <option value="per_session">New each session</option>
+                <option value="fixed">Same every session</option>
+              </select>
+            </label>
+            {norm.seed_mode !== "per_session" && (
+              <NumField label="Pattern" int min={0} value={norm.seed ?? 1} width="7em"
+                onChange={(v) => update({ seed: v })} />
+            )}
             <button type="button" className="pe-small"
               onClick={() => update({ seed: Math.floor(Math.random() * 1e6) })}>
-              New pattern
+              {norm.seed_mode === "per_session" ? "Show another example" : "New pattern"}
             </button>
           </div>
           <p className="pe-random-hint">
-            Trial blocks with jitter, or Random spacing, place trials at random. This
-            number (the seed) picks which random times you get: keep it and every session (and
-            every animal) gets the same schedule, the one in the timeline below; change it for
-            a different one. The times used are saved with each session's data.
+            {norm.seed_mode === "per_session"
+              ? "Trial blocks with jitter, or Random spacing, place trials at random. Each session draws its own times when it's created, so animals can't learn when trials come; the timeline shows one example. The times a session used are saved with its data."
+              : "Trial blocks with jitter, or Random spacing, place trials at random. The pattern number picks which times you get: every session (and every animal) gets the same schedule, the one in the timeline below. Change the number for a different one. The times used are saved with each session's data."}
           </p>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./SoundPlayWidget.css";
@@ -60,31 +61,49 @@ export default function SoundPlayWidget({ module }) {
   };
 
   return (
-    <div className="spw">
-      <div className="spw-title">{module.name || module.id}</div>
-      <div className="spw-row">
-        <select className="spw-file" value={file} onChange={(e) => setFile(e.target.value)}
-          disabled={!names.length} aria-label="Sound">
+    <div className="spw card">
+      <div className="spw-header">
+        <h2>Sound</h2>
+        <Link to={`/settings#${module.id}`} className="spw-link">Settings →</Link>
+      </div>
+      <div className="spw-module">
+        <span className={`status-icon ${String(module.status ?? "").toLowerCase()}`} aria-hidden="true" />
+        <span className="spw-module-name">{module.name || module.id}</span>
+        {hw.board && <span className="spw-board">{hw.board}</span>}
+      </div>
+
+      <label className="spw-field">
+        <span className="spw-label">Sound</span>
+        <select value={file} onChange={(e) => setFile(e.target.value)} disabled={!names.length}>
           {!names.length && <option value="">No sound files</option>}
-          {names.map((n) => <option key={n} value={n}>{n} ({fmtLen(files[n])})</option>)}
+          {names.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
-        {outputs > 1 && (
-          <select className="spw-out" value={output} onChange={(e) => setOutput(Number(e.target.value))}
-            aria-label="Output" title="Stereo output: 1 = channels 1-2, 2 = 3-4, …">
-            {Array.from({ length: outputs }, (_, i) => i + 1).map((o) => (
-              <option key={o} value={o}>Out {o} · ch {2 * o - 1}-{2 * o}</option>
-            ))}
-          </select>
-        )}
-        <button type="button" className="spw-play" onClick={play} disabled={!!blocked || playing}
-          title={blocked ?? `Play ${file} now`}>
+      </label>
+      <div className="spw-controls">
+        {outputs > 1 ? (
+          <label className="spw-field spw-field--out">
+            <span className="spw-label">Output</span>
+            <select value={output} onChange={(e) => setOutput(Number(e.target.value))}
+              title="Stereo output: 1 = channels 1-2, 2 = 3-4, …">
+              {Array.from({ length: outputs }, (_, i) => i + 1).map((o) => (
+                <option key={o} value={o}>{o} · ch {2 * o - 1}-{2 * o}</option>
+              ))}
+            </select>
+          </label>
+        ) : <span />}
+        <span className="spw-meta">
+          {file ? fmtLen(files[file]) : ""}{file ? " · " : ""}vol {module.config?.sound?.volume ?? 1}
+        </span>
+        <button type="button" className={`spw-play${playing ? " spw-play--busy" : ""}`} onClick={play}
+          disabled={!!blocked || playing} title={blocked ?? `Play ${file} now`}>
           {playing ? "Playing…" : "▶ Play"}
         </button>
       </div>
-      <div className={`spw-status${state?.kind === "error" ? " spw-status--bad" : ""}`}>
+      <div className={`spw-status${state?.kind === "error" ? " spw-status--bad" : state?.kind === "ok" ? " spw-status--ok" : ""}`}
+        aria-live="polite">
         {state?.kind === "error" ? state.message
-          : state?.kind === "ok" ? "Played."
-          : blocked ?? `Plays the whole file at the module's volume (${module.config?.sound?.volume ?? 1}).`}
+          : state?.kind === "ok" ? "✓ Played"
+          : blocked ?? "Plays the whole file at the module's volume."}
       </div>
     </div>
   );

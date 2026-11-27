@@ -165,6 +165,13 @@
       {"at_s": 30, "action": "train", "params": {"pin": 22, "rate_hz": 10, "width_s": 0.02, "duration_s": 0.01}}]}},
     {"name": "train by duration, errors", "protocol": {"version": 1, "steps": [
       {"at_s": 1, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 10, "count": 3}},
-      {"at_s": 2, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 0}}]}}
+      {"at_s": 2, "action": "train", "params": {"pin": 17, "rate_hz": 5, "width_s": 0.1, "duration_s": 0}}]}},
+    {"name": "square wave", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "square", "params": {"pin": 17, "rate_hz": 5, "duration_s": 10}},
+      {"at_s": 20, "action": "square", "params": {"pin": 22, "rate_hz": 3, "duty": 0.25, "count": 4}}]}},
+    {"name": "square wave errors", "protocol": {"version": 1, "steps": [
+      {"at_s": 1, "action": "square", "params": {"pin": 17, "rate_hz": 5, "duty": 1, "count": 3}},
+      {"at_s": 5, "action": "square", "params": {"pin": 17, "rate_hz": 5, "duty": 0, "count": 3}},
+      {"at_s": 9, "action": "square", "params": {"pin": 17, "count": 3}}]}}
   ]
 }

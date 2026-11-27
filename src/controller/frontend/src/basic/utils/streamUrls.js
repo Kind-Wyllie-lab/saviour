@@ -45,3 +45,10 @@ export function snapshotUrl(moduleOrIp, { port = 8080 } = {}) {
   }
   return `http://${host(moduleOrIp)}:${port}/snapshot.jpg?t=${t}`;
 }
+
+/** The camera's latest exposure sample (histogram, clipping, verdict):
+ *  camera_base's /exposure.json. null in mock mode (no module to ask). */
+export function exposureUrl(moduleOrIp, { port = 8080 } = {}) {
+  if (MOCK) return null;
+  return `http://${host(moduleOrIp)}:${port}/exposure.json?t=${Date.now()}`;
+}

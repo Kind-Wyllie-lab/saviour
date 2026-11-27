@@ -91,8 +91,17 @@ class ModuleFacade:
         exposure sampler has run (see CameraBase._maybe_sample_exposure)."""
         if not getattr(self.module, "_exposure_sample_history", None):
             return None
-        return max(getattr(self.module, "_exposure_over_pct", 0.0),
-                   getattr(self.module, "_exposure_under_pct", 0.0))
+        # Only a real problem counts: a clipped background with a well-
+        # exposed subject reports 0 (exposure_check).
+        verdict = getattr(self.module, "_exposure_verdict", None)
+        if verdict == "over":
+            return getattr(self.module, "_exposure_over_pct", 0.0)
+        if verdict == "under":
+            return getattr(self.module, "_exposure_under_pct", 0.0)
+        if verdict is None:
+            return max(getattr(self.module, "_exposure_over_pct", 0.0),
+                       getattr(self.module, "_exposure_under_pct", 0.0))
+        return 0.0
 
     def get_rfid_db_status(self) -> dict | None:
         """RFID only: local store + DB sync state; None for other types."""

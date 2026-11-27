@@ -1,28 +1,108 @@
+/* Dashboard sound player: same card look as the health summary. */
 .spw {
+  min-width: 0;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 10px;
 }
-.spw-title { font-weight: 600; }
-.spw-row {
+
+.spw-header {
   display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
 }
-.spw-file { flex: 1 1 10em; min-width: 0; }
+.spw-header h2 { margin: 0; text-align: left; }
+.spw-link {
+  font-size: 0.82em;
+  opacity: 0.7;
+  color: var(--accent-color);
+  text-decoration: none;
+}
+.spw-link:hover { opacity: 1; }
+
+.spw-module {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+  min-width: 0;
+}
+.spw-module .status-icon { flex-shrink: 0; }
+.spw-module-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spw-board {
+  margin-left: auto;
+  font-size: 0.85em;
+  color: var(--secondary-text-color);
+  white-space: nowrap;
+}
+
+.spw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.spw-label {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--secondary-text-color);
+}
+.spw select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+.spw select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+.spw select:disabled { opacity: 0.6; }
+
+.spw-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 8.5em) 1fr auto;
+  align-items: end;
+  gap: 10px;
+}
+.spw-meta {
+  align-self: center;
+  justify-self: end;
+  font-size: 0.8em;
+  color: var(--secondary-text-color);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .spw-play {
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: 7px 18px;
+  border-radius: 6px;
   border: 1px solid var(--accent-color);
   background: var(--accent-color);
   color: #fff;
+  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
+.spw-play:hover:not(:disabled) { filter: brightness(1.1); }
 .spw-play:disabled { opacity: 0.45; cursor: not-allowed; }
+.spw-play--busy:disabled { opacity: 0.8; cursor: progress; }
+
 .spw-status {
   font-size: 0.8em;
   color: var(--secondary-text-color);
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
 }
+.spw-status--ok { color: var(--success-color, #3a9d5d); }
 .spw-status--bad { color: var(--recording-color); }

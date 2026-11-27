@@ -999,3 +999,11 @@ class TestExperimentMarker:
             m.assign_pins()
         assert m.experiment_marker_pins == [6]
         assert len(m.output_pins) == 1
+
+
+def test_preview_names_pins_by_use():
+    from src.modules.variants.ttl.ttl_module import _use_name
+    assert _use_name({"mode": "scheduled"}) == "Protocol output"
+    assert _use_name({"mode": "pseudorandom"}) == "Sync line"
+    assert _use_name({"mode": "experiment_marker"}) == "Experiment marker"
+    assert _use_name({"mode": "warp"}) == "warp"

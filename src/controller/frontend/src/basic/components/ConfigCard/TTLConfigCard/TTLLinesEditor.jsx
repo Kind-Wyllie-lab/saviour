@@ -70,9 +70,10 @@ function ModeFields({ schema, mode, settings, onChange }) {
 
 export default function TTLLinesEditor({
   id, module, ttlCfg, schema, availablePins, setFormData, loggedIn,
-  testPin, pinTestState, status,
+  testPin, pinTestState, holdPin, heldPins = {}, status,
 }) {
   const app = applicationOf(ttlCfg);
+  const activeLow = (ttlCfg.active_logic ?? "active_low") === "active_low";
   const isSync = SYNC_APPLICATIONS.includes(app);
   const [adding, setAdding] = useState(false);
   const pins = Object.entries(ttlCfg.pins ?? {}).sort(([a], [b]) => Number(a) - Number(b));
@@ -183,13 +184,24 @@ export default function TTLLinesEditor({
                 <span className="ttl-line-role">
                   {pin.label || roleLabel(roleKey)}
                 </span>
+                {isOutput && holdPin && (
+                  <button type="button"
+                    className={`btn-test-pin${heldPins[gpio] ? " btn-test-pin--active" : ""}`}
+                    disabled={testing === "testing"}
+                    title={heldPins[gpio]
+                      ? "Turn the line off again"
+                      : `Turn the line on (its active level, ${activeLow ? "LOW: active-low wiring" : "HIGH"}) whatever it's set up for, until pressed again (60 s at most)`}
+                    onClick={() => holdPin(gpio)}>
+                    {heldPins[gpio] ? "On · turn off" : "Test line"}
+                  </button>
+                )}
                 {isOutput && (
                   <button type="button"
                     className={`btn-test-pin${testing === "testing" ? " btn-test-pin--active" : testing === "done" ? " btn-test-pin--done" : ""}`}
-                    disabled={testing === "testing" || unsaved(gpio)}
-                    title={unsaved(gpio) ? "Save first" : "Run the line for 5 seconds so you can see it downstream"}
+                    disabled={testing === "testing" || !!heldPins[gpio] || unsaved(gpio)}
+                    title={unsaved(gpio) ? "Save first" : "Play what this line is set up to send (sync pulses, clock, marker…) for 5 seconds"}
                     onClick={() => testPin(gpio)}>
-                    {testing === "testing" ? "Testing…" : testing === "done" ? "Done" : "Test line"}
+                    {testing === "testing" ? "Running…" : testing === "done" ? "Done" : "Run pattern"}
                   </button>
                 )}
                 <button className="btn-remove" type="button" onClick={() => removePin(gpio)}>✕</button>

@@ -10,7 +10,7 @@ import { formatUtc } from "/src/basic/utils/time";
 
 // Quick setup's Sync lines step (plans/rig-quick-setup.md), shown when an
 // external sync is chosen: each line of that kind's sync TTL modules, with
-// Test line (runs it 5 s, the TTL card's test_pin) and "Seen in Open Ephys"
+// Run pattern (runs it 5 s, the TTL card's test_pin) and "Seen in Open Ephys"
 // (confirm_ttl_line, admin; same store as the TTL card's Lines tab,
 // src/controller/ttl_lines.py). Editing the lines stays on the TTL card.
 
@@ -114,7 +114,7 @@ export default function SyncLinesStep({ externalSync, ttlLines }) {
                           <button type="button" className="quick-setup__btn quick-setup__btn--small"
                             disabled={!!testing[k] || m.online === false} onClick={() => test(m.id, ln.gpio)}
                             title="Run the line for 5 seconds so you can see it downstream">
-                            {testing[k] === "testing" ? "Testing…" : testing[k] === "done" ? "Done" : "Test line"}
+                            {testing[k] === "testing" ? "Testing…" : testing[k] === "done" ? "Done" : "Run pattern"}
                           </button>
                         )}
                         {ROLES[ln.role]?.channel && (

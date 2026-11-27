@@ -155,6 +155,7 @@ class TTLModule(Module):
         # Set up TTL-specific callbacks for the command handler
         self.ttl_commands = {
             "test_pin": self.test_pin,
+            "hold_pin": self.hold_pin,
             "pulse_pin": self.pulse_pin,
             "protocol_status": self.protocol_status,
             "validate_protocol": self.validate_protocol,
@@ -302,6 +303,50 @@ class TTLModule(Module):
             return False, f"TTL generator thread(s) died: pin(s) {dead}"
         return True, None
 
+
+    HOLD_PIN_MAX_S = 60.0
+
+    def hold_pin(self, pin: int, on: bool = True, max_s: float = HOLD_PIN_MAX_S) -> dict:
+        """Plain line test: drive an output pin to its active level (or back
+        to rest with on=False), whatever its mode. Released by itself after
+        *max_s* (at most 60 s) so a forgotten test can't leave it on. Not
+        while recording; it cancels any other test on the pin."""
+        pin_number = int(pin)
+        pin_obj = next((p for p in self.output_pins if p.pin.number == pin_number), None)
+        if pin_obj is None:
+            return {"result": "error",
+                    "message": f"Pin {pin_number} is not an output pin"}
+        if self.is_recording:
+            return {"result": "error",
+                    "message": "Lines can't be tested while recording"}
+        refused = self._scheduled_pin_refusal(pin_number)
+        if refused:
+            return refused
+        existing = self._pin_test_stop_flags.pop(pin_number, None)
+        if existing is not None:
+            existing.set()
+        if not on:
+            self._set_output_inactive(pin_obj)
+            self.logger.info(f"hold_pin: GPIO {pin_number} released")
+            return {"result": "success", "message": f"GPIO {pin_number} off"}
+        hold_s = max(0.1, min(float(max_s), self.HOLD_PIN_MAX_S))
+        stop = threading.Event()
+        self._pin_test_stop_flags[pin_number] = stop
+
+        def _hold():
+            self.logger.info(f"hold_pin: GPIO {pin_number} on (up to {hold_s:g} s)")
+            try:
+                self._set_output_active(pin_obj)
+                stop.wait(hold_s)
+            finally:
+                self._set_output_inactive(pin_obj)
+                if self._pin_test_stop_flags.get(pin_number) is stop:
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                self.logger.info(f"hold_pin: GPIO {pin_number} off")
+
+        threading.Thread(target=_hold, daemon=True, name=f"hold-pin-{pin_number}").start()
+        return {"result": "success",
+                "message": f"GPIO {pin_number} on for up to {hold_s:g} s"}
 
     def test_pin(self, pin: int, duration: float = 5.0) -> dict:
         """Run a mode-faithful test on an output pin for *duration* seconds.

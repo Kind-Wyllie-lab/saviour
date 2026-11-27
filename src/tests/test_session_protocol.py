@@ -496,3 +496,17 @@ class TestRandomWithMaxGap:
              "min_gap_s": 30, "max_gap_s": 10,
              "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}]})
         assert any("max_gap_s (10) is below min_gap_s (30)" in e for e in exp.errors)
+
+
+class TestDeclaredDuration:
+    def test_steps_past_it_warn(self):
+        exp = expand({"version": 1, "duration_s": 30, "steps": [
+            {"at_s": 29, "action": "pulse", "params": {"pin": 17, "width_s": 2}}]})
+        assert exp.ok
+        assert exp.warnings == [
+            "steps run until 31.000 s, past the protocol's duration (30 s)"]
+
+    @pytest.mark.parametrize("bad", [0, -5, "20", True])
+    def test_must_be_positive_seconds(self, bad):
+        exp = expand({"version": 1, "duration_s": bad, "steps": []})
+        assert exp.errors == ["duration_s must be a positive number of seconds"]

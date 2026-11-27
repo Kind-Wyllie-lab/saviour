@@ -15,7 +15,10 @@ import useProtocolTest from "/src/basic/components/Protocol/useProtocolTest";
 // protocolModules.js), so a protocol that would be refused blocks Create
 // here first.
 
-export default function SessionProtocolField({ value, onChange, targetModules, durationMinutes, onCheck }) {
+// onUseDuration(seconds): make the session a timed one of that length (the
+// protocol's declared duration_s).
+export default function SessionProtocolField({ value, onChange, targetModules, durationMinutes, onCheck,
+  onUseDuration = null }) {
   const loggedIn = useIsLoggedIn();
   const library = useProtocolLibrary();
   const [designerOpen, setDesignerOpen] = useState(false);
@@ -62,6 +65,20 @@ export default function SessionProtocolField({ value, onChange, targetModules, d
       {missing && (
         <p className="form-warning">“{value}” isn't in the protocol library any more: pick another or None.</p>
       )}
+      {protocol && Number(protocol.duration_s) > 0 && onUseDuration && (() => {
+        const want = Number(protocol.duration_s);
+        const same = durationMinutes !== null && Math.abs(durationMinutes * 60 - want) < 0.5;
+        return (
+          <p className="form-hint protocol-duration">
+            This protocol runs for {fmtTime(want)}.{" "}
+            {same ? "The session records for exactly that long." : (
+              <button type="button" className="copy-btn" onClick={() => onUseDuration(want)}>
+                Record for {fmtTime(want)} (timed session)
+              </button>
+            )}
+          </p>
+        );
+      })()}
       {protocol && check.errors.map((e) => <p key={e} className="form-warning">{e}</p>)}
       {protocol && check.warnings.map((w) => <p key={w} className="form-warning">{w}</p>)}
       {protocol && ok && (

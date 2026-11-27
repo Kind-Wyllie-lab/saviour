@@ -532,6 +532,8 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
+  // The step picked on the timeline: { top: i } or { block: b, inner: j }.
+  const [picked, setPicked] = useState(null);
   const scheduled = useMemo(() => (scheduledPins ?? []).map(Number), [scheduledPins]);
   const norm = useMemo(() => normaliseProtocol(protocol ?? EMPTY_PROTOCOL), [protocol]);
   const outputs = norm.outputs;
@@ -539,7 +541,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
   const used = useMemo(() => usedOutputs(steps), [steps]);
   // Checked as a design (any pin); whether the rig has the lines Scheduled
   // is a requirement, flagged on the line.
-  const { result, rows: stepRows, spans: stepSpans } = useProtocolExpansion(
+  const { result, rows: stepRows, spans: stepSpans, bands: rawBands } = useProtocolExpansion(
     protocol ? norm : null, null, pinConfigs, moduleId, soundModules, outputs.ttl);
   const sound = { modules: soundModules };
   const soundOutputs = Math.max(0, ...soundModules.map((m) => Number(m.outputs) || 0));
@@ -564,10 +566,83 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
     }
     return [...out, ...ref.rows];
   }, [stepRows, outputs.sound, ref.rows]);
+  const isPicked = (path) => {
+    if (!picked || path === undefined) return false;
+    if (picked.top !== undefined) return path === String(picked.top);
+    const m = /^(\d+)\.\d+\.(\d+)$/.exec(path);
+    return !!m && Number(m[1]) === picked.block && Number(m[2]) === picked.inner;
+  };
   const spans = useMemo(() => [
-    ...stepSpans.map((s) => ({ ...s, label: renameSteps(s.label, names) })),
+    ...stepSpans.map((s) => ({ ...s, label: renameSteps(s.label, names), selected: isPicked(s.step) })),
     ...ref.spans,
-  ], [stepSpans, names, ref.spans]);
+    // isPicked reads `picked`, listed instead of the closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [stepSpans, names, ref.spans, picked]);
+  // Trial marks above the rows: blocks numbered as the table numbers them.
+  const blockNum = useMemo(() => {
+    const out = {};
+    let n = 0;
+    steps.forEach((s, i) => { if (s?.action === "repeat") out[i] = ++n; });
+    return out;
+  }, [steps]);
+  const bands = useMemo(() => (rawBands ?? []).map((b) => ({
+    ...b,
+    group: (blockNum[b.block] ?? 1) - 1,
+    label: String(b.trial + 1),
+    title: `Trial block ${blockNum[b.block] ?? "?"} · trial ${b.trial + 1} · ${fmtTime(b.start, true)} → ${fmtTime(b.end, true)}`,
+  })), [rawBands, blockNum]);
+
+  // Timeline editing: a click or drag on a line adds a step there (a pulse
+  // on a TTL line, a sound on a sound output; a drag sets its length), and
+  // clicking a step opens it below the timeline.
+  const createAt = (rowKey, start, end) => {
+    const at = Math.round(start * 1000) / 1000;
+    const len = end === null ? null : Math.round((end - start) * 1000) / 1000;
+    let step;
+    if (typeof rowKey === "number") {
+      step = newStep("pulse", [rowKey], at, sound);
+      if (len) step.params = { ...step.params, width_s: len };
+    } else if (String(rowKey).startsWith("snd:")) {
+      step = newStep("play", [], at, sound);
+      step.params = { ...step.params, output: Number(String(rowKey).slice(4)) };
+      if (len) step.params.duration_s = len;
+    } else return;
+    update({ steps: [...steps, step] });
+    setPicked({ top: steps.length });
+  };
+  const pickSpan = (span) => {
+    const m = /^(\d+)(?:\.\d+\.(\d+))?$/.exec(String(span.step ?? ""));
+    if (!m) return;
+    setPicked(m[2] === undefined ? { top: Number(m[1]) } : { block: Number(m[1]), inner: Number(m[2]) });
+  };
+  const canCreate = (row) => typeof row.key === "number" || String(row.key).startsWith("snd:");
+
+  // The picked step, where it lives, and how to change or remove it.
+  const pickedStep = !picked ? null
+    : picked.top !== undefined ? steps[picked.top]
+      : steps[picked.block]?.steps?.[picked.inner];
+  const pickedName = !picked ? ""
+    : picked.top !== undefined ? names[String(picked.top)]
+      : names[`${picked.block}.*.${picked.inner}`];
+  const pickedTrack = pickedStep ? tracks.find((t) => t.key === trackOf(pickedStep)) : null;
+  const pickedNum = pickedName ? Number(/step (\d+)$/.exec(pickedName)?.[1]) || 1 : 1;
+  const changePicked = (ns) => {
+    if (picked.top !== undefined) update({ steps: steps.map((x, j) => (j === picked.top ? ns : x)) });
+    else {
+      update({ steps: steps.map((x, j) => (j !== picked.block ? x
+        : { ...x, steps: x.steps.map((y, k) => (k === picked.inner ? ns : y)) })) });
+    }
+  };
+  const removePicked = () => {
+    if (picked.top !== undefined) update({ steps: steps.filter((_, j) => j !== picked.top) });
+    else {
+      update({ steps: steps.map((x, j) => (j !== picked.block ? x
+        : { ...x, steps: x.steps.filter((_, k) => k !== picked.inner) })) });
+    }
+    setPicked(null);
+  };
+  const declared = Number.isFinite(Number(norm.duration_s)) && Number(norm.duration_s) > 0
+    ? Number(norm.duration_s) : null;
 
   const openJson = () => {
     setJsonText(JSON.stringify(norm, null, 2));
@@ -605,12 +680,20 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
           soundOutputs={soundOutputs} hasTtl={!!moduleId} hasSound={soundModules.length > 0}
           onChange={(o) => update({ outputs: o })} />
         <div className="pe-top-right">
-          <div className="pe-field">
-            <span className="pe-field-label">Length</span>
-            <span className="pe-length" title="From the steps: when the last one ends">
-              {result?.ok && result.durationS > 0 ? fmtTime(result.durationS, result.durationS < 60) : "–"}
-            </span>
-          </div>
+          <NumField label="Duration" unit="s" value={norm.duration_s} width="6em"
+            placeholder={result?.durationS > 0 ? `${Math.ceil(result.durationS)}` : "optional"}
+            title="How long the protocol runs (optional). A timed session can take its length from it. Blank: until the last step ends."
+            onChange={(v) => {
+              if (v === "") {
+                // eslint-disable-next-line no-unused-vars -- dropping the key
+                const { duration_s, ...rest } = norm;
+                onChange(rest);
+              } else update({ duration_s: v });
+            }} />
+          <span className="pe-length" title="When the last step ends">
+            {declared ? fmtTime(declared) : "steps end"}{" "}
+            {result?.ok && result.durationS > 0 && !declared ? `at ${fmtTime(result.durationS, result.durationS < 60)}` : ""}
+          </span>
           <button type="button" className="pe-small" onClick={() => (jsonMode ? setJsonMode(false) : openJson())}>
             {jsonMode ? "Table view" : "Edit as JSON"}
           </button>
@@ -716,13 +799,37 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
         <ProtocolTimeline
           rows={rows}
           spans={spans}
-          duration={result?.durationS ?? 0}
+          bands={bands}
+          duration={Math.max(result?.durationS ?? 0, declared ?? 0)}
+          endT={declared}
           minDuration={TIMELINE_MIN_S}
           alwaysShow
           minRows={8}
           cursorT={cursorT}
+          onCreate={createAt}
+          onPick={pickSpan}
+          canCreate={canCreate}
           emptyText="Pick the TTL lines and sound outputs this protocol uses to get rows here."
         />
+        {pickedStep && (
+          <div className="pe-picked">
+            <div className="pe-picked-head">
+              <span className="pe-picked-name">{pickedName ? pickedName[0].toUpperCase() + pickedName.slice(1) : "Step"}</span>
+              {picked.block !== undefined && (
+                <span className="pe-picked-hint">
+                  In a trial block: changes apply to every trial; times are from each trial&apos;s start.
+                </span>
+              )}
+              <button type="button" className="pe-remove" title="Close" onClick={() => setPicked(null)}>✕</button>
+            </div>
+            {pickedTrack ? (
+              <StepLine step={pickedStep} num={pickedNum} track={pickedTrack} sound={sound}
+                inBlock={picked.block !== undefined} onChange={changePicked} onRemove={removePicked} />
+            ) : (
+              <p className="pe-picked-hint">This step drives several lines: edit it in the table above.</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

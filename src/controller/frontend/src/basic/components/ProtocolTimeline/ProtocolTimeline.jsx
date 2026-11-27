@@ -21,6 +21,17 @@ import "./ProtocolTimeline.css";
 // or "Reset zoom" goes back to the default view.
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
 // says how many), so a long fast train stays drawable and readable.
+//
+// bands: [{ key, start, end, group, label, title }] -- coloured marks in a
+//   strip above the rows (one per trial of a trial block; group picks the
+//   colour, label is drawn inside when it fits).
+// endT: a dashed "end" line (the protocol's declared duration), or null.
+// Editing (the designer): onCreate(rowKey, start, end|null) when a line is
+//   clicked (end null) or dragged across, times snapped to the grid (hold
+//   Alt for none); onPick(span) when a bar with a `step` is clicked;
+//   canCreate(row) says which rows take new steps. Spans with `selected`
+//   are drawn highlighted. With onCreate, dragging on the rows creates, so
+//   zoom-by-drag moves to the time axis (and the band strip).
 
 const LABEL_W = 112;
 const LABEL_CHARS = 15;
@@ -29,6 +40,8 @@ const ROW_H = 30;
 const BAR_H = 12;
 const AXIS_H = 24;   // below the rows
 const TOP = 6;       // above the first row
+const BAND_H = 16;   // the trial strip, when there are bands
+const BAND_COLOURS = 6;
 const PAD_R = 12;
 const MIN_SPAN_S = 0.002;
 const MAX_SPAN_S = 6 * 3600;
@@ -58,7 +71,8 @@ function describe(bar) {
 // highlightRow: a row key to emphasise (the others fade), or null.
 // cursorT: a "now" line at this many seconds (a running test), or null.
 export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyText, highlightRow = null,
-  cursorT = null, minDuration = 0, alwaysShow = false, minRows = 0 }) {
+  cursorT = null, minDuration = 0, alwaysShow = false, minRows = 0, bands = [], endT = null,
+  onCreate = null, onPick = null, canCreate = null }) {
   const placeholder = alwaysShow && !rowsIn.length;
   const rows = useMemo(() => {
     const out = placeholder ? [{ key: "__none", label: "No outputs" }] : [...rowsIn];
@@ -84,7 +98,14 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const maxSpan = Math.max(fullEnd, MAX_SPAN_S);
   const [v0, v1] = view ?? [0, fullEnd];
   const plotW = width - LABEL_W - PAD_R;
-  const plotBottom = TOP + rows.length * ROW_H;
+  const hasBands = bands.length > 0;
+  const rowsTop = TOP + (hasBands ? BAND_H : 0);
+  const plotBottom = rowsTop + rows.length * ROW_H;
+  const editable = !!onCreate;
+  // Grid snap for new steps: about 60 snaps across the view.
+  const snapStep = niceStep(v1 - v0, 60);
+  const snapT = (t, free) => Math.max(0, free ? Math.round(t * 1000) / 1000
+    : Math.round(t / snapStep) * snapStep);
   const height = plotBottom + AXIS_H;
   const xOf = (t) => LABEL_W + ((t - v0) / (v1 - v0)) * plotW;
   const tOf = (x) => v0 + ((x - LABEL_W) / plotW) * (v1 - v0);
@@ -141,13 +162,15 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
       const x0 = xOf(Math.max(s.start, v0));
       const x1 = Math.max(xOf(Math.min(end, v1)), x0 + 2);
       const prev = last[ri];
-      if (prev && !held && !prev.held && !s.ref && x0 <= prev.x1 + 1) {
+      if (prev && !held && !prev.held && !s.ref && !s.selected && !prev.selected
+          && x0 <= prev.x1 + 1) {
         prev.x1 = Math.max(prev.x1, x1);
         prev.end = end;
         prev.count += 1;
         continue;
       }
-      const bar = { ri, x0, x1, start: s.start, end, held, count: 1, label: s.label, ref: !!s.ref };
+      const bar = { ri, x0, x1, start: s.start, end, held, count: 1, label: s.label, ref: !!s.ref,
+        step: s.step, selected: !!s.selected, span: s };
       out.push(bar);
       last[ri] = bar;
     }
@@ -174,14 +197,13 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
-  const onMove = (e) => {
-    const { x, y } = svgPoint(e);
-    if (drag) {
-      setDrag({ ...drag, x1: Math.min(Math.max(x, LABEL_W), LABEL_W + plotW) });
-      return;
-    }
-    const ri = Math.floor((y - TOP) / ROW_H);
-    if (ri < 0 || ri >= rows.length || x < LABEL_W || rows[ri].pad || rows[ri].key === "__none") { setHover(null); return; }
+  const rowAt = (y) => {
+    const ri = Math.floor((y - rowsTop) / ROW_H);
+    return ri >= 0 && ri < rows.length && y >= rowsTop ? ri : -1;
+  };
+  const usable = (r) => r && !r.pad && r.key !== "__none";
+  const creatable = (r) => usable(r) && !r.ref && (canCreate ? canCreate(r) : true);
+  const barAt = (ri, x) => {
     // Hit target wider than the mark: ±4 px around each bar.
     let best = null;
     for (const b of bars) {
@@ -189,22 +211,65 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
       const d = x < b.x0 ? b.x0 - x : x > b.x1 ? x - b.x1 : 0;
       if (!best || d < best.d) best = { b, d };
     }
-    setHover(best ? { x, y: TOP + ri * ROW_H, text: `${rows[ri].label} · ${describe(best.b)}` }
-                  : { x, y: TOP + ri * ROW_H, text: `${rows[ri].label} · ${fmtTime(tOf(x), withMs)}`,
-                      quiet: true });
+    return best?.b ?? null;
+  };
+  const clampX = (x) => Math.min(Math.max(x, LABEL_W), LABEL_W + plotW);
+
+  const onMove = (e) => {
+    const { x, y } = svgPoint(e);
+    if (drag) {
+      setDrag({ ...drag, x1: clampX(x), free: e.altKey });
+      return;
+    }
+    if (hasBands && y >= TOP && y < rowsTop && x >= LABEL_W) {
+      const band = bands.find((bd) => x >= xOf(bd.start) - 2 && x <= xOf(bd.end ?? bd.start) + 2);
+      setHover(band ? { x, y: TOP - ROW_H + BAND_H, text: band.title ?? band.label } : null);
+      return;
+    }
+    const ri = rowAt(y);
+    if (ri < 0 || x < LABEL_W || !usable(rows[ri])) { setHover(null); return; }
+    const b = barAt(ri, x);
+    const y0 = rowsTop + ri * ROW_H;
+    const at = editable ? snapT(tOf(x), e.altKey) : tOf(x);
+    setHover(b ? { x, y: y0, text: `${rows[ri].label} · ${describe(b)}`, onBar: !!(onPick && b.step !== undefined && !b.ref) }
+               : { x: editable && creatable(rows[ri]) ? xOf(at) : x, y: y0, quiet: true,
+                   text: `${rows[ri].label} · ${fmtTime(at, withMs || snapStep < 1)}`
+                     + (editable && creatable(rows[ri]) ? " · click or drag to add a step" : "") });
   };
 
   const onDown = (e) => {
-    const { x } = svgPoint(e);
+    const { x, y } = svgPoint(e);
     if (x < LABEL_W) return;
-    setDrag({ x0: x, x1: x });
+    const ri = rowAt(y);
+    if (editable && ri >= 0 && usable(rows[ri])) {
+      const b = barAt(ri, x);
+      if (b) {
+        if (onPick && b.step !== undefined && !b.ref) setDrag({ kind: "pick", bar: b, x0: x, x1: x });
+        return;
+      }
+      if (creatable(rows[ri])) setDrag({ kind: "create", ri, x0: x, x1: x, free: e.altKey });
+      return;
+    }
+    setDrag({ kind: "zoom", x0: x, x1: x });
   };
 
   const onUp = () => {
-    if (drag && Math.abs(drag.x1 - drag.x0) > 4) {
+    if (!drag) return;
+    const moved = Math.abs(drag.x1 - drag.x0) > 4;
+    if (drag.kind === "zoom" && moved) {
       const a = tOf(Math.min(drag.x0, drag.x1));
       const b = tOf(Math.max(drag.x0, drag.x1));
       if (b - a > 0.001) setView([Math.max(0, a), b]);
+    } else if (drag.kind === "pick" && !moved) {
+      onPick(drag.bar.span);
+    } else if (drag.kind === "create") {
+      const key = rows[drag.ri].key;
+      if (!moved) onCreate(key, snapT(tOf(drag.x0), drag.free), null);
+      else {
+        const a = snapT(tOf(Math.min(drag.x0, drag.x1)), drag.free);
+        const b = snapT(tOf(Math.max(drag.x0, drag.x1)), drag.free);
+        onCreate(key, a, b > a ? b : null);
+      }
     }
     setDrag(null);
   };
@@ -223,7 +288,11 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
             : duration > 0 ? `Whole protocol · ${fmtTime(duration, duration < 60)}`
               : `No steps yet · showing ${fmtTime(fullEnd)}`}
         </span>
-        <span className="ptl-hint">Drag to zoom in · Ctrl+scroll to zoom · Shift+scroll to pan</span>
+        <span className="ptl-hint">
+          {editable
+            ? `Click or drag on a line to add a step (snaps to ${fmtTime(snapStep, snapStep < 1)}, Alt for none) · click a step to edit · drag the time axis to zoom · Ctrl+scroll to zoom`
+            : "Drag to zoom in · Ctrl+scroll to zoom · Shift+scroll to pan"}
+        </span>
         <button type="button" className="ptl-reset" title="Zoom out" aria-label="Zoom out"
           disabled={v1 - v0 >= maxSpan - 1e-9} onClick={() => zoomAbout(2, zoomed ? mid : 0)}>−</button>
         <button type="button" className="ptl-reset" title="Zoom in" aria-label="Zoom in"
@@ -232,7 +301,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           <button type="button" className="ptl-reset" onClick={() => setView(null)}>Reset zoom</button>
         )}
       </div>
-      <div className="ptl-plot" ref={plotRef}>
+      <div className={`ptl-plot${editable ? " ptl-plot--editable" : ""}${hover?.onBar ? " ptl-plot--onbar" : ""}`} ref={plotRef}>
         <svg
           width={width}
           height={height}
@@ -246,11 +315,11 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
         >
           {/* grid + axis */}
           {minuteLines.map((t) => (
-            <line key={`m${t}`} className="ptl-grid ptl-grid--minor" x1={xOf(t)} x2={xOf(t)} y1={TOP} y2={plotBottom} />
+            <line key={`m${t}`} className="ptl-grid ptl-grid--minor" x1={xOf(t)} x2={xOf(t)} y1={rowsTop} y2={plotBottom} />
           ))}
           {ticks.map((t) => (
             <g key={t}>
-              <line className="ptl-grid" x1={xOf(t)} x2={xOf(t)} y1={TOP} y2={plotBottom + 4} />
+              <line className="ptl-grid" x1={xOf(t)} x2={xOf(t)} y1={rowsTop} y2={plotBottom + 4} />
               <text className="ptl-tick" x={xOf(t)} y={plotBottom + 17} textAnchor="middle">
                 {fmtTime(t, withMs)}
               </text>
@@ -259,7 +328,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           <line className="ptl-axis" x1={LABEL_W} x2={LABEL_W + plotW} y1={plotBottom} y2={plotBottom} />
           {/* rows */}
           {rows.map((r, i) => {
-            const y = TOP + i * ROW_H;
+            const y = rowsTop + i * ROW_H;
             return (
               <g key={r.key}
                 className={[r.ref ? "ptl-row--ref" : "",
@@ -280,21 +349,54 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
             );
           })}
           {placeholder && (
-            <text className="ptl-sublabel" x={LABEL_W + 8} y={TOP + ROW_H / 2 + 4}>{emptyText}</text>
+            <text className="ptl-sublabel" x={LABEL_W + 8} y={rowsTop + ROW_H / 2 + 4}>{emptyText}</text>
           )}
           {/* bars */}
           {bars.map((b, i) => (
             <rect
               key={i}
-              className={`ptl-bar${b.ref ? " ptl-bar--ref" : ""}${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${
+              className={`ptl-bar${b.ref ? " ptl-bar--ref" : ""}${b.held ? " ptl-bar--held" : ""}${b.count > 1 ? " ptl-bar--dense" : ""}${b.selected ? " ptl-bar--selected" : ""}${
                 highlightRow !== null && rows[b.ri].key !== highlightRow ? " ptl-bar--faded" : ""}`}
               x={b.x0}
-              y={TOP + b.ri * ROW_H + (ROW_H - BAR_H) / 2}
+              y={rowsTop + b.ri * ROW_H + (ROW_H - BAR_H) / 2}
               width={Math.max(2, b.x1 - b.x0)}
               height={BAR_H}
               rx={Math.min(2, (b.x1 - b.x0) / 2)}
             />
           ))}
+          {/* trial strip */}
+          {hasBands && <text className="ptl-sublabel" x={8} y={TOP + BAND_H / 2 + 3}>Trials</text>}
+          {bands.map((bd) => {
+            const end = bd.end ?? bd.start;
+            if (end < v0 || bd.start > v1) return null;
+            const x0 = xOf(Math.max(bd.start, v0));
+            const w = Math.max(3, xOf(Math.min(end, v1)) - x0);
+            return (
+              <g key={bd.key}>
+                <rect className={`ptl-band ptl-band--c${(bd.group ?? 0) % BAND_COLOURS}`}
+                  x={x0} y={TOP + 2} width={w} height={BAND_H - 4} rx={2} />
+                {bd.label && w >= 7 * String(bd.label).length + 4 && (
+                  <text className="ptl-band-label" x={x0 + w / 2} y={TOP + BAND_H / 2 + 3} textAnchor="middle">
+                    {bd.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {endT !== null && endT >= v0 && endT <= v1 && (
+            <g>
+              <line className="ptl-end" x1={xOf(endT)} x2={xOf(endT)} y1={TOP} y2={plotBottom} />
+              <text className="ptl-end-label" x={xOf(endT) - 4} y={plotBottom - 4} textAnchor="end">end</text>
+            </g>
+          )}
+          {drag?.kind === "create" && (() => {
+            const a = xOf(snapT(tOf(Math.min(drag.x0, drag.x1)), drag.free));
+            const b = xOf(snapT(tOf(Math.max(drag.x0, drag.x1)), drag.free));
+            return (
+              <rect className="ptl-create" x={a} width={Math.max(2, b - a)}
+                y={rowsTop + drag.ri * ROW_H + (ROW_H - BAR_H) / 2} height={BAR_H} />
+            );
+          })()}
           {cursorT !== null && cursorT >= v0 && cursorT <= v1 && (
             <line className="ptl-now" x1={xOf(cursorT)} x2={xOf(cursorT)} y1={TOP} y2={plotBottom} />
           )}
@@ -302,7 +404,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           {hover && !drag && (
             <line className="ptl-cursor" x1={hover.x} x2={hover.x} y1={TOP} y2={plotBottom} />
           )}
-          {drag && (
+          {drag?.kind === "zoom" && (
             <rect className="ptl-brush" x={Math.min(drag.x0, drag.x1)} y={TOP}
               width={Math.abs(drag.x1 - drag.x0)} height={plotBottom - TOP} />
           )}

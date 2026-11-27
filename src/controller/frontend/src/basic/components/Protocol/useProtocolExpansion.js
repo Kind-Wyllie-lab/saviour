@@ -45,14 +45,34 @@ export function timelineOf(result, { pins = [], pinConfigs = null, soundModule =
     start: s.start,
     end: s.end === null && result.endState === "all_inactive" ? result.durationS : s.end,
     label: `${s.action} (step ${s.step})`,
+    step: s.step,
   }));
   const cueSpans = (result.cues ?? []).map((c) => ({
     row: `snd:${c.output}`,
     start: c.t_s,
     end: c.length_s === null ? c.t_s + UNKNOWN_LENGTH_S : cueEnd(c),
     label: `${c.file} (step ${c.step})${c.length_s === null ? ", length unknown" : ""}`,
+    step: c.step,
   }));
-  return { rows: [...pinRows, ...soundRows], spans: [...edgeSpans, ...cueSpans] };
+  const spans = [...edgeSpans, ...cueSpans];
+  return { rows: [...pinRows, ...soundRows], spans, bands: trialBands(spans) };
+}
+
+/** One band per trial of a repeat: steps "<block>.<trial>.<step>" grouped by
+ *  block and trial, from the first start to the last end. [{ key, block,
+ *  trial, start, end }], in time order. */
+export function trialBands(spans) {
+  const by = new Map();
+  for (const s of spans) {
+    const m = /^(\d+)\.(\d+)\./.exec(String(s.step ?? ""));
+    if (!m) continue;
+    const key = `${m[1]}.${m[2]}`;
+    const end = s.end ?? s.start;
+    const b = by.get(key);
+    if (!b) by.set(key, { key, block: Number(m[1]), trial: Number(m[2]), start: s.start, end });
+    else { b.start = Math.min(b.start, s.start); b.end = Math.max(b.end, end); }
+  }
+  return [...by.values()].sort((a, b) => a.start - b.start);
 }
 
 // soundModules: [{ id, name, files, outputs }] (protocolModules.soundModulesOf).
@@ -85,11 +105,11 @@ export default function useProtocolExpansion(protocol, scheduledPins, pinConfigs
   }, [protocol, moduleId, pins, anyPin, soundModule]);
 
   const rowKey = rowPins ? [...rowPins].sort((a, b) => a - b).join(",") : null;
-  const { rows, spans } = useMemo(
+  const { rows, spans, bands } = useMemo(
     () => timelineOf(result, {
       pins: rowKey === null ? pins : rowKey ? rowKey.split(",").map(Number) : [], pinConfigs, soundModule,
     }),
     [result, pins, rowKey, pinConfigs, soundModule]);
 
-  return { pins, result, rows, spans, soundModule };
+  return { pins, result, rows, spans, bands, soundModule };
 }

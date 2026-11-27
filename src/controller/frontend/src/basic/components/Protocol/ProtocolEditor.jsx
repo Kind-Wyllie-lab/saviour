@@ -61,12 +61,12 @@ function newStep(action, pins, atS = 0, sound = null) {
   return { at_s: atS, action, params: defaultParams(action, pins, sound) };
 }
 
-// Switch a repeat block between regular gaps (every_s + jitter_s) and a
-// pseudo-random spread over a window (spread_s + min_gap_s), keeping the
-// overall length about the same.
+// Switch a repeat block between regular gaps (every_s + jitter_s) and
+// random placement within a window (spread_s + min_gap_s, optional
+// max_gap_s), keeping the overall length about the same.
 function toSpacing(step, mode) {
   // eslint-disable-next-line no-unused-vars -- dropping the other mode's keys
-  const { every_s, jitter_s, spread_s, min_gap_s, ...rest } = step;
+  const { every_s, jitter_s, spread_s, min_gap_s, max_gap_s, ...rest } = step;
   const gaps = Math.max((Number(step.times) || 1) - 1, 1);
   if (mode === "spread") {
     if (spread_s !== undefined) return step;
@@ -427,15 +427,24 @@ function TrialBlock({ step, num, tracks, sound, onChange, onRemove, flags }) {
           <select value={"spread_s" in step ? "spread" : "regular"}
             onChange={(e) => onChange(toSpacing(step, e.target.value))}>
             <option value="regular">Regular gaps</option>
-            <option value="spread">Spread over a window</option>
+            <option value="spread">Random</option>
           </select>
         </label>
         {"spread_s" in step ? (
           <>
             <NumField label="Within" unit="s" value={step.spread_s} onChange={(v) => set({ spread_s: v })} width="5.5em"
-              title="Every trial starts within this many seconds of the block's start, placed pseudo-randomly (seeded)" />
+              title="Every trial starts within this many seconds of the block's start, at random times (seeded: the Random gap pattern number picks them)" />
             <NumField label="Min gap" unit="s" value={step.min_gap_s ?? 0} onChange={(v) => set({ min_gap_s: v })} width="5em"
               title="Shortest time from one trial's start to the next" />
+            <NumField label="Max gap" unit="s" value={step.max_gap_s} width="5em" placeholder="none"
+              title="Longest time from one trial's start to the next. Blank: no limit."
+              onChange={(v) => {
+                if (v === "") {
+                  // eslint-disable-next-line no-unused-vars -- dropping the key
+                  const { max_gap_s, ...rest } = step;
+                  onChange(rest);
+                } else set({ max_gap_s: v });
+              }} />
           </>
         ) : (
           <>
@@ -660,7 +669,7 @@ export default function ProtocolEditor({ protocol, onChange, scheduledPins, pinC
             </button>
           </div>
           <p className="pe-random-hint">
-            Trial blocks with jitter, or spread over a window, place trials at random. This
+            Trial blocks with jitter, or Random spacing, place trials at random. This
             number (the seed) picks which random times you get: keep it and every session (and
             every animal) gets the same schedule, the one in the timeline below; change it for
             a different one. The times used are saved with each session's data.

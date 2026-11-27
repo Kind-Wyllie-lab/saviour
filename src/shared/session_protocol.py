@@ -35,7 +35,11 @@ Format (v1)::
   (start to start): ``times`` draws in [0, spread_s - (times-1)*min_gap_s],
   sorted, the k-th plus k*min_gap_s, so every valid placement is equally
   likely. E.g. 10 trials pseudo-randomly over 20 min, ≥ 60 s apart. Same
-  seed, same placement.
+  seed, same placement. With ``max_gap_s`` too (the editor's "Random" with a
+  max gap), each of the ``times - 1`` gaps (start to start) is drawn in
+  [min_gap_s, max_gap_s]; if they add up to more than ``spread_s`` their
+  parts above the minimum are scaled down to fit; the run then starts at a
+  draw in [0, spread_s - their sum]. Gaps first, then that offset.
 - ``set`` takes an optional ``duration_s``: hold the level that long, then
   switch to the other level (a second edge from the same step); absent or 0
   holds it until another step changes it.
@@ -341,6 +345,15 @@ def expand(protocol: dict, *, module_id: str | None = None,
                     if not isinstance(inner, list) or not inner:
                         errs.append(f"step {where}: repeat needs a non-empty 'steps' list")
                         continue
+                    max_gap = step.get("max_gap_s")
+                    if max_gap is not None:
+                        max_gap = _num(max_gap, "max_gap_s", where, errs, minimum=0)
+                        if max_gap is None:
+                            continue
+                        if gap is not None and max_gap < gap:
+                            errs.append(f"step {where}: max_gap_s ({max_gap:g}) is "
+                                        f"below min_gap_s ({gap:g})")
+                            continue
                     if times is None or spread is None or gap is None:
                         continue
                     free = spread - (times - 1) * gap
@@ -351,6 +364,21 @@ def expand(protocol: dict, *, module_id: str | None = None,
                             f"(got {spread:g} s)")
                         continue
                     free = max(free, 0.0)
+                    if max_gap is not None:
+                        gaps = [rng.uniform(gap, max_gap) if max_gap > gap else gap
+                                for _ in range(times - 1)]
+                        extra = sum(gaps) - (times - 1) * gap
+                        if extra > free > 0 or (extra > 0 and free == 0):
+                            gaps = [gap + (g - gap) * (free / extra) for g in gaps]
+                        slack = max(spread - sum(gaps), 0.0)
+                        start = t0 + (rng.uniform(0.0, slack) if slack > 0 else 0.0)
+                        for k in range(times):
+                            if k > 0:
+                                start += gaps[k - 1]
+                            walk(inner, start, f"{where}.{k}.", mod)
+                            if len(edges) + len(cues) > MAX_EDGES:
+                                return
+                        continue
                     draws = sorted(rng.uniform(0.0, free) if free > 0 else 0.0
                                    for _ in range(times))
                     for k, u in enumerate(draws):

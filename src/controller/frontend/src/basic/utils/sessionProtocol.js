@@ -227,7 +227,7 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
       if (action === "repeat") {
         const times = int(step.times, "times", where, errs, 1);
         if ("spread_s" in step) {
-          // Spread over a window: see src/shared/session_protocol.py.
+          // Random within a window: see src/shared/session_protocol.py.
           if ("every_s" in step) {
             errs.push(`step ${where}: give every_s or spread_s, not both`);
             continue;
@@ -239,6 +239,15 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
             errs.push(`step ${where}: repeat needs a non-empty 'steps' list`);
             continue;
           }
+          let maxGap = step.max_gap_s ?? null;
+          if (maxGap !== null) {
+            maxGap = num(maxGap, "max_gap_s", where, errs, { minimum: 0 });
+            if (maxGap === null) continue;
+            if (gap !== null && maxGap < gap) {
+              errs.push(`step ${where}: max_gap_s (${fmtG(maxGap)}) is below min_gap_s (${fmtG(gap)})`);
+              continue;
+            }
+          }
           if (times === null || spread === null || gap === null) continue;
           let free = spread - (times - 1) * gap;
           if (free < -1e-9) {
@@ -246,6 +255,23 @@ export function expand(protocol, { moduleId = null, allowedPins = null, moduleTy
             continue;
           }
           free = Math.max(free, 0);
+          if (maxGap !== null) {
+            // Random with a max gap: see src/shared/session_protocol.py.
+            let gaps = [];
+            for (let k = 0; k < times - 1; k++) gaps.push(maxGap > gap ? rng.uniform(gap, maxGap) : gap);
+            const extra = gaps.reduce((a, b) => a + b, 0) - (times - 1) * gap;
+            if ((extra > free && free > 0) || (extra > 0 && free === 0)) {
+              gaps = gaps.map((g) => gap + (g - gap) * (free / extra));
+            }
+            const slack = Math.max(spread - gaps.reduce((a, b) => a + b, 0), 0);
+            let start = t0 + (slack > 0 ? rng.uniform(0, slack) : 0);
+            for (let k = 0; k < times; k++) {
+              if (k > 0) start += gaps[k - 1];
+              walk(inner, start, `${where}.${k}.`, mod);
+              if (edges.length + cues.length > MAX_EDGES) return;
+            }
+            continue;
+          }
           const draws = [];
           for (let k = 0; k < times; k++) draws.push(free > 0 ? rng.uniform(0, free) : 0);
           draws.sort((a, b) => a - b);

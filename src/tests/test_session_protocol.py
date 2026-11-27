@@ -457,3 +457,42 @@ class TestSetDuration:
              "params": {"pin": 17, "level": "high", "duration_s": 10}},
             {"at_s": 5, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]})
         assert not exp.ok
+
+
+class TestRandomWithMaxGap:
+    """repeat with spread_s + min_gap_s + max_gap_s (the editor's "Random")."""
+
+    @staticmethod
+    def _starts(times, spread, lo, hi, seed, at=0):
+        exp = expand({"version": 1, "seed": seed, "steps": [
+            {"at_s": at, "action": "repeat", "times": times, "spread_s": spread,
+             "min_gap_s": lo, "max_gap_s": hi,
+             "steps": [{"at_s": 0, "action": "pulse",
+                        "params": {"pin": 17, "width_s": 0.5}}]}]})
+        assert exp.ok, exp.errors
+        return [e.t_s for e in exp.edges if e.level == "high"]
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_gaps_within_bounds_and_window(self, seed):
+        starts = self._starts(8, 1189, 60, 180, seed, at=10)
+        assert len(starts) == 8
+        gaps = [b - a for a, b in itertools.pairwise(starts)]
+        assert all(60 - 1e-6 <= g <= 180 + 1e-6 for g in gaps)
+        assert 10 <= starts[0] and starts[-1] <= 10 + 1189 + 1e-6
+
+    @pytest.mark.parametrize("seed", range(10))
+    def test_squeezed_to_fit_the_window(self, seed):
+        starts = self._starts(6, 400, 30, 200, seed)
+        gaps = [b - a for a, b in itertools.pairwise(starts)]
+        assert all(g >= 30 - 1e-6 for g in gaps) and starts[-1] <= 400 + 1e-6
+
+    def test_equal_min_and_max_is_regular(self):
+        starts = self._starts(4, 500, 100, 100, 1)
+        assert [round(b - a, 6) for a, b in itertools.pairwise(starts)] == [100] * 3
+
+    def test_max_below_min_is_refused(self):
+        exp = expand({"version": 1, "steps": [
+            {"at_s": 0, "action": "repeat", "times": 3, "spread_s": 100,
+             "min_gap_s": 30, "max_gap_s": 10,
+             "steps": [{"at_s": 0, "action": "pulse", "params": {"pin": 17, "width_s": 1}}]}]})
+        assert any("max_gap_s (10) is below min_gap_s (30)" in e for e in exp.errors)

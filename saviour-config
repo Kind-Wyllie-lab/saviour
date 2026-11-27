@@ -1872,6 +1872,19 @@ configure_module_dependencies() {
         done
     fi
 
+    # A DKMS driver (hailort-pcie-driver) is built only for the running
+    # kernel, but the same apt run can pull in a newer kernel (hailo-all did
+    # on hailo_camera_0fcc, 2026-11-27): after the reboot the Pi runs a
+    # kernel with no Hailo driver. Build for every installed kernel that has
+    # headers.
+    if command -v dkms >/dev/null 2>&1; then
+        local kdir
+        for kdir in /lib/modules/*; do
+            [ -e "$kdir/build" ] || continue
+            run_logged dkms autoinstall -k "$(basename "$kdir")" || true
+        done
+    fi
+
     # A freshly installed kernel driver (hailort-pcie-driver via dkms) often
     # can't bind until a reboot: on a long-running Pi the probe fails
     # allocating its DMA memory (dmesg "Failed allocating vdma engines",

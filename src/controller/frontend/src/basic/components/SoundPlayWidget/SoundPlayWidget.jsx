@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import "../MJPEGStreamCard/MJPEGStreamCard.css";
 import "./SoundPlayWidget.css";
 
 // Dashboard widget for one sound module: pick a sound (and an output on a
@@ -77,14 +78,11 @@ export default function SoundPlayWidget({ module }) {
 
   return (
     <div className="spw card">
-      <div className="spw-header">
-        <h2>Sound</h2>
-        <Link to={`/settings#${module.id}`} className="spw-link">Settings →</Link>
-      </div>
-      <div className="spw-module">
-        <span className={`status-icon ${String(module.status ?? "").toLowerCase()}`} aria-hidden="true" />
-        <span className="spw-module-name">{module.name || module.id}</span>
-        {hw.board && <span className="spw-board">{hw.board}</span>}
+      {/* Header as on the livestream cards: the module name, ⚙ to its settings. */}
+      <div className="mjpeg-stream-header spw-header">
+        <span className="mjpeg-stream-label">{module.name || module.id}</span>
+        <Link to={`/settings#${module.id}`} className="mjpeg-settings-button"
+          title="Module settings" aria-label="Module settings">⚙</Link>
       </div>
 
       <label className="spw-field">

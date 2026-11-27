@@ -17,7 +17,7 @@ import "./ProtocolTimeline.css";
 //   this many, so the chart keeps its height before outputs exist.
 // Plot on black, time axis along the bottom.
 //
-// Zoom: drag across the plot, the − / + buttons, or Ctrl+scroll at the
+// Zoom: drag across the plot (read-only timelines), the − / + buttons, or Ctrl+scroll at the
 // pointer (out to 6 h or the whole protocol); Shift+scroll pans. Double-click
 // or "Reset zoom" goes back to the default view.
 // Bars closer than a pixel at the current zoom merge into one (its tooltip
@@ -32,7 +32,8 @@ import "./ProtocolTimeline.css";
 //   Alt for none); onPick(span) when a bar with a `step` is clicked;
 //   canCreate(row) says which rows take new steps. Spans with `selected`
 //   are drawn highlighted. With onCreate, dragging on the rows creates, so
-//   zoom-by-drag moves to the time axis (and the band strip).
+//   zoom-by-drag moves to the trial strip.
+// Pan (hand cursor): drag the time axis, Space + drag, or middle-drag.
 
 const LABEL_W = 112;
 const LABEL_CHARS = 15;
@@ -87,6 +88,29 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const plotRef = useRef(null);
   const [drag, setDrag] = useState(null);
   const [hover, setHover] = useState(null);
+  const [overAxis, setOverAxis] = useState(false);
+  // Space held (while the pointer is over the plot) turns drags into pans.
+  const spaceDown = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const pointerIn = useRef(false);
+  useEffect(() => {
+    const down = (e) => {
+      if (e.code !== "Space" || !pointerIn.current) return;
+      const tag = (e.target?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      e.preventDefault();   // no page scroll
+      spaceDown.current = true;
+      setSpaceHeld(true);
+    };
+    const up = (e) => {
+      if (e.code !== "Space") return;
+      spaceDown.current = false;
+      setSpaceHeld(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -218,6 +242,15 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
 
   const onMove = (e) => {
     const { x, y } = svgPoint(e);
+    if (drag?.kind === "pan") {
+      // Hand drag: the time under the pointer stays under it.
+      const [a, b] = drag.view;
+      const dt = ((drag.x0 - x) / plotW) * (b - a);
+      const n0 = Math.max(0, a + dt);
+      setView([n0, n0 + (b - a)]);
+      return;
+    }
+    setOverAxis(y > plotBottom && x >= LABEL_W);
     if (drag) {
       setDrag({ ...drag, x1: clampX(x), free: e.altKey, shift: drag.shift || e.shiftKey });
       return;
@@ -242,6 +275,15 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
   const onDown = (e) => {
     const { x, y } = svgPoint(e);
     if (x < LABEL_W) return;
+    // Pan: the middle button or Space + drag anywhere, or a drag on the
+    // time axis.
+    if (e.button === 1 || spaceDown.current || y > plotBottom) {
+      e.preventDefault();
+      setHover(null);
+      setDrag({ kind: "pan", x0: x, x1: x, view: [v0, v1] });
+      return;
+    }
+    if (e.button !== 0) return;
     const ri = rowAt(y);
     if (editable && ri >= 0 && usable(rows[ri])) {
       const b = barAt(ri, x);
@@ -299,8 +341,8 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
         </span>
         <span className="ptl-hint">
           {editable
-            ? `Click or drag on a line to add a step (snaps to ${fmtTime(snapStep, snapStep < 1)}, Alt for none) · click a step to edit · drag the time axis to zoom · Ctrl+scroll to zoom`
-            : "Drag to zoom in · Ctrl+scroll to zoom · Shift+scroll to pan"}
+            ? `Click or drag on a line to add a step (snaps to ${fmtTime(snapStep, snapStep < 1)}, Alt for none) · click a step to edit · drag the time axis, Space+drag or middle-drag to pan · Ctrl+scroll to zoom`
+            : "Drag to zoom in · drag the time axis to pan · Ctrl+scroll to zoom · Shift+scroll to pan"}
         </span>
         <button type="button" className="ptl-reset" title="Zoom out" aria-label="Zoom out"
           disabled={v1 - v0 >= maxSpan - 1e-9} onClick={() => zoomAbout(2, zoomed ? mid : 0)}>−</button>
@@ -310,7 +352,11 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           <button type="button" className="ptl-reset" onClick={() => setView(null)}>Reset zoom</button>
         )}
       </div>
-      <div className={`ptl-plot${editable ? " ptl-plot--editable" : ""}${hover?.onBar ? " ptl-plot--onbar" : ""}`} ref={plotRef}>
+      <div ref={plotRef}
+        className={`ptl-plot${editable ? " ptl-plot--editable" : ""}${hover?.onBar ? " ptl-plot--onbar" : ""}${
+          drag?.kind === "pan" ? " ptl-plot--panning" : spaceHeld || overAxis ? " ptl-plot--pannable" : ""}`}
+        onMouseEnter={() => { pointerIn.current = true; }}
+        onMouseLeave={() => { pointerIn.current = false; setOverAxis(false); }}>
         <svg
           width={width}
           height={height}
@@ -318,6 +364,7 @@ export default function ProtocolTimeline({ rows: rowsIn, spans, duration, emptyT
           aria-label={`Timeline of ${rows.length} output(s) over ${fmtTime(duration)}`}
           onMouseMove={onMove}
           onMouseLeave={() => { setHover(null); setDrag(null); }}
+          onAuxClick={(e) => e.preventDefault()}
           onMouseDown={onDown}
           onMouseUp={onUp}
           onDoubleClick={() => setView(null)}

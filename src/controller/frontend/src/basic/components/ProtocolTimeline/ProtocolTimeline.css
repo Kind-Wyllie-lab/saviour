@@ -171,3 +171,7 @@
 .ptl-trace--ref { stroke: #6b6b6b; }
 .ptl-trace-fill { fill: var(--accent-color); fill-opacity: 0.18; }
 .ptl-trace-fill--ref { fill: #6b6b6b; }
+
+/* Hand-drag panning: on the time axis, with Space held, or middle-drag. */
+.ptl-plot--pannable svg, .ptl-plot--editable.ptl-plot--pannable svg { cursor: grab; }
+.ptl-plot--panning svg, .ptl-plot--editable.ptl-plot--panning svg { cursor: grabbing; }
